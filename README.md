@@ -14,7 +14,7 @@ sudo dnf install git gcc pkgconf-pkg-config gtk4-devel libadwaita-devel python3 
 
 On other Linux distributions, install the equivalent packages using your package
 manager. You need a C compiler, pkg-config, GTK4 and libadwaita development files,
-Python 3.11+ with pip and venv, Git, Meson, Ninja, Flatpak, flatpak-builder,
+Python 3.11+ with pip and venv, Git, Meson 1.3+, Ninja, Flatpak, flatpak-builder 1.4.0+,
 and the desktop-file and AppStream validators.
 The Rust bindings check the required native library versions during compilation.
 Other distributions have not yet been validated.
@@ -59,11 +59,31 @@ flatpak run io.github.mitinand.Mailbag
 
 Cargo vendors the dependencies from `Cargo.lock` before the sandboxed, offline
 build. Generated dependencies and build outputs are ignored by Git. Meson invokes
-Cargo and installs the binary, desktop entry, icon, metadata and license. The
-manifest selects GNOME runtime/SDK 50 and its Rust SDK extension; the extension's
+Cargo and installs the binary, desktop entry, icon, metadata and license notices.
+Upstream notices and package metadata are included for every vendored crate,
+including build and target-specific dependencies. No license collection tool is needed.
+Setup and the build script require flatpak-builder 1.4.0+ (declared in
+`scripts/tool-versions.env`); setup checks this before downloading SDKs.
+
+The manifest selects GNOME runtime/SDK 50 and its Rust SDK extension; the extension's
 compiler is maintained separately from the native toolchain in
 `rust-toolchain.toml` and must satisfy the package's `rust-version`.
 
 The current shell only requests Wayland and GPU access. Add integration permissions
 with the features that need them. CI builds and exports the Flatpak; checking the
 window, About dialog and Ctrl+Q still requires a GNOME desktop session.
+
+Flatpak builds explicitly use Meson's `release` build type. For a native Meson
+build with debug symbols, prepare the sources and select `debug`:
+
+```bash
+cargo vendor --locked vendor
+meson setup target/meson --buildtype=debug
+meson compile -C target/meson
+```
+
+Meson supports `debug` (Cargo `dev`) and `release` (Cargo `release`); unsupported
+build types fail explicitly. Vendoring is required for Meson's license installation;
+plain `cargo run --locked` remains available without this preparation.
+Runtime and SDK branches receive updates, so this development setup does not
+promise bit-for-bit reproducible binaries across different SDK revisions.

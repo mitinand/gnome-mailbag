@@ -15,6 +15,9 @@ build-options:
 modules:
   - name: mailbag
     buildsystem: meson
+    config-opts: [--buildtype=release]
+    # Meson installs licenses on both old and new builder versions.
+    license-files: []
     sources:
       - type: file
         path: meson.build
@@ -24,6 +27,9 @@ modules:
         path: Cargo.lock
       - type: file
         path: LICENSE
+      - type: dir
+        path: LICENSES
+        dest: LICENSES
       - type: dir
         path: src
         dest: src

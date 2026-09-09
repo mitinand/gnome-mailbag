@@ -33,6 +33,8 @@ if ! command -v rustup >/dev/null; then
     echo 'Install rustup from https://rustup.rs, then rerun setup.' >&2
     exit 1
 fi
+scripts/check-flatpak-tools.sh
+
 # The manifest owns runtime/SDK versions and extension requirements.
 flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 flatpak-builder --user --install-deps-only --install-deps-from=flathub \
