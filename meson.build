@@ -22,7 +22,6 @@ custom_target(
         'cargo-build', cargo, meson.project_source_root(), meson.project_build_root(), '@OUTPUT@',
         cargo_profile, cargo_output,
     ],
-    build_by_default: true,
     build_always_stale: true, # Cargo tracks Rust inputs and reuses unchanged outputs.
     install: true,
     install_dir: get_option('bindir'),
