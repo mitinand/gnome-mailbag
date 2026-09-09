@@ -1,0 +1,39 @@
+app-id: io.github.mitinand.Mailbag
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: mailbag
+finish-args:
+  - --socket=wayland
+  - --device=dri
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_NET_OFFLINE: 'true'
+modules:
+  - name: mailbag
+    buildsystem: meson
+    sources:
+      - type: file
+        path: meson.build
+      - type: file
+        path: Cargo.toml
+      - type: file
+        path: Cargo.lock
+      - type: file
+        path: LICENSE
+      - type: dir
+        path: src
+        dest: src
+      - type: dir
+        path: data
+        dest: data
+      - type: dir
+        path: vendor
+        dest: vendor
+      - type: file
+        path: .flatpak-builder/cargo-config.toml
+        dest: .cargo
+        dest-filename: config.toml

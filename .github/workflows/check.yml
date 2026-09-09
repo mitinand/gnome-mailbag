@@ -46,3 +46,17 @@ jobs:
         run: scripts/check.sh
       - name: Check dependency advisories
         run: cargo deny check advisories
+
+  flatpak:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Flatpak tools
+        run: sudo apt-get update && sudo apt-get install -y flatpak flatpak-builder
+      - name: Install SDK and runtime
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak-builder --user --install-deps-only --install-deps-from=flathub build-dir io.github.mitinand.Mailbag.yml
+      - name: Build and export Flatpak
+        run: scripts/build-flatpak.sh
