@@ -9,7 +9,7 @@ if [[ $(uname -s) != Linux ]]; then
 fi
 export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 missing=()
-for tool in git cc pkg-config python3 desktop-file-validate appstreamcli; do
+for tool in git cc pkg-config python3 desktop-file-validate appstreamcli meson ninja flatpak flatpak-builder; do
     command -v "$tool" >/dev/null || missing+=("$tool")
 done
 if command -v pkg-config >/dev/null; then
@@ -23,7 +23,7 @@ if ((${#missing[@]})); then
         source /etc/os-release
         if [[ ${ID:-} == fedora ]]; then
             echo 'Install prerequisites, then rerun setup:' >&2
-            echo 'sudo dnf install git gcc pkgconf-pkg-config gtk4-devel libadwaita-devel python3 python3-pip desktop-file-utils appstream' >&2
+            echo 'sudo dnf install git gcc pkgconf-pkg-config gtk4-devel libadwaita-devel python3 python3-pip desktop-file-utils appstream meson ninja-build flatpak flatpak-builder' >&2
         fi
     fi
     exit 1
@@ -33,6 +33,13 @@ if ! command -v rustup >/dev/null; then
     echo 'Install rustup from https://rustup.rs, then rerun setup.' >&2
     exit 1
 fi
+scripts/check-flatpak-tools.sh
+
+# The manifest owns runtime/SDK versions and extension requirements.
+flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+flatpak-builder --user --install-deps-only --install-deps-from=flathub \
+    build-dir io.github.mitinand.Mailbag.yml
+
 # Rustup reads the version, profile and components from rust-toolchain.toml.
 cargo --version
 if [[ $(cargo deny --version 2>/dev/null || true) != "cargo-deny $CARGO_DENY_VERSION" ]]; then
