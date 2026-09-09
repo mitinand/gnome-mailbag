@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Mailbag
+Comment=Read and organize your email
+Exec=mailbag
+Icon=io.github.mitinand.Mailbag
+Terminal=false
+Categories=GNOME;GTK;Network;Email;
+StartupNotify=true

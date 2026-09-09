@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: 2026 Andrey Mitin -->
+<!-- SPDX-License-Identifier: CC0-1.0 -->
+<component type="desktop-application">
+  <id>io.github.mitinand.Mailbag</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Mailbag</name>
+  <summary>Read and organize your email</summary>
+  <developer id="io.github.mitinand"><name>Andrey Mitin</name></developer>
+  <description><p>Mailbag is a personal email reader for GNOME, focused on reading and organizing incoming mail. Development has just started; this build displays an application shell and cannot connect to mail accounts yet.</p></description>
+  <launchable type="desktop-id">io.github.mitinand.Mailbag.desktop</launchable>
+  <url type="homepage">https://github.com/mitinand/gnome-mailbag</url>
+  <url type="bugtracker">https://github.com/mitinand/gnome-mailbag/issues</url>
+  <content_rating type="oars-1.1"/>
+</component>
