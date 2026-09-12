@@ -62,7 +62,7 @@ Development has just started.",
         if let Some(window) = window_weak.upgrade() {
             adw::AboutDialog::builder()
                 .application_name("Mailbag")
-                .application_icon("mail-unread-symbolic")
+                .application_icon(APP_ID)
                 .developer_name("Andrey Mitin")
                 .version(env!("CARGO_PKG_VERSION"))
                 .license_type(gtk::License::Gpl30)
