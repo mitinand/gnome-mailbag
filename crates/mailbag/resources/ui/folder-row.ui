@@ -1,0 +1,44 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!-- Created with Cambalache 1.0.3 -->
+<!-- SPDX-FileCopyrightText: 2026 Andrey Mitin
+     SPDX-License-Identifier: GPL-3.0-or-later -->
+<interface domain="mailbag">
+  <!-- interface-name folder-row.ui -->
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="libadwaita" version="1.5"/>
+  <object class="GtkBox" id="folder_row">
+    <property name="orientation">vertical</property>
+    <child>
+      <object class="GtkSeparator" id="group_separator">
+        <property name="visible">false</property>
+      </object>
+    </child>
+    <child>
+      <object class="GtkTreeExpander" id="folder_expander">
+        <property name="child">
+          <object class="AdwActionRow" id="folder_details">
+            <property name="hexpand">true</property>
+            <property name="title"/>
+            <property name="title-lines">1</property>
+            <property name="use-markup">false</property>
+            <child type="prefix">
+              <object class="GtkImage" id="folder_icon">
+                <property name="icon-name">mail-unread-symbolic</property>
+              </object>
+            </child>
+            <child type="suffix">
+              <object class="GtkLabel" id="folder_badge">
+                <property name="label"/>
+                <style>
+                  <class name="accent"/>
+                  <class name="numeric"/>
+                </style>
+                <property name="visible">false</property>
+              </object>
+            </child>
+          </object>
+        </property>
+      </object>
+    </child>
+  </object>
+</interface>

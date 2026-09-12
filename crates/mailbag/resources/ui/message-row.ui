@@ -1,0 +1,146 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!-- Created with Cambalache 1.0.3 -->
+<!-- SPDX-FileCopyrightText: 2026 Andrey Mitin
+     SPDX-License-Identifier: GPL-3.0-or-later -->
+<interface domain="mailbag">
+  <!-- interface-name message-row.ui -->
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="libadwaita" version="1.8"/>
+  <object class="GtkListBoxRow" id="row">
+    <property name="child">
+      <object class="GtkRevealer" id="row_reveal">
+        <property name="child">
+          <object class="GtkBox">
+            <child>
+              <object class="GtkGrid" id="message_grid">
+                <property name="hexpand">true</property>
+                <property name="margin-bottom">12</property>
+                <property name="margin-top">12</property>
+                <property name="row-spacing">4</property>
+                <child>
+                  <object class="GtkImage" id="dot">
+                    <property name="accessible-role">presentation</property>
+                    <property name="halign">center</property>
+                    <property name="icon-name">media-record-symbolic</property>
+                    <property name="margin-end">8</property>
+                    <property name="margin-start">8</property>
+                    <property name="pixel-size">8</property>
+                    <property name="tooltip-text" translatable="yes">Unread</property>
+                    <property name="valign">center</property>
+                    <style>
+                      <class name="accent"/>
+                    </style>
+                    <layout>
+                      <property name="column">0</property>
+                      <property name="row">0</property>
+                    </layout>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox">
+                    <property name="spacing">8</property>
+                    <child>
+                      <object class="GtkLabel" id="sender">
+                        <property name="ellipsize">end</property>
+                        <property name="hexpand">true</property>
+                        <property name="label"/>
+                        <property name="xalign">0</property>
+                        <style>
+                          <class name="heading"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="time">
+                        <property name="label"/>
+                        <property name="xalign">0</property>
+                        <style>
+                          <class name="caption"/>
+                        </style>
+                      </object>
+                    </child>
+                    <layout>
+                      <property name="column">1</property>
+                      <property name="row">0</property>
+                    </layout>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox">
+                    <property name="hexpand">true</property>
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">4</property>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="spacing">6</property>
+                        <child>
+                          <object class="GtkLabel" id="subject">
+                            <property name="ellipsize">end</property>
+                            <property name="hexpand">true</property>
+                            <property name="label"/>
+                            <property name="xalign">0</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="thread_count">
+                            <property name="label"/>
+                            <property name="visible">false</property>
+                            <property name="xalign">0</property>
+                            <style>
+                              <class name="dim-label"/>
+                              <class name="caption"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="preview">
+                        <property name="ellipsize">end</property>
+                        <property name="label"/>
+                        <property name="xalign">0</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                    <layout>
+                      <property name="column">1</property>
+                      <property name="row">1</property>
+                    </layout>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkRevealer" id="trash_reveal">
+                <property name="child">
+                  <object class="GtkButton" id="delete">
+                    <property name="halign">fill</property>
+                    <property name="icon-name">user-trash-symbolic</property>
+                    <property name="tooltip-text" translatable="yes">Move to Trash</property>
+                    <property name="valign">fill</property>
+                    <property name="vexpand">true</property>
+                    <style>
+                      <class name="destructive-action"/>
+                      <class name="flat"/>
+                    </style>
+                  </object>
+                </property>
+                <property name="halign">fill</property>
+                <property name="reveal-child">false</property>
+                <property name="transition-duration">120</property>
+                <property name="transition-type">crossfade</property>
+                <property name="valign">fill</property>
+                <property name="vexpand">true</property>
+              </object>
+            </child>
+          </object>
+        </property>
+        <property name="reveal-child">true</property>
+        <property name="transition-duration">220</property>
+        <property name="transition-type">slide-down</property>
+      </object>
+    </property>
+  </object>
+</interface>

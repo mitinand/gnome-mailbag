@@ -31,8 +31,8 @@ modules:
         path: LICENSES
         dest: LICENSES
       - type: dir
-        path: src
-        dest: src
+        path: crates
+        dest: crates
       - type: dir
         path: data
         dest: data

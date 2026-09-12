@@ -18,7 +18,7 @@ custom_target(
     output: 'mailbag',
     command: [
         'sh', '-c',
-        '"$1" build --locked --profile "$5" --manifest-path "$2/Cargo.toml" --target-dir "$3/target" && cp "$3/target/$6/mailbag" "$4"',
+        '"$1" build --locked --package mailbag --profile "$5" --manifest-path "$2/Cargo.toml" --target-dir "$3/target" && cp "$3/target/$6/mailbag" "$4"',
         'cargo-build', cargo, meson.project_source_root(), meson.project_build_root(), '@OUTPUT@',
         cargo_profile, cargo_output,
     ],

@@ -1,0 +1,73 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!-- Created with Cambalache 1.0.3 -->
+<!-- SPDX-FileCopyrightText: 2026 Andrey Mitin
+     SPDX-License-Identifier: GPL-3.0-or-later -->
+<interface domain="mailbag">
+  <!-- interface-name message-content.ui -->
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="libadwaita" version="1.8"/>
+  <object class="GtkBox" id="main_message">
+    <property name="orientation">vertical</property>
+    <child>
+      <object class="AdwBanner" id="images_banner">
+        <property name="button-label" translatable="yes">Load Images</property>
+        <property name="revealed">false</property>
+        <property name="title" translatable="yes">Remote images are blocked</property>
+      </object>
+    </child>
+    <child>
+      <object class="GtkBox" id="message_body_content">
+        <property name="margin-bottom">12</property>
+        <property name="margin-end">12</property>
+        <property name="margin-start">12</property>
+        <property name="margin-top">12</property>
+        <property name="orientation">vertical</property>
+        <property name="spacing">22</property>
+        <child>
+          <object class="GtkBox" id="envelope_slot">
+            <property name="orientation">vertical</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkRevealer" id="attachments_revealer">
+            <property name="child">
+              <object class="GtkListBox" id="attachment_list">
+                <property name="activate-on-single-click">false</property>
+                <property name="selection-mode">single</property>
+                <property name="show-separators">true</property>
+              </object>
+            </property>
+            <property name="transition-duration">180</property>
+            <property name="transition-type">slide-down</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox" id="body_slot">
+            <child>
+              <object class="AdwClamp" id="reader_body_text_width">
+                <property name="maximum-size">800</property>
+                <property name="tightening-threshold">800</property>
+                <property name="unit">sp</property>
+                <property name="child">
+                  <object class="GtkLabel" id="reader_body">
+                    <property name="label"/>
+                    <property name="selectable">true</property>
+                    <property name="wrap">true</property>
+                    <property name="wrap-mode">word-char</property>
+                    <property name="xalign">0</property>
+                    <property name="max-width-chars">95</property>
+                  </object>
+                </property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox">
+                <property name="hexpand">true</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </object>
+</interface>

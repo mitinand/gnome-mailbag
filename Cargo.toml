@@ -1,14 +1,10 @@
-[package]
-name = "mailbag"
-version = "0.1.0-dev"
-edition = "2024"
-rust-version = "1.95"
-license = "GPL-3.0-or-later"
-repository = "https://github.com/mitinand/gnome-mailbag"
-publish = false
+[workspace]
+members = ["crates/mailbag"]
+default-members = ["crates/mailbag"]
+resolver = "3"
 
-[dependencies]
+[workspace.dependencies]
 adw = { package = "libadwaita", version = "=0.9.2", features = ["v1_8"] }
 
-[lints.rust]
+[workspace.lints.rust]
 unsafe_code = "forbid"
