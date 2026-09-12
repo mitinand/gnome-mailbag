@@ -16,4 +16,4 @@
 !/.specify/memory/constitution.md
 __pycache__/
 *.pyc
-/docs/
+/docs/*

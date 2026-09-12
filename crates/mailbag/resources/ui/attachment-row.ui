@@ -1,0 +1,44 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!-- Created with Cambalache 1.0.3 -->
+<!-- SPDX-FileCopyrightText: 2026 Andrey Mitin
+     SPDX-License-Identifier: GPL-3.0-or-later -->
+<interface domain="mailbag">
+  <!-- interface-name attachment-row.ui -->
+  <requires lib="gio" version="2.0"/>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="libadwaita" version="1.8"/>
+  <object class="AdwActionRow" id="attachment_row">
+    <property name="selectable">true</property>
+    <property name="activatable">true</property>
+    <property name="title-lines">1</property>
+    <property name="use-markup">false</property>
+    <child type="prefix">
+      <object class="GtkImage" id="attachment_icon"/>
+    </child>
+    <child type="suffix">
+      <object class="GtkMenuButton" id="attachment_menu_button">
+        <property name="icon-name">view-more-symbolic</property>
+        <property name="menu-model">attachment_menu</property>
+        <property name="valign">center</property>
+        <property name="has-frame">false</property>
+        <property name="tooltip-text" translatable="yes">Attachment Actions</property>
+      </object>
+    </child>
+  </object>
+  <menu id="attachment_menu">
+    <section>
+      <item>
+        <attribute name="action">attachment.preview</attribute>
+        <attribute name="label" translatable="yes">_Preview</attribute>
+      </item>
+      <item>
+        <attribute name="action">attachment.open</attribute>
+        <attribute name="label" translatable="yes">_Open</attribute>
+      </item>
+      <item>
+        <attribute name="action">attachment.save</attribute>
+        <attribute name="label" translatable="yes">_Save…</attribute>
+      </item>
+    </section>
+  </menu>
+</interface>

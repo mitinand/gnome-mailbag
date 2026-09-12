@@ -1,0 +1,14 @@
+[package]
+name = "mailbag"
+version = "0.1.0-dev"
+edition = "2024"
+rust-version = "1.95"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/mitinand/gnome-mailbag"
+publish = false
+
+[dependencies]
+adw.workspace = true
+
+[lints]
+workspace = true

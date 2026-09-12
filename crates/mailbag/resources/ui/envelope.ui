@@ -1,0 +1,159 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!-- Created with Cambalache 1.0.3 -->
+<!-- SPDX-FileCopyrightText: 2026 Andrey Mitin
+     SPDX-License-Identifier: GPL-3.0-or-later -->
+<interface domain="mailbag">
+  <!-- interface-name envelope.ui -->
+  <requires lib="gio" version="2.0"/>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="libadwaita" version="1.8"/>
+  <object class="GtkBox" id="envelope_group">
+    <property name="orientation">vertical</property>
+    <property name="spacing">8</property>
+    <child>
+      <object class="AdwWrapBox" id="envelope">
+        <child>
+          <object class="GtkBox" id="envelope_sender">
+            <property name="hexpand">true</property>
+            <property name="spacing">12</property>
+            <child>
+              <object class="AdwAvatar" id="avatar">
+                <property name="show-initials">true</property>
+                <property name="size">40</property>
+                <property name="text"/>
+                <property name="valign">center</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox">
+                <property name="hexpand">true</property>
+                <property name="orientation">vertical</property>
+                <property name="spacing">4</property>
+                <property name="valign">center</property>
+                <child>
+                  <object class="GtkLabel" id="reader_sender">
+                    <property name="ellipsize">end</property>
+                    <property name="hexpand">true</property>
+                    <property name="label"/>
+                    <property name="xalign">0</property>
+                    <style>
+                      <class name="heading"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="reader_to">
+                    <property name="ellipsize">end</property>
+                    <property name="hexpand">true</property>
+                    <property name="label"/>
+                    <property name="xalign">0</property>
+                    <style>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <property name="valign">center</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox" id="envelope_right">
+            <property name="halign">end</property>
+            <property name="orientation">vertical</property>
+            <property name="spacing">4</property>
+            <property name="valign">center</property>
+            <child>
+              <object class="GtkLabel" id="single_date">
+                <property name="justify">right</property>
+                <property name="label"/>
+                <property name="visible">true</property>
+                <property name="wrap">false</property>
+                <property name="xalign">1</property>
+                <style>
+                  <class name="caption"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="reader_location">
+                <property name="ellipsize">end</property>
+                <property name="hexpand">true</property>
+                <property name="label"/>
+                <property name="xalign">1</property>
+                <style>
+                  <class name="caption"/>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <property name="child-spacing">12</property>
+        <property name="line-spacing">12</property>
+        <property name="justify">spread</property>
+        <property name="justify-last-line">true</property>
+      </object>
+    </child>
+    <child>
+      <object class="GtkBox" id="envelope_actions">
+        <property name="halign">end</property>
+        <property name="spacing">8</property>
+        <child>
+          <object class="GtkToggleButton" id="star_button">
+            <property name="action-name">message.star</property>
+            <property name="icon-name">non-starred-symbolic</property>
+            <property name="tooltip-text" translatable="yes">Star this message</property>
+            <property name="valign">center</property>
+            <style>
+              <class name="flat"/>
+            </style>
+          </object>
+        </child>
+        <child>
+          <object class="GtkToggleButton" id="attachment_button">
+            <property name="child">
+              <object class="AdwButtonContent" id="attachment_count">
+                <property name="icon-name">mail-attachment-symbolic</property>
+                <property name="label"/>
+              </object>
+            </property>
+            <property name="tooltip-text" translatable="yes">Show attachments</property>
+            <property name="visible">false</property>
+            <style>
+              <class name="flat"/>
+            </style>
+          </object>
+        </child>
+        <child>
+          <object class="GtkMenuButton" id="message_menu">
+            <property name="icon-name">view-more-symbolic</property>
+            <property name="menu-model">message_menu_model</property>
+            <property name="tooltip-text" translatable="yes">Actions for this message</property>
+            <style>
+              <class name="flat"/>
+            </style>
+          </object>
+        </child>
+      </object>
+    </child>
+  </object>
+  <menu id="message_menu_model">
+    <section>
+      <item>
+        <attribute name="action">message.mark-unread</attribute>
+        <attribute name="label" translatable="yes">Mark as _Unread</attribute>
+      </item>
+    </section>
+    <section>
+      <item>
+        <attribute name="action">message.archive</attribute>
+        <attribute name="label" translatable="yes" context="mail-action">_Archive</attribute>
+      </item>
+      <item>
+        <attribute name="action">message.trash</attribute>
+        <attribute name="label" translatable="yes">Move to _Trash</attribute>
+      </item>
+    </section>
+  </menu>
+</interface>

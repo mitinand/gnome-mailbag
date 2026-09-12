@@ -1,0 +1,77 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!-- Created with Cambalache 1.0.3 -->
+<!-- SPDX-FileCopyrightText: 2026 Andrey Mitin
+     SPDX-License-Identifier: GPL-3.0-or-later -->
+<interface domain="mailbag">
+  <!-- interface-name move-dialog.ui -->
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="libadwaita" version="1.8"/>
+  <object class="AdwDialog" id="move_dialog">
+    <property name="title" translatable="yes">Move Messages</property>
+    <property name="child">
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar"/>
+        </child>
+        <property name="content">
+          <object class="GtkScrolledWindow">
+            <property name="hscrollbar-policy">never</property>
+            <property name="propagate-natural-height">true</property>
+            <property name="child">
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <property name="margin-start">18</property>
+                <property name="margin-end">18</property>
+                <property name="margin-top">12</property>
+                <property name="margin-bottom">18</property>
+                <child>
+                  <object class="GtkLabel" id="move_scope">
+                    <property name="label" translatable="yes">Selected messages</property>
+                    <property name="xalign">0</property>
+                    <property name="wrap">true</property>
+                    <property name="wrap-mode">word-char</property>
+                    <style>
+                      <class name="heading"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="move_account">
+                    <property name="label"/>
+                    <property name="xalign">0</property>
+                    <property name="wrap">true</property>
+                    <property name="wrap-mode">word-char</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="move_context">
+                    <property name="label"/>
+                    <property name="xalign">0</property>
+                    <property name="wrap">true</property>
+                    <property name="wrap-mode">word-char</property>
+                    <style>
+                      <class name="caption"/>
+                    </style>
+                    <property name="visible">false</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkListBox" id="destinations">
+                    <property name="selection-mode">none</property>
+                    <style>
+                      <class name="boxed-list"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </property>
+          </object>
+        </property>
+      </object>
+    </property>
+  </object>
+</interface>
