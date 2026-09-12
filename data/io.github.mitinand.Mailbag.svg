@@ -1,6 +1,52 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
-<!-- SPDX-FileCopyrightText: 2026 Andrey Mitin -->
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<rect x="12" y="28" width="104" height="78" rx="14" fill="#3584e4"/>
-<path d="M20 38L64 72L108 38" fill="none" stroke="#fff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- SPDX-FileCopyrightText: 2026 Andrey Mitin -->
+  <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+  <title>Mailbag — envelope satchel with handle</title>
+  <defs>
+    <linearGradient id="bottom-edge" x1="8" y1="0" x2="120" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#573c27"/>
+      <stop offset="0.05" stop-color="#865e3c"/>
+      <stop offset="0.11" stop-color="#63452c"/>
+      <stop offset="0.89" stop-color="#63452c"/>
+      <stop offset="0.95" stop-color="#865e3c"/>
+      <stop offset="1" stop-color="#573c27"/>
+    </linearGradient>
+    <linearGradient id="paper-edge" x1="8" y1="0" x2="120" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#c0bfbc"/>
+      <stop offset="0.04" stop-color="#ffffff"/>
+      <stop offset="0.08" stop-color="#deddda"/>
+      <stop offset="0.92" stop-color="#deddda"/>
+      <stop offset="0.96" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#c0bfbc"/>
+    </linearGradient>
+    <linearGradient id="button" x1="0" y1="77" x2="0" y2="87" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff"/>
+      <stop offset="0.25" stop-color="#deddda"/>
+      <stop offset="1" stop-color="#9a9996"/>
+    </linearGradient>
+  </defs>
+  <!-- A flat leather handle with a narrow inner edge; its ends sit behind the flap. -->
+  <path d="M38 40V34c0-10 7-16 17-16h18c10 0 17 6 17 16v6h-7v-6c0-5-4-9-10-9H55c-6 0-10 4-10 9v6z" fill="#63452c"/>
+  <path d="M38 38v-4c0-10 7-16 17-16h18c10 0 17 6 17 16v4h-7v-6c0-5-4-9-10-9H55c-6 0-10 4-10 9v6z" fill="#986a44"/>
+  <!-- A narrow colored underside supports the opaque paper-white body. -->
+  <rect x="8" y="38" width="112" height="78" rx="8" fill="url(#bottom-edge)"/>
+  <!-- Layered leather base beneath the Light 3 paper surface. -->
+  <rect x="8" y="38" width="112" height="75" rx="8" fill="url(#bottom-edge)"/>
+  <rect x="8" y="38" width="112" height="73" rx="8" fill="#deddda"/>
+  <!-- Widely separated paper creases disappear behind the rounded leather lid. -->
+  <path d="M11 108L60 54Q64 50 68 54L117 108" fill="none" stroke="#9a9996" stroke-opacity="0.55" stroke-width="1.25" stroke-linejoin="round"/>
+  <g transform="translate(0 -8)">
+  <!-- The flap has a thin end face and a close shadow on the white body. -->
+  <path d="M8 55Q8 58 12 61L48 90Q64 105 80 90L116 61Q120 58 120 55L80 87Q64 102 48 87z" fill="#000000" opacity="0.06"/>
+  <path d="M16 48h96a8 8 0 0 1 8 8q0 3-4 5L80 89Q64 104 48 89L12 61q-4-2-4-5a8 8 0 0 1 8-8z" fill="#63452c"/>
+  <path d="M16 46h96a8 8 0 0 1 8 8q0 3-4 5L80 87Q64 102 48 87L12 59q-4-2-4-5a8 8 0 0 1 8-8z" fill="#986a44"/>
+  <!-- A fine inset leather seam follows the lid edge; the snap covers its tip. -->
+  <path d="M17 54L50 80Q64 94 78 80L111 54" fill="none" stroke="#cdab8f" stroke-width="0.85" stroke-dasharray="2 2" stroke-linecap="round"/>
+  <g transform="translate(0 5)">
+  <!-- A shallow convex metal snap. -->
+  <circle cx="64" cy="83.5" r="5.5" fill="#422e1d" opacity="0.24"/>
+  <circle cx="64" cy="82" r="5" fill="url(#button)"/>
+  <path d="M60 80a4.5 4.5 0 0 1 8 0" fill="none" stroke="#ffffff" stroke-width="0.75" stroke-linecap="round"/>
+  </g>
+  </g>
 </svg>
