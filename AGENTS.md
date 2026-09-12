@@ -17,6 +17,28 @@ Design drafts are proposals, not additional binding requirements.
 
 Keep changes scoped to the task and preserve unrelated working-tree changes.
 
+## Commits, PRs and review pauses
+
+The maintainer creates commits and PRs. The agent prepares and checks changes;
+it must not create commits or open PRs.
+
+Implement one agreed portion suitable for a commit at a time, including its tests
+and required checks. Then stop and report what changed, what was verified, any
+remaining limitations, a suggested commit message and the intended PR.
+Wait for maintainer review and an explicit instruction before starting the next
+portion. Address review feedback within the current portion before moving on.
+
+When generating implementation tasks, include these review pauses at the agreed
+commit boundaries. A request to implement a feature or PR does not remove them.
+
+## Preparing work for review
+
+Before handing over code or documents, check the result against constitution
+principles I and II.
+Keep the main plan focused on behavior, scope and decisions requiring review;
+put detailed protocols and internal mechanics in linked supporting documents.
+Reference shared decisions instead of repeating their rationale across files.
+
 ## UI layout
 
 The layout in `crates/mailbag/resources/ui/` is approved. Preserve widget arrangement, spacing,
