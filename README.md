@@ -9,7 +9,7 @@ Linux is required; Fedora is the primary development environment.
 Install [rustup](https://rustup.rs/) and the system prerequisites:
 
 ```bash
-sudo dnf install git gcc pkgconf-pkg-config gtk4-devel libadwaita-devel python3 python3-pip desktop-file-utils appstream meson ninja-build flatpak flatpak-builder
+sudo dnf install git gcc pkgconf-pkg-config gtk4-devel libadwaita-devel python3 python3-pip desktop-file-utils appstream dbus-daemon meson ninja-build flatpak flatpak-builder
 ```
 
 Then run from the repository root:
@@ -47,7 +47,7 @@ only builds and exports the package. The build uses GNOME SDK/runtime 50.
 | `crates/mailbag/resources/ui/` | Approved UI forms awaiting application integration |
 | `data/` | App icon, desktop entry and AppStream metadata |
 | `scripts/` | Setup, checks and Flatpak build tools |
-| `docs/spec.md` | Product requirements and architecture |
+| `specs/` | Accepted feature requirements and design |
 
 The root Cargo workspace owns shared dependencies, lints and `Cargo.lock`.
 Other architecture crates will be added with their implementations.

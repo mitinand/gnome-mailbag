@@ -1,5 +1,5 @@
 [package]
-name = "mailbag"
+name = "goa-adapter"
 version = "0.1.0-dev"
 edition = "2024"
 rust-version = "1.95"
@@ -9,7 +9,8 @@ publish = false
 
 [dependencies]
 account-model = { path = "../account-model" }
-adw.workspace = true
+gio.workspace = true
+glib.workspace = true
 
 [lints]
 workspace = true

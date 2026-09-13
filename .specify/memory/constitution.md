@@ -1,7 +1,13 @@
 <!-- Sync Impact Report
-Version: 2.0.1 -> 2.0.2. Remove duplicated Spec Kit workflow instructions.
-Core principles unchanged. Specification Ownership removed; governance condensed.
-Constitution Checks and versioning mechanics remain in Spec Kit skills.
+Version: 2.0.2 -> 2.1.0 (expanded guidance).
+Modified principles:
+- I. Necessary complexity only: require a current failure scenario and compare
+  dependency costs with an in-project implementation.
+- II. Concrete domain language -> Clear language and concrete names: cover code,
+  documents and reviewability explicitly.
+Governance: state amendment versioning and compliance review expectations.
+Added sections: none. Removed sections: none.
+Templates: unchanged; Spec Kit reads the constitution at runtime.
 Deferred items: none.
 -->
 # Mailbag Constitution
@@ -10,16 +16,34 @@ Deferred items: none.
 
 ### I. Necessary complexity only
 
-Use the simplest design that meets current requirements. Additional abstractions,
-configuration or recovery paths must solve a concrete current problem, not a
-hypothetical future need. Required security and data-integrity safeguards are
-not speculative complexity.
+Use the simplest design that meets current requirements. Before adding an
+abstraction, configuration option or recovery mechanism, identify a concrete
+scenario in the current feature that fails without it and explain the consequence.
+Defer mechanisms justified only by future features. Required security and
+data-integrity safeguards remain part of the current requirements.
 
-### II. Concrete domain language
+Before adding a dependency, compare the functionality needed now with the cost of
+implementing and maintaining it in the project. Consider correctness, testing,
+maintenance, security updates, licensing and packaging. Record the choice and its
+main trade-off in the relevant design or PR. Choose the lower overall cost for the
+required behavior; minimizing dependency count alone is not a goal.
 
-Name business functions, types and modules after concrete mail or application
-entities and actions. Use established technical terms where appropriate; explain
-necessary unfamiliar terminology in plain language.
+### II. Clear language and concrete names
+
+Write code and documentation for a maintainer who knows the application but did
+not participate in the design. Use familiar words and name the account, message,
+folder, user action or system operation involved. Names must reveal what a value
+represents or what an operation does.
+
+Explain behavior through concrete situations before describing implementation.
+Avoid invented terminology, vague umbrella names and chains of technical
+qualifiers. Use established technical terms where they add precision, explain
+unfamiliar terms at first use, and keep them within the relevant technical layer.
+A glossary must not compensate for unnecessarily obscure writing.
+
+Reviewability is a requirement: readers must be able to identify the behavior,
+reason for a change and important trade-offs without reconstructing the author's
+terminology.
 
 ### III. Explicit failures and truthful state
 
@@ -69,6 +93,8 @@ coherent, reviewable PRs.
 
 Amendments require maintainer approval, a recorded rationale and a version update;
 revise affected documents accordingly. Do not weaken a principle merely to justify
-an implementation. Constitution versions are independent of application releases.
+an implementation. Review design and code changes against these principles. Use
+semantic versioning for amendments; constitution versions are independent of
+application releases.
 
-**Version**: 2.0.2 | **Ratified**: 2026-09-08 | **Last Amended**: 2026-09-09
+**Version**: 2.1.0 | **Ratified**: 2026-09-08 | **Last Amended**: 2026-09-12
