@@ -194,6 +194,41 @@ fn account_ui_transitions() {
     assert!(!ui.borrow().mail_split.shows_content());
     assert!(!ui.borrow().folders_split.shows_sidebar());
     assert_eq!(ui.borrow().accounts.selected_id(), Some(&second_id));
+    let actions = gio::SimpleActionGroup::new();
+    let action = gio::SimpleAction::new("accounts", None);
+    let launches = Rc::new(Cell::new(0));
+    let count = launches.clone();
+    action.connect_activate(move |_, _| count.set(count.get() + 1));
+    actions.add_action(&action);
+    window.insert_action_group("app", Some(&actions));
+    ui.borrow_mut()
+        .show_settings_result(false, Some(crate::settings::LaunchError::Timeout));
+    let settings_button = ui.borrow().online_accounts.clone();
+    settings_button.emit_clicked();
+    action.activate(None);
+    assert_eq!(launches.get(), 2);
+    ui.borrow_mut().apply_update(&update);
+    assert!(
+        ui.borrow()
+            .status
+            .description()
+            .unwrap()
+            .contains("Settings did not respond")
+    );
+    AccountNotices::push(&notices, AccountHiddenNotice::Group(3));
+    let active = notices.borrow().active.clone().unwrap();
+    active.dismiss();
+    assert!(
+        ui.borrow()
+            .status
+            .description()
+            .unwrap()
+            .contains("Settings did not respond")
+    );
+    ui.borrow_mut().show_settings_result(true, None);
+    assert!(!settings_button.is_sensitive());
+    ui.borrow_mut().show_settings_result(false, None);
+    assert!(!ui.borrow().status.is_visible());
     window.destroy();
 }
 

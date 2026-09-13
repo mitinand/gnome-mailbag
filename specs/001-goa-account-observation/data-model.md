@@ -11,7 +11,8 @@ All state belongs to the current run; F01 has no database, credentials or mail c
 | Visible AccountRow values, selected ID, AccountPage and excluded reasons | Mailbag AccountList | [Application representation](contracts/accounts.md#application-representation) |
 | AccountHiddenNotice | Caller presenting the notice | [FR-017](spec.md#requirements) and [UI contract](contracts/ui.md#notices) |
 | Row objects, focus, popovers and toast presentation | GTK account UI | [UI contract](contracts/ui.md) |
-| Pending launch and last launch error | Settings launcher | [Settings protocol](contracts/ui.md#settings-launch-protocol) |
+| Pending launch | Settings launcher | [Settings protocol](contracts/ui.md#settings-launch-protocol) |
+| Last Settings launch failure | GTK account UI | [Settings protocol](contracts/ui.md#settings-launch-protocol) |
 
 The adapter retains source facts; AccountList retains the rows actually applied by
 the UI. These serve different purposes: replacing a pending source snapshot does

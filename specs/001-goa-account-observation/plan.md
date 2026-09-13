@@ -1,7 +1,7 @@
 # Implementation Plan: GNOME Mail Accounts
 
 **Feature**: F01 / `001-goa-account-observation` · **Branch**: `codex/goa`
-**Status**: Account UI integration (portion 5) implemented and checked; awaiting maintainer review. Settings and installed acceptance remain pending.
+**Status**: Settings and packaging (portion 6) implemented and checked; awaiting maintainer review. Installed acceptance remains pending.
 
 Implement [the approved requirements](spec.md) in two sequential PRs. Preserve the
 existing layout and use the existing GNOME runtime and build tooling.

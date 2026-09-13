@@ -1,7 +1,7 @@
 # Tasks: GNOME Mail Accounts
 
 **Feature**: F01 / `001-goa-account-observation` · **Branch**: `codex/goa`
-**Status**: Portions 1–5 implemented and checked; portion 5 awaiting maintainer review.
+**Status**: Portions 1–6 implemented and checked; portion 6 awaiting maintainer review.
 
 This is the execution list. [Spec](spec.md) owns behavior; [plan](plan.md) owns
 component boundaries; the [GOA](contracts/observation.md),
@@ -87,16 +87,24 @@ The UI cases use synthetic snapshots and cover status, row identity, selection,
 focus, popovers, retry, notices and collapsed navigation. Physical keyboard/touch,
 enlarged text/high contrast, combined load/shutdown and installed-host acceptance
 remain for portions 6–7. The Online Accounts button targets `app.accounts`; its
-launcher is intentionally still T034–T037. No installed compatibility is claimed.
+launcher was subsequently connected in portion 6. No installed compatibility is claimed.
 
 ## Portion 6: Settings and packaging (PR 2)
 
-- [ ] T034 [US3] Add private Settings fixtures using tests/support/bus.rs.
-- [ ] T035 [US3] Test the Settings protocol, failures, coalescing and cancellation.
-- [ ] T036 [US3] Implement the shared async Settings launcher under contracts/ui.md.
-- [ ] T037 [US3] Wire/test both Settings entry points and persistent failure explanations.
-- [ ] T038 [US3] Add the two named Flatpak permissions and verify path-crate packaging.
-- [ ] T039 [US3] STOP: run required checks and hand over portion 6 for PR 2 review.
+- [X] T034 [US3] Add private Settings fixtures using tests/support/bus.rs.
+- [X] T035 [US3] Test the Settings protocol, failures, coalescing and cancellation.
+- [X] T036 [US3] Implement the shared async Settings launcher under contracts/ui.md.
+- [X] T037 [US3] Wire/test both Settings entry points and persistent failure explanations.
+- [X] T038 [US3] Add the two named Flatpak permissions and verify path-crate packaging.
+- [X] T039 [US3] STOP: run required checks and hand over portion 6 for PR 2 review.
+
+Portion 6 validation: scripts/check.sh and both graphical cases passed. The private
+Settings fixture covers the exact action parameters, successful launch replies,
+access denial, invalid arguments, unavailable service, timeout before/after bus
+acquisition, coalesced requests and ignored late replies after timeout/shutdown.
+Flatpak built without installation; package metadata contains only the two named
+bus permissions in addition to the existing Wayland/GPU permissions. Actual GNOME
+panel presentation and installed-host acceptance remain for portion 7.
 
 ## Portion 7: combined acceptance (PR 2)
 
@@ -130,8 +138,8 @@ portion 5.
 - [X] T059 Bind AccountList to stable GTK account rows and ID-based selection through T025 and T030 in mailbag::account_ui; verify updates, retained focus and confirmed exclusion per FR-003, FR-004 and FR-006–010 (partial).
 - [X] T060 Present AccountPage and account problems, and connect accessible status actions and Retry Check through T026, T027 and T031 in mailbag::account_ui per FR-005, FR-008, FR-009, FR-012, FR-014 and FR-015 (partial).
 - [X] T061 Present AccountHiddenNotice through the bounded toast owner in T032; verify single/group wording and notifications for applied exclusions per FR-017 and SC-008 (partial).
-- [ ] T062 Implement and test the shared Settings launcher and both entry points through T034–T037 in mailbag::settings, including safe failures, coalescing and cancellation per FR-011, SC-004 and plan: Settings launch (missing).
-- [ ] T063 Complete T038 in io.github.mitinand.Mailbag.yml; add the two named D-Bus permissions and verify packaging of the application path dependencies per FR-016, SC-007 and plan: Flatpak integration (partial).
+- [X] T062 Implement and test the shared Settings launcher and both entry points through T034–T037 in mailbag::settings, including safe failures, coalescing and cancellation per FR-011, SC-004 and plan: Settings launch (missing).
+- [X] T063 Complete T038 in io.github.mitinand.Mailbag.yml; add the two named D-Bus permissions and verify packaging of the application path dependencies per FR-016, SC-007 and plan: Flatpak integration (partial).
 - [ ] T064 Complete the GTK behavioral/input coverage in T024 and T029 and combined acceptance in T040 and T041; verify focus, status transitions, retry, notices, yielding, shutdown and the 30-account/250-ms target per SC-001, SC-003, SC-005, SC-006, SC-008 and plan: graphical validation (partial).
 - [ ] T065 Run supported installed-Flatpak acceptance and complete prerequisite/evidence documentation through T042 and T043; verify actual GOA discovery, both Settings entry points, input access and installed permissions per SC-004, SC-005, SC-007 and plan: installed acceptance (partial).
 

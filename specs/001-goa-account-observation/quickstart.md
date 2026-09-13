@@ -3,7 +3,8 @@
 This guide targets F01 on top of approved UI commit `7a69c49`. Portions 2–4c provide
 the shared account contract, GOA adapter, account display/selection rules and
 headless tests. Portion 5 connects account rows, status, retry and exclusion notices to GTK.
-Settings and installed-Flatpak acceptance remain pending.
+Portion 6 connects Online Accounts actions and the Flatpak permissions.
+Installed-Flatpak acceptance remains pending.
 
 ## Prerequisites and baseline
 
@@ -23,6 +24,7 @@ Each of the two planned PRs runs `scripts/check.sh`. At the approved baseline it
 
 ```bash
 cargo test --locked -p goa-adapter
+cargo test --locked -p mailbag settings::
 cargo test --locked -p mailbag account_
 ```
 
@@ -30,7 +32,7 @@ GOA restart/recovery fixtures keep their session bus running; recovery after des
 
 The goa-adapter entry point runs field, event, recovery, timing and shutdown tests.
 The mailbag accounts tests exercise display/selection rules using synthetic account
-lists without D-Bus or GTK. The settings test module remains planned. The client tests start isolated D-Bus fixtures with service activation directories disabled and connect explicitly to those buses; they never replace the host GOA name or modify real accounts. Each fixture enforces an outer deadline and cleans up its daemon. Use synthetic identities only.
+lists without D-Bus or GTK. The settings tests use a private bus to check request parameters, errors, timeout, repeated activation and cancellation. The client tests start isolated D-Bus fixtures with service activation directories disabled and connect explicitly to those buses; they never replace the host GOA name or modify real accounts. Each fixture enforces an outer deadline and cleans up its daemon. Use synthetic identities only.
 
 Acceptance criteria are listed once in [spec.md](spec.md#acceptance). Component
 protocol cases belong to [the GOA contract](contracts/observation.md#verification).
@@ -90,4 +92,4 @@ Synthetic lifecycle UI cases must also cover removing/disabling the last display
 
 Record commit/build, environment and runtime revision, check commands/results, behavioral test counts, installed permissions and actual observed UI outcomes. Separate headless synthetic, graphical synthetic and installed-host evidence. Mark unavailable touch/desktop/test services explicitly unverified. Do not include account identifiers, addresses, screenshots with private data or secrets in public evidence. Do not create a standalone verification diary file.
 
-PR 1 must pass the observation and account-policy matrix while keeping the application buildable. PR 2 must pass the full matrix and installed/accessible UI checks before F01 is called complete. Account hiding does not test or imply deletion of stored mail. Settings integration and installed-host checks remain pending.
+PR 1 must pass the observation and account-policy matrix while keeping the application buildable. PR 2 must pass the full matrix and installed/accessible UI checks before F01 is called complete. Account hiding does not test or imply deletion of stored mail. Installed-host checks remain pending.

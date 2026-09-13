@@ -5,6 +5,7 @@ use adw::{gio, glib, gtk, prelude::*};
 
 mod account_ui;
 mod accounts;
+mod settings;
 
 #[cfg(test)]
 #[path = "accounts/notice_tests.rs"]
@@ -29,7 +30,7 @@ fn build_window(app: &adw::Application) {
 
     let builder = create_window(app);
     let window: adw::Window = builder.object("window").expect("mailbag.ui: window");
-    start_account_observation(&builder, &window);
+    connect_account_updates(&builder, &window);
 }
 
 fn create_window(app: &adw::Application) -> gtk::Builder {
@@ -97,11 +98,22 @@ fn create_window(app: &adw::Application) -> gtk::Builder {
     builder
 }
 
-fn start_account_observation(builder: &gtk::Builder, window: &adw::Window) {
+fn connect_account_updates(builder: &gtk::Builder, window: &adw::Window) {
     let (adapter, mut updates) = goa_adapter::GoaAdapter::start();
     let refresh_adapter = adapter.clone();
     let account_ui =
         account_ui::AccountUi::new(builder, move || refresh_adapter.refresh_accounts());
+    let settings_ui = std::rc::Rc::downgrade(&account_ui);
+    let launcher = settings::SettingsLauncher::new(move |pending, error| {
+        if let Some(ui) = settings_ui.upgrade() {
+            ui.borrow_mut().show_settings_result(pending, error);
+        }
+    });
+    let action = gio::SimpleAction::new("accounts", None);
+    let action_launcher = launcher.clone();
+    action.connect_activate(move |_, _| action_launcher.open());
+    let app = window.application().expect("application window");
+    app.add_action(&action);
     let weak_ui = std::rc::Rc::downgrade(&account_ui);
     let consumer = glib::MainContext::default().spawn_local(async move {
         while let Some(update) = updates.next_account_update().await {
@@ -119,6 +131,8 @@ fn start_account_observation(builder: &gtk::Builder, window: &adw::Window) {
     });
     let window_ui = std::cell::RefCell::new(Some(account_ui));
     window.connect_destroy(move |_| {
+        launcher.stop();
+        app.remove_action("accounts");
         window_ui.borrow_mut().take();
         adapter.stop();
         consumer.abort();

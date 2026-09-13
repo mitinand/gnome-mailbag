@@ -29,6 +29,8 @@ struct AccountWidgets {
 
 pub struct AccountUi {
     accounts: AccountList,
+    settings_error: Option<crate::settings::LaunchError>,
+    settings_pending: bool,
     rows: BTreeMap<AccountId, AccountWidgets>,
     store: gio::ListStore,
     selection: gtk::SingleSelection,
@@ -90,6 +92,8 @@ impl AccountUi {
         let reconciling = Rc::new(Cell::new(false));
         let ui = Rc::new(RefCell::new(Self {
             accounts: AccountList::default(),
+            settings_error: None,
+            settings_pending: false,
             rows: BTreeMap::new(),
             store,
             selection: selection.clone(),
@@ -226,6 +230,19 @@ impl AccountUi {
         }
     }
 
+    pub fn show_settings_result(
+        &mut self,
+        pending: bool,
+        error: Option<crate::settings::LaunchError>,
+    ) {
+        self.settings_pending = pending;
+        self.settings_error = error;
+        self.show_status();
+        if let Some(error) = error {
+            AccountNotices::show_settings_error(&self.notices, error);
+        }
+    }
+
     fn show_status(&self) {
         let (title, description) = if let Some(error) = self.accounts.check_error() {
             ("Unable to get accounts", check_error_text(error.cause))
@@ -253,9 +270,19 @@ impl AccountUi {
                 AccountPage::SelectedAccount => ("", ""),
             }
         };
+        let description = match self.settings_error {
+            Some(error) if description.is_empty() => error.message().to_owned(),
+            Some(error) => format!("{description}\n{}", error.message()),
+            None => description.to_owned(),
+        };
+        let title = if title.is_empty() && self.settings_error.is_some() {
+            "Could not open Online Accounts"
+        } else {
+            title
+        };
         self.status.set_visible(!title.is_empty());
         self.status.set_title(title);
-        self.status.set_description(Some(description));
+        self.status.set_description(Some(&description));
         self.retry.set_visible(
             self.accounts
                 .check_error()
@@ -267,10 +294,13 @@ impl AccountUi {
         } else {
             "Retry Check"
         });
-        self.online_accounts.set_visible(matches!(
-            self.accounts.page(),
-            AccountPage::NoAccounts | AccountPage::NoEligibleAccounts
-        ));
+        self.online_accounts.set_visible(
+            matches!(
+                self.accounts.page(),
+                AccountPage::NoAccounts | AccountPage::NoEligibleAccounts
+            ) || self.settings_error.is_some(),
+        );
+        self.online_accounts.set_sensitive(!self.settings_pending);
     }
 }
 
@@ -380,6 +410,15 @@ struct AccountNotices {
     pending: Option<AccountHiddenNotice>,
 }
 impl AccountNotices {
+    fn show_settings_error(owner: &Rc<RefCell<Self>>, error: crate::settings::LaunchError) {
+        let active = owner.borrow().active.clone();
+        if let Some(toast) = active {
+            toast.set_title(error.message());
+        } else {
+            Self::show_toast(owner, error.message().to_owned());
+        }
+    }
+
     fn new(overlay: adw::ToastOverlay) -> Rc<RefCell<Self>> {
         Rc::new(RefCell::new(Self {
             overlay,
@@ -406,6 +445,11 @@ impl AccountNotices {
                 format!("{count} accounts were removed or had Mail turned off in Online Accounts.")
             }
         };
+        drop(notices);
+        Self::show_toast(owner, title);
+    }
+    fn show_toast(owner: &Rc<RefCell<Self>>, title: String) {
+        let mut notices = owner.borrow_mut();
         let toast = adw::Toast::builder().title(title).use_markup(false).build();
         let weak = Rc::downgrade(owner);
         toast.connect_dismissed(move |_| {
