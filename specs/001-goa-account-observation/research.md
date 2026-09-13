@@ -1,7 +1,7 @@
 # Research: GNOME Mail Accounts
 
 Date: 2026-09-12. Amended 2026-09-13 with maintainer approval after initial-client
-testing. Later recovery, UI and installed-Flatpak acceptance remain pending.
+testing. Account display rules, UI and installed-Flatpak acceptance remain pending.
 
 ## 1. Existing project and dependency choice
 
@@ -110,11 +110,10 @@ valid updates is not itself a loss of data needed by this feature.
 
 ## 5. Limits and shutdown
 
-**Decision:** One check at a time, five seconds per attempt, three fast automatic
-retries per outage with 1/2/4-second pauses, and manual retry after exhaustion.
-Check GOA every ten seconds when idle, including after fast retries are exhausted.
-Failed periodic checks do not restart that sequence; successful recovery resets it
-for a later outage. Skip busy ticks rather than accumulating requests. The UI waits for new
+**Decision:** One check at a time, five seconds per attempt. Recover through GOA
+events, manual Retry Check and a ten-second periodic check when idle. Fast automatic
+retries are omitted: they only shorten recovery latency while adding timers and
+budget-reset rules to behavior already covered by those checks. Skip busy ticks rather than accumulating requests. The UI waits for new
 account data and the worker waits for commands, using tasks on their existing GLib
 contexts. Publishing data or a command wakes the waiting task. Repeated changes
 replace the pending state; they do not add callbacks. Stop requests remain separate

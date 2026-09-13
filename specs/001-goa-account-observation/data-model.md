@@ -84,8 +84,7 @@ including pending/failure when no account property changed.
 A routine ten-second background check does not change confirmed availability merely
 by being pending. Keep its request status separate from visible loading; if Retry
 Check joins it, show pending state at the retry controls. Its failure uses the same
-unavailable state as any other failed account check. Periodic checks continue after
-fast retries are exhausted, with no parallel requests or growing queue.
+unavailable state as any other failed account check. Periodic checks continue after failure, with no parallel requests or growing queue.
 
 Exact request guards and limits belong to [the GOA contract](contracts/observation.md).
 

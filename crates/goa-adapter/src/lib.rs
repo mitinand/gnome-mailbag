@@ -19,8 +19,9 @@ use std::{
     task::{Poll, Waker},
 };
 
-/// One consumer takes the latest state. Clones share one worker; dropping the last
-/// handle requests shutdown without blocking the caller.
+/// Delivers the latest account list and check status to one caller at a time.
+/// Clones share one GOA worker; dropping the last handle requests shutdown
+/// without waiting for the worker to finish.
 #[derive(Clone)]
 pub struct GoaClient(Arc<ClientHandle>);
 struct ClientHandle {
@@ -34,11 +35,11 @@ impl Drop for ClientHandle {
 
 #[derive(Default)]
 struct ClientState {
-    pending_update: Option<GoaAccountList>,
+    latest_update: Option<Arc<GoaAccountList>>,
+    update_pending: bool,
     update_waker: Option<Waker>,
     command_waker: Option<Waker>,
     refresh_requested: bool,
-    check_pending: bool,
     stop_requested: bool,
     worker_stopped: bool,
 }
@@ -64,7 +65,8 @@ impl SharedClientState {
             if state.stop_requested {
                 return;
             }
-            state.pending_update = Some(update);
+            state.latest_update = Some(Arc::new(update));
+            state.update_pending = true;
             state.update_waker.take()
         };
         if let Some(waker) = waker {
@@ -72,22 +74,28 @@ impl SharedClientState {
         }
     }
     fn mark_worker_stopped(&self) {
+        // Keep the last account list after delivery so a worker crash can report
+        // failure with the known accounts still present. Copy outside the lock.
+        let last_update = self.lock().latest_update.clone();
+        let mut failed_update = last_update
+            .as_deref()
+            .cloned()
+            .unwrap_or_else(GoaAccountList::initial);
+        failed_update.update_number += 1;
+        failed_update.status = CheckStatus::Failed;
+        failed_update.membership_confirmed = false;
+        failed_update.error = Some(AccountError::new(
+            "account worker",
+            ErrorCause::WorkerStopped,
+        ));
         let waker = {
             let mut state = self.lock();
-            if !state.stop_requested {
-                let mut update = state
-                    .pending_update
-                    .take()
-                    .unwrap_or_else(GoaAccountList::initial);
-                update.status = CheckStatus::Failed;
-                update.membership_confirmed = false;
-                update.error = Some(AccountError::new(
-                    "account worker",
-                    ErrorCause::WorkerStopped,
-                ));
-                state.pending_update = Some(update);
+            if state.stop_requested {
+                state.latest_update = None;
+                state.update_pending = false;
             } else {
-                state.pending_update = None;
+                state.latest_update = Some(Arc::new(failed_update));
+                state.update_pending = true;
             }
             state.worker_stopped = true;
             state.command_waker = None;
@@ -99,15 +107,16 @@ impl SharedClientState {
     }
 }
 impl GoaClient {
-    /// Start observation on the desktop session bus without waiting for it.
+    /// Start reading accounts and listening for GOA changes on the desktop session bus.
+    /// Return immediately while the worker connects and requests the account list.
     pub fn start() -> Self {
         client::start()
     }
     pub async fn next_account_update(&self) -> Option<GoaAccountList> {
         poll_fn(|cx| {
             let mut state = self.0.shared.lock();
-            if let Some(update) = state.pending_update.take() {
-                Poll::Ready(Some(update))
+            if std::mem::take(&mut state.update_pending) {
+                Poll::Ready(state.latest_update.clone())
             } else if state.worker_stopped {
                 Poll::Ready(None)
             } else {
@@ -116,11 +125,12 @@ impl GoaClient {
             }
         })
         .await
+        .map(|update| (*update).clone())
     }
     pub fn refresh_accounts(&self) {
         let waker = {
             let mut state = self.0.shared.lock();
-            if state.stop_requested || state.worker_stopped || state.check_pending {
+            if state.stop_requested || state.worker_stopped {
                 return;
             }
             state.refresh_requested = true;

@@ -39,6 +39,15 @@ Keep the main plan focused on behavior, scope and decisions requiring review;
 put detailed protocols and internal mechanics in linked supporting documents.
 Reference shared decisions instead of repeating their rationale across files.
 
+## Naming
+
+Name functions for their action, types for their role, and variables for their
+contents. Prefer two or three clear words over vague names such as `value`,
+`check`, `State` or `Shared`. Include units in quantities and distinguish pending
+commands, current state and task wakers. Keep conventional names such as `new`,
+`from_glib` and `lock` when the enclosing type makes their meaning clear. Apply
+these rules to tests and fixtures as well as production code.
+
 ## UI layout
 
 The layout in `crates/mailbag/resources/ui/` is approved. Preserve widget arrangement, spacing,

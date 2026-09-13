@@ -4,8 +4,8 @@
 
 **Feature**: F01 / `001-goa-account-observation`
 
-**Status**: Initial client implemented through portion 2; subsequent portions remain
-pending. Historical product documents are references; the clarified feature
+**Status**: GOA client implemented through portion 3; account display rules and
+subsequent portions remain pending. Historical product documents are references; the clarified feature
 specification and the latest accepted review decisions take precedence.
 
 ## Summary
@@ -40,9 +40,8 @@ Deliver this feature in **two sequential PRs, about seven substantive commits**.
 GOA calls run on a dedicated GLib thread so they continue while GTK is busy.
 New data wakes the UI to read the newest account list; there is no frequent command/UI polling or queue of every update.
 A separate health check asks GOA for its account list every ten seconds when no
-check is already pending. Each check has a five-second deadline. An outage allows
-three fast retries; after those are exhausted, ten-second checks continue without
-restarting the fast-retry sequence. Users can also retry manually. Detailed limits and shutdown
+check is already pending. Each check has a five-second deadline. Failed checks wait
+for a GOA event, the next periodic check or a manual Retry Check. Detailed limits and shutdown
 rules are in [the GOA contract](contracts/observation.md).
 
 The UI target is to display an accepted update within 250 ms with the 30-account
@@ -60,7 +59,7 @@ These are design checks; implementation acceptance is still pending.
 | II. Clear language and concrete names | Start with user behavior; use account/action names; keep D-Bus details in the contract. |
 | III. Explicit failures and truthful state | Distinguish failed checks from empty accounts and real removal; preserve error causes; no mail/authentication claims. |
 | IV. One owner per business rule | The accounts module decides which rows to show; widgets only present its result. |
-| V. Responsive, bounded work | Dedicated GOA thread, one current update, finite request deadlines and fast retries, one periodic check at a time and no GTK wait on shutdown. |
+| V. Responsive, bounded work | Dedicated GOA thread, one current update, finite request deadlines, one periodic check at a time and no GTK wait on shutdown. |
 | VI. Evidence before completion | Test error cases with fake services; check actual Flatpak discovery and Settings separately. |
 | Language and governance | Repository text stays English; no unrelated architecture or implementation changes. |
 
@@ -164,7 +163,7 @@ properties, callbacks and restart ordering.
 Every ten seconds, if idle, use the existing GetManagedObjects request to check that
 GOA still answers and to refresh account data. This detects a process that remains
 present but stops answering, and repairs differences even if an event was missed.
-Skip a tick while another check or fast retry is pending; do not queue extra checks.
+Skip a tick while another check is pending; do not queue extra checks.
 A routine check leaves confirmed rows and selection unchanged while pending, with
 no loading flash or success toast. Errors follow the same failure rules below.
 
@@ -257,7 +256,7 @@ not require an empty commit or a separate diary. Each PR runs `scripts/check.sh`
 | Provider/account classification, distinct IDs, 30 accounts | Synthetic account tests | 1 |
 | Empty versus unavailable GOA; one account error isolated | Client and account-rule tests | 1 |
 | Each subscribed event, startup changes, restart and late replies | Fake GOA service tests; events update before the next health check | 1 |
-| Silent GOA hang, missed event and later recovery without restart | Ten-second check, timeout, no parallel checks and continued recovery after fast retries | 1 |
+| Silent GOA hang, missed event and later recovery without restart | Ten-second check, timeout, no parallel checks and continued periodic recovery | 1 |
 | Brief changes superseded before UI update | Row remains selected; no false toast | 1 and 2 |
 | A row actually hidden, then later restored | One toast; selection stays cleared | 1 and 2 |
 | Retry, load and shutdown without GTK waiting | Independent-thread and resource-limit tests | 1 |

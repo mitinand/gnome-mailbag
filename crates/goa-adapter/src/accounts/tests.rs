@@ -219,3 +219,71 @@ fn oversized_required_field_is_an_account_error_and_total_data_is_bounded() {
         ErrorCause::DataLimit
     );
 }
+
+#[test]
+fn partial_snapshot_does_not_restore_ambiguous_or_reassigned_paths() {
+    use crate::test_goa::make_object_map;
+    let initial = parse_account_snapshot(
+        &make_account_reply(vec![make_account("one"), make_account("two")]),
+        &BTreeMap::new(),
+    )
+    .unwrap();
+    let first_path = format!("{GOA_ROOT_PATH}/Accounts/account_0");
+    let second_path = format!("{GOA_ROOT_PATH}/Accounts/account_1");
+    let mut missing_id = make_account("damaged");
+    missing_id.get_mut(ACCOUNT_INTERFACE).unwrap().remove("Id");
+
+    let duplicate_ids = parse_account_snapshot(
+        &make_account_reply(vec![make_account("one"), make_account("one")]),
+        &initial.account_paths,
+    )
+    .unwrap();
+    assert!(duplicate_ids.account_paths.is_empty());
+
+    let reassigned = parse_account_snapshot(
+        &make_account_reply(vec![
+            make_account("replacement"),
+            make_account("two"),
+            missing_id.clone(),
+        ]),
+        &initial.account_paths,
+    )
+    .unwrap();
+    assert_ne!(
+        reassigned.account_paths[&first_path],
+        initial.account_paths[&first_path]
+    );
+
+    let moved = parse_account_snapshot(
+        &make_account_reply(vec![make_account("two"), missing_id]),
+        &initial.account_paths,
+    )
+    .unwrap();
+    // Missing Id at the old path is attributed to the known account, making
+    // this a duplicate rather than silently retaining two paths for one ID.
+    assert!(moved.account_paths.is_empty());
+
+    let mut missing_interface = make_account("two");
+    missing_interface.remove(ACCOUNT_INTERFACE);
+    let moved_path = parse_account_snapshot(
+        &make_account_reply(vec![make_account("two"), missing_interface]),
+        &initial.account_paths,
+    )
+    .unwrap();
+    assert_eq!(
+        moved_path.account_paths[&first_path],
+        initial.account_paths[&second_path]
+    );
+    assert!(!moved_path.account_paths.contains_key(&second_path));
+
+    let objects = make_object_map(vec![make_account("one")]).to_variant();
+    let entry = objects.child_value(0);
+    let duplicated = Variant::array_from_iter_with_type(entry.type_(), [&entry, &entry]);
+    let reply = Variant::tuple_from_iter([duplicated]);
+    let duplicate_path = parse_account_snapshot(&reply, &initial.account_paths).unwrap();
+    assert!(!duplicate_path.account_paths.contains_key(&first_path));
+    assert_eq!(
+        duplicate_path.account_paths[&second_path],
+        initial.account_paths[&second_path]
+    );
+}

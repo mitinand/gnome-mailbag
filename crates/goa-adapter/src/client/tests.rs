@@ -22,7 +22,7 @@ impl Wake for ThreadWake {
     }
 }
 // Deliberately never iterate GLib's default context (or any GLib context).
-fn await_with_timeout<T>(future: impl Future<Output = T>) -> T {
+pub(super) fn await_with_timeout<T>(future: impl Future<Output = T>) -> T {
     let deadline = Instant::now() + Duration::from_secs(3);
     let waker = Waker::from(Arc::new(ThreadWake(thread::current())));
     let mut cx = Context::from_waker(&waker);
@@ -36,10 +36,10 @@ fn await_with_timeout<T>(future: impl Future<Output = T>) -> T {
         thread::park_timeout(remaining);
     }
 }
-fn start_test_client(bus: &TestBus) -> crate::GoaClient {
+pub(super) fn start_test_client(bus: &TestBus) -> crate::GoaClient {
     start_for_test(bus.address.clone(), Duration::from_millis(400))
 }
-fn await_check_result(client: &crate::GoaClient) -> crate::GoaAccountList {
+pub(super) fn await_check_result(client: &crate::GoaClient) -> crate::GoaAccountList {
     loop {
         let update = await_with_timeout(client.next_account_update()).expect("client open");
         if update.status != CheckStatus::Checking {

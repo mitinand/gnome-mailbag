@@ -81,7 +81,7 @@ Sources: [D-Bus standard interfaces](https://dbus.freedesktop.org/doc/dbus-speci
 ## Worker and request checks
 
 The worker acquires its own GLib context and sets it as thread-default before
-creating GIO objects. The same context dispatches calls, signals, retry timers and
+creating GIO objects. The same context dispatches calls, signals, health checks and
 cancellation without GTK being iterated.
 
 The NameOwnerChanged subscription identifies GOA process changes. Resolve its
@@ -95,18 +95,23 @@ Keep these internal request checks:
 
 | Check | Prevents |
 |---|---|
-| GOA process/run number | Reply from a previous GOA process being accepted |
-| Client instance number | Callbacks from a replaced client affecting a newer client, even for the same process |
+| Current unique GOA owner and account change number | Reply from a previous GOA process being accepted |
+| Worker-owned subscription state, captured weakly by callbacks | Callbacks from a replaced client affecting a newer client, even for the same process |
 | Account change number captured at request start | A reply overwriting account changes received while the request was pending |
-| Request ID and deadline | Superseded, cancelled or timed-out results being accepted |
+| One owned request future and its attempt deadline | Superseded, cancelled or timed-out results being accepted |
 
 The account change number advances on relevant service signals. Published UI updates
 have a separate update number so pending/error transitions also reach the UI; those
 publications must not invalidate their own request.
 
 If account changes arrive during a full check, discard that reply and schedule one
-new check within the remaining attempt deadline. Use the retry budget under sustained
-changes; do not reset the deadline indefinitely.
+new check within the remaining attempt deadline. Under sustained changes, fail at the deadline and wait for a later check; do not
+reset the deadline indefinitely.
+
+The worker awaits one request future at a time. Dropping that future cancels the
+request; its later completion has no path to publish accounts. A new client owns
+separate subscription state, even when GOA's unique owner is unchanged. These
+ownership checks avoid additional counters for requests and client instances.
 
 Subscription setup, owner resolution, activation and account acquisition share the
 attempt deadline. Manual retry after an unavailable start permits fresh activation.
@@ -143,7 +148,7 @@ check every ten seconds on the worker context while Mailbag runs. Use the same
 ping alone would not prove that GOA can supply account data. Do not read only cached
 account fields for this check.
 
-If startup, a user check or recovery is already running or a fast retry is scheduled,
+If startup, a user check or recovery is already running,
 skip that tick. Do not queue a missed tick or issue a parallel request. After suspend,
 perform at most one due check, with no catch-up burst. Ordinary property signals do
 not postpone this timer indefinitely.
@@ -158,12 +163,10 @@ is working, so missing-event fixtures test ongoing signal handling separately.
 
 An error/timeout immediately applies the agreed unavailable/incomplete state. Keep
 known rows and selection; never report empty accounts or removal from a failed check.
-One outage may use the existing three fast retries. Their exhaustion leaves the
-failure visible, but the ten-second checks continue, one attempt per due tick. Failed
-periodic checks do not reset the fast-retry budget. A successful full check restores
-only verified accounts and allows a fresh fast-retry budget for a later outage.
-Manual Retry Check and a newly appeared GOA process retain their existing bounded
-retry behavior and share the one-active-check rule.
+Failure does not schedule fast automatic retries. Ten-second checks continue, one
+attempt per idle tick. Manual Retry Check and GOA events can request an earlier
+check and share the one-active-check rule. A successful full check restores only
+verified accounts.
 
 These checks diagnose failure to obtain GOA data while the application and session
 bus remain running. They do not add recovery of the entire desktop D-Bus bus or
@@ -173,7 +176,10 @@ promise that an application terminated by bus loss can show an error.
 
 Store one latest account list/check status behind a short lock. Build and validate
 data outside the lock; use the lock only to replace/take it or set retry/stop flags.
-No widget work or D-Bus call runs under that lock. Replacing a pending update with
+The slot retains its last accepted snapshot after delivery, with a separate
+pending flag, so unexpected worker exit can report failure without losing known
+accounts. Copy account data outside the lock; only the snapshot reference crosses
+it. No widget work or D-Bus call runs under that lock. Replacing a pending update with
 newer valid data does not require remembering what it replaced.
 
 Run one waiting consumer task on the GTK context and one waiting command task on
@@ -208,15 +214,14 @@ Initial engineering limits; validate them during implementation.
 | Resource | Limit / behavior |
 |---|---|
 | Active checks | One bootstrap or account check at a time, five seconds total per attempt |
-| Fast automatic retries | Three per outage cycle, with 1/2/4-second pauses; failed health checks after exhaustion do not restart that cycle |
-| GOA health check | Every ten seconds while running, one request if idle; skip busy ticks and continue after fast retries are exhausted |
-| Manual retry | Reuse pending work or start a fresh limited attempt after failure/exhaustion |
+| GOA health check | Every ten seconds while running, one request if idle; skip busy ticks and continue after failure |
+| Manual retry | Reuse pending work or start a fresh limited attempt after failure |
 | New GOA process | Start a new recovery attempt; do not accumulate checks during repeated restarts |
 | Current account data | Up to 4,096 records, 4 KiB per normalized string, 16 MiB total |
 | Pending UI data | One account list/status, no history of changes |
 | Commands | One retry flag and a separate stop flag |
 | Notifications | One waiting task/waker per direction; new data or commands wake it, repeated changes merge |
-| Timers | Ten-second GOA health check plus request deadlines, fast-retry delays and shutdown deadline; none for checking flags or refreshing the UI |
+| Timers | Ten-second GOA health check plus request deadlines and shutdown deadline; none for checking flags or refreshing the UI |
 | Shutdown test | Worker finishes within one second in the isolated fixture; GTK never waits for it |
 
 Optional display fields that are too large use a neutral fallback. Do not truncate
@@ -226,7 +231,7 @@ The required 30-account fixture is not a product maximum.
 
 Use GLib's existing context executor and standard Rust Future/Waker support. No
 additional runtime or channel dependency is needed for this latest-value interface.
-Only the health-check timer repeats. Deadline/retry/teardown timers end with their
+Only the health-check timer repeats. Deadline/teardown timers end with their
 operation. Remove all of them on stop; no health request is issued after shutdown.
 
 ## Shutdown
@@ -262,13 +267,13 @@ Test:
   A silent/hanging GOA process triggers the failure state by the due tick plus its
   five-second deadline while the worker runs normally. Drop a fixture event and
   verify the full check corrects account state, then verify later signals still work.
-  Check busy-tick skipping, no retry-budget reset after exhaustion, recovery with
+  Check busy-tick skipping, no extra automatic attempts after failure, recovery with
   no owner change, manual/automatic check coalescing and no post-shutdown health call.
 - Updates/commands racing with wait
   registration are delivered; bursts schedule no growing task queue. Continuous
   updates yield to other GTK work. Stop wakes an idle worker and a waiting UI consumer.
-- Rapid retry presses, exhausted retry then manual retry, and stop during connection,
-  check, backoff and heavy updates.
+- Rapid retry presses, manual retry after failure, and stop during connection,
+  check, idle failure and heavy updates.
 - 10,000 transient changes and oversized replies: pending data stays within limits,
   no truncated list is accepted and a later complete check restores availability.
 
