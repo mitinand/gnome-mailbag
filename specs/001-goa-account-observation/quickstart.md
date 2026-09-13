@@ -1,6 +1,10 @@
 # F01 Validation Quickstart
 
-This guide targets the planned implementation on top of approved UI commit `7a69c49`. Planning created documents only: the adapter, behavioral tests and UI integration described below do not exist yet. Run the full sequence after implementation; successful checks on the old shell do not prove F01.
+This guide targets F01 on top of approved UI commit `7a69c49`. Portion 2 provides
+the adapter’s initial acquisition, field validation and private-bus tests. Ongoing
+account updates, recovery, account policy, Settings and UI integration remain
+pending. Run the full sequence after implementation; initial-client tests do not
+prove the remaining F01 behavior.
 
 ## Prerequisites and baseline
 
@@ -26,13 +30,14 @@ cargo test --locked -p mailbag settings::
 
 GOA restart/recovery fixtures keep their session bus running; recovery after destruction of the entire desktop bus is outside F01.
 
-These are planned crate/module test entry points. The later task stage must create the corresponding meaningful tests. They start isolated D-Bus fixtures with service activation directories disabled and connect explicitly to those buses; they never replace the host GOA name or modify real accounts. Each fixture enforces an outer deadline and cleans up its daemon. Use synthetic identities only.
+The goa-adapter entry point runs the initial-client tests; the mailbag accounts and
+settings test modules remain planned. The client tests start isolated D-Bus fixtures with service activation directories disabled and connect explicitly to those buses; they never replace the host GOA name or modify real accounts. Each fixture enforces an outer deadline and cleans up its daemon. Use synthetic identities only.
 
 Expected coverage:
 
 1. Healthy empty versus absent GOA; all three provider keys, unsupported providers, duplicate presentation and Microsoft 365 without IMAP.
 2. Exercise every signal/property listed in the GOA contract, including events during initial discovery. Add/remove/disable/re-enable; both orders of MailDisabled/Mail-interface changes; one malformed account isolated from valid accounts. Verify event-driven updates before the next ten-second check.
-3. Owner loss/replacement/recovery, stalled proxy reconstruction, retry activation, same-owner obsolete-manager callbacks, malformed membership, late replies, explicit disable amid unrelated errors, retained rows and selected ID.
+3. Owner loss/replacement/recovery, stalled activation/account acquisition, retry activation, same-owner obsolete-client callbacks, malformed membership, late replies, explicit disable amid unrelated errors, retained rows and selected ID.
 4. Pause UI updates, then disable/re-enable or remove/restore an account and confirm its final state: keep the visible row and selection, with no toast. Separately apply a disabled/absent update before restoring the account: expect one toast and cleared selection. Test 10,000 transient changes, resource-limit failure and recovery without an event history.
 5. Retry after fast-retry exhaustion, repeated retry coalescing and worker progress without GTK/default-context iteration; stop during each pending phase. Verify that quiet state issues only the ten-second health request, with no frequent command/UI polling, and that updates arriving as a consumer starts waiting are not missed.
 6. Notices for selected and unselected hidden rows: single-account display label, one combined count-based toast for mixed removal/Mail-disablement, deduplication, no false/cross-run notices, and a new notice after confirmed reappearance.

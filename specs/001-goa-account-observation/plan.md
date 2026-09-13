@@ -4,8 +4,8 @@
 
 **Feature**: F01 / `001-goa-account-observation`
 
-**Status**: Design for maintainer review. Task generation and implementation are
-separate steps. Historical product documents are references; the clarified feature
+**Status**: Initial client implemented through portion 2; subsequent portions remain
+pending. Historical product documents are references; the clarified feature
 specification and the latest accepted review decisions take precedence.
 
 ## Summary
@@ -77,6 +77,7 @@ specs/001-goa-account-observation/
 ├── research.md
 ├── data-model.md
 ├── quickstart.md
+├── tasks.md
 ├── contracts/
 │   ├── observation.md
 │   └── ui.md
@@ -85,7 +86,8 @@ specs/001-goa-account-observation/
 
 Each supporting document has one purpose: research explains choices, the data
 model names the state, contracts define exact behavior at component boundaries,
-and quickstart describes how to test it. `tasks.md` is a later stage.
+and quickstart describes how to test it. [tasks.md](tasks.md) defines execution
+order and the maintainer review stops.
 
 ### Planned source files
 
@@ -152,7 +154,9 @@ the run. Normal changes update Mailbag through events without waiting for a time
 | `org.freedesktop.DBus.ObjectManager.InterfacesRemoved` | An account or interface disappeared; verify removal before hiding a row |
 | `org.freedesktop.DBus.Properties.PropertiesChanged` | Account or Mail fields changed, including MailDisabled, AttentionNeeded and display information |
 
-Use the corresponding GIO callbacks; do not add duplicate raw D-Bus subscriptions.
+Use direct GIO signal subscriptions on the private worker, with no ObjectManager
+proxies or duplicate handlers. [Research](research.md#3-proving-that-an-account-was-removed)
+records the approved change and its independent-context test evidence.
 MailDisabled=true and a missing Mail interface retain their different meanings.
 The [GOA contract](contracts/observation.md#events-to-subscribe-to) lists exact paths,
 properties, callbacks and restart ordering.
@@ -222,8 +226,8 @@ Welcome and initial synchronization are also future work.
 ## PRs and Commits
 
 First incorporate the approved UI/workspace commit `7a69c49` into the implementation
-checkout, preserving specifications and unrelated work. Current local HEAD remains
-`7083b8a`; no merge or remote refresh happened during planning.
+checkout, preserving specifications and unrelated work. The planning checkout was
+based on `7083b8a`; T003 verifies baseline ancestry before source implementation.
 
 | PR | Result | Commits |
 |---|---|---:|

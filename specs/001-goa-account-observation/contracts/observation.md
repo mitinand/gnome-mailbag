@@ -41,20 +41,21 @@ properties, remove accounts or connect to a mail server.
 
 Install the subscriptions on the private GLib context before accepting the initial
 account list. Keep them active while Mailbag runs, including after retry failures.
-Use GIO's existing subscriptions rather than registering a second raw handler for
-the same event.
+Use direct GIO D-Bus subscriptions, installed on that context, with one handler
+per signal and no ObjectManager proxies. GIO handles transport and match rules.
 
 | D-Bus signal | Source / GIO handler | What Mailbag does |
 |---|---|---|
-| `org.freedesktop.DBus.NameOwnerChanged` (`sss`) | Bus daemon at `/org/freedesktop/DBus`, filtered to `org.gnome.OnlineAccounts`; GIO name-watcher appeared/vanished callbacks | Detect GOA disappearance, appearance or replacement. Mark known rows unconfirmed on loss, reject old requests and check the new process. |
-| `org.freedesktop.DBus.ObjectManager.InterfacesAdded` (`oa{sa{sv}}`) | GOA root `/org/gnome/OnlineAccounts`; GIO `object-added` and `interface-added` | Check new account data or restored Mail interface. Add/show only an eligible account; do not require an application restart. |
-| `org.freedesktop.DBus.ObjectManager.InterfacesRemoved` (`oas`) | GOA root; GIO `object-removed` and `interface-removed` | Recheck the full list before confirming account absence. Missing Mail alone makes a known account temporarily unavailable; it does not imply MailDisabled=true. |
-| `org.freedesktop.DBus.Properties.PropertiesChanged` (`sa{sv}as`) | Account object path, for Account or Mail; GIO `interface-proxy-properties-changed` | Apply changed account fields; explicitly invalidated required fields become unknown and trigger a check. |
+| `org.freedesktop.DBus.NameOwnerChanged` (`sss`) | Bus daemon at `/org/freedesktop/DBus`, filtered to `org.gnome.OnlineAccounts`; direct GIO NameOwnerChanged callback | Detect GOA disappearance, appearance or replacement. Mark known rows unconfirmed on loss, reject old requests and check the new process. |
+| `org.freedesktop.DBus.ObjectManager.InterfacesAdded` (`oa{sa{sv}}`) | GOA root `/org/gnome/OnlineAccounts`; direct GIO InterfacesAdded callback | Check new account data or restored Mail interface. Add/show only an eligible account; do not require an application restart. |
+| `org.freedesktop.DBus.ObjectManager.InterfacesRemoved` (`oas`) | GOA root; direct GIO InterfacesRemoved callback | Recheck the full list before confirming account absence. Missing Mail alone makes a known account temporarily unavailable; it does not imply MailDisabled=true. |
+| `org.freedesktop.DBus.Properties.PropertiesChanged` (`sa{sv}as`) | Account object path, for Account or Mail; direct GIO PropertiesChanged callback | Apply changed account fields; explicitly invalidated required fields become unknown and trigger a check. |
 
-Also connect `notify::name-owner` on the GIO ObjectManager. This is a local GObject
-notification, not another D-Bus signal: it tells us when GIO has finished rebuilding
-its account proxies. While it is null, GIO's synthetic additions/removals during
-restart must not be interpreted as user account changes.
+Install subscriptions before resolving the current unique GOA owner and requesting
+its list. Validate sender, object path and signal body before applying account facts.
+Owner loss invalidates membership; it never synthesizes account removals. There is
+no proxy reconstruction or readiness notification. All setup and acquisition work
+shares the existing attempt deadline.
 
 Handle these property changes explicitly:
 
@@ -75,8 +76,7 @@ Signals from an obsolete client/process are ignored. Disconnect the old subscrip
 when replacing a client or shutting down.
 
 Sources: [D-Bus standard interfaces](https://dbus.freedesktop.org/doc/dbus-specification.html),
-[GIO ObjectManager signals and owner ordering](https://docs.gtk.org/gio/class.DBusObjectManagerClient.html),
-[GIO property changes](https://docs.gtk.org/gio/signal.DBusObjectManagerClient.interface-proxy-properties-changed.html).
+[GIO signal subscriptions](https://docs.gtk.org/gio/method.DBusConnection.signal_subscribe.html).
 
 ## Worker and request checks
 
@@ -84,10 +84,10 @@ The worker acquires its own GLib context and sets it as thread-default before
 creating GIO objects. The same context dispatches calls, signals, retry timers and
 cancellation without GTK being iterated.
 
-GIO's ObjectManager follows account changes. A separate bus-name watcher identifies
-the actual GOA process. During GOA restart, the manager temporarily has no process
-name and emits object removals; these removals are not proof that accounts were deleted.
-A successfully constructed manager with no process is still unavailable.
+The NameOwnerChanged subscription identifies GOA process changes. Resolve its
+current unique name through the bus daemon before acquiring account data. When no
+owner exists, allow normal activation and resolve again. A connected session bus
+without an answering GOA process is still unavailable.
 
 Verify the entire account list on startup, recovery, removal, invalidated required
 fields, manual refresh and the ten-second health check. Send the request to the current unique process name.
@@ -108,11 +108,10 @@ If account changes arrive during a full check, discard that reply and schedule o
 new check within the remaining attempt deadline. Use the retry budget under sustained
 changes; do not reset the deadline indefinitely.
 
-The wait for manager reconstruction is part of the deadline. If it stalls, replace
-the client within the retry budget, reconnect its signals and reject old-instance
-callbacks. Manual retry after an unavailable start permits fresh activation. The
-independent name watcher lets recovery start even when the manager never announces
-that rebuilding is complete.
+Subscription setup, owner resolution, activation and account acquisition share the
+attempt deadline. Manual retry after an unavailable start permits fresh activation.
+Replace obsolete subscription state on a new client instance and reject its queued
+callbacks. Process appearance can start recovery without a proxy-readiness event.
 
 These recovery guarantees cover the GOA process while the desktop session bus is
 running. F01 does not promise that the application survives or reconnects after the
@@ -142,7 +141,7 @@ Events handle normal account changes immediately. In addition, schedule one heal
 check every ten seconds on the worker context while Mailbag runs. Use the same
 `GetManagedObjects` request, validation and five-second attempt deadline; a bus-daemon
 ping alone would not prove that GOA can supply account data. Do not read only cached
-proxy properties for this check.
+account fields for this check.
 
 If startup, a user check or recovery is already running or a fast retry is scheduled,
 skip that tick. Do not queue a missed tick or issue a parallel request. After suspend,
@@ -153,7 +152,7 @@ On a healthy account list, a background check leaves availability and selection
 unchanged while pending; no loading-screen flash or success toast. If it finds changed
 accounts, apply the latest checked state using the normal display/notice rules.
 If a returned list corrects a missed event, later property events apply only their
-changed fields; old proxy-cache fields must not overwrite fresher checked values.
+changed fields; older account fields must not overwrite fresher checked values.
 A complete-list reply must not be mistaken for proof that every event subscription
 is working, so missing-event fixtures test ongoing signal handling separately.
 
@@ -250,7 +249,7 @@ Test:
 - Every event/property row above, including invalidated properties, is exercised;
   signal-driven updates arrive before the next health tick. Events during initial
   list acquisition are not missed or overwritten.
-- Service restart/replacement, stalled reconstruction, fresh activation on retry,
+- Service restart/replacement, stalled activation or account acquisition, fresh activation on retry,
   failed recovery and obsolete replies/client callbacks.
 - One account error isolated; missing/duplicate IDs; optional display errors.
 - Both orders of MailDisabled and Mail-interface changes; explicit disable amid

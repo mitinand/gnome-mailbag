@@ -256,6 +256,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "goa-adapter"
+version = "0.1.0-dev"
+dependencies = [
+ "gio",
+ "glib",
+]
+
+[[package]]
 name = "gobject-sys"
 version = "0.22.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"

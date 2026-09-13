@@ -1,14 +1,15 @@
 # Research: GNOME Mail Accounts
 
-Date: 2026-09-12. Revised after maintainer review. These are design decisions;
-future GOA and installed-Flatpak tests have not run yet.
+Date: 2026-09-12. Amended 2026-09-13 with maintainer approval after initial-client
+testing. Later recovery, UI and installed-Flatpak acceptance remain pending.
 
 ## 1. Existing project and dependency choice
 
 **Decision:** Build on approved UI/workspace commit
 `7a69c494dbb97c10fe1baf8db88a5296d271278e`, available locally as origin/main.
-The actual feature branch is codex/goa; the checkout still has the earlier shell
-at `7083b8a`. The implementation stage must incorporate the approved baseline.
+The feature branch is codex/goa; research used the earlier shell at `7083b8a`.
+T003 in [tasks.md](tasks.md) verifies that the implementation checkout includes
+the approved baseline before source changes.
 
 Use its Rust 1.95.0 toolchain and existing library family: libadwaita 0.9.2,
 GTK bindings 0.11.4, GIO/GLib 0.22.9. Add goa-adapter as a local crate and direct
@@ -53,33 +54,40 @@ Sources: [GOA Account interface](https://gnome.pages.gitlab.gnome.org/gnome-onli
 
 ## 3. Proving that an account was removed
 
-**Decision:** Follow GOA through GIO ObjectManager on a dedicated GLib thread.
+**Decision (amended with maintainer approval, 2026-09-13):** Use asynchronous
+GIO D-Bus calls and direct signal subscriptions on the dedicated GLib worker.
+Do not construct GIO ObjectManager proxies. GIO still handles the wire protocol;
+the adapter validates account data and handles the four signals in
+[the contract](contracts/observation.md#events-to-subscribe-to).
+
 Verify the full account list on startup, recovery, removal, invalidated required
-fields, Retry Check and the ten-second health check. Subscribe to process-name,
-interface-added/removed and property-change signals before accepting initial data;
-[the contract](contracts/observation.md#events-to-subscribe-to) lists their exact names.
-Accept the reply only while it still belongs to the same
-GOA process, client instance, account-data version and request.
+fields, Retry Check and the ten-second health check. Accept replies only from the
+current GOA process and current request, with no intervening account changes.
+An interface-removal signal alone cannot prove an account was deleted.
 
-**Rationale:** GIO clears the manager's service name before reporting synthetic
-object removals during restart, then sets the new name after rebuilding proxies.
-Successful client construction can still mean no GOA process is available.
-Therefore an empty proxy cache is not proof of zero accounts.
+**Evidence and trade-off:** With GIO 2.88.3 and Rust gio 0.22.9, the isolated
+startup-race test received no ObjectManager property callback while only the
+private context was dispatched. Temporarily dispatching the global default context
+made that test pass. ObjectManager's asynchronous initializer runs its synchronous
+initializer in a GTask thread; its internal subscriptions therefore use the default
+context. That fails the requirement to observe changes independently of GTK.
 
-An independent bus-name watcher detects the process even if rebuilding proxies
-stalls. Deadline expiry allows a fresh client attempt. Recreating the client on
-manual retry also permits fresh service activation after an unavailable start.
-Old-instance callbacks cannot change current state. These recovery rules cover GOA restarting on a running session bus; they do not promise recovery of the whole desktop bus. The GOA contract defines the
-small request identifiers used to enforce these checks.
+Direct subscriptions remove proxy construction, proxy caches and reconstruction
+readiness rules. The adapter must explicitly validate and apply signal fields;
+the required account validation, request guards and event tests remain. This is
+less machinery than adding a helper executor or another thread to preserve proxies.
+The client API, dependencies, permissions, one-worker design and five-second
+attempt deadline are unchanged.
 
-**Alternatives considered:** Acting on object-removed alone creates false removals.
-Trusting only the proxy cache hides failed recovery. Reimplementing GIO's object
-manager would duplicate existing library work.
+Resolve the current unique GOA owner after installing subscriptions. Normal service
+activation is allowed when no owner exists. Failed activation or list acquisition
+is unavailable state, never an empty list. Retry and owner replacement use bounded
+attempts and reject obsolete callbacks. Whole-session-bus recovery remains outside F01.
 
-Sources: [ObjectManagerClient](https://docs.gtk.org/gio/class.DBusObjectManagerClient.html),
-[async D-Bus calls](https://docs.gtk.org/gio/method.DBusConnection.call.html),
-[Rust GIO API](https://docs.rs/gio/0.22.9/gio/struct.DBusObjectManagerClient.html),
-[Rust GLib context](https://docs.rs/glib/0.22.9/glib/struct.MainContext.html).
+Sources: [ObjectManager initialization and subscriptions](https://github.com/GNOME/glib/blob/main/gio/gdbusobjectmanagerclient.c),
+[default asynchronous initialization](https://github.com/GNOME/glib/blob/main/gio/gasyncinitable.c),
+[GIO signal subscriptions](https://docs.gtk.org/gio/method.DBusConnection.signal_subscribe.html),
+[async D-Bus calls](https://docs.gtk.org/gio/method.DBusConnection.call.html).
 
 ## 4. Latest account state, without replaying switches
 
