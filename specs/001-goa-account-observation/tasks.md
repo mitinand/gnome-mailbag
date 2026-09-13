@@ -3,10 +3,10 @@
 **Feature**: F01 / `001-goa-account-observation` · **Branch**: `codex/goa`
 
 **Input**: [spec.md](spec.md), [plan.md](plan.md), [research.md](research.md),
-[data-model.md](data-model.md), [GOA contract](contracts/observation.md),
+[data-model.md](data-model.md), [account contract](contracts/accounts.md), [GOA contract](contracts/observation.md),
 [UI contract](contracts/ui.md), [quickstart.md](quickstart.md).
 
-**Status**: Portion 3 (T011–T018) is complete; awaiting maintainer review. F01 is not yet complete.
+**Status**: Portion 4 (T019–T023) is complete. Portion 4b (T045–T049) is complete; awaiting maintainer review for PR 1. F01 is not yet complete.
 Tests are required by the specification. Add the relevant tests before the behavior,
 verify that they expose the missing behavior, then make them pass within the same
 portion. Do not hand over a portion with deliberately failing tests.
@@ -35,11 +35,12 @@ A checked STOP means that handoff occurred, not that permission to continue exis
 | 2. Initial GOA client | 1 | T003–T010 | `feat(goa): read accounts on a dedicated GLib thread` | T010 |
 | 3. Changes, recovery and periodic checks | 1 | T011–T018 | `feat(goa): follow account changes and recover failed checks` | T018 |
 | 4. Account display and selection rules | 1 | T019–T023 | `feat(accounts): define availability and selection rules` | T023 |
+| 4b. Shared account contract | 1 | T045–T049 | `refactor(accounts): separate account data from GOA` | T049 |
 | 5. Accounts in the approved UI | 2 | T024–T033 | `feat(ui): show GOA accounts and explain changes` | T033 |
 | 6. Settings and Flatpak access | 2 | T034–T039 | `feat(settings): open Online Accounts from Mailbag` | T039 |
 | 7. Integration acceptance and fixes | 2 | T040–T044 | `test: verify GOA integration and account UI` | T044 |
 
-Seven portions remain an estimate for review. Evidence alone does not require an
+Eight portions remain an estimate for review. Evidence alone does not require an
 empty commit. Fix review feedback within its portion; do not silently add scope.
 
 ## Phase 1: Setup — reviewed scope (portion 1, PR 1)
@@ -80,11 +81,19 @@ The application must remain buildable and launchable throughout PR 1.
 
 These tests cover the shared parts of US1 and US2 before their GTK presentation.
 
-- [ ] T019 [P] Add availability/selection tests in `crates/mailbag/src/accounts/tests.rs`: exact imap_smtp/google/ms_graph support, unsupported consumer Microsoft/provider keys, Microsoft 365 without IMAP, 30 accounts and duplicate labels, all status cases, isolated account errors, GOA loss/recovery, explicit disable amid other errors, no cold-start history, retained selection and no automatic reselection.
-- [ ] T020 [P] Add change/notice tests in `crates/mailbag/src/accounts/notice_tests.rs`: changes superseded before UI application leave rows/selection intact; an applied exclusion clears selection; single labels and mixed-cause group counts; unselected exclusions; no duplicate/false/cross-run notices; reappearance followed by a new exclusion; and hiding/readding the final account without Welcome or synchronization.
-- [ ] T021 Add the goa-adapter path dependency to `crates/mailbag/Cargo.toml` and implement shared account policy in `crates/mailbag/src/accounts.rs`, registering the module in `crates/mailbag/src/main.rs`. Own provider eligibility, VisibleAccount, selected ID and status decisions here; keep rows during uncertainty and distinguish explicit disablement, missing Mail and confirmed absence. Keep all state in memory.
-- [ ] T022 Implement latest-state comparison and AccountHiddenNotice generation in `crates/mailbag/src/accounts.rs`: compare against rows actually applied by the UI, produce a single label or mixed-cause count only when rows are hidden, and discard labels when no longer needed. Do not add switch history, removal acknowledgements, persistence or cache deletion.
-- [ ] T023 STOP for portion 4 and PR 1: run `scripts/check.sh`, `cargo test --locked -p goa-adapter` and `cargo test --locked -p mailbag accounts::`; verify nonzero behavioral coverage and a launchable app. Hand over results under `AGENTS.md` and wait for maintainer review before any PR 2 work.
+- [X] T019 [P] Add availability/selection tests in `crates/mailbag/src/accounts/tests.rs`: exact imap_smtp/google/ms_graph support, unsupported consumer Microsoft/provider keys, Microsoft 365 without IMAP, 30 accounts and duplicate labels, all status cases, isolated account errors, GOA loss/recovery, explicit disable amid other errors, no cold-start history, retained selection and no automatic reselection.
+- [X] T020 [P] Add change/notice tests in `crates/mailbag/src/accounts/notice_tests.rs`: changes superseded before UI application leave rows/selection intact; an applied exclusion clears selection; single labels and mixed-cause group counts; unselected exclusions; no duplicate/false/cross-run notices; reappearance followed by a new exclusion; and hiding/readding the final account without Welcome or synchronization.
+- [X] T021 Add the goa-adapter path dependency to `crates/mailbag/Cargo.toml` and implement shared account policy in `crates/mailbag/src/accounts.rs`, registering the module in `crates/mailbag/src/main.rs`. Own provider eligibility, AccountRow, selected ID and status decisions here; keep rows during uncertainty and distinguish explicit disablement, missing Mail and confirmed absence. Keep all state in memory.
+- [X] T022 Implement latest-state comparison and AccountHiddenNotice generation in `crates/mailbag/src/accounts.rs`: compare against rows actually applied by the UI, produce a single label or mixed-cause count only when rows are hidden, and discard labels when no longer needed. Do not add switch history, removal acknowledgements, persistence or cache deletion.
+- [X] T023 STOP for portion 4: run `scripts/check.sh`, `cargo test --locked -p goa-adapter` and `cargo test --locked -p mailbag accounts::`; verify nonzero behavioral coverage and a launchable app. Hand over results under `AGENTS.md` and wait for maintainer review before any PR 2 work.
+
+### Shared account contract (portion 4b, approved refactoring)
+
+- [X] T045 Update the specification, plan, data model and contracts for the approved source-independent boundary before implementation.
+- [X] T046 Add shared validity tests and GOA translation tests covering provider recognition versus unknown data, mail enablement versus service presence, attention versus unknown state, list completeness versus individual errors, and safe diagnostic causes. Preserve existing scenario tests.
+- [X] T047 Add the dependency-free `crates/account-source` data crate. Use AccountUpdate as the only public account format; move correctness checks there, translate GOA within goa-adapter and make Mailbag account rules depend only on account-source.
+- [X] T048 Keep GoaAdapter commands, the non-cloneable GoaUpdates receiver, one worker and existing delivery/recovery behavior. Update callers and verify no GOA/GIO names or codes drive Mailbag account rules. Add no universal trait or new delivery mechanism.
+- [X] T049 STOP for portion 4b and PR 1: run scripts/check.sh, shared-contract and GOA translation tests, existing account-policy scenarios and the graphical window smoke test where available. Inspect dependency boundaries, report limitations and suggest a commit subject; maintainer creates commits/PRs. Wait before PR 2 work.
 
 ## Phase 3: US1 — see available GNOME mail accounts (P1, portion 5, PR 2)
 
@@ -101,10 +110,10 @@ The US1 installed-discovery evidence is collected in T042.
 
 ### Implementation
 
-- [ ] T025 [US1] Implement the flat account model and row binding in `crates/mailbag/src/account_ui.rs` using the existing folder_tree and folder-row.ui; reconcile by GOA ID with GtkSingleSelection autoselect disabled and unselection allowed, and translate selection to the accounts module.
+- [ ] T025 [US1] Implement the flat account model and row binding in `crates/mailbag/src/account_ui.rs` using the existing folder_tree and folder-row.ui; reconcile by AccountId with GtkSingleSelection autoselect disabled and unselection allowed, and translate selection to the accounts module.
 - [ ] T026 [US1] Connect the existing status page in `crates/mailbag/resources/ui/mailbag.ui` and `crates/mailbag/src/account_ui.rs` to the shared status decisions; show cause-specific empty guidance and its Online Accounts button, with a neutral reader and unavailable mail actions. Keep dimensions, pane proportions, spacing, menu positions and breakpoints unchanged.
 - [ ] T027 [US1] Replace the count suffix with a focusable problem button in `crates/mailbag/resources/ui/folder-row.ui` and wire its tooltip/explanation in `crates/mailbag/src/account_ui.rs`; use English plain text and accessible names, support mouse/touch/Enter/Space, and prevent icon activation from selecting another account.
-- [ ] T028 [US1] Wire client startup and UI consumption in `crates/mailbag/src/main.rs` and `crates/mailbag/src/account_ui.rs`; keep GTK objects on GTK's thread, apply at most one update per dispatch and yield, cancel the consumer on window/app teardown with weak references, and show the list page initially/on account activation while closing an overlaid folder sidebar.
+- [ ] T028 [US1] Add the goa-adapter dependency for application wiring only, and wire GoaAdapter startup and its sole GoaUpdates receiver in `crates/mailbag/src/main.rs` and `crates/mailbag/src/account_ui.rs`; keep GTK objects on GTK's thread, apply at most one update per dispatch and yield, cancel the consumer on window/app teardown with weak references, and show the list page initially/on account activation while closing an overlaid folder sidebar.
 
 **Checkpoint**: US1 presentation is independently testable. Continue to US2 only
 within this same authorized portion; portion 5 is handed over at T033.
@@ -165,7 +174,8 @@ without expanding scope or repeating already adequate checks without a reason.
 Scope review (T001–T002)
   -> approved workspace and initial client (T003–T010)
   -> account changes, recovery and periodic checks (T011–T018)
-  -> shared account rules (T019–T023) -> PR 1 review
+  -> shared account rules (T019–T023)
+  -> shared account contract (T045–T049) -> PR 1 review
   -> US1 presentation (T024–T028)
   -> US2 interaction and notices (T029–T033) -> portion 5 review
   -> US3 Settings and packaging (T034–T039) -> portion 6 review

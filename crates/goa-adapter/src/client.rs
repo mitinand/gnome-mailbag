@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::{
-    AccountError, CheckStatus, ClientHandle, ErrorCause, GoaClient, SharedClientState,
+    AccountCheckError, CheckStatus, ClientHandle, ErrorCause, GoaAdapter, GoaUpdates,
+    SharedClientState,
     accounts::{
-        AccountSnapshot, GOA_BUS_NAME, GOA_ROOT_PATH, OBJECT_MANAGER_INTERFACE,
+        AccountSnapshot, GOA_BUS_NAME, GOA_ROOT_PATH, OBJECT_MANAGER_INTERFACE, map_glib_error,
         parse_account_snapshot,
     },
 };
@@ -20,7 +21,7 @@ use std::{
 };
 
 #[cfg(test)]
-use crate::GoaAccountList;
+use crate::AccountUpdate;
 
 mod worker_state;
 use worker_state::GoaWorkerState;
@@ -45,11 +46,11 @@ enum BusTarget {
     #[cfg(test)]
     Private(String),
 }
-pub(crate) fn start() -> GoaClient {
+pub(crate) fn start() -> (GoaAdapter, GoaUpdates) {
     spawn_worker(BusTarget::Session, CheckTiming::default())
 }
 #[cfg(test)]
-fn start_for_test(address: String, timeout: Duration) -> GoaClient {
+fn start_for_test(address: String, timeout: Duration) -> (GoaAdapter, GoaUpdates) {
     spawn_worker(
         BusTarget::Private(address),
         CheckTiming {
@@ -59,9 +60,9 @@ fn start_for_test(address: String, timeout: Duration) -> GoaClient {
     )
 }
 
-fn spawn_worker(target: BusTarget, timing: CheckTiming) -> GoaClient {
+fn spawn_worker(target: BusTarget, timing: CheckTiming) -> (GoaAdapter, GoaUpdates) {
     let shared = Arc::new(SharedClientState::default());
-    let client = GoaClient(Arc::new(ClientHandle {
+    let client = GoaAdapter(Arc::new(ClientHandle {
         shared: shared.clone(),
     }));
     let shared_state = shared.clone();
@@ -83,7 +84,7 @@ fn spawn_worker(target: BusTarget, timing: CheckTiming) -> GoaClient {
     {
         shared.mark_worker_stopped();
     }
-    client
+    (client, GoaUpdates { shared })
 }
 
 /// Cancel the whole attempt, including connection and activation, at one deadline.
@@ -92,8 +93,8 @@ async fn run_with_deadline<T>(
     shared: &SharedClientState,
     timeout: Duration,
     worker_state: &RefCell<GoaWorkerState>,
-    future: impl Future<Output = Result<T, AccountError>>,
-) -> Option<Result<T, AccountError>> {
+    future: impl Future<Output = Result<T, AccountCheckError>>,
+) -> Option<Result<T, AccountCheckError>> {
     let mut future = pin!(future);
     let mut deadline_timer = pin!(glib::timeout_future(timeout));
     poll_fn(|cx| {
@@ -112,7 +113,7 @@ async fn run_with_deadline<T>(
             }
         }
         if deadline_timer.as_mut().poll(cx).is_ready() {
-            return Poll::Ready(Some(Err(AccountError::new(
+            return Poll::Ready(Some(Err(AccountCheckError::new(
                 "account check",
                 ErrorCause::Timeout,
             ))));
@@ -132,7 +133,7 @@ struct GoaConnection {
 async fn connect_and_subscribe(
     target: &BusTarget,
     worker_state: &Rc<RefCell<GoaWorkerState>>,
-) -> Result<GoaConnection, AccountError> {
+) -> Result<GoaConnection, AccountCheckError> {
     let connection = match target {
         BusTarget::Session => gio::bus_get_future(gio::BusType::Session).await,
         #[cfg(test)]
@@ -146,7 +147,7 @@ async fn connect_and_subscribe(
             .await
         }
     }
-    .map_err(|error| AccountError::from_glib("connect to session bus", error))?;
+    .map_err(|error| map_glib_error("connect to session bus", error))?;
     let mut subscriptions = Vec::new();
     let callback_state = Rc::downgrade(worker_state);
     subscriptions.push(connection.subscribe_to_signal(
@@ -236,10 +237,10 @@ async fn fetch_accounts(
     goa_connection: &GoaConnection,
     deadline: Instant,
     worker_state: &RefCell<GoaWorkerState>,
-) -> Result<AccountSnapshot, AccountError> {
+) -> Result<AccountSnapshot, AccountCheckError> {
     loop {
         if Instant::now() >= deadline {
-            return Err(AccountError::new("account check", ErrorCause::Timeout));
+            return Err(AccountCheckError::new("account check", ErrorCause::Timeout));
         }
         let request_change_number = worker_state.borrow().account_change_number;
         // Waiting for the bus reply lets it process our earlier signal subscriptions
@@ -260,12 +261,12 @@ async fn fetch_accounts(
                         remaining_timeout_ms(deadline),
                     )
                     .await
-                    .map_err(|e| AccountError::from_glib("activate GOA service", e))?;
+                    .map_err(|e| map_glib_error("activate GOA service", e))?;
                 resolve_goa_owner(&goa_connection.connection, deadline)
                     .await
-                    .map_err(|e| AccountError::from_glib("find GOA service", e))?
+                    .map_err(|e| map_glib_error("find GOA service", e))?
             }
-            Err(error) => return Err(AccountError::from_glib("find GOA service", error)),
+            Err(error) => return Err(map_glib_error("find GOA service", error)),
         };
         if worker_state.borrow().account_change_number != request_change_number {
             continue;
@@ -293,7 +294,7 @@ async fn fetch_accounts(
         if worker_state.borrow().account_change_number != request_change_number {
             continue;
         }
-        let reply = reply.map_err(|error| AccountError::from_glib("GetManagedObjects", error))?;
+        let reply = reply.map_err(|error| map_glib_error("GetManagedObjects", error))?;
         return parse_account_snapshot(&reply, &worker_state.borrow().account_paths);
     }
 }

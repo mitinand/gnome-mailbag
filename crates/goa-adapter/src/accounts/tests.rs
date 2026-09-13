@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::*;
 use crate::test_goa::{ACCOUNT_INTERFACE, MAIL_INTERFACE, make_account, make_account_reply};
+use account_source::AccountField;
 
 #[test]
 fn required_fields_are_not_defaulted_and_disable_is_independent() {
@@ -21,9 +22,9 @@ fn required_fields_are_not_defaulted_and_disable_is_independent() {
             let list = parse_account_list(&make_account_reply(vec![account])).unwrap();
             assert!(list.membership_confirmed);
             let account_details = list.accounts.values().next().unwrap();
-            assert!(!account_details.invalid_fields.is_empty());
+            assert!(!account_details.invalid_fields().is_empty());
             if name != "MailDisabled" {
-                assert_eq!(account_details.mail_disabled, Some(true));
+                assert_eq!(account_details.mail_enabled, Some(false));
             }
         }
     }
@@ -70,9 +71,9 @@ fn optional_fields_fall_back_without_changing_availability() {
         .insert("EmailAddress".into(), "".to_variant());
     let list = parse_account_list(&make_account_reply(vec![account])).unwrap();
     let account_details = list.accounts.values().next().unwrap();
-    assert!(account_details.invalid_fields.is_empty());
+    assert!(account_details.invalid_fields().is_empty());
     assert!(account_details.email_address.is_none());
-    assert!(account_details.presentation_identity.is_none());
+    assert!(account_details.display_name.is_none());
     assert!(account_details.provider_name.is_none());
     assert!(account_details.icon_name.is_none());
 }
@@ -97,8 +98,8 @@ fn display_limits_and_icons_do_not_authorize_file_access() {
         let list = parse_account_list(&make_account_reply(vec![account])).unwrap();
         let account_details = list.accounts.values().next().unwrap();
         assert!(account_details.icon_name.is_none());
-        assert!(account_details.presentation_identity.is_none());
-        assert!(account_details.invalid_fields.is_empty());
+        assert!(account_details.display_name.is_none());
+        assert!(account_details.invalid_fields().is_empty());
     }
     let mut account = make_account("one");
     account
@@ -130,9 +131,9 @@ fn mail_presence_disable_and_attention_are_separate() {
                 }
                 let list = parse_account_list(&make_account_reply(vec![account])).unwrap();
                 let account_details = list.accounts.values().next().unwrap();
-                assert_eq!(account_details.mail_disabled, Some(mail_disabled));
-                assert_eq!(account_details.attention_needed, Some(attention_needed));
-                assert_eq!(account_details.mail_present, mail_present);
+                assert_eq!(account_details.mail_enabled, Some(!mail_disabled));
+                assert_eq!(account_details.needs_attention, Some(attention_needed));
+                assert_eq!(account_details.mail_service_available, mail_present);
             }
         }
     }
@@ -191,7 +192,7 @@ fn oversized_required_field_is_an_account_error_and_total_data_is_bounded() {
     assert_eq!(
         list.accounts
             .values()
-            .filter(|account| !account.invalid_fields.is_empty())
+            .filter(|account| !account.invalid_fields().is_empty())
             .count(),
         1
     );
@@ -199,7 +200,7 @@ fn oversized_required_field_is_an_account_error_and_total_data_is_bounded() {
     let accounts = (0..1100)
         .map(|i| {
             let mut account = make_account(&i.to_string());
-            for name in ["ProviderType", "ProviderName", "PresentationIdentity"] {
+            for name in ["ProviderIcon", "ProviderName", "PresentationIdentity"] {
                 account
                     .get_mut(ACCOUNT_INTERFACE)
                     .unwrap()
@@ -286,4 +287,104 @@ fn partial_snapshot_does_not_restore_ambiguous_or_reassigned_paths() {
         duplicate_path.account_paths[&second_path],
         initial.account_paths[&second_path]
     );
+}
+
+#[test]
+fn goa_provider_keys_translate_without_deciding_application_support() {
+    for (key, expected) in [
+        ("imap_smtp", AccountProvider::ImapSmtp),
+        ("google", AccountProvider::Google),
+        ("ms_graph", AccountProvider::Microsoft365),
+        ("windows_live", AccountProvider::Other),
+        ("microsoft", AccountProvider::Other),
+        ("outlook", AccountProvider::Other),
+        ("MS_GRAPH", AccountProvider::Other),
+        ("exchange", AccountProvider::Other),
+        ("unknown", AccountProvider::Other),
+    ] {
+        let mut account = make_account("one");
+        account
+            .get_mut(ACCOUNT_INTERFACE)
+            .unwrap()
+            .insert("ProviderType".into(), key.to_variant());
+        let list = parse_account_list(&make_account_reply(vec![account])).unwrap();
+        let details = list.accounts.values().next().unwrap();
+        assert_eq!(details.provider, Some(expected));
+        assert!(details.invalid_fields().is_empty());
+    }
+    for invalid in [
+        "".to_variant(),
+        7i32.to_variant(),
+        "x".repeat(4097).to_variant(),
+    ] {
+        let mut account = make_account("one");
+        account
+            .get_mut(ACCOUNT_INTERFACE)
+            .unwrap()
+            .insert("ProviderType".into(), invalid);
+        let list = parse_account_list(&make_account_reply(vec![account])).unwrap();
+        assert!(list.membership_confirmed);
+        assert_eq!(list.accounts.values().next().unwrap().provider, None);
+    }
+}
+
+#[test]
+fn property_signals_use_the_same_translation_as_full_replies() {
+    let mut list = parse_account_list(&make_account_reply(vec![make_account("one")])).unwrap();
+    let account = list.accounts.values_mut().next().unwrap();
+    let changed = BTreeMap::from([
+        ("ProviderType", "ms_graph".to_variant()),
+        ("MailDisabled", true.to_variant()),
+        ("AttentionNeeded", true.to_variant()),
+    ])
+    .to_variant();
+    apply_account_properties(
+        account,
+        ACCOUNT_INTERFACE,
+        &changed,
+        &Vec::<String>::new().to_variant(),
+    );
+    assert_eq!(account.provider, Some(AccountProvider::Microsoft365));
+    assert_eq!(account.mail_enabled, Some(false));
+    assert_eq!(account.needs_attention, Some(true));
+    assert!(account.mail_service_available);
+    apply_account_properties(
+        account,
+        ACCOUNT_INTERFACE,
+        &BTreeMap::<String, Variant>::new().to_variant(),
+        &vec!["ProviderType", "MailDisabled", "AttentionNeeded"].to_variant(),
+    );
+    assert_eq!(
+        account.invalid_fields(),
+        vec![
+            AccountField::Provider,
+            AccountField::MailEnabled,
+            AccountField::Attention
+        ]
+    );
+}
+
+#[test]
+fn glib_errors_keep_safe_diagnostics_without_remote_messages() {
+    for (source_cause, expected) in [
+        (gio::DBusError::AccessDenied, ErrorCause::AccessDenied),
+        (gio::DBusError::NoReply, ErrorCause::Timeout),
+        (gio::DBusError::InvalidArgs, ErrorCause::InvalidReply),
+        (gio::DBusError::ServiceUnknown, ErrorCause::Unavailable),
+    ] {
+        let source = glib::Error::new(source_cause, "synthetic-private-error-detail");
+        let code = source.code();
+        let mapped = map_glib_error("GetManagedObjects", source);
+        assert_eq!(mapped.cause, expected);
+        assert_eq!(mapped.operation, "GetManagedObjects");
+        assert_eq!(mapped.domain.as_deref(), Some("g-dbus-error-quark"));
+        assert_eq!(mapped.code, Some(code));
+        assert!(!format!("{mapped:?}").contains("synthetic-private-error-detail"));
+    }
+    let mapped = map_glib_error(
+        "connect",
+        glib::Error::new(glib::FileError::Failed, "private detail"),
+    );
+    assert!(mapped.domain.is_none());
+    assert!(!format!("{mapped:?}").contains("private detail"));
 }

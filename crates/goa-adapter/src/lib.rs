@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 mod accounts;
-pub use accounts::*;
+use account_source::{AccountCheckError, AccountId, AccountUpdate, CheckStatus, ErrorCause};
 
 #[cfg(test)]
 #[path = "../../../tests/support/bus.rs"]
@@ -19,11 +19,11 @@ use std::{
     task::{Poll, Waker},
 };
 
-/// Delivers the latest account list and check status to one caller at a time.
+/// Sends refresh and stop commands to the GOA worker.
 /// Clones share one GOA worker; dropping the last handle requests shutdown
 /// without waiting for the worker to finish.
 #[derive(Clone)]
-pub struct GoaClient(Arc<ClientHandle>);
+pub struct GoaAdapter(Arc<ClientHandle>);
 struct ClientHandle {
     shared: Arc<SharedClientState>,
 }
@@ -35,7 +35,7 @@ impl Drop for ClientHandle {
 
 #[derive(Default)]
 struct ClientState {
-    latest_update: Option<Arc<GoaAccountList>>,
+    latest_update: Option<Arc<AccountUpdate>>,
     update_pending: bool,
     update_waker: Option<Waker>,
     command_waker: Option<Waker>,
@@ -59,7 +59,7 @@ impl SharedClientState {
             waker.wake();
         }
     }
-    fn publish_update(&self, update: GoaAccountList) {
+    fn publish_update(&self, update: AccountUpdate) {
         let waker = {
             let mut state = self.lock();
             if state.stop_requested {
@@ -80,13 +80,13 @@ impl SharedClientState {
         let mut failed_update = last_update
             .as_deref()
             .cloned()
-            .unwrap_or_else(GoaAccountList::initial);
+            .unwrap_or_else(AccountUpdate::default);
         failed_update.update_number += 1;
         failed_update.status = CheckStatus::Failed;
         failed_update.membership_confirmed = false;
-        failed_update.error = Some(AccountError::new(
+        failed_update.error = Some(AccountCheckError::new(
             "account worker",
-            ErrorCause::WorkerStopped,
+            ErrorCause::SourceStopped,
         ));
         let waker = {
             let mut state = self.lock();
@@ -106,26 +106,11 @@ impl SharedClientState {
         }
     }
 }
-impl GoaClient {
+impl GoaAdapter {
     /// Start reading accounts and listening for GOA changes on the desktop session bus.
-    /// Return immediately while the worker connects and requests the account list.
-    pub fn start() -> Self {
+    /// Return command handles and the sole updates receiver without waiting for GOA.
+    pub fn start() -> (Self, GoaUpdates) {
         client::start()
-    }
-    pub async fn next_account_update(&self) -> Option<GoaAccountList> {
-        poll_fn(|cx| {
-            let mut state = self.0.shared.lock();
-            if std::mem::take(&mut state.update_pending) {
-                Poll::Ready(state.latest_update.clone())
-            } else if state.worker_stopped {
-                Poll::Ready(None)
-            } else {
-                state.update_waker = Some(cx.waker().clone());
-                Poll::Pending
-            }
-        })
-        .await
-        .map(|update| (*update).clone())
     }
     pub fn refresh_accounts(&self) {
         let waker = {
@@ -146,5 +131,49 @@ impl GoaClient {
     #[cfg(test)]
     fn shared_for_test(&self) -> Arc<SharedClientState> {
         self.0.shared.clone()
+    }
+}
+
+/// Sole receiver of the latest account list and check status.
+/// Dropping it requests worker shutdown without waiting for the worker.
+///
+/// A pending read exclusively borrows the receiver:
+/// ```compile_fail
+/// use goa_adapter::GoaUpdates;
+/// fn two_reads(updates: &mut GoaUpdates) {
+///     let first = updates.next_account_update();
+///     let second = updates.next_account_update();
+///     drop((first, second));
+/// }
+/// ```
+/// The receiver cannot be cloned:
+/// ```compile_fail
+/// use goa_adapter::GoaUpdates;
+/// fn duplicate(updates: GoaUpdates) { let _ = updates.clone(); }
+/// ```
+pub struct GoaUpdates {
+    shared: Arc<SharedClientState>,
+}
+impl GoaUpdates {
+    /// Wait for the latest list; return None once the worker has stopped.
+    pub async fn next_account_update(&mut self) -> Option<AccountUpdate> {
+        poll_fn(|cx| {
+            let mut state = self.shared.lock();
+            if std::mem::take(&mut state.update_pending) {
+                Poll::Ready(state.latest_update.clone())
+            } else if state.worker_stopped {
+                Poll::Ready(None)
+            } else {
+                state.update_waker = Some(cx.waker().clone());
+                Poll::Pending
+            }
+        })
+        .await
+        .map(|update| (*update).clone())
+    }
+}
+impl Drop for GoaUpdates {
+    fn drop(&mut self) {
+        self.shared.request_stop();
     }
 }

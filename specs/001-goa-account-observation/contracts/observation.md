@@ -1,25 +1,48 @@
 # GOA Client Contract
 
-`goa-adapter` supplies current account data to `mailbag::accounts`. The application
+`goa-adapter` translates GOA replies and signals into the shared `AccountUpdate`
+from `account-source`, as defined in [the account contract](accounts.md).
+It supplies these updates to `mailbag::accounts`. The application
 alone decides which rows to show and when to notify the user. This is an internal
 Rust interface, not a new network API.
 
 ## Client operations
 
-- `start()` promptly returns a thread-safe client handle and starts one worker.
+- `GoaAdapter::start()` promptly returns `(GoaAdapter, GoaUpdates)` and starts one worker.
+  The client is a cloneable command handle; the updates receiver cannot be cloned.
   Connection failure is reported as account-check failure, not an application crash.
-- `next_account_update()` asynchronously waits for and takes the newest pending
+- `GoaUpdates::next_account_update(&mut self)` asynchronously waits for and takes the newest pending
   account list/status. There is one UI consumer; waiting does not block GTK or
   repeatedly check a flag. Closing the client wakes the consumer and ends the wait.
 - `refresh_accounts()` requests or reuses one current check. It does not obtain
   credentials or wait for GTK.
 - `stop()` is idempotent. Dropping the last handle also requests stop. GTK never
   joins the worker; tests may wait for completion with a deadline.
+  Dropping the updates receiver also requests stop. Dropping the last command
+  handle requests stop even if the receiver still exists.
+
+The mutable receiver borrow prevents simultaneous waits on one receiver. Command
+handles expose no update-reading method. `AccountDetails::invalid_fields()`
+belongs to `account-source` and computes unknown required fields from the current values; no second stored list
+needs to be kept consistent. Mailbag uses this method for field explanations.
 
 Only plain Rust account/error values cross this interface. No GTK/GIO objects,
 Variants, proxies, endpoints, passwords or tokens cross it. Preserve the operation,
 error class, underlying domain/code and safe cause. Do not log raw D-Bus replies,
 account IDs, addresses or unchecked error text. Expected cancellation is not an error.
+
+## Translation into the shared account contract
+
+- ProviderType: exact `imap_smtp`, `google`, `ms_graph` map to ImapSmtp, Google,
+  Microsoft365; other valid text maps to Other. Missing/invalid text maps to None.
+- MailDisabled: invert a valid boolean into mail_enabled; invalid/missing is None.
+- AttentionNeeded: copy a valid boolean into needs_attention; invalid/missing is None.
+- Mail interface presence: mail_service_available, independent of mail_enabled.
+- PresentationIdentity: validated display_name; optional fields retain their fallback rules.
+- GIO errors: map to common categories and preserve whitelisted diagnostic domain,
+  numeric code and static operation. Never copy remote error messages.
+
+These translations do not decide provider support or row visibility.
 
 ## D-Bus interface
 

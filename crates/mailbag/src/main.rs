@@ -3,6 +3,10 @@
 
 use adw::{gio, glib, gtk, prelude::*};
 
+// These rules are tested now; remove this allowance when GTK starts using them.
+#[cfg_attr(not(test), allow(dead_code))]
+mod accounts;
+
 const APP_ID: &str = "io.github.mitinand.Mailbag";
 
 fn main() -> glib::ExitCode {

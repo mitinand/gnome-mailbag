@@ -126,6 +126,16 @@ As a user, I want to open GNOME Online Accounts from Mailbag to add an account, 
 - Confirmed exclusions affect unselected accounts too: explain them once, group simultaneous exclusions, and never infer removal from service failure. Repeat observations, Retry Check and removal of an already hidden Mail-disabled account do not repeat the same exclusion toast. A new exclusion after confirmed reappearance is a new event.
 - Application closes during discovery, recovery or Settings launch: no late result may reopen UI or keep the application waiting indefinitely.
 
+## Approved implementation boundary
+
+Account rules depend on a source-independent account data contract, not GOA types
+or property names. The small shared crate contains data and validity checks only.
+The GOA adapter translates its protocol into that one public format; Mailbag owns
+provider support, display, selection and notices. Preserve safe diagnostic causes
+without requiring account rules to interpret GIO codes. This does not add another
+account authority, source registry or generic runtime; GOA remains the F01 source.
+See [the account contract](contracts/accounts.md).
+
 ## Requirements
 
 ### Functional Requirements

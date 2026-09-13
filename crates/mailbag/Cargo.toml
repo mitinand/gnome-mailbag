@@ -8,6 +8,7 @@ repository = "https://github.com/mitinand/gnome-mailbag"
 publish = false
 
 [dependencies]
+account-source = { path = "../account-source" }
 adw.workspace = true
 
 [lints]

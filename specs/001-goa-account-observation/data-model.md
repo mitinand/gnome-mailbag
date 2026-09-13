@@ -7,34 +7,40 @@ store, previous-run account history or cache-deletion record.
 
 | Data | Meaning | Responsible component |
 |---|---|---|
-| GoaAccountId | Valid, nonempty GOA ID; never display or log it | GOA client validates it; Mailbag uses it as the account key |
-| GoaAccountDetails | Provider, display fields, MailDisabled, Mail presence and AttentionNeeded | GOA client reads and validates fields |
-| GoaAccountList | Latest accepted account details, whether the list is complete, check status and errors | GOA client |
+| AccountId | Valid, nonempty source account ID; never display or log it | account-source validates it; Mailbag uses it as the account key |
+| AccountDetails | Provider, display fields, mail enabled, mail service presence and attention | account-source defines data; adapter translates GOA |
+| GoaUpdates | Sole receiver of account updates; mutable reads, no cloning | Application consumer |
+| AccountUpdate | Latest accepted account details, whether the list is complete, check status and errors | account-source defines format; adapter supplies updates |
 | AccountCheck | Current request and reason (startup, user retry, recovery or periodic check), expected GOA process/client instance, deadline and cancellation | GOA client thread |
-| VisibleAccount | ID, last usable display fields, availability and problem explanation | Mailbag accounts module |
-| AccountSelection | Selected GOA ID or none | Mailbag accounts module |
+| AccountList | Rows last applied by the UI, selected ID, check status and empty-state reasons | Mailbag accounts module |
+| AccountPage | Checking, unavailable, no accounts, no eligible accounts, select account or selected account | Mailbag accounts module |
+| AccountRow | Last usable display fields, availability and problems; keyed by AccountId in AccountList | Mailbag accounts module |
+| AccountSelection | Selected AccountId or none | Mailbag accounts module |
 | AccountHiddenNotice | Single-account display label or group count; one combined removed-or-Mail-disabled explanation | Mailbag accounts module; UI presents it |
 | SettingsLaunch | Idle, pending or failed; request ID, deadline, cancellation and safe error | Settings module |
 
-There is one pending GoaAccountList for the UI and a wakeup for its waiting task. A newer accepted update replaces
+There is one pending AccountUpdate for the UI and a wakeup for its waiting task. A newer accepted update replaces
 it. Only current account state is needed; intermediate switches are not recorded.
 
 ## Validating account fields
 
-- GOA Id identifies the account. A display name or email address does not.
-- Required fields for a newly available row: valid unique ID and provider type,
-  explicit MailDisabled=false, present Mail interface and valid AttentionNeeded.
-- AttentionNeeded=true keeps an otherwise eligible row with a repair explanation.
-- The application maps imap_smtp, google and ms_graph to its three planned providers.
-  Other providers are unsupported; Microsoft 365 does not require IMAP.
-- Missing or wrongly typed required values are unknown/error, never false defaults.
-- ProviderName, PresentationIdentity, icon and EmailAddress are display information.
-  An empty address is valid. Invalid optional display data gets a neutral fallback.
-- Display text is plain text. Accept safe themed icons only; a provider-supplied
-  file/URI does not authorize opening a file or downloading an image.
-- Identical display values do not merge accounts. If necessary, add a stable
-  current-run display number to distinguish otherwise identical rows; do not expose
-  internal IDs or invent addresses.
+The [account contract](contracts/accounts.md) defines the shared types, validation
+and distinction between unknown and unsupported information. GOA property mapping
+belongs to the [GOA contract](contracts/observation.md).
+
+- AccountId identifies the account; labels and addresses do not. Its stored value
+  remains private and redacted in diagnostics.
+- A newly available row requires a valid ID, supported provider, mail_enabled=true,
+  a present mail service and a known needs_attention value.
+- needs_attention=true keeps an otherwise eligible row with a repair explanation.
+- Mailbag supports ImapSmtp, Google and Microsoft365. Other is unsupported;
+  an unknown provider is an account-data problem. Microsoft365 does not require IMAP.
+- If the source supplies no provider name, Mailbag uses `IMAP / SMTP`, `Google`
+  or `Microsoft 365`. These names do not claim implemented mail operations.
+- Optional display data uses neutral fallbacks. Text is plain text and icons are
+  theme names; no file/URI loading is authorized by source data.
+- Identical display values do not merge accounts. A stable current-run label number
+  distinguishes matching row names without exposing IDs or inventing addresses.
 
 A malformed account can be isolated if its ID and the rest of the account list
 are trustworthy. Missing/new ambiguous IDs or duplicate IDs make the list unsuitable
@@ -54,6 +60,7 @@ It updates existing rows by ID and produces notices only for rows this update hi
 |---|---|
 | Supported, enabled and valid new account | Add a row; do not automatically select it |
 | Unsupported, disabled or unverified new account | Keep hidden; explain applicable reasons in the empty state |
+| Complete check confirms an unsupported provider | Hide the row and clear its selection; no removal/disablement notice |
 | Valid display change | Update the existing row; preserve selection and focus |
 | Known account needs attention or has a temporary problem | Keep its row and selection with a problem indicator |
 | GOA/list unavailable or incomplete | Keep known rows unconfirmed; do not infer removal from missing data |

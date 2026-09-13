@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 use crate::{
-    AccountError, CheckStatus, ErrorCause, GoaAccountId, GoaAccountList, SharedClientState,
+    AccountCheckError, AccountId, AccountUpdate, CheckStatus, ErrorCause, SharedClientState,
     accounts::{
-        ACCOUNT_INTERFACE, AccountSnapshot, GOA_ROOT_PATH, MAIL_INTERFACE, fits_account_limits,
-        merge_account_facts,
+        ACCOUNT_INTERFACE, AccountSnapshot, GOA_ROOT_PATH, MAIL_INTERFACE,
+        apply_account_properties, fits_account_limits, merge_account_facts,
     },
 };
 use glib::Variant;
@@ -12,8 +12,8 @@ use std::{collections::BTreeMap, sync::Arc, task::Waker};
 
 /// Account data and pending checks, accessed only by the GOA worker thread.
 pub(super) struct GoaWorkerState {
-    pub account_list: GoaAccountList,
-    pub account_paths: BTreeMap<String, GoaAccountId>,
+    pub account_list: AccountUpdate,
+    pub account_paths: BTreeMap<String, AccountId>,
     pub goa_owner: Option<String>,
     pub account_change_number: u64,
     pub recheck_requested: bool,
@@ -26,7 +26,7 @@ pub(super) struct GoaWorkerState {
 impl GoaWorkerState {
     pub fn new(shared: Arc<SharedClientState>) -> Self {
         Self {
-            account_list: GoaAccountList::initial(),
+            account_list: AccountUpdate::default(),
             account_paths: BTreeMap::new(),
             goa_owner: None,
             account_change_number: 0,
@@ -50,7 +50,7 @@ impl GoaWorkerState {
     }
 
     /// Update the account list and its D-Bus paths together, then notify the caller.
-    pub fn finish_check(&mut self, result: Result<AccountSnapshot, AccountError>) {
+    pub fn finish_check(&mut self, result: Result<AccountSnapshot, AccountCheckError>) {
         let accepted = result.and_then(|snapshot| self.accept_snapshot(snapshot));
         if let Err(error) = accepted {
             self.account_list.status = CheckStatus::Failed;
@@ -63,7 +63,7 @@ impl GoaWorkerState {
         self.publish_accounts();
     }
 
-    fn accept_snapshot(&mut self, snapshot: AccountSnapshot) -> Result<(), AccountError> {
+    fn accept_snapshot(&mut self, snapshot: AccountSnapshot) -> Result<(), AccountCheckError> {
         let AccountSnapshot {
             account_list: mut checked_list,
             account_paths,
@@ -92,7 +92,7 @@ impl GoaWorkerState {
     pub fn report_failure(&mut self, operation: &'static str, cause: ErrorCause) {
         self.account_list.status = CheckStatus::Failed;
         self.account_list.membership_confirmed = false;
-        self.account_list.error = Some(AccountError::new(operation, cause));
+        self.account_list.error = Some(AccountCheckError::new(operation, cause));
         self.publish_accounts();
     }
     pub fn wake_worker(&mut self) {
@@ -137,7 +137,7 @@ impl GoaWorkerState {
                             .iter()
                             .any(|field| field.str() == Some("Id")));
                 if identity_changed {
-                    self.report_failure("account identity changed", ErrorCause::InvalidMembership);
+                    self.report_failure("account identity changed", ErrorCause::InvalidList);
                 }
                 let Some(id) = self.account_paths.get(path) else {
                     self.request_recheck();
@@ -148,7 +148,8 @@ impl GoaWorkerState {
                     return;
                 };
                 let mut previous_details = account.clone();
-                let recheck_needed = account.apply_properties(
+                let recheck_needed = apply_account_properties(
+                    account,
                     interface,
                     &changed_properties,
                     &invalidated_properties,
@@ -157,20 +158,17 @@ impl GoaWorkerState {
                     let updated_details = &self.account_list.accounts[id];
                     // Even if the new strings are too large, apply MailDisabled and
                     // AttentionNeeded changes and clear fields GOA marked as unknown.
-                    previous_details.mail_disabled = updated_details.mail_disabled;
-                    previous_details.attention_needed = updated_details.attention_needed;
+                    previous_details.mail_enabled = updated_details.mail_enabled;
+                    previous_details.needs_attention = updated_details.needs_attention;
+                    previous_details.provider = updated_details.provider;
                     for (old_text, new_text) in [
-                        (
-                            &mut previous_details.provider_type,
-                            &updated_details.provider_type,
-                        ),
                         (
                             &mut previous_details.provider_name,
                             &updated_details.provider_name,
                         ),
                         (
-                            &mut previous_details.presentation_identity,
-                            &updated_details.presentation_identity,
+                            &mut previous_details.display_name,
+                            &updated_details.display_name,
                         ),
                         (
                             &mut previous_details.email_address,
@@ -182,7 +180,6 @@ impl GoaWorkerState {
                             *old_text = None;
                         }
                     }
-                    previous_details.refresh_invalid_fields();
                     self.account_list
                         .accounts
                         .insert(id.clone(), previous_details);
@@ -214,7 +211,7 @@ impl GoaWorkerState {
                         .any(|interface| interface.str() == Some(MAIL_INTERFACE))
                     && let Some(account) = self.account_list.accounts.get_mut(id)
                 {
-                    account.mail_present = false;
+                    account.mail_service_available = false;
                     account.email_address = None;
                     self.publish_accounts();
                 }

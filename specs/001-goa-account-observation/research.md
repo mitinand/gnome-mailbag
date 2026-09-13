@@ -1,7 +1,16 @@
 # Research: GNOME Mail Accounts
 
 Date: 2026-09-12. Amended 2026-09-13 with maintainer approval after initial-client
-testing. Account display rules, UI and installed-Flatpak acceptance remain pending.
+testing. UI and installed-Flatpak acceptance remain pending.
+
+## Approved account-contract refactoring
+
+A dependency-free `account-source` crate now defines the one account data contract.
+The immediate benefit is separating Mailbag account rules from GOA terminology and
+implementation. GOA translation stays in the adapter; provider support stays in
+Mailbag. A universal trait, source registry and new delivery mechanism add no needed
+behavior and are excluded. Safe source diagnostics are preserved as data, not used
+as application decision codes. See [the account contract](contracts/accounts.md).
 
 ## 1. Existing project and dependency choice
 
@@ -36,8 +45,9 @@ workspace; its manifest already includes all of crates/.
 ## 2. Which GOA fields matter
 
 **Decision:** Read Account and Mail fields only. MailDisabled, Mail-interface
-presence and AttentionNeeded are independent. The application recognizes exact
-provider keys imap_smtp, google and ms_graph. Microsoft 365 does not need IMAP.
+presence and AttentionNeeded are independent. The GOA adapter translates exact
+provider keys imap_smtp, google and ms_graph into the shared provider enum.
+Mailbag decides which enum values it supports. Microsoft 365 does not need IMAP.
 
 **Rationale:** GOA adds/removes Mail asynchronously after its setting changes.
 AttentionNeeded requests human attention; it does not establish a specific mail

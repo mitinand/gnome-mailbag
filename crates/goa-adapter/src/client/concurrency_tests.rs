@@ -25,29 +25,33 @@ impl Wake for WakeCounter {
         self.0.fetch_add(1, Ordering::SeqCst);
     }
 }
-fn make_client_without_worker() -> GoaClient {
-    GoaClient(Arc::new(ClientHandle {
-        shared: Arc::new(SharedClientState::default()),
-    }))
+fn make_client_without_worker() -> (GoaAdapter, GoaUpdates) {
+    let shared = Arc::new(SharedClientState::default());
+    (
+        GoaAdapter(Arc::new(ClientHandle {
+            shared: shared.clone(),
+        })),
+        GoaUpdates { shared },
+    )
 }
 
 #[test]
 fn publication_racing_with_wait_registration_never_loses_update() {
     for sequence in 1..=100 {
-        let client = make_client_without_worker();
+        let (client, mut updates) = make_client_without_worker();
         let shared = client.shared_for_test();
         let barrier = Arc::new(Barrier::new(2));
         let producer_barrier = barrier.clone();
         let producer = thread::spawn(move || {
             producer_barrier.wait();
-            shared.publish_update(GoaAccountList {
+            shared.publish_update(AccountUpdate {
                 update_number: sequence,
-                ..GoaAccountList::initial()
+                ..AccountUpdate::default()
             });
         });
         barrier.wait();
         assert_eq!(
-            await_with_timeout(client.next_account_update())
+            await_with_timeout(updates.next_account_update())
                 .unwrap()
                 .update_number,
             sequence
@@ -58,18 +62,18 @@ fn publication_racing_with_wait_registration_never_loses_update() {
 
 #[test]
 fn idle_consumer_sleeps_and_burst_replaces_one_slot_with_one_wakeup() {
-    let client = make_client_without_worker();
+    let (client, mut updates) = make_client_without_worker();
     let shared = client.shared_for_test();
     let wake_counter = Arc::new(WakeCounter::default());
     let waker = Waker::from(wake_counter.clone());
     let mut context = Context::from_waker(&waker);
-    let mut next_update = pin!(client.next_account_update());
+    let mut next_update = pin!(updates.next_account_update());
     assert!(next_update.as_mut().poll(&mut context).is_pending());
     assert_eq!(wake_counter.0.load(Ordering::SeqCst), 0);
     for sequence in 1..=10_000 {
-        shared.publish_update(GoaAccountList {
+        shared.publish_update(AccountUpdate {
             update_number: sequence,
-            ..GoaAccountList::initial()
+            ..AccountUpdate::default()
         });
     }
     assert_eq!(wake_counter.0.load(Ordering::SeqCst), 1);
@@ -82,20 +86,20 @@ fn idle_consumer_sleeps_and_burst_replaces_one_slot_with_one_wakeup() {
 
 #[test]
 fn unexpected_exit_reports_failure_after_previous_update_was_consumed() {
-    let client = make_client_without_worker();
+    let (client, mut updates) = make_client_without_worker();
     let shared = client.shared_for_test();
     let mut previous =
         crate::accounts::parse_account_list(&make_account_reply(vec![make_account("one")]))
             .unwrap();
     previous.update_number = 7;
     shared.publish_update(previous.clone());
-    await_with_timeout(client.next_account_update());
+    await_with_timeout(updates.next_account_update());
     shared.mark_worker_stopped();
-    let failed = await_with_timeout(client.next_account_update()).unwrap();
-    assert_eq!(failed.error.unwrap().cause, ErrorCause::WorkerStopped);
+    let failed = await_with_timeout(updates.next_account_update()).unwrap();
+    assert_eq!(failed.error.unwrap().cause, ErrorCause::SourceStopped);
     assert_eq!(failed.accounts, previous.accounts);
     assert_eq!(failed.update_number, 8);
-    assert!(await_with_timeout(client.next_account_update()).is_none());
+    assert!(await_with_timeout(updates.next_account_update()).is_none());
 }
 
 #[test]
@@ -107,8 +111,8 @@ fn ten_thousand_signals_with_paused_consumer_keep_only_final_facts() {
             make_account("one"),
         ]))],
     );
-    let client = start_test_client(&bus);
-    await_check_result(&client);
+    let (client, mut updates) = start_test_client(&bus);
+    await_check_result(&mut updates);
     for sequence in 0..10_000 {
         goa.change_properties(
             ACCOUNT_INTERFACE,
@@ -141,11 +145,11 @@ fn ten_thousand_signals_with_paused_consumer_keep_only_final_facts() {
             Poll::Pending
         }
     }));
-    let update = await_with_timeout(client.next_account_update()).unwrap();
+    let update = await_with_timeout(updates.next_account_update()).unwrap();
     assert_eq!(update.accounts.len(), 1);
     assert_eq!(
-        update.accounts.values().next().unwrap().mail_disabled,
-        Some(false)
+        update.accounts.values().next().unwrap().mail_enabled,
+        Some(true)
     );
     assert_eq!(
         goa.calls.lock().unwrap().len(),
@@ -154,7 +158,7 @@ fn ten_thousand_signals_with_paused_consumer_keep_only_final_facts() {
     );
     assert!(!shared.lock().update_pending);
     client.stop();
-    assert!(await_with_timeout(client.next_account_update()).is_none());
+    assert!(await_with_timeout(updates.next_account_update()).is_none());
 }
 
 #[test]
@@ -165,8 +169,8 @@ fn stop_wins_over_commands_during_idle_failure_and_signal_load() {
     ] {
         let bus = TestBus::new();
         let goa = FakeGoaService::new(&bus.address, vec![reply]);
-        let client = start_test_client(&bus);
-        await_check_result(&client);
+        let (client, mut updates) = start_test_client(&bus);
+        await_check_result(&mut updates);
         for _ in 0..1000 {
             goa.change_properties(
                 ACCOUNT_INTERFACE,
@@ -177,7 +181,7 @@ fn stop_wins_over_commands_during_idle_failure_and_signal_load() {
         }
         let stopped_at = Instant::now();
         client.stop();
-        await_with_timeout(async { while client.next_account_update().await.is_some() {} });
+        await_with_timeout(async { while updates.next_account_update().await.is_some() {} });
         assert!(stopped_at.elapsed() < Duration::from_secs(1));
         let state = client.shared_for_test();
         let state = state.lock();
@@ -196,20 +200,20 @@ fn oversized_list_keeps_previous_accounts_and_later_check_recovers() {
             make_account("one"),
         ]))],
     );
-    let client = start_test_client(&bus);
-    let original = await_check_result(&client);
+    let (client, mut updates) = start_test_client(&bus);
+    let original = await_check_result(&mut updates);
     goa.set_reply(ReplyBehavior::Value(make_account_reply(
         (0..4097)
             .map(|i| make_account(&format!("synthetic-{i}")))
             .collect(),
     )));
     client.refresh_accounts();
-    let failed = await_check_result(&client);
+    let failed = await_check_result(&mut updates);
     assert_eq!(failed.error.unwrap().cause, ErrorCause::DataLimit);
     assert_eq!(failed.accounts, original.accounts);
     goa.set_reply(ReplyBehavior::Value(make_account_reply(vec![])));
     client.refresh_accounts();
-    let recovered = await_check_result(&client);
+    let recovered = await_check_result(&mut updates);
     assert!(recovered.membership_confirmed);
     assert!(recovered.accounts.is_empty());
     client.stop();
@@ -223,7 +227,7 @@ fn stop_cancels_connection_authentication_without_waiting_for_server() {
     let socket_path = directory.join("socket");
     let listener = UnixListener::bind(&socket_path).unwrap();
     listener.set_nonblocking(true).unwrap();
-    let client = start_for_test(
+    let (client, mut updates) = start_for_test(
         format!("unix:path={}", socket_path.display()),
         Duration::from_secs(5),
     );
@@ -240,7 +244,7 @@ fn stop_cancels_connection_authentication_without_waiting_for_server() {
     };
     let stopped_at = Instant::now();
     client.stop();
-    await_with_timeout(async { while client.next_account_update().await.is_some() {} });
+    await_with_timeout(async { while updates.next_account_update().await.is_some() {} });
     assert!(stopped_at.elapsed() < Duration::from_secs(1));
     drop(listener);
     std::fs::remove_dir_all(directory).unwrap();
@@ -256,15 +260,15 @@ fn incomplete_lists_cannot_accumulate_accounts_beyond_the_limit() {
         &bus.address,
         vec![ReplyBehavior::Value(make_account_reply(initial))],
     );
-    let client = start_for_test(bus.address.clone(), Duration::from_secs(2));
-    let original = await_check_result(&client);
+    let (client, mut updates) = start_for_test(bus.address.clone(), Duration::from_secs(2));
+    let original = await_check_result(&mut updates);
     let mut incoming: Vec<_> = (0..3000)
         .map(|i| make_account(&format!("new-{i}")))
         .collect();
     incoming[0].get_mut(ACCOUNT_INTERFACE).unwrap().remove("Id");
     goa.set_reply(ReplyBehavior::Value(make_account_reply(incoming)));
     client.refresh_accounts();
-    let failed = await_check_result(&client);
+    let failed = await_check_result(&mut updates);
     assert_eq!(failed.error.unwrap().cause, ErrorCause::DataLimit);
     assert_eq!(failed.accounts, original.accounts);
     assert!(!failed.membership_confirmed);
@@ -278,13 +282,13 @@ fn refresh_commands_at_completion_reliably_wake_next_wait() {
         &bus.address,
         vec![ReplyBehavior::Value(make_account_reply(vec![]))],
     );
-    let client = start_test_client(&bus);
-    let mut previous_update_number = await_check_result(&client).update_number;
+    let (client, mut updates) = start_test_client(&bus);
+    let mut previous_update_number = await_check_result(&mut updates).update_number;
     for _ in 0..100 {
         // The caller has received the check result, but the worker may not yet
         // be waiting for commands. A refresh sent now must still reach it.
         client.refresh_accounts();
-        let update = await_check_result(&client);
+        let update = await_check_result(&mut updates);
         assert_eq!(update.status, CheckStatus::Ready);
         assert!(update.update_number > previous_update_number);
         previous_update_number = update.update_number;
@@ -316,7 +320,9 @@ fn total_string_limit_does_not_discard_disable_in_the_same_signal() {
             path.as_str().len()
                 + interfaces
                     .values()
-                    .flat_map(|fields| fields.values())
+                    .flat_map(|fields| fields.iter())
+                    .filter(|(key, _)| key.as_str() != "ProviderType")
+                    .map(|(_, field)| field)
                     .filter_map(|field| field.get::<String>())
                     .map(|text| text.len())
                     .sum::<usize>()
@@ -325,7 +331,7 @@ fn total_string_limit_does_not_discard_disable_in_the_same_signal() {
     let mut remaining_bytes = 16 * 1024 * 1024 - 1 - initial_bytes;
     for (path, interfaces) in &mut objects {
         for (interface, property) in [
-            (ACCOUNT_INTERFACE, "ProviderType"),
+            (ACCOUNT_INTERFACE, "ProviderIcon"),
             (ACCOUNT_INTERFACE, "ProviderName"),
             (ACCOUNT_INTERFACE, "PresentationIdentity"),
             (MAIL_INTERFACE, "EmailAddress"),
@@ -353,8 +359,8 @@ fn total_string_limit_does_not_discard_disable_in_the_same_signal() {
         &bus.address,
         vec![ReplyBehavior::Value((objects,).to_variant())],
     );
-    let client = start_for_test(bus.address.clone(), Duration::from_secs(2));
-    assert_eq!(await_check_result(&client).status, CheckStatus::Ready);
+    let (client, mut updates) = start_for_test(bus.address.clone(), Duration::from_secs(2));
+    assert_eq!(await_check_result(&mut updates).status, CheckStatus::Ready);
     goa.set_reply(ReplyBehavior::Hang);
     goa.change_properties(
         ACCOUNT_INTERFACE,
@@ -364,13 +370,57 @@ fn total_string_limit_does_not_discard_disable_in_the_same_signal() {
         ]),
         vec![],
     );
-    let failed = await_check_result(&client);
+    let failed = await_check_result(&mut updates);
     assert_eq!(failed.error.unwrap().cause, ErrorCause::DataLimit);
     assert!(
         failed
             .accounts
             .values()
-            .any(|account| account.mail_disabled == Some(true))
+            .any(|account| account.mail_enabled == Some(false))
     );
     client.stop();
+}
+
+#[test]
+fn dropping_updates_stops_pending_worker_even_with_command_handles_alive() {
+    let bus = TestBus::new();
+    let goa = FakeGoaService::new(&bus.address, vec![ReplyBehavior::Hang]);
+    let (client, updates) = start_test_client(&bus);
+    let other_commands = client.clone();
+    goa.wait_for_calls(1);
+    let shared = client.shared_for_test();
+    let stopped_at = Instant::now();
+    drop(updates);
+    await_with_timeout(poll_fn(|cx| {
+        let mut state = shared.lock();
+        if state.worker_stopped {
+            Poll::Ready(())
+        } else {
+            state.update_waker = Some(cx.waker().clone());
+            Poll::Pending
+        }
+    }));
+    assert!(stopped_at.elapsed() < Duration::from_secs(1));
+    other_commands.refresh_accounts();
+    assert!(!shared.lock().refresh_requested);
+}
+
+#[test]
+fn command_clones_share_one_receiver_and_last_command_drop_ends_it() {
+    let bus = TestBus::new();
+    let goa = FakeGoaService::new(
+        &bus.address,
+        vec![ReplyBehavior::Value(make_account_reply(vec![]))],
+    );
+    let (client, mut updates) = start_test_client(&bus);
+    let other_commands = client.clone();
+    assert!(await_check_result(&mut updates).membership_confirmed);
+    drop(client);
+    goa.set_reply(ReplyBehavior::Value(make_account_reply(vec![
+        make_account("one"),
+    ])));
+    other_commands.refresh_accounts();
+    assert_eq!(await_check_result(&mut updates).accounts.len(), 1);
+    drop(other_commands);
+    assert!(await_with_timeout(updates.next_account_update()).is_none());
 }

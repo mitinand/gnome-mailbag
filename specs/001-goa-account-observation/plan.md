@@ -4,8 +4,9 @@
 
 **Feature**: F01 / `001-goa-account-observation`
 
-**Status**: GOA client implemented through portion 3; account display rules and
-subsequent portions remain pending. Historical product documents are references; the clarified feature
+**Status**: GOA client and account display/selection rules implemented through portion 4.
+The approved account-contract refactoring (portion 4b) is complete and ready for PR 1 review.
+GTK integration and subsequent portions remain pending. Historical product documents are references; the clarified feature
 specification and the latest accepted review decisions take precedence.
 
 ## Summary
@@ -22,7 +23,7 @@ why. We do not keep a history of intermediate switches.
 F01 only hides accounts. It does not store or delete mail, acquire credentials,
 connect to a mail server or show a Welcome/synchronization screen.
 
-Deliver this feature in **two sequential PRs, about seven substantive commits**.
+Deliver this feature in **two sequential PRs, about eight substantive commits**.
 
 ## Technical Context
 
@@ -31,7 +32,7 @@ Deliver this feature in **two sequential PRs, about seven substantive commits**.
 | Language | Rust 2024; repository toolchain 1.95.0 |
 | Existing UI libraries | libadwaita 0.9.2, GTK bindings 0.11.4 |
 | GOA access | Existing GIO/GLib family, version 0.22.9 from Cargo.lock |
-| Application structure | Existing mailbag crate plus one goa-adapter crate |
+| Application structure | mailbag, goa-adapter and a dependency-free account-source data crate |
 | Storage | Account state and selection in memory for the current run only |
 | Supported test environment | Fedora 44, GNOME 50, Wayland, x86_64, GNOME runtime 50 |
 | Scale fixture | 30 accounts, including identical display names |
@@ -78,6 +79,7 @@ specs/001-goa-account-observation/
 ├── quickstart.md
 ├── tasks.md
 ├── contracts/
+│   ├── accounts.md
 │   ├── observation.md
 │   └── ui.md
 └── checklists/requirements.md
@@ -92,6 +94,7 @@ order and the maintainer review stops.
 
 ```text
 crates/
+├── account-source/           # Shared account data and validity checks
 ├── goa-adapter/
 │   ├── Cargo.toml
 │   └── src/
@@ -128,6 +131,14 @@ primary sources. The important decisions are:
 ## Phase 1: Application Design
 
 ### Responsibilities
+
+`account-source` owns the shared data and validity checks described in
+[the account contract](contracts/accounts.md). It contains no transport, GTK/GIO,
+commands, threads or recovery. Both other crates depend on it. The application
+startup code selects the GOA adapter; account rules import only `account-source`.
+There is one `AccountUpdate` format, including inside the adapter. No parallel GOA
+DTO set, universal trait, source registry or delivery mechanism is introduced.
+
 
 `goa-adapter` gets GOA account fields, follows changes and reports failures. It
 knows nothing about selected rows or toast messages. Its client uses one background
@@ -230,7 +241,7 @@ based on `7083b8a`; T003 verifies baseline ancestry before source implementation
 
 | PR | Result | Commits |
 |---|---|---:|
-| 1. GOA accounts and state handling | Reviewed documents, working client, restart/error handling, account rules and tests | About 4 |
+| 1. GOA accounts and state handling | Reviewed documents, working client, restart/error handling, account rules and tests | About 5 |
 | 2. Accounts in the existing UI | Rows and explanations, Settings/Flatpak integration, full acceptance and fixes | About 3 |
 
 Follow [AGENTS.md: Commits, PRs and review pauses](../../AGENTS.md#commits-prs-and-review-pauses)
@@ -246,7 +257,7 @@ Suggested commit content:
 6. PR 2: Settings action, failure tests and Flatpak permissions.
 7. PR 2: remaining integration tests and necessary fixes.
 
-Tests accompany behavior. Seven commits is an estimate; manual evidence alone does
+Tests accompany behavior. Eight commits is an estimate; manual evidence alone does
 not require an empty commit or a separate diary. Each PR runs `scripts/check.sh`.
 
 ## Acceptance

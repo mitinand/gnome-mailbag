@@ -1,10 +1,9 @@
 # F01 Validation Quickstart
 
-This guide targets F01 on top of approved UI commit `7a69c49`. Portion 2 provides
-the adapter’s initial acquisition, field validation and private-bus tests. Ongoing
-account updates, recovery, account policy, Settings and UI integration remain
-pending. Run the full sequence after implementation; initial-client tests do not
-prove the remaining F01 behavior.
+This guide targets F01 on top of approved UI commit `7a69c49`. Portions 2–4b provide
+the shared account contract, GOA adapter, account display/selection rules and headless tests. GTK account
+integration, Settings and installed-Flatpak acceptance remain pending; the existing
+graphical smoke test verifies only the application window and dialogs.
 
 ## Prerequisites and baseline
 
@@ -23,6 +22,7 @@ Each of the two planned PRs runs `scripts/check.sh`. At the approved baseline it
 ## Automated observation and policy
 
 ```bash
+cargo test --locked -p account-source
 cargo test --locked -p goa-adapter
 cargo test --locked -p mailbag accounts::
 cargo test --locked -p mailbag settings::
@@ -30,8 +30,9 @@ cargo test --locked -p mailbag settings::
 
 GOA restart/recovery fixtures keep their session bus running; recovery after destruction of the entire desktop bus is outside F01.
 
-The goa-adapter entry point runs the initial-client tests; the mailbag accounts and
-settings test modules remain planned. The client tests start isolated D-Bus fixtures with service activation directories disabled and connect explicitly to those buses; they never replace the host GOA name or modify real accounts. Each fixture enforces an outer deadline and cleans up its daemon. Use synthetic identities only.
+The goa-adapter entry point runs field, event, recovery, timing and shutdown tests.
+The mailbag accounts tests exercise display/selection rules using synthetic account
+lists without D-Bus or GTK. The settings test module remains planned. The client tests start isolated D-Bus fixtures with service activation directories disabled and connect explicitly to those buses; they never replace the host GOA name or modify real accounts. Each fixture enforces an outer deadline and cleans up its daemon. Use synthetic identities only.
 
 Expected coverage:
 
