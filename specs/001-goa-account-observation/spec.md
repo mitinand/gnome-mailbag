@@ -26,9 +26,9 @@ protocol representation; other feature documents reference these rules.
 
 - **FR-001**: Mailbag MUST use GNOME Online Accounts as the sole account authority. Account creation, removal, Mail enablement and account repair MUST remain in the system interface.
 - **FR-002**: Mailbag MUST recognize Generic IMAP, Google and Microsoft 365 as the providers in this feature's planned mail scope. The separate consumer Microsoft/Outlook.com provider and other providers MUST remain unsupported; a display name or email domain MUST NOT alone determine support.
-- **FR-003**: An account MUST be presented as confirmed available only when its existence, supported provider, enabled Mail and available Mail service are confirmed. A previously known row MUST remain visible during temporary problems with explicitly unconfirmed availability; row presence alone MUST NOT claim availability. Attention requirements MUST remain distinct from disablement and removal. Initially excluded accounts MUST remain hidden; their exclusion reasons are explained when there are no eligible accounts.
+- **FR-003**: An account MUST be presented as confirmed available only when its existence, supported provider, enabled Mail and available Mail service are confirmed. A previously known row MUST remain visible during temporary problems with explicitly unconfirmed availability; row presence alone MUST NOT claim availability. Attention requirements MUST remain distinct from disablement and removal. Initially excluded accounts MUST remain hidden; the empty state offers guidance for adding a mail account or enabling Mail without listing unsupported providers.
 - **FR-004**: Mailbag MUST show enough account identity and provider information to distinguish eligible accounts. Account identity and selection MUST remain stable when display information changes; duplicate display names MUST NOT merge accounts.
-- **FR-005**: Mailbag MUST distinguish discovery in progress, no configured accounts, no eligible mail accounts, an individual account problem, service-wide unavailable/incomplete information, account attention and mail reading not yet implemented. Already listed accounts with temporary problems MUST retain their rows with a problem icon in the message-count position. Discovery or retained row presence MUST NOT imply successful authentication, synchronization or an empty mailbox. An observation failure alone MUST NOT be described as invalid credentials or stopped mail access; the explanation MUST identify the inability to check account state. When no account rows remain and observation establishes an account-empty state, the existing status area MUST explain the applicable reasons and offer an Online Accounts button, both at startup and after confirmed exclusion of the last displayed account. Guidance MUST distinguish adding an account, enabling Mail and other known causes; loading or uncertainty MUST NOT be presented as confirmed absence. F01 MUST NOT introduce a separate Welcome screen, require account setup to access the normal interface or quit, or announce initial synchronization.
+- **FR-005**: Mailbag MUST distinguish discovery in progress, no configured accounts, no eligible mail accounts, an individual account problem, service-wide unavailable/incomplete information, account attention and failure to obtain account details. Already listed accounts with temporary problems MUST retain their rows with a problem icon in the message-count position. Discovery or retained row presence MUST NOT imply successful authentication, synchronization or an empty mailbox. An observation failure alone MUST NOT be described as invalid credentials or stopped mail access; the explanation MUST identify the inability to check account state. When no account rows remain and observation establishes an account-empty state, the existing status area MUST explain the applicable reasons and offer an Online Accounts button, both at startup and after confirmed exclusion of the last displayed account. Guidance MUST distinguish adding an account, enabling Mail and other known causes; loading or uncertainty MUST NOT be presented as confirmed absence. F01 MUST NOT introduce a separate Welcome screen, require account setup to access the normal interface or quit, or announce initial synchronization.
 - **FR-006**: Account addition, confirmed removal, Mail enablement, attention and display-information changes MUST be reflected without restarting Mailbag. The UI MUST apply the latest confirmed account state; intermediate changes superseded before the UI update need not be replayed. If the latest state confirms the account is enabled and present, a brief earlier disablement/removal MUST NOT by itself hide its row, clear selection or produce a toast.
 - **FR-007**: Explicit Mail disablement in the current applied state MUST hide the affected account without waiting for unrelated account information to recover. A newer confirmed enabled state received before the UI update supersedes the earlier disablement under FR-006. Missing Mail service without confirmed disablement MUST be represented as a temporary problem: keep a previously known row marked as unconfirmed rather than treating it as explicitly disabled or removed.
 - **FR-008**: Temporary account-service loss or an untrustworthy account list MUST NOT confirm removal or a healthy empty account set. Mailbag MUST keep rows known during the current run and their selection, marking availability as unconfirmed with problem icons. A cold start without account information MUST show service unavailability without fabricated or persisted account rows. If the account list is trustworthy, incomplete/invalid information for an individual account MUST be isolated and MUST NOT make other verified accounts unavailable.
@@ -44,10 +44,11 @@ protocol representation; other feature documents reference these rules.
 
 ## Implementation boundary
 
-Account rules depend on the data-only `account-model` crate. The GOA adapter
-translates source data; Mailbag owns provider support, display, selection and
-notices. Application wiring selects the adapter. The shared contract introduces
-no source registry, universal trait, persistence or second account authority.
+Account rules use the public account data contract exported by `goa-adapter`.
+Its internal `account_model` module owns the normalized data and validity checks;
+the adapter translates GOA into that format. Mailbag owns provider support,
+display, selection and notices. Application wiring selects the adapter. There is
+no separate model crate, source registry, universal trait or second account authority.
 See [the account contract](contracts/accounts.md).
 
 The 2026-09-13 review authorizes simplifying the existing PR 1 implementation:
@@ -104,3 +105,16 @@ and review boundaries are in [tasks.md](tasks.md).
   must validate continuation with usable credentials, waiting without usable
   credentials, and stopping on confirmed exclusion.
 - Governing principles: [constitution](../../.specify/memory/constitution.md).
+
+## Account UI wording and behavior
+
+The account-empty page uses one title, “No mail accounts”, with guidance to add a
+mail account or enable Mail. It does not list unsupported providers. A failed
+account-list request is a separate error, never an empty-account claim.
+Before selection show “Select an account”; after selection leave the status area
+blank unless a list request failed. Do not show development-stage messages or
+claim that the mailbox is empty. Show the shared request failure once in the
+status area. Row explanations describe only the affected account; an unconfirmed
+row refers to the list check without repeating its detailed error. Offer Retry
+Check for missing account details, and Online Accounts for required attention.
+Settings action implementation remains in the next portion.

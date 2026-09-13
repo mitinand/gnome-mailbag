@@ -146,7 +146,7 @@ fn changed_fields_apply_while_full_check_is_hanging() {
     let account = update.accounts.values().next().unwrap();
     assert_eq!(
         account.provider,
-        Some(account_model::AccountProvider::Google)
+        Some(crate::account_model::AccountProvider::Google)
     );
     assert_eq!(account.needs_attention, Some(true));
     assert_eq!(account.provider_name.as_deref(), Some("Synthetic provider"));

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 use crate::{account_tests::*, accounts::*};
-use account_model::AccountProvider;
+use goa_adapter::AccountProvider;
 
 #[test]
 fn explicit_disable_wins_over_unrelated_errors_and_reappearance_does_not_select() {

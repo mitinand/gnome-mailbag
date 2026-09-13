@@ -4,7 +4,7 @@ All state belongs to the current run; F01 has no database, credentials or mail c
 
 | Data | Owner | Definition |
 |---|---|---|
-| AccountId, AccountDetails, AccountCheckResult, AccountUpdate, AccountCheckError | account-model | [Shared account contract](contracts/accounts.md) |
+| AccountId, AccountDetails, AccountCheckResult, AccountUpdate, AccountCheckError | goa-adapter::account_model | [Shared account contract](contracts/accounts.md) |
 | Parsed account records and D-Bus paths | GOA decoder | [Parsing and acceptance](contracts/observation.md#parsing-and-acceptance) |
 | Current account facts, valid path mappings and active request | GOA worker | [GOA client contract](contracts/observation.md) |
 | Latest shared snapshot and waiting task | GOA exchange | [Delivery and shutdown](contracts/observation.md#delivery-and-shutdown) |

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use account_model::{
+use crate::account_model::{
     AccountCheckError, AccountDetails, AccountId, AccountProvider, ErrorCause, MAX_STRING_BYTES,
     is_valid_icon_name, is_valid_text,
 };

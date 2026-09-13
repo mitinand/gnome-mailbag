@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use account_model::{
+use goa_adapter::{
     AccountCheckError, AccountCheckResult, AccountDetails, AccountField, AccountId,
     AccountProvider, AccountUpdate,
 };

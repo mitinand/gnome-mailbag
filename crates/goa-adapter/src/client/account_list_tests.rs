@@ -10,8 +10,8 @@ mod application_accounts;
 use super::tests::{
     await_check_result, await_published_update, await_with_timeout, start_test_client,
 };
+use crate::account_model::{AccountField, AccountId, ErrorCause};
 use crate::{test_bus::TestBus, test_goa::*};
-use account_model::{AccountField, AccountId, ErrorCause};
 use application_accounts::{
     AccountAvailability, AccountHiddenNotice, AccountList, AccountPage, AccountProblem,
 };

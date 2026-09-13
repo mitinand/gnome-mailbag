@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::*;
+use crate::account_model::AccountField;
 use crate::test_goa::{ACCOUNT_INTERFACE, MAIL_INTERFACE, make_account, make_account_reply};
-use account_model::AccountField;
 
 #[test]
 fn conflicting_paths_cannot_supply_account_facts() {

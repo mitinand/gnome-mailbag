@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 use crate::accounts::*;
-use account_model::{
+use goa_adapter::{
     AccountCheckError, AccountCheckResult, AccountDetails, AccountField, AccountId,
     AccountProvider, AccountUpdate,
 };
@@ -51,7 +51,7 @@ pub(super) fn make_failed_list() -> AccountUpdate {
     AccountUpdate {
         last_check: AccountCheckResult::Failed(AccountCheckError::new(
             "read accounts",
-            account_model::ErrorCause::Timeout,
+            goa_adapter::ErrorCause::Timeout,
         )),
         ..make_checked_list(&[])
     }

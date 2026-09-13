@@ -2,9 +2,8 @@
 
 This guide targets F01 on top of approved UI commit `7a69c49`. Portions 2–4c provide
 the shared account contract, GOA adapter, account display/selection rules and
-headless tests. GTK account integration, Settings and installed-Flatpak acceptance
-remain pending; the existing graphical smoke test verifies only the application
-window and dialogs.
+headless tests. Portion 5 connects account rows, status, retry and exclusion notices to GTK.
+Settings and installed-Flatpak acceptance remain pending.
 
 ## Prerequisites and baseline
 
@@ -23,7 +22,6 @@ Each of the two planned PRs runs `scripts/check.sh`. At the approved baseline it
 ## Automated observation and policy
 
 ```bash
-cargo test --locked -p account-model
 cargo test --locked -p goa-adapter
 cargo test --locked -p mailbag account_
 ```
@@ -45,10 +43,18 @@ rules. Do not substitute live destructive account operations for synthetic tests
 In a GNOME graphical session, run the graphical tests separately from the headless gate:
 
 ```bash
-cargo test --locked -p mailbag -- --ignored --test-threads=1
+cargo test --locked -p mailbag account_ui_transitions -- --ignored --test-threads=1
+cargo test --locked -p mailbag empty_window_and_about -- --ignored --test-threads=1
 ```
 
-The approved UI already has an ignored graphical smoke test. Extend graphical coverage for F01; fixture-based graphical tests must still use private GOA/Settings connections. Confirm the output contains the intended graphical cases and no ignored/skipped case is reported as passed.
+Run these cases in separate processes because GTK initialization belongs to one
+thread. The account UI test applies synthetic snapshots without contacting host
+services; it covers status transitions, stable row objects, selection, focus,
+problem popovers, both retry controls, bounded notices and collapsed navigation.
+The window/dialog smoke test also runs without GOA. These tests do not establish
+physical keyboard/touch input or installed-host behavior. Future service-backed
+graphical fixtures must use private GOA/Settings connections. Confirm each case
+actually ran; ignored/skipped cases are not passing evidence.
 
 Check stable focus/selection under rename and outages; problem explanations by hover, click, touch and Enter/Space; Retry Check and Online Accounts via keyboard/touch; no fabricated mail or sync state. At 360 logical units and through 720sp/1100sp breakpoints, the list status must be visible and actions reachable. Repeat with enlarged text and high contrast. Keep geometry and action placement consistent with approved UI.
 
@@ -60,7 +66,7 @@ flatpak info --user --show-permissions io.github.mitinand.Mailbag
 flatpak run io.github.mitinand.Mailbag
 ```
 
-Expected: the existing Generic IMAP account is discovered, selectable and marked as having mail reading not implemented. The GOA client is compiled into Mailbag; it does not install a separate daemon or require libgoa. Native GIO/GLib comes from the selected runtime; GOA and Settings run on the host. Its discovery does not request credentials. The installed manifest adds only the two named talk permissions; no network/broad-bus/host filesystem permission is introduced.
+Expected: the existing Generic IMAP account is discovered, selectable, with no development-stage message or claim that its mailbox is empty. The GOA client is compiled into Mailbag; it does not install a separate daemon or require libgoa. Native GIO/GLib comes from the selected runtime; GOA and Settings run on the host. Its discovery does not request credentials. The installed manifest adds only the two named talk permissions; no network/broad-bus/host filesystem permission is introduced.
 
 Open Online Accounts from the existing menu. Repeat with Settings closed, already open on another panel, and on another workspace; verify the panel actually appears rather than relying on a successful D-Bus reply. Test the account-empty button using the synthetic graphical fixture. Verify actual host presentation from the empty-state button when the maintainer provides a disposable supported desktop account setup with no eligible accounts; do not remove personal accounts just to reach it.
 
@@ -84,4 +90,4 @@ Synthetic lifecycle UI cases must also cover removing/disabling the last display
 
 Record commit/build, environment and runtime revision, check commands/results, behavioral test counts, installed permissions and actual observed UI outcomes. Separate headless synthetic, graphical synthetic and installed-host evidence. Mark unavailable touch/desktop/test services explicitly unverified. Do not include account identifiers, addresses, screenshots with private data or secrets in public evidence. Do not create a standalone verification diary file.
 
-PR 1 must pass the observation and account-policy matrix while keeping the application buildable. PR 2 must pass the full matrix and installed/accessible UI checks before F01 is called complete. Account hiding does not test or imply deletion of stored mail. GTK account integration and installed-host checks remain pending.
+PR 1 must pass the observation and account-policy matrix while keeping the application buildable. PR 2 must pass the full matrix and installed/accessible UI checks before F01 is called complete. Account hiding does not test or imply deletion of stored mail. Settings integration and installed-host checks remain pending.

@@ -8,8 +8,8 @@ repository = "https://github.com/mitinand/gnome-mailbag"
 publish = false
 
 [dependencies]
-account-model = { path = "../account-model" }
-adw.workspace = true
+adw = { workspace = true, features = ["gtk_v4_10"] }
+goa-adapter = { path = "../goa-adapter" }
 
 [lints]
 workspace = true

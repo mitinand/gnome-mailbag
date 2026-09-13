@@ -7,7 +7,7 @@ use std::{collections::BTreeMap, fmt};
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AccountId(String);
 impl AccountId {
-    pub fn byte_len(&self) -> usize {
+    pub(crate) fn byte_len(&self) -> usize {
         self.0.len()
     }
 }
@@ -150,7 +150,7 @@ impl AccountDetails {
     }
 
     /// Bytes retained in optional display strings; enums contain no source strings.
-    pub fn string_bytes(&self) -> usize {
+    pub(crate) fn string_bytes(&self) -> usize {
         [
             &self.provider_name,
             &self.display_name,
@@ -164,11 +164,11 @@ impl AccountDetails {
     }
 }
 
-pub const MAX_STRING_BYTES: usize = 4096;
-pub fn is_valid_text(text: &str) -> bool {
+pub(crate) const MAX_STRING_BYTES: usize = 4096;
+pub(crate) fn is_valid_text(text: &str) -> bool {
     !text.is_empty() && text.len() <= MAX_STRING_BYTES && !text.chars().any(char::is_control)
 }
-pub fn is_valid_icon_name(name: &str) -> bool {
+pub(crate) fn is_valid_icon_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= MAX_STRING_BYTES
         && name

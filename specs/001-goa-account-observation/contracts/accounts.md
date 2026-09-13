@@ -1,7 +1,9 @@
 # Shared Account Data Contract
 
-`account-model` defines account data and validity checks without GTK/GIO,
-transport, commands or recovery. `goa-adapter` translates GOA; Mailbag applies
+`goa-adapter` exports the account data types from its private `account_model`
+module. The module defines data and validity checks without GTK/GIO, transport,
+commands or recovery. Validation helpers and byte accounting stay crate-private.
+The adapter translates GOA; Mailbag applies
 [the feature requirements](../spec.md#requirements). There is one public account
 format and no generic source trait or registry.
 

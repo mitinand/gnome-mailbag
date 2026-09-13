@@ -1,7 +1,7 @@
 # Implementation Plan: GNOME Mail Accounts
 
 **Feature**: F01 / `001-goa-account-observation` · **Branch**: `codex/goa`
-**Status**: PR 1 review fixes (portion 4c) implemented and checked; awaiting maintainer review. GTK and Settings remain pending.
+**Status**: Account UI integration (portion 5) implemented and checked; awaiting maintainer review. Settings and installed acceptance remain pending.
 
 Implement [the approved requirements](spec.md) in two sequential PRs. Preserve the
 existing layout and use the existing GNOME runtime and build tooling.
@@ -10,14 +10,16 @@ existing layout and use the existing GNOME runtime and build tooling.
 
 | Component | Owns | Contract |
 |---|---|---|
-| account-model | Common account fields, last check result and validity checks | [Accounts](contracts/accounts.md) |
+| goa-adapter::account_model | Common account fields, last check result and validity checks | [Accounts](contracts/accounts.md) |
 | goa-adapter | Stateless decoding, accepted source facts, D-Bus events, checks and delivery | [GOA](contracts/observation.md) |
 | mailbag::accounts | Visible rows, selection, status and exclusion notices | [Account representation](contracts/accounts.md#application-representation) |
 | mailbag::account_ui | Existing GTK row objects, focus, explanations and toasts | [UI](contracts/ui.md) |
 | mailbag::settings | Both entry points for opening Online Accounts | [Settings](contracts/ui.md#settings-launch-protocol) |
 
-Application wiring selects GOA. Account rules depend only on account-model.
-The shared crate contains no transport, registry or generic source interface.
+Application wiring selects GOA. Account rules use the public data types exported by goa-adapter.
+Its private account_model module contains data and checks, with no transport or
+generic source interface. Keeping the types in the adapter avoids a separate
+crate without changing the data format, callback wiring or account rules.
 GOA runs on one dedicated GLib thread; GTK borrows immutable received snapshots.
 The last observation result and pending work have separate meanings. All exact
 protocol, identity, deadline and size decisions live in the linked contracts.

@@ -3,8 +3,7 @@
 
 use adw::{gio, glib, gtk, prelude::*};
 
-// These rules are tested now; remove this allowance when GTK starts using them.
-#[cfg_attr(not(test), allow(dead_code))]
+mod account_ui;
 mod accounts;
 
 #[cfg(test)]
@@ -28,6 +27,12 @@ fn build_window(app: &adw::Application) {
         return;
     }
 
+    let builder = create_window(app);
+    let window: adw::Window = builder.object("window").expect("mailbag.ui: window");
+    start_account_observation(&builder, &window);
+}
+
+fn create_window(app: &adw::Application) -> gtk::Builder {
     let builder = gtk::Builder::from_string(include_str!("../resources/ui/mailbag.ui"));
     let window: adw::Window = builder.object("window").expect("mailbag.ui: window");
     app.add_window(&window);
@@ -89,6 +94,35 @@ fn build_window(app: &adw::Application) {
     });
     app.add_action(&about);
     window.present();
+    builder
+}
+
+fn start_account_observation(builder: &gtk::Builder, window: &adw::Window) {
+    let (adapter, mut updates) = goa_adapter::GoaAdapter::start();
+    let refresh_adapter = adapter.clone();
+    let account_ui =
+        account_ui::AccountUi::new(builder, move || refresh_adapter.refresh_accounts());
+    let weak_ui = std::rc::Rc::downgrade(&account_ui);
+    let consumer = glib::MainContext::default().spawn_local(async move {
+        while let Some(update) = updates.next_account_update().await {
+            let Some(account_ui) = weak_ui.upgrade() else {
+                break;
+            };
+            account_ui.borrow_mut().apply_update(&update);
+            drop(account_ui);
+            glib::timeout_future_with_priority(
+                glib::Priority::DEFAULT_IDLE,
+                std::time::Duration::ZERO,
+            )
+            .await;
+        }
+    });
+    let window_ui = std::cell::RefCell::new(Some(account_ui));
+    window.connect_destroy(move |_| {
+        window_ui.borrow_mut().take();
+        adapter.stop();
+        consumer.abort();
+    });
 }
 
 #[cfg(test)]
@@ -104,7 +138,8 @@ mod tests {
             .flags(gio::ApplicationFlags::NON_UNIQUE)
             .build();
         app.register(None::<&gio::Cancellable>).unwrap();
-        build_window(&app);
+        let builder = create_window(&app);
+        let _account_ui = account_ui::AccountUi::new(&builder, || {});
         let window = app.windows()[0].clone().downcast::<adw::Window>().unwrap();
         assert!(window.content().unwrap().is::<adw::ToastOverlay>());
         assert_eq!(window.default_width(), 1440);

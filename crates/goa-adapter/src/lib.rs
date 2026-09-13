@@ -1,8 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+// Cross-component tests compile Mailbag's account rules against this public API.
+#[cfg(test)]
+extern crate self as goa_adapter;
+
+mod account_model;
 mod accounts;
-use account_model::{AccountCheckError, AccountCheckResult, AccountId, AccountUpdate, ErrorCause};
+pub use account_model::{
+    AccountCheckError, AccountCheckResult, AccountDetails, AccountField, AccountId,
+    AccountProvider, AccountUpdate, ErrorCause,
+};
 
 #[cfg(test)]
 #[path = "../../../tests/support/bus.rs"]

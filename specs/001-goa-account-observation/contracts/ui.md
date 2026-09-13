@@ -33,7 +33,7 @@ to FR-005; widgets do not recalculate eligibility. The shared
 [account contract](accounts.md) defines last_check and check_pending. Use pending
 state at retry controls without changing an established status page, row
 availability, selection or unresolved error. First discovery has no previous result.
-Explain both row-specific and common check errors when they coexist.
+Show the common check error once in the status area; keep account-specific explanations at the row. Follow the wording and action rules in the specification.
 
 ## Notices
 

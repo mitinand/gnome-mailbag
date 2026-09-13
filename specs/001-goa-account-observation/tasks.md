@@ -1,7 +1,7 @@
 # Tasks: GNOME Mail Accounts
 
 **Feature**: F01 / `001-goa-account-observation` · **Branch**: `codex/goa`
-**Status**: Portions 1–4c implemented and checked; portion 4c awaiting maintainer review.
+**Status**: Portions 1–5 implemented and checked; portion 5 awaiting maintainer review.
 
 This is the execution list. [Spec](spec.md) owns behavior; [plan](plan.md) owns
 component boundaries; the [GOA](contracts/observation.md),
@@ -53,8 +53,8 @@ spawning agents or crossing a review boundary.
 - [X] T023 STOP: run required checks and hand over portion 4 for PR 1 review.
 - [X] T045 Update the accepted documents for the source-independent account boundary.
 - [X] T046 Test shared validity and GOA translation without moving provider policy into the adapter.
-- [X] T047 Create account-model; use its one account format in GOA and application rules.
-- [X] T048 Preserve the single worker/receiver design and remove GOA dependencies from account rules.
+- [X] T047 Define one normalized account format for GOA and application rules (now in goa-adapter::account_model after review).
+- [X] T048 Preserve the single worker/receiver design and keep GOA protocol details out of account rules.
 - [X] T049 STOP: run required checks and hand over portion 4b for PR 1 review.
 
 ## Portion 4c: approved review fixes (PR 1)
@@ -70,16 +70,24 @@ spawning agents or crossing a review boundary.
 
 ## Portion 5: accounts in the existing UI (PR 2)
 
-- [ ] T024 [US1] Add graphical account/status/input tests under contracts/ui.md.
-- [ ] T025 [US1] Bind stable account rows by AccountId using the approved forms and selection policy.
-- [ ] T026 [US1] Connect AccountPage to the existing status area; preserve the approved layout.
-- [ ] T027 [US1] Wire the agreed problem button, tooltip and accessible explanation.
-- [ ] T028 [US1] Wire GOA startup/receiver and GTK consumer lifetime; yield between updates.
-- [ ] T029 [US2] Test graphical changes, retained focus/selection, retry and notices.
-- [ ] T030 [US2] Apply AccountList results in place; handle disappearing rows/icons and popovers.
-- [ ] T031 [US2] Connect both retry entry points using the shared pending/result contract.
-- [ ] T032 [US2] Present notices through the bounded toast owner in contracts/ui.md#notices.
-- [ ] T033 [US2] STOP: run headless and graphical checks and hand over portion 5 for PR 2 review.
+- [X] T024 [US1] Add graphical account/status/input tests under contracts/ui.md.
+- [X] T025 [US1] Bind stable account rows by AccountId using the approved forms and selection policy.
+- [X] T026 [US1] Connect AccountPage to the existing status area; preserve the approved layout.
+- [X] T027 [US1] Wire the agreed problem button, tooltip and accessible explanation.
+- [X] T028 [US1] Wire GOA startup/receiver and GTK consumer lifetime; yield between updates.
+- [X] T029 [US2] Test graphical changes, retained focus/selection, retry and notices.
+- [X] T030 [US2] Apply AccountList results in place; handle disappearing rows/icons and popovers.
+- [X] T031 [US2] Connect both retry entry points using the shared pending/result contract.
+- [X] T032 [US2] Present notices through the bounded toast owner in contracts/ui.md#notices.
+- [X] T033 [US2] STOP: run headless and graphical checks and hand over portion 5 for PR 2 review.
+
+Portion 5 validation: `scripts/check.sh` passed (84 unit tests and two
+compile-fail doctests); both graphical cases in quickstart.md passed separately.
+The UI cases use synthetic snapshots and cover status, row identity, selection,
+focus, popovers, retry, notices and collapsed navigation. Physical keyboard/touch,
+enlarged text/high contrast, combined load/shutdown and installed-host acceptance
+remain for portions 6–7. The Online Accounts button targets `app.accounts`; its
+launcher is intentionally still T034–T037. No installed compatibility is claimed.
 
 ## Portion 6: Settings and packaging (PR 2)
 
@@ -118,11 +126,17 @@ corresponding convergence item when its acceptance evidence is available. Preser
 the review pauses at T033, T039 and T044, and complete PR 1 review before starting
 portion 5.
 
-- [ ] T058 CRITICAL: Connect the existing GOA adapter and receiver to the application through T028; verify the path dependency in crates/mailbag/Cargo.toml, startup in crates/mailbag/src/main.rs, GTK yielding and receiver/shutdown lifetime per FR-001, FR-006, FR-012 and plan: GOA application wiring (missing).
-- [ ] T059 Bind AccountList to stable GTK account rows and ID-based selection through T025 and T030 in mailbag::account_ui; verify updates, retained focus and confirmed exclusion per FR-003, FR-004 and FR-006–010 (partial).
-- [ ] T060 Present AccountPage and account problems, and connect accessible status actions and Retry Check through T026, T027 and T031 in mailbag::account_ui per FR-005, FR-008, FR-009, FR-012, FR-014 and FR-015 (partial).
-- [ ] T061 Present AccountHiddenNotice through the bounded toast owner in T032; verify single/group wording and notifications for applied exclusions per FR-017 and SC-008 (partial).
+- [X] T058 CRITICAL: Connect the existing GOA adapter and receiver to the application through T028; verify the path dependency in crates/mailbag/Cargo.toml, startup in crates/mailbag/src/main.rs, GTK yielding and receiver/shutdown lifetime per FR-001, FR-006, FR-012 and plan: GOA application wiring (missing).
+- [X] T059 Bind AccountList to stable GTK account rows and ID-based selection through T025 and T030 in mailbag::account_ui; verify updates, retained focus and confirmed exclusion per FR-003, FR-004 and FR-006–010 (partial).
+- [X] T060 Present AccountPage and account problems, and connect accessible status actions and Retry Check through T026, T027 and T031 in mailbag::account_ui per FR-005, FR-008, FR-009, FR-012, FR-014 and FR-015 (partial).
+- [X] T061 Present AccountHiddenNotice through the bounded toast owner in T032; verify single/group wording and notifications for applied exclusions per FR-017 and SC-008 (partial).
 - [ ] T062 Implement and test the shared Settings launcher and both entry points through T034–T037 in mailbag::settings, including safe failures, coalescing and cancellation per FR-011, SC-004 and plan: Settings launch (missing).
 - [ ] T063 Complete T038 in io.github.mitinand.Mailbag.yml; add the two named D-Bus permissions and verify packaging of the application path dependencies per FR-016, SC-007 and plan: Flatpak integration (partial).
 - [ ] T064 Complete the GTK behavioral/input coverage in T024 and T029 and combined acceptance in T040 and T041; verify focus, status transitions, retry, notices, yielding, shutdown and the 30-account/250-ms target per SC-001, SC-003, SC-005, SC-006, SC-008 and plan: graphical validation (partial).
 - [ ] T065 Run supported installed-Flatpak acceptance and complete prerequisite/evidence documentation through T042 and T043; verify actual GOA discovery, both Settings entry points, input access and installed permissions per SC-004, SC-005, SC-007 and plan: installed acceptance (partial).
+
+## Portion 5 review: consolidate the account contract
+
+- [X] T066 Update the accepted boundary: normalized account data belongs to the public goa-adapter contract; no separate account-model crate.
+- [X] T067 Move data, validation and their tests into goa-adapter::account_model; export public data types and keep validation helpers internal. Remove the workspace member and dependency entries, and update imports without changing behavior.
+- [X] T068 Run scripts/check.sh and the graphical cases, then hand over the current portion for maintainer review under PR 2. No new account service interface is introduced.
