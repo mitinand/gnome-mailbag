@@ -1,9 +1,113 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::tests::{await_check_result, await_with_timeout, start_test_client};
-use crate::{CheckStatus, test_bus::TestBus, test_goa::*};
+use crate::{AccountCheckResult, test_bus::TestBus, test_goa::*};
 use gio::prelude::*;
 use std::collections::BTreeMap;
+
+#[test]
+fn unrelated_account_changes_do_not_invalidate_or_publish() {
+    let shared = std::sync::Arc::new(crate::SharedClientState::default());
+    let mut worker = super::worker_state::GoaWorkerState::new(shared.clone());
+    worker.goa_owner = Some(":1.1".into());
+    worker.begin_check();
+    worker.finish_check(crate::accounts::parse_account_snapshot(
+        &make_account_reply(vec![make_account("one")]),
+    ));
+    shared.lock().update_pending = false;
+    let path = format!("{GOA_ROOT_PATH}/Accounts/account_0");
+    for (interface, property) in [
+        (ACCOUNT_INTERFACE, "CalendarDisabled"),
+        (MAIL_INTERFACE, "ImapHost"),
+    ] {
+        for body in [
+            (
+                interface,
+                BTreeMap::from([(property, true.to_variant())]),
+                Vec::<String>::new(),
+            )
+                .to_variant(),
+            (
+                interface,
+                BTreeMap::<String, glib::Variant>::new(),
+                vec![property],
+            )
+                .to_variant(),
+        ] {
+            worker.apply_account_signal(":1.1", &path, "PropertiesChanged", &body);
+        }
+    }
+    let object_path = glib::variant::ObjectPath::try_from(path).unwrap();
+    let unrelated_interface = "org.gnome.OnlineAccounts.Calendar";
+    worker.apply_account_signal(
+        ":1.1",
+        GOA_ROOT_PATH,
+        "InterfacesAdded",
+        &(
+            &object_path,
+            BTreeMap::from([(
+                unrelated_interface,
+                BTreeMap::<String, glib::Variant>::new(),
+            )]),
+        )
+            .to_variant(),
+    );
+    worker.apply_account_signal(
+        ":1.1",
+        GOA_ROOT_PATH,
+        "InterfacesRemoved",
+        &(&object_path, vec![unrelated_interface]).to_variant(),
+    );
+    assert_eq!(worker.account_change_number, 0);
+    assert!(!worker.recheck_requested);
+    assert!(!shared.lock().update_pending);
+}
+
+#[test]
+fn account_interface_removal_preserves_an_existing_disable_fact() {
+    for removed_interfaces in [
+        vec![ACCOUNT_INTERFACE],
+        vec![ACCOUNT_INTERFACE, MAIL_INTERFACE],
+    ] {
+        let shared = std::sync::Arc::new(crate::SharedClientState::default());
+        let mut worker = super::worker_state::GoaWorkerState::new(shared);
+        worker.goa_owner = Some(":1.1".into());
+        let mut disabled = make_account("one");
+        disabled
+            .get_mut(ACCOUNT_INTERFACE)
+            .unwrap()
+            .insert("MailDisabled".into(), true.to_variant());
+        worker.finish_check(crate::accounts::parse_account_snapshot(
+            &make_account_reply(vec![disabled]),
+        ));
+        let path =
+            glib::variant::ObjectPath::try_from(format!("{GOA_ROOT_PATH}/Accounts/account_0"))
+                .unwrap();
+        worker.apply_account_signal(
+            ":1.1",
+            GOA_ROOT_PATH,
+            "InterfacesRemoved",
+            &(path, removed_interfaces).to_variant(),
+        );
+        worker.begin_check();
+        assert_eq!(
+            worker
+                .account_list
+                .accounts
+                .values()
+                .next()
+                .unwrap()
+                .mail_enabled,
+            Some(false)
+        );
+        assert_eq!(
+            worker.account_list.last_check.error().unwrap().cause,
+            crate::ErrorCause::InvalidList
+        );
+        assert!(worker.account_list.check_pending);
+        assert!(worker.account_paths.is_empty());
+    }
+}
 
 #[test]
 fn changed_fields_apply_while_full_check_is_hanging() {
@@ -42,7 +146,7 @@ fn changed_fields_apply_while_full_check_is_hanging() {
     let account = update.accounts.values().next().unwrap();
     assert_eq!(
         account.provider,
-        Some(account_source::AccountProvider::Google)
+        Some(account_model::AccountProvider::Google)
     );
     assert_eq!(account.needs_attention, Some(true));
     assert_eq!(account.provider_name.as_deref(), Some("Synthetic provider"));
@@ -106,8 +210,8 @@ fn owner_loss_retains_accounts_and_replacement_recovers() {
     let original = await_check_result(&mut updates);
     drop(goa);
     let failed = await_check_result(&mut updates);
-    assert_eq!(failed.status, CheckStatus::Failed);
-    assert!(!failed.membership_confirmed);
+    assert!(matches!(failed.last_check, AccountCheckResult::Failed(_)));
+    assert!(!failed.last_check.is_complete());
     assert_eq!(failed.accounts, original.accounts);
     let _replacement = FakeGoaService::new(
         &bus.address,
@@ -118,12 +222,12 @@ fn owner_loss_retains_accounts_and_replacement_recovers() {
     let recovered = await_with_timeout(async {
         loop {
             let update = updates.next_account_update().await.unwrap();
-            if update.status == CheckStatus::Ready {
+            if update.last_check.is_complete() {
                 break update;
             }
         }
     });
-    assert!(recovered.membership_confirmed);
+    assert!(recovered.last_check.is_complete());
     assert_ne!(
         original.accounts.keys().next(),
         recovered.accounts.keys().next()
@@ -207,13 +311,25 @@ fn account_removal_requires_complete_list_and_interfaces_added_restore_it() {
         "InterfacesRemoved",
         &(path.clone(), vec![ACCOUNT_INTERFACE]).to_variant(),
     );
-    let failed = await_check_result(&mut updates);
+    // The signal invalidates membership before the full check finishes.
+    let failed = await_with_timeout(async {
+        loop {
+            let update = updates.next_account_update().await.unwrap();
+            if update
+                .last_check
+                .error()
+                .is_some_and(|error| error.cause == crate::ErrorCause::AccessDenied)
+            {
+                break update;
+            }
+        }
+    });
     assert_eq!(failed.accounts.len(), 1);
-    assert!(!failed.membership_confirmed);
+    assert!(!failed.last_check.is_complete());
     goa.set_reply(ReplyBehavior::Value(make_account_reply(vec![])));
     client.refresh_accounts();
     let empty = await_check_result(&mut updates);
-    assert!(empty.membership_confirmed);
+    assert!(empty.last_check.is_complete());
     assert!(empty.accounts.is_empty());
     goa.set_reply(ReplyBehavior::Value(make_account_reply(vec![
         make_account("one"),
@@ -229,7 +345,7 @@ fn account_removal_requires_complete_list_and_interfaces_added_restore_it() {
 }
 
 #[test]
-fn damaged_identity_on_known_path_preserves_disable_fact_and_does_not_confirm_absence() {
+fn damaged_identity_does_not_attribute_disable_to_a_previous_account() {
     let bus = TestBus::new();
     let goa = FakeGoaService::new(
         &bus.address,
@@ -248,20 +364,20 @@ fn damaged_identity_on_known_path_preserves_disable_fact_and_does_not_confirm_ab
     ])));
     client.refresh_accounts();
     let failed = await_check_result(&mut updates);
-    assert!(!failed.membership_confirmed);
+    assert!(!failed.last_check.is_complete());
     assert_eq!(
         failed.accounts.keys().next(),
         original.accounts.keys().next()
     );
     assert_eq!(
         failed.accounts.values().next().unwrap().mail_enabled,
-        Some(false)
+        Some(true)
     );
     client.stop();
 }
 
 #[test]
-fn identity_signal_requires_full_check_and_optional_invalidations_clear_display() {
+fn identity_signal_drops_mapping_without_patching_the_previous_account() {
     let bus = TestBus::new();
     let goa = FakeGoaService::new(
         &bus.address,
@@ -274,32 +390,15 @@ fn identity_signal_requires_full_check_and_optional_invalidations_clear_display(
     goa.set_reply(ReplyBehavior::Hang);
     goa.change_properties(
         ACCOUNT_INTERFACE,
-        BTreeMap::from([("Id".into(), "two".to_variant())]),
-        vec![
-            "PresentationIdentity".into(),
-            "ProviderName".into(),
-            "ProviderIcon".into(),
-            "ProviderType".into(),
-            "AttentionNeeded".into(),
-        ],
+        BTreeMap::from([
+            ("Id".into(), "two".to_variant()),
+            ("MailDisabled".into(), true.to_variant()),
+        ]),
+        vec![],
     );
-    let invalidated = await_with_timeout(async {
-        loop {
-            let update = updates.next_account_update().await.unwrap();
-            if update.accounts.values().next().unwrap().provider.is_none() {
-                break update;
-            }
-        }
-    });
-    assert_eq!(
-        invalidated.accounts.keys().next(),
-        original.accounts.keys().next()
-    );
-    assert!(!invalidated.membership_confirmed);
-    let account = invalidated.accounts.values().next().unwrap();
-    assert!(account.display_name.is_none());
-    assert!(account.needs_attention.is_none());
-    assert_eq!(account.invalid_fields().len(), 2);
+    let invalidated = await_with_timeout(updates.next_account_update()).unwrap();
+    assert!(!invalidated.last_check.is_complete());
+    assert_eq!(invalidated.accounts, original.accounts);
     goa.wait_for_calls(2);
     client.stop();
 }
@@ -328,7 +427,7 @@ fn obsolete_owner_reply_and_later_signals_cannot_restore_old_accounts() {
     let recovered = await_with_timeout(async {
         loop {
             let update = updates.next_account_update().await.unwrap();
-            if update.status == CheckStatus::Ready
+            if update.last_check.is_complete()
                 && update.accounts.keys().next() != original.accounts.keys().next()
             {
                 break update;
@@ -374,20 +473,23 @@ fn stalled_activation_times_out_and_manual_retry_permits_fresh_activation() {
     let bus = TestBus::with_activation();
     let (client, mut updates) = start_test_client(&bus);
     let failed = await_check_result(&mut updates);
-    assert_eq!(failed.error.unwrap().cause, crate::ErrorCause::Timeout);
-    assert!(!failed.membership_confirmed);
+    assert_eq!(
+        failed.last_check.error().unwrap().cause,
+        crate::ErrorCause::Timeout
+    );
+    assert!(!failed.last_check.is_complete());
     bus.set_activation_mode("ready");
     client.refresh_accounts();
     let recovered = await_with_timeout(async {
         loop {
             let update = updates.next_account_update().await.unwrap();
-            if update.status == CheckStatus::Ready {
+            if update.last_check.is_complete() {
                 break update;
             }
         }
     });
     assert_eq!(recovered.accounts.len(), 1);
-    assert!(recovered.membership_confirmed);
+    assert!(recovered.last_check.is_complete());
     client.stop();
 }
 
@@ -397,7 +499,11 @@ fn reply_from_timed_out_request_cannot_overwrite_a_later_check() {
     let goa = FakeGoaService::new(&bus.address, vec![ReplyBehavior::Hang]);
     let (client, mut updates) = start_test_client(&bus);
     assert_eq!(
-        await_check_result(&mut updates).error.unwrap().cause,
+        await_check_result(&mut updates)
+            .last_check
+            .error()
+            .unwrap()
+            .cause,
         crate::ErrorCause::Timeout
     );
     goa.set_reply(ReplyBehavior::Value(make_account_reply(vec![
@@ -424,59 +530,33 @@ fn reply_from_timed_out_request_cannot_overwrite_a_later_check() {
 }
 
 #[test]
-fn partial_check_keeps_known_paths_for_immediate_disable() {
-    for missing_interface in [true, false] {
-        let bus = TestBus::new();
-        let goa = FakeGoaService::new(
-            &bus.address,
-            vec![ReplyBehavior::Value(make_account_reply(vec![
-                make_account("one"),
-            ]))],
-        );
-        let (client, mut updates) = start_test_client(&bus);
-        let original = await_check_result(&mut updates);
-        let mut partial_objects =
-            make_object_map(vec![make_account("one"), make_account("damaged")]);
-        let first_path =
-            glib::variant::ObjectPath::try_from(format!("{GOA_ROOT_PATH}/Accounts/account_0"))
-                .unwrap();
-        if missing_interface {
-            partial_objects
-                .get_mut(&first_path)
-                .unwrap()
-                .remove(ACCOUNT_INTERFACE);
-        } else {
-            partial_objects.remove(&first_path);
-        }
-        let second_path =
-            glib::variant::ObjectPath::try_from(format!("{GOA_ROOT_PATH}/Accounts/account_1"))
-                .unwrap();
-        partial_objects
-            .get_mut(&second_path)
-            .unwrap()
-            .get_mut(ACCOUNT_INTERFACE)
-            .unwrap()
-            .remove("Id");
-        goa.set_reply(ReplyBehavior::Value((partial_objects,).to_variant()));
-        client.refresh_accounts();
-        let partial = await_check_result(&mut updates);
-        assert!(!partial.membership_confirmed);
-        assert_eq!(partial.accounts, original.accounts);
-        goa.set_reply(ReplyBehavior::Hang);
-        goa.change_properties(
-            ACCOUNT_INTERFACE,
-            BTreeMap::from([("MailDisabled".into(), true.to_variant())]),
-            vec![],
-        );
-        let disabled = await_with_timeout(async {
-            loop {
-                let update = updates.next_account_update().await.unwrap();
-                if update.accounts.values().next().unwrap().mail_enabled == Some(false) {
-                    break update;
-                }
-            }
-        });
-        assert!(!disabled.membership_confirmed);
-        client.stop();
-    }
+fn incomplete_check_does_not_keep_unverified_signal_mappings() {
+    let bus = TestBus::new();
+    let goa = FakeGoaService::new(
+        &bus.address,
+        vec![ReplyBehavior::Value(make_account_reply(vec![
+            make_account("one"),
+        ]))],
+    );
+    let (client, mut updates) = start_test_client(&bus);
+    let original = await_check_result(&mut updates);
+    let mut missing_id = make_account("damaged");
+    missing_id.get_mut(ACCOUNT_INTERFACE).unwrap().remove("Id");
+    goa.set_reply(ReplyBehavior::Value(make_account_reply(vec![missing_id])));
+    client.refresh_accounts();
+    let partial = await_check_result(&mut updates);
+    assert!(!partial.last_check.is_complete());
+    assert_eq!(partial.accounts, original.accounts);
+    goa.set_reply(ReplyBehavior::AccessDenied);
+    goa.change_properties(
+        ACCOUNT_INTERFACE,
+        BTreeMap::from([("MailDisabled".into(), true.to_variant())]),
+        vec![],
+    );
+    let failed = await_check_result(&mut updates);
+    assert_eq!(
+        failed.accounts, original.accounts,
+        "unverified paths cannot supply disablement facts"
+    );
+    client.stop();
 }

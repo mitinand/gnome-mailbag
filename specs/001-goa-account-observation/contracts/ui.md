@@ -26,40 +26,23 @@ A problem icon has an accessible name describing the account problem, a tooltip 
 
 Use plain text (`use-markup=false`); provider-supplied text is data. Explain duplicate presentation without exposing internal GOA IDs. All application-authored strings are English. High contrast, enlarged text and narrow layouts must retain essential actions.
 
-## Status decision table
+## Status and pending work
 
-Apply these priorities; multiple relevant problems may be explained together rather than masking each other.
+Present AccountPage, row problems and excluded reasons from AccountList according
+to FR-005; widgets do not recalculate eligibility. The shared
+[account contract](accounts.md) defines last_check and check_pending. Use pending
+state at retry controls without changing an established status page, row
+availability, selection or unresolved error. First discovery has no previous result.
+Explain both row-specific and common check errors when they coexist.
 
-| Observation / selection | Required presentation | Actions |
-|---|---|---|
-| First discovery pending | Checking Online Accounts; no invented rows or mail progress | Existing menu; quit always available |
-| No trustworthy initial GOA information | Unable to check Online Accounts, with safe cause | Retry Check in status area; existing menu |
-| Trusted list has zero accounts | No Online Accounts; explain adding a mail account | Online Accounts status button and existing menu |
-| Accounts exist, no eligible rows, no failure to get the full account list | Explain all applicable excluded reasons: disabled Mail, unsupported provider, unavailable Mail/invalid account details | Online Accounts status button; Retry Check if a failed account check can be retried |
-| Eligible rows, no selection | Neutral invitation to select an account; mail reading not yet implemented | Account navigation, existing menu |
-| Selected verified account | Identity and mail reading not yet implemented | Existing menu; no mail actions |
-| Selected account requires attention | GOA requests attention; do not assert a specific mail login failure | Problem explanation and Online Accounts |
-| Known rows with individual/GOA uncertainty | Retain rows and selection with problem icons; account state could not be checked | Problem explanation, Retry Check, Online Accounts |
-| Last displayed row confirmed excluded | Clear selection, appropriate account-empty state, one exclusion toast | Online Accounts button; same status on subsequent confirmed-empty startup |
+## Notices
 
-Retry Check is for account observation. It neither acquires credentials nor initiates synchronization. The same pending state is visible from all retry entry points; repeated activation coalesces. A successful check clears only resolved observation problems, not an unrelated AttentionNeeded state.
-
-Routine ten-second checks do not flash loading, mark confirmed rows unconfirmed
-while pending, or show a success toast. If Retry Check joins a background request,
-show pending state at the retry controls. Background failures use the same GOA
-problem state as other failures; successful checks clear only resolved problems.
-
-When several states coexist, first distinguish a failed account-list check from a confirmed empty result. For a selected row, explain its specific problem and any common GOA problem. Unknown accounts are never invented to populate an error state.
-
-## Notices when accounts are hidden
-
-- Notify when applying the latest confirmed state actually hides a previously displayed account for GOA removal or disabled Mail, regardless of selection.
-- Group rows hidden by the same update into one toast, even if some were removed and others had Mail turned off. Use the same combined wording for both causes. A single notice includes the row's display label, for example, “Work was removed or had Mail turned off in Online Accounts.” A group uses the total count, for example, “3 accounts were removed or had Mail turned off in Online Accounts.” Do not create separate groups by cause. Copy may be polished without changing semantics; use the existing disambiguated row label for identical names and never expose the GOA ID.
-- A disable/re-enable or removal/reappearance confirmed before the UI update does not hide the row, clear selection or generate a toast. Do not replay the intermediate change. If the row was already hidden by an applied update, later reappearance does not undo that completed UI change.
-- One notice per applied displayed→hidden transition; no duplicates on retry/repeated snapshots/removal of an already hidden disabled account. A later redisplay and new exclusion is a new event.
-- No notice for cold-start absence, initially excluded accounts, synthetic owner-loss removals or an invalid/incomplete account list.
-- No claim that remote mail was deleted, no Undo of the system choice, no persistent notification history or desktop notification. A single-account display label exists only for the lifetime of its toast; discard it when dismissed or merged into a count-based group.
-- Bound toast presentation to one active toast plus one pending aggregate; retain no unbounded queue of individual labels. Ordinary Settings error feedback uses the same bounded presentation owner and must not be silently lost behind repeated exclusion events.
+AccountList returns AccountHiddenNotice under [FR-017](../spec.md#requirements).
+Present Single(label) using the existing disambiguated label, or Group(count), with
+one combined removed-or-Mail-disabled wording. Keep one active toast and one pending
+aggregate, releasing single labels when dismissed or aggregated. Settings failures
+share this bounded presentation owner; retain their explanation separately so an
+exclusion burst cannot hide a failed user action. No desktop notification is added.
 
 ## Settings launch protocol
 

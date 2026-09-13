@@ -47,7 +47,7 @@ only builds and exports the package. The build uses GNOME SDK/runtime 50.
 | `crates/mailbag/resources/ui/` | Approved UI forms awaiting application integration |
 | `data/` | App icon, desktop entry and AppStream metadata |
 | `scripts/` | Setup, checks and Flatpak build tools |
-| `docs/spec.md` | Product requirements and architecture |
+| `specs/` | Accepted feature requirements and design |
 
 The root Cargo workspace owns shared dependencies, lints and `Cargo.lock`.
 Other architecture crates will be added with their implementations.

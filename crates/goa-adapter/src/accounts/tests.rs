@@ -2,7 +2,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::*;
 use crate::test_goa::{ACCOUNT_INTERFACE, MAIL_INTERFACE, make_account, make_account_reply};
-use account_source::AccountField;
+use account_model::AccountField;
+
+#[test]
+fn conflicting_paths_cannot_supply_account_facts() {
+    use crate::test_goa::make_object_map;
+    let mut disabled = make_account("one");
+    disabled
+        .get_mut(ACCOUNT_INTERFACE)
+        .unwrap()
+        .insert("MailDisabled".into(), true.to_variant());
+    let first = make_object_map(vec![disabled]).to_variant().child_value(0);
+    let second = make_object_map(vec![make_account("two")])
+        .to_variant()
+        .child_value(0);
+    let duplicated = Variant::array_from_iter_with_type(first.type_(), [&first, &second]);
+    let snapshot = parse_account_snapshot(&Variant::tuple_from_iter([duplicated])).unwrap();
+    assert!(snapshot.list_error.is_some());
+    assert!(
+        snapshot.accounts.is_empty(),
+        "neither conflicting record can identify an account"
+    );
+}
 
 #[test]
 fn required_fields_are_not_defaulted_and_disable_is_independent() {
@@ -19,9 +40,9 @@ fn required_fields_are_not_defaulted_and_disable_is_independent() {
                     account_properties.insert(name.into(), field_value);
                 }
             }
-            let list = parse_account_list(&make_account_reply(vec![account])).unwrap();
-            assert!(list.membership_confirmed);
-            let account_details = list.accounts.values().next().unwrap();
+            let snapshot = parse_account_snapshot(&make_account_reply(vec![account])).unwrap();
+            assert!(snapshot.list_error.is_none());
+            let account_details = snapshot.accounts.values().next().unwrap();
             assert!(!account_details.invalid_fields().is_empty());
             if name != "MailDisabled" {
                 assert_eq!(account_details.mail_enabled, Some(false));
@@ -43,18 +64,19 @@ fn ambiguous_identity_cannot_confirm_absence() {
         if let Some(value) = value {
             account_properties.insert("Id".into(), value);
         }
-        let list =
-            parse_account_list(&make_account_reply(vec![account, make_account("two")])).unwrap();
-        assert!(!list.membership_confirmed);
-        assert_eq!(list.accounts.len(), 1);
+        let snapshot =
+            parse_account_snapshot(&make_account_reply(vec![account, make_account("two")]))
+                .unwrap();
+        assert!(snapshot.list_error.is_some());
+        assert_eq!(snapshot.accounts.len(), 1);
     }
-    let list = parse_account_list(&make_account_reply(vec![
+    let snapshot = parse_account_snapshot(&make_account_reply(vec![
         make_account("same"),
         make_account("same"),
     ]))
     .unwrap();
-    assert!(!list.membership_confirmed);
-    assert!(list.accounts.is_empty());
+    assert!(snapshot.list_error.is_some());
+    assert!(snapshot.accounts.is_empty());
 }
 #[test]
 fn optional_fields_fall_back_without_changing_availability() {
@@ -69,8 +91,8 @@ fn optional_fields_fall_back_without_changing_availability() {
         .get_mut(MAIL_INTERFACE)
         .unwrap()
         .insert("EmailAddress".into(), "".to_variant());
-    let list = parse_account_list(&make_account_reply(vec![account])).unwrap();
-    let account_details = list.accounts.values().next().unwrap();
+    let snapshot = parse_account_snapshot(&make_account_reply(vec![account])).unwrap();
+    let account_details = snapshot.accounts.values().next().unwrap();
     assert!(account_details.invalid_fields().is_empty());
     assert!(account_details.email_address.is_none());
     assert!(account_details.display_name.is_none());
@@ -95,8 +117,8 @@ fn display_limits_and_icons_do_not_authorize_file_access() {
             .get_mut(ACCOUNT_INTERFACE)
             .unwrap()
             .insert("PresentationIdentity".into(), "x".repeat(4097).to_variant());
-        let list = parse_account_list(&make_account_reply(vec![account])).unwrap();
-        let account_details = list.accounts.values().next().unwrap();
+        let snapshot = parse_account_snapshot(&make_account_reply(vec![account])).unwrap();
+        let account_details = snapshot.accounts.values().next().unwrap();
         assert!(account_details.icon_name.is_none());
         assert!(account_details.display_name.is_none());
         assert!(account_details.invalid_fields().is_empty());
@@ -106,9 +128,15 @@ fn display_limits_and_icons_do_not_authorize_file_access() {
         .get_mut(ACCOUNT_INTERFACE)
         .unwrap()
         .insert("ProviderIcon".into(), "goa-account-google".to_variant());
-    let list = parse_account_list(&make_account_reply(vec![account])).unwrap();
+    let snapshot = parse_account_snapshot(&make_account_reply(vec![account])).unwrap();
     assert_eq!(
-        list.accounts.values().next().unwrap().icon_name.as_deref(),
+        snapshot
+            .accounts
+            .values()
+            .next()
+            .unwrap()
+            .icon_name
+            .as_deref(),
         Some("goa-account-google")
     );
 }
@@ -129,8 +157,8 @@ fn mail_presence_disable_and_attention_are_separate() {
                 if !mail_present {
                     account.remove(MAIL_INTERFACE);
                 }
-                let list = parse_account_list(&make_account_reply(vec![account])).unwrap();
-                let account_details = list.accounts.values().next().unwrap();
+                let snapshot = parse_account_snapshot(&make_account_reply(vec![account])).unwrap();
+                let account_details = snapshot.accounts.values().next().unwrap();
                 assert_eq!(account_details.mail_enabled, Some(!mail_disabled));
                 assert_eq!(account_details.needs_attention, Some(attention_needed));
                 assert_eq!(account_details.mail_service_available, mail_present);
@@ -141,21 +169,24 @@ fn mail_presence_disable_and_attention_are_separate() {
 #[test]
 fn empty_protocol_and_record_limits_are_distinct() {
     assert!(
-        parse_account_list(&make_account_reply(vec![]))
+        parse_account_snapshot(&make_account_reply(vec![]))
             .unwrap()
-            .membership_confirmed
+            .list_error
+            .is_none()
     );
     assert_eq!(
-        parse_account_list(&("invalid",).to_variant())
-            .unwrap_err()
+        parse_account_snapshot(&("invalid",).to_variant())
+            .err()
+            .expect("invalid snapshot accepted")
             .cause,
         ErrorCause::InvalidReply
     );
     assert_eq!(
-        parse_account_list(&make_account_reply(
+        parse_account_snapshot(&make_account_reply(
             (0..4097).map(|i| make_account(&i.to_string())).collect()
         ))
-        .unwrap_err()
+        .err()
+        .expect("invalid snapshot accepted")
         .cause,
         ErrorCause::DataLimit
     );
@@ -165,17 +196,18 @@ fn malformed_account_membership_and_duplicate_labels() {
     let mut broken = make_account("one");
     broken.remove(ACCOUNT_INTERFACE);
     assert!(
-        !parse_account_list(&make_account_reply(vec![broken]))
+        parse_account_snapshot(&make_account_reply(vec![broken]))
             .unwrap()
-            .membership_confirmed
+            .list_error
+            .is_some()
     );
-    let list = parse_account_list(&make_account_reply(
+    let snapshot = parse_account_snapshot(&make_account_reply(
         (0..30).map(|i| make_account(&i.to_string())).collect(),
     ))
     .unwrap();
-    assert!(list.membership_confirmed);
-    assert_eq!(list.accounts.len(), 30);
-    let debug = format!("{list:?}");
+    assert!(snapshot.list_error.is_none());
+    assert_eq!(snapshot.accounts.len(), 30);
+    let debug = format!("{:?}", snapshot.accounts);
     assert!(!debug.contains("synthetic@example.invalid"));
     assert!(!debug.contains("Synthetic account"));
 }
@@ -187,10 +219,12 @@ fn oversized_required_field_is_an_account_error_and_total_data_is_bounded() {
         .get_mut(ACCOUNT_INTERFACE)
         .unwrap()
         .insert("ProviderType".into(), "x".repeat(4097).to_variant());
-    let list = parse_account_list(&make_account_reply(vec![broken, make_account("two")])).unwrap();
-    assert!(list.membership_confirmed);
+    let snapshot =
+        parse_account_snapshot(&make_account_reply(vec![broken, make_account("two")])).unwrap();
+    assert!(snapshot.list_error.is_none());
     assert_eq!(
-        list.accounts
+        snapshot
+            .accounts
             .values()
             .filter(|account| !account.invalid_fields().is_empty())
             .count(),
@@ -214,78 +248,32 @@ fn oversized_required_field_is_an_account_error_and_total_data_is_bounded() {
         })
         .collect();
     assert_eq!(
-        parse_account_list(&make_account_reply(accounts))
-            .unwrap_err()
+        parse_account_snapshot(&make_account_reply(accounts))
+            .err()
+            .expect("invalid snapshot accepted")
             .cause,
         ErrorCause::DataLimit
     );
 }
 
 #[test]
-fn partial_snapshot_does_not_restore_ambiguous_or_reassigned_paths() {
-    use crate::test_goa::make_object_map;
-    let initial = parse_account_snapshot(
-        &make_account_reply(vec![make_account("one"), make_account("two")]),
-        &BTreeMap::new(),
-    )
-    .unwrap();
-    let first_path = format!("{GOA_ROOT_PATH}/Accounts/account_0");
-    let second_path = format!("{GOA_ROOT_PATH}/Accounts/account_1");
+fn invalid_identity_records_have_no_signal_mapping() {
     let mut missing_id = make_account("damaged");
     missing_id.get_mut(ACCOUNT_INTERFACE).unwrap().remove("Id");
-
-    let duplicate_ids = parse_account_snapshot(
-        &make_account_reply(vec![make_account("one"), make_account("one")]),
-        &initial.account_paths,
-    )
+    let snapshot = parse_account_snapshot(&make_account_reply(vec![
+        make_account("one"),
+        make_account("one"),
+        missing_id,
+        make_account("valid"),
+    ]))
     .unwrap();
-    assert!(duplicate_ids.account_paths.is_empty());
-
-    let reassigned = parse_account_snapshot(
-        &make_account_reply(vec![
-            make_account("replacement"),
-            make_account("two"),
-            missing_id.clone(),
-        ]),
-        &initial.account_paths,
-    )
-    .unwrap();
-    assert_ne!(
-        reassigned.account_paths[&first_path],
-        initial.account_paths[&first_path]
-    );
-
-    let moved = parse_account_snapshot(
-        &make_account_reply(vec![make_account("two"), missing_id]),
-        &initial.account_paths,
-    )
-    .unwrap();
-    // Missing Id at the old path is attributed to the known account, making
-    // this a duplicate rather than silently retaining two paths for one ID.
-    assert!(moved.account_paths.is_empty());
-
-    let mut missing_interface = make_account("two");
-    missing_interface.remove(ACCOUNT_INTERFACE);
-    let moved_path = parse_account_snapshot(
-        &make_account_reply(vec![make_account("two"), missing_interface]),
-        &initial.account_paths,
-    )
-    .unwrap();
-    assert_eq!(
-        moved_path.account_paths[&first_path],
-        initial.account_paths[&second_path]
-    );
-    assert!(!moved_path.account_paths.contains_key(&second_path));
-
-    let objects = make_object_map(vec![make_account("one")]).to_variant();
-    let entry = objects.child_value(0);
-    let duplicated = Variant::array_from_iter_with_type(entry.type_(), [&entry, &entry]);
-    let reply = Variant::tuple_from_iter([duplicated]);
-    let duplicate_path = parse_account_snapshot(&reply, &initial.account_paths).unwrap();
-    assert!(!duplicate_path.account_paths.contains_key(&first_path));
-    assert_eq!(
-        duplicate_path.account_paths[&second_path],
-        initial.account_paths[&second_path]
+    assert!(snapshot.list_error.is_some());
+    assert_eq!(snapshot.accounts.len(), 1);
+    assert_eq!(snapshot.account_paths.len(), 1);
+    assert!(
+        snapshot
+            .accounts
+            .contains_key(&AccountId::try_from("valid").unwrap())
     );
 }
 
@@ -307,8 +295,8 @@ fn goa_provider_keys_translate_without_deciding_application_support() {
             .get_mut(ACCOUNT_INTERFACE)
             .unwrap()
             .insert("ProviderType".into(), key.to_variant());
-        let list = parse_account_list(&make_account_reply(vec![account])).unwrap();
-        let details = list.accounts.values().next().unwrap();
+        let snapshot = parse_account_snapshot(&make_account_reply(vec![account])).unwrap();
+        let details = snapshot.accounts.values().next().unwrap();
         assert_eq!(details.provider, Some(expected));
         assert!(details.invalid_fields().is_empty());
     }
@@ -322,16 +310,17 @@ fn goa_provider_keys_translate_without_deciding_application_support() {
             .get_mut(ACCOUNT_INTERFACE)
             .unwrap()
             .insert("ProviderType".into(), invalid);
-        let list = parse_account_list(&make_account_reply(vec![account])).unwrap();
-        assert!(list.membership_confirmed);
-        assert_eq!(list.accounts.values().next().unwrap().provider, None);
+        let snapshot = parse_account_snapshot(&make_account_reply(vec![account])).unwrap();
+        assert!(snapshot.list_error.is_none());
+        assert_eq!(snapshot.accounts.values().next().unwrap().provider, None);
     }
 }
 
 #[test]
 fn property_signals_use_the_same_translation_as_full_replies() {
-    let mut list = parse_account_list(&make_account_reply(vec![make_account("one")])).unwrap();
-    let account = list.accounts.values_mut().next().unwrap();
+    let mut snapshot =
+        parse_account_snapshot(&make_account_reply(vec![make_account("one")])).unwrap();
+    let account = snapshot.accounts.values_mut().next().unwrap();
     let changed = BTreeMap::from([
         ("ProviderType", "ms_graph".to_variant()),
         ("MailDisabled", true.to_variant()),

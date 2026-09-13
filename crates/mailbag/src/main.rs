@@ -7,6 +7,13 @@ use adw::{gio, glib, gtk, prelude::*};
 #[cfg_attr(not(test), allow(dead_code))]
 mod accounts;
 
+#[cfg(test)]
+#[path = "accounts/notice_tests.rs"]
+mod account_notice_tests;
+#[cfg(test)]
+#[path = "accounts/tests.rs"]
+mod account_tests;
+
 const APP_ID: &str = "io.github.mitinand.Mailbag";
 
 fn main() -> glib::ExitCode {

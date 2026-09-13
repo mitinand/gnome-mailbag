@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::{
-    AccountCheckError, CheckStatus, ClientHandle, ErrorCause, GoaAdapter, GoaUpdates,
-    SharedClientState,
+    AccountCheckError, ClientHandle, ErrorCause, GoaAdapter, GoaUpdates, SharedClientState,
     accounts::{
         AccountSnapshot, GOA_BUS_NAME, GOA_ROOT_PATH, OBJECT_MANAGER_INTERFACE, map_glib_error,
         parse_account_snapshot,
@@ -89,12 +88,11 @@ fn spawn_worker(target: BusTarget, timing: CheckTiming) -> (GoaAdapter, GoaUpdat
 
 /// Cancel the whole attempt, including connection and activation, at one deadline.
 /// Dropping pending GIO futures cancels their individual operations.
-async fn run_with_deadline<T>(
+async fn await_account_check(
     shared: &SharedClientState,
     timeout: Duration,
-    worker_state: &RefCell<GoaWorkerState>,
-    future: impl Future<Output = Result<T, AccountCheckError>>,
-) -> Option<Result<T, AccountCheckError>> {
+    future: impl Future<Output = Result<AccountSnapshot, AccountCheckError>>,
+) -> Option<Result<AccountSnapshot, AccountCheckError>> {
     let mut future = pin!(future);
     let mut deadline_timer = pin!(glib::timeout_future(timeout));
     poll_fn(|cx| {
@@ -104,13 +102,8 @@ async fn run_with_deadline<T>(
                 return Poll::Ready(None);
             }
             state.command_waker = Some(cx.waker().clone());
-            if state.refresh_requested {
-                state.refresh_requested = false;
-                drop(state);
-                let mut worker_state = worker_state.borrow_mut();
-                worker_state.account_list.status = CheckStatus::Checking;
-                worker_state.publish_accounts();
-            }
+            // Repeated refresh commands join the active request.
+            state.refresh_requested = false;
         }
         if deadline_timer.as_mut().poll(cx).is_ready() {
             return Poll::Ready(Some(Err(AccountCheckError::new(
@@ -295,7 +288,7 @@ async fn fetch_accounts(
             continue;
         }
         let reply = reply.map_err(|error| map_glib_error("GetManagedObjects", error))?;
-        return parse_account_snapshot(&reply, &worker_state.borrow().account_paths);
+        return parse_account_snapshot(&reply);
     }
 }
 
@@ -320,9 +313,8 @@ fn start_health_timer(
                     break;
                 };
                 let mut worker_state = worker_state.borrow_mut();
-                if !worker_state.check_pending {
-                    worker_state.health_check_due = true;
-                    worker_state.wake_worker();
+                if !worker_state.account_list.check_pending {
+                    worker_state.request_recheck();
                 }
             }
         }),
@@ -333,11 +325,10 @@ async fn run_worker(shared: Arc<SharedClientState>, target: BusTarget, timing: C
     let worker_state = Rc::new(RefCell::new(GoaWorkerState::new(shared.clone())));
     let health_timer = start_health_timer(&worker_state, timing.health_interval);
     let mut goa_connection = None;
-    let mut show_checking = true;
     loop {
-        worker_state.borrow_mut().begin_check(show_checking);
+        worker_state.borrow_mut().begin_check();
         let deadline = Instant::now() + timing.attempt_timeout;
-        let result = run_with_deadline(&shared, timing.attempt_timeout, &worker_state, async {
+        let result = await_account_check(&shared, timing.attempt_timeout, async {
             if goa_connection.is_none() {
                 goa_connection = Some(connect_and_subscribe(&target, &worker_state).await?);
             }
@@ -363,19 +354,14 @@ async fn run_worker(shared: Arc<SharedClientState>, target: BusTarget, timing: C
             drop(commands);
             let mut worker_state = worker_state.borrow_mut();
             worker_state.worker_waker = Some(cx.waker().clone());
-            if manual_check || worker_state.owner_appeared {
-                return Poll::Ready(Some(manual_check));
-            }
-            if worker_state.recheck_requested || worker_state.health_check_due {
-                worker_state.health_check_due = false;
-                return Poll::Ready(Some(false));
+            if manual_check || worker_state.recheck_requested {
+                return Poll::Ready(Some(()));
             }
             Poll::Pending
         })
         .await;
-        match next_check {
-            Some(manual_check) => show_checking = manual_check,
-            None => break,
+        if next_check.is_none() {
+            break;
         }
     }
     drop(health_timer);
@@ -397,3 +383,6 @@ mod health_tests;
 
 #[cfg(test)]
 mod concurrency_tests;
+
+#[cfg(test)]
+mod account_list_tests;

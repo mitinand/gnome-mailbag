@@ -8,7 +8,7 @@ repository = "https://github.com/mitinand/gnome-mailbag"
 publish = false
 
 [dependencies]
-account-source = { path = "../account-source" }
+account-model = { path = "../account-model" }
 gio.workspace = true
 glib.workspace = true
 

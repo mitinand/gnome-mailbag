@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::*;
 use crate::{
-    CheckStatus, ErrorCause,
+    AccountCheckResult, ErrorCause,
     test_bus::TestBus,
     test_goa::{self as fixture, FakeGoaService, ReplyBehavior},
 };
@@ -39,13 +39,31 @@ pub(super) fn await_with_timeout<T>(future: impl Future<Output = T>) -> T {
 pub(super) fn start_test_client(bus: &TestBus) -> (crate::GoaAdapter, crate::GoaUpdates) {
     start_for_test(bus.address.clone(), Duration::from_millis(400))
 }
-pub(super) fn await_check_result(updates: &mut crate::GoaUpdates) -> crate::AccountUpdate {
-    loop {
-        let update = await_with_timeout(updates.next_account_update()).expect("client open");
-        if update.status != CheckStatus::Checking {
-            return update;
+pub(super) fn await_check_result(updates: &mut crate::GoaUpdates) -> Arc<crate::AccountUpdate> {
+    await_with_timeout(async {
+        loop {
+            let update = updates.next_account_update().await.expect("client open");
+            if !update.check_pending {
+                break update;
+            }
         }
-    }
+    })
+}
+/// Wait for worker progress without consuming the update intended for AccountList.
+pub(super) fn await_published_update(
+    client: &crate::GoaAdapter,
+    matches: impl Fn(&crate::AccountUpdate) -> bool,
+) {
+    let shared = client.shared_for_test();
+    await_with_timeout(std::future::poll_fn(|cx| {
+        let mut state = shared.lock();
+        if state.latest_update.as_deref().is_some_and(&matches) {
+            Poll::Ready(())
+        } else {
+            state.update_waker = Some(cx.waker().clone());
+            Poll::Pending
+        }
+    }));
 }
 fn assert_only_account_reads(goa: &FakeGoaService) {
     let calls = goa.calls.lock().unwrap();
@@ -72,8 +90,7 @@ fn initial_accounts_arrive_without_default_context_and_use_exact_read_protocol()
     );
     let (client, mut updates) = start_test_client(&bus);
     let update = await_check_result(&mut updates);
-    assert_eq!(update.status, CheckStatus::Ready);
-    assert!(update.membership_confirmed);
+    assert!(update.last_check.is_complete());
     assert_eq!(update.accounts.len(), 1);
     assert_only_account_reads(&goa);
     client.stop();
@@ -84,8 +101,8 @@ fn healthy_empty_and_absent_service_are_different() {
     let bus = TestBus::new();
     let (client, mut updates) = start_test_client(&bus);
     let update = await_check_result(&mut updates);
-    assert_eq!(update.status, CheckStatus::Failed);
-    assert!(!update.membership_confirmed);
+    assert!(matches!(update.last_check, AccountCheckResult::Failed(_)));
+    assert!(!update.last_check.is_complete());
     client.stop();
     let goa = FakeGoaService::new(
         &bus.address,
@@ -93,9 +110,8 @@ fn healthy_empty_and_absent_service_are_different() {
     );
     let (_client, mut updates) = start_test_client(&bus);
     let update = await_check_result(&mut updates);
-    assert!(update.membership_confirmed);
+    assert!(update.last_check.is_complete());
     assert!(update.accounts.is_empty());
-    assert_eq!(update.status, CheckStatus::Ready);
     assert_only_account_reads(&goa);
 }
 #[test]
@@ -105,8 +121,11 @@ fn startup_timeout_covers_initial_acquisition() {
     let started = Instant::now();
     let (_client, mut updates) = start_test_client(&bus);
     let update = await_check_result(&mut updates);
-    assert_eq!(update.error.unwrap().cause, ErrorCause::Timeout);
-    assert!(!update.membership_confirmed);
+    assert_eq!(
+        update.last_check.error().unwrap().cause,
+        ErrorCause::Timeout
+    );
+    assert!(!update.last_check.is_complete());
     assert!(started.elapsed() < Duration::from_secs(2));
 }
 #[test]
@@ -119,10 +138,10 @@ fn wrong_reply_and_remote_error_are_safe_failures() {
         let goa = FakeGoaService::new(&bus.address, vec![response]);
         let (_client, mut updates) = start_test_client(&bus);
         let update = await_check_result(&mut updates);
-        assert_eq!(update.status, CheckStatus::Failed);
-        assert!(!update.membership_confirmed);
+        assert!(matches!(update.last_check, AccountCheckResult::Failed(_)));
+        assert!(!update.last_check.is_complete());
         assert!(!format!("{update:?}").contains("synthetic-private-detail"));
-        let error = update.error.unwrap();
+        let error = update.last_check.error().unwrap();
         assert_eq!(error.cause, cause);
         assert!(error.domain.is_some());
         assert!(error.code.is_some());
@@ -171,7 +190,10 @@ fn repeated_stale_replies_cannot_extend_attempt_deadline() {
     let start = Instant::now();
     let (_client, mut updates) = start_test_client(&bus);
     let update = await_check_result(&mut updates);
-    assert_eq!(update.error.unwrap().cause, ErrorCause::Timeout);
+    assert_eq!(
+        update.last_check.error().unwrap().cause,
+        ErrorCause::Timeout
+    );
     assert!(start.elapsed() < Duration::from_secs(2));
 }
 #[test]
@@ -190,12 +212,11 @@ fn refresh_keeps_old_data_on_failure_and_can_be_repeated() {
     let first = await_check_result(&mut updates);
     client.refresh_accounts();
     let failed = await_check_result(&mut updates);
-    assert_eq!(failed.status, CheckStatus::Failed);
-    assert!(!failed.membership_confirmed);
+    assert!(matches!(failed.last_check, AccountCheckResult::Failed(_)));
+    assert!(!failed.last_check.is_complete());
     assert_eq!(first.accounts, failed.accounts);
-    assert!(failed.update_number > first.update_number);
     client.refresh_accounts();
-    assert_eq!(await_check_result(&mut updates).status, CheckStatus::Ready);
+    assert!(await_check_result(&mut updates).last_check.is_complete());
     assert_only_account_reads(&goa);
 }
 #[test]
@@ -232,7 +253,10 @@ fn repeated_refresh_reuses_pending_check_and_stop_is_idempotent() {
         client.refresh_accounts();
     }
     let update = await_check_result(&mut updates);
-    assert_eq!(update.error.unwrap().cause, ErrorCause::Timeout);
+    assert_eq!(
+        update.last_check.error().unwrap().cause,
+        ErrorCause::Timeout
+    );
     assert_eq!(goa.calls.lock().unwrap().len(), 1);
     client.stop();
     client.stop();
@@ -256,9 +280,12 @@ fn malformed_membership_is_not_reported_as_healthy_empty() {
     );
     let (_client, mut updates) = start_test_client(&bus);
     let update = await_check_result(&mut updates);
-    assert_eq!(update.status, CheckStatus::Failed);
-    assert_eq!(update.error.unwrap().cause, ErrorCause::InvalidList);
-    assert!(!update.membership_confirmed);
+    assert!(matches!(update.last_check, AccountCheckResult::Failed(_)));
+    assert_eq!(
+        update.last_check.error().unwrap().cause,
+        ErrorCause::InvalidList
+    );
+    assert!(!update.last_check.is_complete());
     assert_eq!(update.accounts.len(), 1);
 }
 
@@ -269,7 +296,10 @@ fn unavailable_connection_is_reported_by_the_worker() {
     drop(bus);
     let (_client, mut updates) = start_for_test(address, Duration::from_millis(400));
     let update = await_check_result(&mut updates);
-    assert_eq!(update.status, CheckStatus::Failed);
-    assert_eq!(update.error.unwrap().operation, "connect to session bus");
-    assert!(!update.membership_confirmed);
+    assert!(matches!(update.last_check, AccountCheckResult::Failed(_)));
+    assert_eq!(
+        update.last_check.error().unwrap().operation,
+        "connect to session bus"
+    );
+    assert!(!update.last_check.is_complete());
 }

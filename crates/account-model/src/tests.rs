@@ -68,8 +68,9 @@ fn invalid_display_values_and_icon_paths_are_rejected() {
 #[test]
 fn initial_list_does_not_confirm_absence_or_hide_diagnostics() {
     let update = AccountUpdate::default();
-    assert_eq!(update.status, CheckStatus::Checking);
-    assert!(!update.membership_confirmed);
+    assert_eq!(update.last_check, AccountCheckResult::NotChecked);
+    assert!(!update.check_pending);
+    assert!(!update.last_check.is_complete());
     let error = AccountCheckError {
         operation: "read accounts",
         cause: ErrorCause::AccessDenied,

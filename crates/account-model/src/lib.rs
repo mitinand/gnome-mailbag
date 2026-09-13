@@ -107,32 +107,33 @@ impl fmt::Display for AccountCheckError {
 }
 impl std::error::Error for AccountCheckError {}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CheckStatus {
-    Checking,
-    Ready,
-    Failed,
+/// Result of the last observation, independent of any request now in progress.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum AccountCheckResult {
+    #[default]
+    NotChecked,
+    Complete,
+    Failed(AccountCheckError),
 }
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AccountUpdate {
-    pub update_number: u64,
-    pub accounts: BTreeMap<AccountId, AccountDetails>,
-    /// True when the check confirms which accounts exist, so absent accounts can be removed.
-    pub membership_confirmed: bool,
-    pub status: CheckStatus,
-    pub error: Option<AccountCheckError>,
-}
-impl Default for AccountUpdate {
-    fn default() -> Self {
-        Self {
-            update_number: 0,
-            accounts: BTreeMap::new(),
-            membership_confirmed: false,
-            status: CheckStatus::Checking,
-            error: None,
+impl AccountCheckResult {
+    /// Only a complete observation can confirm absence from the account map.
+    pub fn is_complete(&self) -> bool {
+        matches!(self, Self::Complete)
+    }
+    pub fn error(&self) -> Option<&AccountCheckError> {
+        match self {
+            Self::Failed(error) => Some(error),
+            _ => None,
         }
     }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AccountUpdate {
+    pub accounts: BTreeMap<AccountId, AccountDetails>,
+    pub last_check: AccountCheckResult,
+    /// A request is running; its result has not replaced last_check yet.
+    pub check_pending: bool,
 }
 
 impl AccountDetails {

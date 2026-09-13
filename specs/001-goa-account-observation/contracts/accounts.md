@@ -1,41 +1,64 @@
 # Shared Account Data Contract
 
-`account-source` contains account data and correctness checks only. It has no
-GTK/GIO dependencies, worker, commands, delivery queue or recovery policy.
-`goa-adapter` translates its protocol directly into these types; Mailbag decides
-provider support, rows, selection and notices. Only application wiring knows the
-concrete adapter. No second public GOA account format is retained.
+`account-model` defines account data and validity checks without GTK/GIO,
+transport, commands or recovery. `goa-adapter` translates GOA; Mailbag applies
+[the feature requirements](../spec.md#requirements). There is one public account
+format and no generic source trait or registry.
 
-| Data | Meaning |
+## Data
+
+| Type / field | Meaning |
 |---|---|
-| AccountId | Valid, nonempty source ID; opaque, comparable and redacted in Debug |
+| AccountId | Valid, nonempty opaque source ID; comparable and redacted in Debug |
 | AccountProvider | ImapSmtp, Google, Microsoft365 or Other; recognition, not application support |
 | AccountDetails.provider | Some(provider) for valid information; None for missing/invalid information |
 | mail_enabled | Some(true) enabled, Some(false) explicitly disabled, None unknown |
-| mail_service_available | Whether the source reports a mail service; false never implies disabled |
-| needs_attention | Some(true) needs attention, Some(false) does not, None unknown; no authentication diagnosis |
-| display_name, provider_name, email_address, icon_name | Optional validated display data, never identifiers |
-| AccountUpdate | Current account map, completeness, check status, safe error and update number |
-| AccountCheckError | Common cause plus operation and optional safe source diagnostic domain/code |
+| mail_service_available | Source reports a Mail service; false does not mean disabled |
+| needs_attention | Known attention flag or None; no authentication diagnosis |
+| display_name, provider_name, email_address, icon_name | Optional validated display data |
+| AccountCheckResult | NotChecked, Complete or Failed(AccountCheckError) |
+| AccountUpdate | Account map, last_check: AccountCheckResult, check_pending: bool |
+| AccountCheckError | Common cause, operation and optional safe source diagnostic domain/code |
 
-An AccountUpdate can confirm membership despite errors in individual accounts.
-An incomplete update cannot prove removal. Explicit mail_enabled=false remains
-usable independently of unrelated unknown fields. A successful check does not
-clear needs_attention=true.
+`Complete` confirms membership, including absence, even when an identifiable
+account has invalid fields. `Failed` contains its cause; `NotChecked` has no
+previous observation. Membership and check errors are derived from this one result.
 
-`invalid_fields()` derives unknown required fields from the current values; there
-is no duplicate stored list. Shared validation rejects empty/control-containing
-or oversized identifiers and provides text/icon checks and string-size accounting.
-Adapters validate source field types before using these checks. Optional invalid
-text uses None; empty email addresses are allowed as absent display information.
-The initial update is checking with no confirmed accounts.
+`check_pending` describes the current request independently of `last_check`.
+Starting any check, including a manual retry that joins background work, leaves
+that result and the account facts unchanged. First discovery has NotChecked;
+retry after failure retains Failed(error). Presentation follows FR-005/012:
+pending controls do not make confirmed rows unconfirmed or hide unresolved errors.
+A finished check clears check_pending and supplies its result. There is no public
+publication counter; the adapter rejects obsolete replies before publishing.
 
-Common error categories distinguish unavailable, access denied, timeout, invalid
-reply, invalid account list, data limit and stopped source. Preserve safe diagnostic
-operation/domain/code; application rules branch on categories, never GIO codes.
-The adapter must whitelist diagnostic strings and omit arbitrary remote error text.
-Debug output omits account IDs and all personal display values.
+## Validation and diagnostics
 
-Data values are ordinary Rust types. This contract adds no source trait, registry,
-account creation API or persistence. Existing transport size limits and scheduling
-remain responsibilities of the adapter under its own contract.
+`invalid_fields()` derives unknown provider/mail-enabled/attention fields from
+AccountDetails. Optional invalid text becomes None, including empty email addresses.
+IDs and text reject empty, control-containing or oversized strings. Icons must be
+theme names, not file paths or URIs. Adapters validate source types first.
+The GOA adapter owns total data limits under [its contract](observation.md#limits).
+
+Error causes are unavailable, access denied, timeout, invalid reply, invalid list,
+data limit and stopped source. Account rules use these categories, not GIO codes.
+Adapters whitelist diagnostic strings and omit remote error messages. Debug output
+omits IDs and personal display values. Expected cancellation is not an error.
+
+## Application representation
+
+`AccountList::apply_update(&AccountUpdate)` applies the latest received snapshot
+when updating displayed rows. It borrows source data; the receiver can share an
+immutable snapshot without a deep copy. AccountList owns visible rows, selection,
+last check result, pending controls and excluded reasons.
+
+AccountRow keeps usable display fields during uncertainty. Confirmed missing
+optional data uses fallbacks: Mail account, the supported provider name or Online
+Accounts, and mail-unread-symbolic. Supported fallback names are IMAP / SMTP,
+Google and Microsoft 365. Equal row names use a stable current-run distinguishing
+number without exposing IDs. Selection is by AccountId.
+
+Row retention, eligibility and selection follow FR-003–010; AccountPage represents
+the FR-005 status. AccountHiddenNotice returns Single(display label) or Group(count)
+for an applied exclusion under FR-017. The caller owns its lifetime; AccountList
+keeps no notice history. GTK behavior belongs to [the UI contract](ui.md).

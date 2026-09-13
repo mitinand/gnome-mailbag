@@ -1,9 +1,10 @@
 # F01 Validation Quickstart
 
-This guide targets F01 on top of approved UI commit `7a69c49`. Portions 2–4b provide
-the shared account contract, GOA adapter, account display/selection rules and headless tests. GTK account
-integration, Settings and installed-Flatpak acceptance remain pending; the existing
-graphical smoke test verifies only the application window and dialogs.
+This guide targets F01 on top of approved UI commit `7a69c49`. Portions 2–4c provide
+the shared account contract, GOA adapter, account display/selection rules and
+headless tests. GTK account integration, Settings and installed-Flatpak acceptance
+remain pending; the existing graphical smoke test verifies only the application
+window and dialogs.
 
 ## Prerequisites and baseline
 
@@ -22,10 +23,9 @@ Each of the two planned PRs runs `scripts/check.sh`. At the approved baseline it
 ## Automated observation and policy
 
 ```bash
-cargo test --locked -p account-source
+cargo test --locked -p account-model
 cargo test --locked -p goa-adapter
-cargo test --locked -p mailbag accounts::
-cargo test --locked -p mailbag settings::
+cargo test --locked -p mailbag account_
 ```
 
 GOA restart/recovery fixtures keep their session bus running; recovery after destruction of the entire desktop bus is outside F01.
@@ -34,18 +34,11 @@ The goa-adapter entry point runs field, event, recovery, timing and shutdown tes
 The mailbag accounts tests exercise display/selection rules using synthetic account
 lists without D-Bus or GTK. The settings test module remains planned. The client tests start isolated D-Bus fixtures with service activation directories disabled and connect explicitly to those buses; they never replace the host GOA name or modify real accounts. Each fixture enforces an outer deadline and cleans up its daemon. Use synthetic identities only.
 
-Expected coverage:
-
-1. Healthy empty versus absent GOA; all three provider keys, unsupported providers, duplicate presentation and Microsoft 365 without IMAP.
-2. Exercise every signal/property listed in the GOA contract, including events during initial discovery. Add/remove/disable/re-enable; both orders of MailDisabled/Mail-interface changes; one malformed account isolated from valid accounts. Verify event-driven updates before the next ten-second check.
-3. Owner loss/replacement/recovery, stalled activation/account acquisition, retry activation, same-owner obsolete-client callbacks, malformed membership, late replies, explicit disable amid unrelated errors, retained rows and selected ID.
-4. Pause UI updates, then disable/re-enable or remove/restore an account and confirm its final state: keep the visible row and selection, with no toast. Separately apply a disabled/absent update before restoring the account: expect one toast and cleared selection. Test 10,000 transient changes, resource-limit failure and recovery without an event history.
-5. Retry after failure, repeated retry coalescing and worker progress without GTK/default-context iteration; stop during each pending phase. Verify that quiet state issues only the ten-second health request, with no frequent command/UI polling, and that updates arriving as a consumer starts waiting are not missed.
-6. Notices for selected and unselected hidden rows: single-account display label, one combined count-based toast for mixed removal/Mail-disablement, deduplication, no false/cross-run notices, and a new notice after confirmed reappearance.
-7. Exact Settings action body; absent/denied/hanging/error/malformed reply; shared pending launch and no late UI action after quit.
-8. Hang GOA without changing its process name: the periodic request times out and preserves known rows/selection with a problem indicator. Resume replies after a failed check: periodic checks still recover, with no extra automatic attempts between ticks. Skip busy ticks, coalesce manual checks, and cancel the periodic timer at shutdown. Suppress one fixture change signal, verify that the next list check repairs current state, then emit another real change to verify subscriptions still work. Healthy checks cause no loading flash or success toast.
-
-See [observation contract](contracts/observation.md) for budgets and [UI contract](contracts/ui.md) for expected presentation. Do not substitute live destructive account operations for missing synthetic tests.
+Acceptance criteria are listed once in [spec.md](spec.md#acceptance). Component
+protocol cases belong to [the GOA contract](contracts/observation.md#verification).
+The goa-adapter suite includes adapter-to-AccountList cases for malformed identities,
+pending checks and actual superseded/applied exclusions, in addition to isolated
+rules. Do not substitute live destructive account operations for synthetic tests.
 
 ## Graphical checks
 
@@ -91,4 +84,4 @@ Synthetic lifecycle UI cases must also cover removing/disabling the last display
 
 Record commit/build, environment and runtime revision, check commands/results, behavioral test counts, installed permissions and actual observed UI outcomes. Separate headless synthetic, graphical synthetic and installed-host evidence. Mark unavailable touch/desktop/test services explicitly unverified. Do not include account identifiers, addresses, screenshots with private data or secrets in public evidence. Do not create a standalone verification diary file.
 
-PR 1 must pass the observation and account-policy matrix while keeping the application buildable. PR 2 must pass the full matrix and installed/accessible UI checks before F01 is called complete. Account hiding does not test or imply deletion of stored mail. Real integration checks remain pending at the end of planning.
+PR 1 must pass the observation and account-policy matrix while keeping the application buildable. PR 2 must pass the full matrix and installed/accessible UI checks before F01 is called complete. Account hiding does not test or imply deletion of stored mail. GTK account integration and installed-host checks remain pending.

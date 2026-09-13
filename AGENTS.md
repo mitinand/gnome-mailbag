@@ -59,7 +59,9 @@ approval before changing it.
 ## Documentation
 
 Keep the root `README.md` as the public introduction and getting-started guide.
-Record accepted requirements and design decisions in the relevant specification.
+Specifications under `specs/` are the source of truth for accepted requirements
+and design decisions. Keep them self-contained; do not refer to local documents
+excluded from version control.
 Keep internal developer notes, implementation diaries, validation reports, and
 inspection artifacts outside the repository; do not add duplicate design guides.
 Agent instructions, required legal notices, and operational tooling files remain

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 mod accounts;
-use account_source::{AccountCheckError, AccountId, AccountUpdate, CheckStatus, ErrorCause};
+use account_model::{AccountCheckError, AccountCheckResult, AccountId, AccountUpdate, ErrorCause};
 
 #[cfg(test)]
 #[path = "../../../tests/support/bus.rs"]
@@ -60,15 +60,17 @@ impl SharedClientState {
         }
     }
     fn publish_update(&self, update: AccountUpdate) {
-        let waker = {
+        let update = Arc::new(update);
+        let (previous, waker) = {
             let mut state = self.lock();
             if state.stop_requested {
                 return;
             }
-            state.latest_update = Some(Arc::new(update));
+            let previous = state.latest_update.replace(update);
             state.update_pending = true;
-            state.update_waker.take()
+            (previous, state.update_waker.take())
         };
+        drop(previous);
         if let Some(waker) = waker {
             waker.wake();
         }
@@ -76,31 +78,33 @@ impl SharedClientState {
     fn mark_worker_stopped(&self) {
         // Keep the last account list after delivery so a worker crash can report
         // failure with the known accounts still present. Copy outside the lock.
-        let last_update = self.lock().latest_update.clone();
-        let mut failed_update = last_update
-            .as_deref()
-            .cloned()
-            .unwrap_or_else(AccountUpdate::default);
-        failed_update.update_number += 1;
-        failed_update.status = CheckStatus::Failed;
-        failed_update.membership_confirmed = false;
-        failed_update.error = Some(AccountCheckError::new(
-            "account worker",
-            ErrorCause::SourceStopped,
-        ));
-        let waker = {
+        let (stop_requested, last_update) = {
+            let state = self.lock();
+            (state.stop_requested, state.latest_update.clone())
+        };
+        let failed_update = (!stop_requested).then(|| {
+            let mut update = last_update.as_deref().cloned().unwrap_or_default();
+            update.check_pending = false;
+            update.last_check = AccountCheckResult::Failed(AccountCheckError::new(
+                "account worker",
+                ErrorCause::SourceStopped,
+            ));
+            Arc::new(update)
+        });
+        let (previous, waker) = {
             let mut state = self.lock();
-            if state.stop_requested {
-                state.latest_update = None;
-                state.update_pending = false;
+            let update = if state.stop_requested {
+                None
             } else {
-                state.latest_update = Some(Arc::new(failed_update));
-                state.update_pending = true;
-            }
+                failed_update
+            };
+            let previous = std::mem::replace(&mut state.latest_update, update);
+            state.update_pending = state.latest_update.is_some();
             state.worker_stopped = true;
             state.command_waker = None;
-            state.update_waker.take()
+            (previous, state.update_waker.take())
         };
+        drop(previous);
         if let Some(waker) = waker {
             waker.wake();
         }
@@ -156,7 +160,7 @@ pub struct GoaUpdates {
 }
 impl GoaUpdates {
     /// Wait for the latest list; return None once the worker has stopped.
-    pub async fn next_account_update(&mut self) -> Option<AccountUpdate> {
+    pub async fn next_account_update(&mut self) -> Option<Arc<AccountUpdate>> {
         poll_fn(|cx| {
             let mut state = self.shared.lock();
             if std::mem::take(&mut state.update_pending) {
@@ -169,7 +173,6 @@ impl GoaUpdates {
             }
         })
         .await
-        .map(|update| (*update).clone())
     }
 }
 impl Drop for GoaUpdates {

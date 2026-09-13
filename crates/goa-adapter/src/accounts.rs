@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use account_source::{
-    AccountCheckError, AccountDetails, AccountId, AccountProvider, AccountUpdate, CheckStatus,
-    ErrorCause, MAX_STRING_BYTES, is_valid_icon_name, is_valid_text,
+use account_model::{
+    AccountCheckError, AccountDetails, AccountId, AccountProvider, ErrorCause, MAX_STRING_BYTES,
+    is_valid_icon_name, is_valid_text,
 };
 use gio::prelude::*;
 use glib::Variant;
@@ -60,137 +60,126 @@ fn read_icon_name(dict: &Variant) -> Option<String> {
         .map(ToString::to_string)
 }
 
-#[cfg(test)]
-pub(crate) fn parse_account_list(reply: &Variant) -> Result<AccountUpdate, AccountCheckError> {
-    parse_account_snapshot(reply, &BTreeMap::new()).map(|snapshot| snapshot.account_list)
-}
-
+/// One decoded reply. No previous account state participates in decoding.
 pub(crate) struct AccountSnapshot {
-    pub account_list: AccountUpdate,
-    /// Maps D-Bus object paths to account IDs. An incomplete reply keeps known
-    /// mappings unless the reply shows conflicting paths or IDs.
+    pub accounts: BTreeMap<AccountId, AccountDetails>,
     pub account_paths: BTreeMap<String, AccountId>,
+    pub list_error: Option<AccountCheckError>,
 }
 
 pub(crate) fn parse_account_snapshot(
     reply: &Variant,
-    known_paths: &BTreeMap<String, AccountId>,
 ) -> Result<AccountSnapshot, AccountCheckError> {
     let error = |cause| AccountCheckError::new("GetManagedObjects", cause);
     if reply.type_().as_str() != "(a{oa{sa{sv}}})" {
         return Err(error(ErrorCause::InvalidReply));
     }
-    let mut account_list = AccountUpdate {
-        status: CheckStatus::Ready,
-        membership_confirmed: true,
-        ..AccountUpdate::default()
-    };
-    let mut account_paths = BTreeMap::new();
-    let mut duplicate_paths = BTreeSet::new();
-    let mut duplicate_ids = BTreeSet::new();
+    let mut accounts = BTreeMap::new();
+    let mut account_paths: BTreeMap<String, AccountId> = BTreeMap::new();
     let mut seen_paths = BTreeSet::new();
-    let mut total_string_bytes = 0;
-    let mut account_count = 0;
+    let mut duplicate_ids = BTreeSet::new();
+    let mut duplicate_paths = BTreeSet::new();
+    let mut list_error = None;
+    let mut record_count = 0;
     for entry in reply.child_value(0).iter() {
         let path_value = entry.child_value(0);
         let path = path_value.str().expect("validated object-path type");
         let interfaces = entry.child_value(1);
         let account_properties = lookup_unique_value(&interfaces, ACCOUNT_INTERFACE);
-        if !path.starts_with(&format!("{GOA_ROOT_PATH}/")) {
-            continue;
-        }
-        if account_properties.is_none() && !path.starts_with(&format!("{GOA_ROOT_PATH}/Accounts/"))
+        if !path.starts_with("/org/gnome/OnlineAccounts/")
+            || (account_properties.is_none()
+                && !path.starts_with("/org/gnome/OnlineAccounts/Accounts/"))
         {
             continue;
         }
-        account_count += 1;
-        if account_count > MAX_ACCOUNTS {
+        record_count += 1;
+        if record_count > MAX_ACCOUNTS || path.len() > MAX_STRING_BYTES {
             return Err(error(ErrorCause::DataLimit));
         }
-        if path.len() > MAX_STRING_BYTES {
-            return Err(error(ErrorCause::DataLimit));
-        }
-        total_string_bytes += path.len();
         if !seen_paths.insert(path.to_owned()) {
             duplicate_paths.insert(path.to_owned());
-            account_list.membership_confirmed = false;
+            if let Some(id) = account_paths.get(path) {
+                duplicate_ids.insert(id.clone());
+            }
+            list_error = Some(error(ErrorCause::InvalidList));
         }
         let Some(account_properties) = account_properties else {
-            account_list.membership_confirmed = false;
+            list_error = Some(error(ErrorCause::InvalidList));
             continue;
         };
-        let id = match read_valid_text(&account_properties, "Id")
+        let Some(id) = read_valid_text(&account_properties, "Id")
             .and_then(|id| AccountId::try_from(id.as_str()).ok())
-        {
-            Some(id) => id,
-            None => {
-                account_list.membership_confirmed = false;
-                let Some(id) = known_paths.get(path) else {
-                    continue;
-                };
-                id.clone()
-            }
+        else {
+            list_error = Some(error(ErrorCause::InvalidList));
+            continue;
         };
+        if duplicate_paths.contains(path) || accounts.contains_key(&id) {
+            duplicate_ids.insert(id.clone());
+            list_error = Some(error(ErrorCause::InvalidList));
+        }
         account_paths.insert(path.to_owned(), id.clone());
         let mail_properties = lookup_unique_value(&interfaces, MAIL_INTERFACE);
-        let details = AccountDetails {
-            provider: read_provider(&account_properties, "ProviderType"),
-            mail_enabled: read_mail_enabled(&account_properties, "MailDisabled"),
-            needs_attention: read_bool(&account_properties, "AttentionNeeded"),
-            mail_service_available: mail_properties.is_some(),
-            provider_name: read_valid_text(&account_properties, "ProviderName"),
-            display_name: read_valid_text(&account_properties, "PresentationIdentity"),
-            email_address: mail_properties
-                .as_ref()
-                .and_then(|m| read_valid_text(m, "EmailAddress")),
-            icon_name: read_icon_name(&account_properties),
-        };
-        total_string_bytes += account_string_bytes(&id, &details);
-        if total_string_bytes > MAX_ACCOUNT_STRING_BYTES {
-            return Err(error(ErrorCause::DataLimit));
-        }
-        if account_list.accounts.contains_key(&id) {
-            duplicate_ids.insert(id.clone());
-            account_list.membership_confirmed = false;
-        }
-        account_list.accounts.insert(id, details);
+        accounts.insert(
+            id,
+            AccountDetails {
+                provider: read_provider(&account_properties, "ProviderType"),
+                mail_enabled: read_mail_enabled(&account_properties, "MailDisabled"),
+                needs_attention: read_bool(&account_properties, "AttentionNeeded"),
+                mail_service_available: mail_properties.is_some(),
+                provider_name: read_valid_text(&account_properties, "ProviderName"),
+                display_name: read_valid_text(&account_properties, "PresentationIdentity"),
+                email_address: mail_properties
+                    .as_ref()
+                    .and_then(|m| read_valid_text(m, "EmailAddress")),
+                icon_name: read_icon_name(&account_properties),
+            },
+        );
     }
-    if !account_list.membership_confirmed {
-        // An incomplete reply cannot prove that a known account was removed.
-        // Keep its old path unless that path conflicts or the account has a new path.
-        for (path, id) in known_paths {
-            if !duplicate_paths.contains(path)
-                && !duplicate_ids.contains(id)
-                && !account_list.accounts.contains_key(id)
-            {
-                account_paths
-                    .entry(path.clone())
-                    .or_insert_with(|| id.clone());
-            }
-        }
-    }
-    account_paths.retain(|path, id| !duplicate_ids.contains(id) && !duplicate_paths.contains(path));
-    for id in duplicate_ids {
-        account_list.accounts.remove(&id);
-    }
-    if !account_list.membership_confirmed {
-        account_list.status = CheckStatus::Failed;
-        account_list.error = Some(error(ErrorCause::InvalidList));
-    }
+    account_paths.retain(|path, id| !duplicate_paths.contains(path) && !duplicate_ids.contains(id));
+    accounts.retain(|id, _| !duplicate_ids.contains(id));
+    validate_account_limits(accounts.iter(), &account_paths)?;
     Ok(AccountSnapshot {
-        account_list,
+        accounts,
         account_paths,
+        list_error,
     })
 }
 
+pub(crate) fn has_account_properties(
+    interface: &str,
+    changed: &Variant,
+    invalidated: &Variant,
+) -> bool {
+    let properties: &[&str] = match interface {
+        ACCOUNT_INTERFACE => &[
+            "Id",
+            "ProviderType",
+            "MailDisabled",
+            "AttentionNeeded",
+            "ProviderName",
+            "PresentationIdentity",
+            "ProviderIcon",
+        ],
+        MAIL_INTERFACE => &["EmailAddress"],
+        _ => return false,
+    };
+    changed.iter().any(|entry| {
+        entry
+            .child_value(0)
+            .str()
+            .is_some_and(|name| properties.contains(&name))
+    }) || invalidated
+        .iter()
+        .any(|field| field.str().is_some_and(|name| properties.contains(&name)))
+}
+
 /// Update fields listed in the GOA signal; keep all other account fields unchanged.
-/// Return true if required fields are unknown and need a full account check.
 pub(crate) fn apply_account_properties(
     account: &mut AccountDetails,
     interface: &str,
     changed_properties: &Variant,
     invalidated_properties: &Variant,
-) -> bool {
+) {
     let is_invalidated = |name: &str| {
         invalidated_properties
             .iter()
@@ -224,57 +213,27 @@ pub(crate) fn apply_account_properties(
     } else if interface == MAIL_INTERFACE {
         update_field!("EmailAddress", email_address, read_valid_text);
     }
-    !account.invalid_fields().is_empty()
 }
 
-fn account_string_bytes(id: &AccountId, account: &AccountDetails) -> usize {
-    id.byte_len() + account.string_bytes()
-}
-
-pub(crate) fn fits_account_limits(
-    account_list: &AccountUpdate,
-    account_paths: &BTreeMap<String, AccountId>,
-) -> bool {
-    let string_bytes = account_paths.keys().map(String::len).sum::<usize>()
-        + account_list
-            .accounts
-            .iter()
-            .map(|(id, account)| account_string_bytes(id, account))
-            .sum::<usize>();
-    account_list.accounts.len() <= MAX_ACCOUNTS && string_bytes <= MAX_ACCOUNT_STRING_BYTES
-}
-
-/// Merge the checked accounts while keeping known accounts omitted from the reply.
-/// Leave the current list unchanged if the combined data exceeds the size limits.
-pub(crate) fn merge_account_facts(
-    current_list: &mut AccountUpdate,
-    checked_list: AccountUpdate,
+/// Validate the resulting collection, including an uncommitted replacement record.
+pub(crate) fn validate_account_limits<'a>(
+    accounts: impl Iterator<Item = (&'a AccountId, &'a AccountDetails)>,
     account_paths: &BTreeMap<String, AccountId>,
 ) -> Result<(), AccountCheckError> {
-    let mut account_count = checked_list.accounts.len();
-    let mut string_bytes = account_paths.keys().map(String::len).sum::<usize>()
-        + checked_list
-            .accounts
-            .iter()
-            .map(|(id, account)| account_string_bytes(id, account))
-            .sum::<usize>();
-    for (id, account) in &current_list.accounts {
-        if !checked_list.accounts.contains_key(id) {
-            account_count += 1;
-            string_bytes += account_string_bytes(id, account);
-        }
+    let mut string_bytes = account_paths.keys().map(String::len).sum::<usize>();
+    let mut account_count = 0;
+    for (id, account) in accounts {
+        account_count += 1;
+        string_bytes += id.byte_len() + account.string_bytes();
     }
     if account_count > MAX_ACCOUNTS || string_bytes > MAX_ACCOUNT_STRING_BYTES {
-        return Err(AccountCheckError::new(
-            "retain unconfirmed accounts",
+        Err(AccountCheckError::new(
+            "account data",
             ErrorCause::DataLimit,
-        ));
+        ))
+    } else {
+        Ok(())
     }
-    current_list.accounts.extend(checked_list.accounts);
-    current_list.status = checked_list.status;
-    current_list.error = checked_list.error;
-    current_list.membership_confirmed = false;
-    Ok(())
 }
 
 fn read_provider(dict: &Variant, key: &str) -> Option<AccountProvider> {

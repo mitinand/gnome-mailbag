@@ -16,11 +16,11 @@ fn start_timed_client(bus: &TestBus) -> (GoaAdapter, GoaUpdates) {
         },
     )
 }
-fn await_ready(updates: &mut GoaUpdates) -> AccountUpdate {
+fn await_ready(updates: &mut GoaUpdates) -> Arc<AccountUpdate> {
     await_with_timeout(async {
         loop {
             let update = updates.next_account_update().await.unwrap();
-            if update.status == CheckStatus::Ready {
+            if update.last_check.is_complete() && !update.check_pending {
                 break update;
             }
         }
@@ -97,24 +97,20 @@ fn routine_pending_check_preserves_ready_state_and_manual_refresh_joins_it() {
     await_check_result(&mut updates);
     goa.set_reply(ReplyBehavior::Hang);
     goa.wait_for_calls(2);
-    let shared = client.shared_for_test();
-    assert!(
-        !shared.lock().update_pending,
-        "background work should not publish Checking"
-    );
-    client.refresh_accounts();
     let update = await_with_timeout(updates.next_account_update()).unwrap();
-    assert_eq!(update.status, CheckStatus::Checking);
+    assert!(update.check_pending);
+    assert!(update.last_check.is_complete());
     assert_eq!(update.accounts.len(), 1);
+    client.refresh_accounts();
     assert_eq!(
         goa.calls.lock().unwrap().len(),
         2,
         "manual refresh reuses the held check"
     );
     let reply = make_account_reply(vec![make_account("one")]);
-    goa.set_reply(ReplyBehavior::Value(reply.clone()));
     goa.complete_held_reply(&reply);
-    assert_eq!(await_check_result(&mut updates).status, CheckStatus::Ready);
+    goa.set_reply(ReplyBehavior::Value(reply));
+    assert!(await_check_result(&mut updates).last_check.is_complete());
     client.stop();
 }
 
@@ -138,7 +134,7 @@ fn failed_checks_wait_for_periodic_tick_and_same_owner_recovers() {
     goa.set_reply(ReplyBehavior::Value(make_account_reply(vec![
         make_account("one"),
     ])));
-    assert!(await_ready(&mut updates).membership_confirmed);
+    assert!(await_ready(&mut updates).last_check.is_complete());
     client.stop();
 }
 
@@ -155,7 +151,10 @@ fn busy_ticks_are_skipped_without_queued_catchup() {
     );
     goa.wait_for_calls(1);
     let failure = await_check_result(&mut updates);
-    assert_eq!(failure.error.unwrap().cause, ErrorCause::Timeout);
+    assert_eq!(
+        failure.last_check.error().unwrap().cause,
+        ErrorCause::Timeout
+    );
     goa.wait_for_calls(2);
     thread::sleep(Duration::from_millis(100));
     assert_eq!(goa.calls.lock().unwrap().len(), 2);
@@ -176,13 +175,18 @@ fn delayed_context_dispatch_produces_one_due_tick_without_catchup_burst() {
                 // Pause the worker long enough to miss several timer ticks.
                 thread::sleep(Duration::from_millis(120));
                 glib::timeout_future(Duration::from_millis(1)).await;
-                assert!(worker_state.borrow().health_check_due);
-                worker_state.borrow_mut().health_check_due = false;
+                assert!(worker_state.borrow().recheck_requested);
+                worker_state.borrow_mut().begin_check();
+                worker_state
+                    .borrow_mut()
+                    .finish_check(crate::accounts::parse_account_snapshot(
+                        &make_account_reply(vec![]),
+                    ));
                 glib::timeout_future(Duration::from_millis(10)).await;
-                assert!(!worker_state.borrow().health_check_due);
+                assert!(!worker_state.borrow().recheck_requested);
                 drop(timer);
                 glib::timeout_future(Duration::from_millis(40)).await;
-                assert!(!worker_state.borrow().health_check_due);
+                assert!(!worker_state.borrow().recheck_requested);
             })
         })
         .unwrap();
@@ -202,15 +206,18 @@ fn silent_service_fails_by_health_deadline_and_recovers_without_owner_change() {
     goa.set_reply(ReplyBehavior::Hang);
     let stopped_answering = Instant::now();
     let failure = await_check_result(&mut updates);
-    assert_eq!(failure.error.unwrap().cause, ErrorCause::Timeout);
+    assert_eq!(
+        failure.last_check.error().unwrap().cause,
+        ErrorCause::Timeout
+    );
     assert_eq!(failure.accounts, original.accounts);
-    assert!(!failure.membership_confirmed);
+    assert!(!failure.last_check.is_complete());
     assert!(stopped_answering.elapsed() < Duration::from_millis(500));
     goa.set_reply(ReplyBehavior::Value(make_account_reply(vec![
         make_account("one"),
     ])));
     let recovered = await_ready(&mut updates);
-    assert!(recovered.membership_confirmed);
+    assert!(recovered.last_check.is_complete());
     assert_eq!(recovered.accounts, original.accounts);
     client.stop();
 }

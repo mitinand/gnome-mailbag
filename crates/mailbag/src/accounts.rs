@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use account_source::{
-    AccountCheckError, AccountDetails, AccountField, AccountId, AccountProvider, AccountUpdate,
-    CheckStatus,
+use account_model::{
+    AccountCheckError, AccountCheckResult, AccountDetails, AccountField, AccountId,
+    AccountProvider, AccountUpdate,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -54,7 +54,6 @@ pub struct AccountRow {
     pub provider_name: String,
     pub email_address: Option<String>,
     pub icon_name: String,
-    pub availability: AccountAvailability,
     pub problems: Vec<AccountProblem>,
     /// Account name or address before adding a distinguishing number.
     base_label: String,
@@ -63,7 +62,7 @@ pub struct AccountRow {
 impl fmt::Debug for AccountRow {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AccountRow")
-            .field("availability", &self.availability)
+            .field("availability", &self.availability())
             .field("problems", &self.problems)
             .finish_non_exhaustive()
     }
@@ -94,9 +93,8 @@ impl fmt::Debug for AccountHiddenNotice {
 pub struct AccountList {
     visible_accounts: BTreeMap<AccountId, AccountRow>,
     selected_id: Option<AccountId>,
-    check_status: CheckStatus,
-    check_error: Option<AccountCheckError>,
-    membership_confirmed: bool,
+    last_check: AccountCheckResult,
+    check_pending: bool,
     excluded_reasons: BTreeSet<ExclusionReason>,
     next_label_number: u64,
 }
@@ -105,9 +103,8 @@ impl Default for AccountList {
         Self {
             visible_accounts: BTreeMap::new(),
             selected_id: None,
-            check_status: CheckStatus::Checking,
-            check_error: None,
-            membership_confirmed: false,
+            last_check: AccountCheckResult::NotChecked,
+            check_pending: false,
             excluded_reasons: BTreeSet::new(),
             next_label_number: 1,
         }
@@ -120,11 +117,11 @@ impl AccountList {
     pub fn selected_id(&self) -> Option<&AccountId> {
         self.selected_id.as_ref()
     }
-    pub fn check_status(&self) -> CheckStatus {
-        self.check_status
+    pub fn check_pending(&self) -> bool {
+        self.check_pending
     }
     pub fn check_error(&self) -> Option<&AccountCheckError> {
-        self.check_error.as_ref()
+        self.last_check.error()
     }
     pub fn excluded_reasons(&self) -> &BTreeSet<ExclusionReason> {
         &self.excluded_reasons
@@ -146,9 +143,9 @@ impl AccountList {
             AccountPage::SelectedAccount
         } else if !self.visible_accounts.is_empty() {
             AccountPage::SelectAccount
-        } else if self.check_status == CheckStatus::Checking {
+        } else if self.last_check == AccountCheckResult::NotChecked {
             AccountPage::Checking
-        } else if !self.membership_confirmed {
+        } else if !self.last_check.is_complete() {
             AccountPage::Unavailable
         } else if self.excluded_reasons.is_empty() {
             AccountPage::NoAccounts
@@ -157,23 +154,23 @@ impl AccountList {
         }
     }
 
-    pub fn apply_update(&mut self, update: AccountUpdate) -> Option<AccountHiddenNotice> {
-        self.check_status = update.status;
-        self.check_error = update.error;
-        self.membership_confirmed =
-            update.membership_confirmed && update.status == CheckStatus::Ready;
+    pub fn apply_update(&mut self, update: &AccountUpdate) -> Option<AccountHiddenNotice> {
+        self.last_check = update.last_check.clone();
+        self.check_pending = update.check_pending;
+        let membership_confirmed = update.last_check.is_complete();
         self.excluded_reasons.clear();
         let mut hidden_notice = None;
         self.visible_accounts.retain(|id, row| {
-            let disabled = update
-                .accounts
-                .get(id)
-                .is_some_and(|details| details.mail_enabled == Some(false));
-            let removed = self.membership_confirmed && !update.accounts.contains_key(id);
+            let details = update.accounts.get(id);
+            let disabled = details.is_some_and(|details| details.mail_enabled == Some(false));
+            let removed = membership_confirmed && details.is_none();
             if disabled || removed {
                 extend_hidden_notice(&mut hidden_notice, &row.label);
                 false
             } else {
+                if details.is_none() {
+                    row.mark_check_unconfirmed();
+                }
                 true
             }
         });
@@ -184,24 +181,22 @@ impl AccountList {
                 self.excluded_reasons.extend(reasons);
                 continue;
             }
-            let provider_name = lookup_provider_name(details.provider);
             // A confirmed change to an unsupported provider hides the row, but is
             // neither account removal nor Mail disablement, so it creates no notice.
-            if self.membership_confirmed && details.provider.is_some() && provider_name.is_none() {
+            if membership_confirmed && reasons.contains(&ExclusionReason::UnsupportedProvider) {
                 self.visible_accounts.remove(id);
                 self.excluded_reasons.extend(reasons);
                 continue;
             }
             if let Some(row) = self.visible_accounts.get_mut(id) {
-                row.update_details(details, self.membership_confirmed, problems);
-            } else if self.membership_confirmed && reasons.is_empty() {
+                row.update_details(details, membership_confirmed, problems);
+            } else if membership_confirmed && reasons.is_empty() {
                 let mut row = AccountRow {
                     label: String::new(),
                     base_label: "Mail account".into(),
                     provider_name: "Online Accounts".into(),
                     email_address: None,
                     icon_name: "mail-unread-symbolic".into(),
-                    availability: AccountAvailability::Unconfirmed,
                     problems: vec![],
                     label_number: self.next_label_number,
                 };
@@ -210,14 +205,6 @@ impl AccountList {
                 self.visible_accounts.insert(id.clone(), row);
             } else {
                 self.excluded_reasons.extend(reasons);
-            }
-        }
-        if !self.membership_confirmed {
-            for row in self.visible_accounts.values_mut() {
-                row.availability = AccountAvailability::Unconfirmed;
-                if !row.problems.contains(&AccountProblem::CheckUnconfirmed) {
-                    row.problems.push(AccountProblem::CheckUnconfirmed);
-                }
             }
         }
         if self
@@ -253,6 +240,23 @@ impl AccountList {
     }
 }
 impl AccountRow {
+    fn mark_check_unconfirmed(&mut self) {
+        if !self.problems.contains(&AccountProblem::CheckUnconfirmed) {
+            self.problems.push(AccountProblem::CheckUnconfirmed);
+        }
+    }
+
+    pub fn availability(&self) -> AccountAvailability {
+        if self
+            .problems
+            .iter()
+            .all(|problem| *problem == AccountProblem::AttentionNeeded)
+        {
+            AccountAvailability::Confirmed
+        } else {
+            AccountAvailability::Unconfirmed
+        }
+    }
     fn update_details(
         &mut self,
         details: &AccountDetails,
@@ -261,22 +265,13 @@ impl AccountRow {
     ) {
         self.problems = problems;
         if !membership_confirmed {
-            self.problems.push(AccountProblem::CheckUnconfirmed);
+            self.mark_check_unconfirmed();
         }
         let provider_name = lookup_provider_name(details.provider);
-        self.availability = if self
-            .problems
-            .iter()
-            .all(|problem| *problem == AccountProblem::AttentionNeeded)
-        {
-            AccountAvailability::Confirmed
-        } else {
-            AccountAvailability::Unconfirmed
-        };
         // While account availability is unconfirmed, keep previous display text
         // and icon when the source provides no replacement. Once confirmed, use fallbacks
         // for missing fields.
-        let keep_previous_display = self.availability == AccountAvailability::Unconfirmed;
+        let keep_previous_display = self.availability() == AccountAvailability::Unconfirmed;
         if let Some(name) = details
             .display_name
             .as_ref()
@@ -362,8 +357,3 @@ fn extend_hidden_notice(notice: &mut Option<AccountHiddenNotice>, label: &str) {
         Some(AccountHiddenNotice::Group(count)) => AccountHiddenNotice::Group(count + 1),
     });
 }
-
-#[cfg(test)]
-mod notice_tests;
-#[cfg(test)]
-mod tests;

@@ -1,146 +1,28 @@
 # Feature Specification: Observe GNOME Mail Accounts
 
-**Feature**: F01 / `001-goa-account-observation`
+**Feature**: F01 / `001-goa-account-observation` · **Branch**: `codex/goa`
+**Created**: 2026-09-12 · **Status**: Approved scope; implementation in progress
 
-**Feature Branch**: `codex/goa`
+Mailbag shows mail accounts configured in GNOME Online Accounts, explains their
+availability, follows changes and opens system account settings. It observes
+accounts only; it does not authenticate to mail services or read mail.
 
-**Created**: 2026-09-12
+## User stories
 
-**Status**: Draft for maintainer review
-
-**Input**: Show mail accounts configured in GNOME Online Accounts, explain their availability, reflect changes without restarting Mailbag, and open the system Online Accounts settings. This first feature observes accounts only; it does not authenticate to mail services or read mail.
-
-## Clarifications
-
-### Session 2026-09-12
-
-- Q: If GOA is available but information for one account is incomplete or invalid, should other confirmed accounts remain available? → A: Yes. Isolate the account problem when the account list is trustworthy; uncertainty about the list itself is a service-wide problem.
-- Q: When some accounts are available, should Mailbag explain why others are excluded? → A: An already listed account with a temporary problem keeps its row and selection, with a problem icon in the message-count position and an explanation. Explicit Mail disablement or confirmed removal still hides the row. Initially excluded accounts retain the existing empty-state explanation policy. Cached mail and queued actions are future-feature context, not F01 work.
-- Q: How should a user without a mouse open the explanation at the account problem icon? → A: Clicking, tapping, or activating the focused icon with Enter/Space opens an explanation; hovering also shows a tooltip.
-- Q: If GOA becomes unavailable while Mailbag is running, should already displayed account rows remain with an unavailable indicator? → A: Yes. Keep known rows and selection, mark availability as unconfirmed, and recheck after recovery. A cold start without account information shows service unavailability without inventing or restoring persisted accounts.
-
-- Q: If GOA becomes unreachable in the current session but an authenticated mail connection or previously obtained credentials still work, may new mail-server requests continue? → A: Yes. Continue using the last confirmed account configuration while the connection or credentials permit; reconcile GOA changes after recovery. Confirmed Mail disablement/removal still stops account work. This is a future mail-feature policy, not permission to add credentials or mail-server access to F01.
-
-- Q: Should the GOA problem explanation offer Retry Check in addition to automatic recovery? → A: Yes. Users can explicitly retry account observation; repeated activation does not accumulate parallel requests. This does not request credentials or initiate mail authentication.
-
-- Q: Should a toast explain confirmed GOA removal or Mail disablement for any previously displayed account, even when it is not selected? → A: Yes. Notify once when applying the current confirmed state hides a previously displayed account, group simultaneous exclusions, and do not repeat the message on subsequent checks. Superseded intermediate changes that never hide a row do not generate a toast. F01 covers the current run only; it has no cross-run account history.
-
-- Q: Should F01 include a separate Welcome screen? → A: No. F01 provides an explanation and an Online Accounts button in the existing status area when no account rows are available to show. A dedicated Welcome screen, including initial-synchronization messaging, belongs to a later feature. The normal interface remains accessible and quitting is never gated on account setup.
-
-- Q: Must the UI replay a brief Mail disablement or account removal that was superseded before the next UI update? → A: No. Apply the latest confirmed account state. If the account is already confirmed enabled/present again before the UI update, keep its row and selection without an exclusion toast. Notify only when the applied state actually hides a previously displayed row. Hiding an account and deleting stored mail are separate functions; F01 implements hiding only.
-
-- Q: Should removal and Mail-disablement notices be split by cause? → A: No. Use one combined account-removed-or-Mail-disabled wording for both causes. Name a single hidden account; use the account count for a group, including mixed causes. Keep the display label only while the notice needs it.
-- Q: Does F01 need to recover the whole desktop session bus? → A: No. Recover from GOA disappearing or restarting while the desktop session bus is running. Recovery of the session bus itself is outside F01.
-
-- Q: Should Mailbag also check GOA periodically in case events do not reveal a failure? → A: Yes. Subscribe to account changes, obtain the initial list, and check GOA every ten seconds when no check is already pending. A failed check follows the agreed unavailable-state behavior. Failed checks recover through GOA events, later periodic checks or manual Retry Check; no fast automatic retry sequence is used. Healthy background checks do not flash loading or disturb selection. Recovery of the whole session bus remains outside F01.
-
-## User Scenarios & Testing
-
-### User Story 1 - See available GNOME mail accounts (Priority: P1)
-
-As a GNOME user, I want Mailbag to show the mail accounts I already configured in the system and clearly explain what I can currently do with them.
-
-**Why this priority**: Discovering existing accounts is the first useful integration and establishes that GNOME owns account setup.
-
-**Independent Test**: Start the installed application with known account configurations. Verify the account list and explanations without opening Settings or accessing a mail server.
-
-**Acceptance Scenarios**:
-
-1. **Given** an existing Generic IMAP account with Mail enabled, **When** I open Mailbag, **Then** I can identify and select that account and see that mail reading is not implemented yet.
-2. **Given** enabled Google and Microsoft 365 accounts, **When** I open Mailbag, **Then** they are recognized as planned mail providers, with no claim of working mail access or successful authentication.
-3. **Given** no configured accounts and a healthy account service, **When** account discovery finishes, **Then** Mailbag explains that there are no Online Accounts and offers an Online Accounts button in the existing status area, with no separate Welcome screen or account-setup gate.
-4. **Given** configured accounts but none eligible for mail, **When** discovery finishes, **Then** Mailbag explains that there are no available mail accounts and distinguishes disabled Mail, unsupported providers and temporarily unavailable Mail services as applicable, with an Online Accounts button in the existing status area. Guidance reflects the known cause rather than always asking me to add another account.
-5. **Given** an otherwise eligible account that requires attention, **When** it is displayed or selected, **Then** Mailbag retains its row, shows a problem icon in the message-count position, and explains the attention state with a direction to Online Accounts without treating the account as removed.
-6. **Given** two eligible accounts with the same displayed identity, **When** I select one and its display information changes, **Then** the accounts remain distinct and selection stays on the same account.
-7. **Given** an account has a problem icon, **When** I hover over it, **Then** a tooltip explains the problem; clicking or tapping the icon also opens the explanation.
-8. **Given** I use the keyboard, **When** I focus the problem icon and press Enter or Space, **Then** I can read the same explanation without hovering or selecting another account.
-
----
-
-### User Story 2 - Trust account state as GNOME changes (Priority: P1)
-
-As a user, I want Mailbag to follow changes made in GNOME and distinguish a temporary account-service outage from an actual account removal.
-
-**Why this priority**: Incorrect account state undermines the integration and would create unsafe assumptions for later mail features.
-
-**Independent Test**: Supply controlled account changes and outages while Mailbag is open. Verify visible states and recovery without relying on a mail backend or the Settings launch action.
-
-**Acceptance Scenarios**:
-
-1. **Given** Mailbag is running, **When** I add an eligible account in GNOME, **Then** it appears without restarting Mailbag.
-2. **Given** a displayed account, **When** the current state applied to the UI explicitly confirms Mail is disabled or a complete trustworthy account list confirms removal, **Then** its row is hidden and a toast names the account and explains that it was removed or Mail was turned off in Online Accounts, whether or not the account was selected; if selected, selection clears without selecting another account.
-3. **Given** an excluded account, **When** Mail is enabled again and eligibility is confirmed, **Then** the account becomes available without old observations restoring outdated state.
-4. **Given** accounts were previously observed, **When** the account service disappears or restarts, **Then** Mailbag keeps their rows and the current selection, marks their availability as unconfirmed with problem icons, and explains the service outage without classifying it as account removal.
-5. **Given** an outage or incomplete account information, **When** a complete trustworthy account list becomes available, **Then** Mailbag rechecks each account, clears the problem indicator for accounts whose problems are resolved, and hides confirmed removed or explicitly disabled accounts. An account whose information remains incomplete stays marked as unconfirmed without blocking other verified accounts; incomplete list recovery is never presented as a healthy empty result.
-6. **Given** an already listed account whose Mail has not been explicitly disabled, **When** its Mail service becomes temporarily unavailable, **Then** Mailbag keeps its row and selection with a problem icon, treats its mail availability as unconfirmed, and leaves other confirmed accounts available.
-7. **Given** newer account information has already been accepted, **When** an older result arrives, **Then** it cannot restore a removed account, undo disablement or replace the newer state.
-8. **Given** one account has incomplete information, **When** another account is explicitly disabled, **Then** the disabled account is still hidden; incomplete information cannot authorize its continued availability.
-9. **Given** the account list is trustworthy, **When** one account's information becomes incomplete or invalid, **Then** other confirmed accounts remain available; the affected account keeps its row and selection if already known, with a problem icon instead of a claim of confirmed availability.
-10. **Given** a cold start with no account information, **When** GOA is unavailable, **Then** Mailbag shows service unavailability without creating account rows or restoring account data from previous runs.
-11. **Given** only account observation has failed, **When** Mailbag explains the problem, **Then** it states that account status cannot be checked without claiming that credentials are invalid or mail access has stopped. F01 continues to explain separately that mail reading is not yet implemented.
-12. **Given** account observation has failed, **When** I open the problem icon explanation and activate Retry Check, **Then** Mailbag makes a new bounded observation attempt without requesting credentials or requiring an application restart, and indicates that checking is in progress.
-13. **Given** an observation attempt is already pending, **When** I repeatedly activate Retry Check, **Then** no parallel attempts accumulate; the result updates the explanation, and unresolved problems keep their indicator. A later manual retry remains possible after failure.
-14. **Given** a cold start without account information and GOA is unavailable, **When** I use the account-service status area, **Then** the same Retry Check action is reachable without an account row.
-15. **Given** several previously displayed accounts are confirmed removed or Mail-disabled together, **When** Mailbag hides their rows, **Then** one toast gives the total account count and the combined removed-or-Mail-disabled explanation, including when causes differ; subsequent observations and Retry Check do not repeat that event.
-16. **Given** a GOA outage, incomplete information, or an account excluded before it was ever displayed in this run, **When** Mailbag updates account state, **Then** no account-removal or Mail-disablement toast is shown without a confirmed exclusion of a previously displayed account.
-17. **Given** a previously excluded account was confirmed eligible and displayed again, **When** a new explicit Mail disablement or confirmed removal hides it, **Then** that new exclusion receives one toast; removing an already hidden Mail-disabled account does not produce a duplicate toast.
-18. **Given** a cold start without account history, **When** initial discovery finds an account absent or Mail-disabled, **Then** Mailbag uses its ordinary account-state explanation and does not claim to have detected a change since the previous run.
-19. **Given** the last displayed account is confirmed removed or explicitly Mail-disabled, **When** its row is hidden, **Then** the normal interface stays open with the appropriate account-empty explanation and Online Accounts button, and the exclusion toast follows the existing notification rules. A later launch with the same confirmed empty state offers the same explanation and button without a separate Welcome screen.
-20. **Given** the account-empty explanation is visible, **When** an eligible account is added or Mail is re-enabled and eligibility is confirmed, **Then** the account appears and replaces that empty state without restarting or dismissing an onboarding screen; F01 does not announce initial synchronization.
-21. **Given** a displayed and selected account, **When** Mail is disabled then confirmed enabled again before the next UI update, **Then** its row and selection remain and no exclusion toast appears. The same rule applies when removal is superseded by a confirmed current account list containing the account again.
-22. **Given** an applied account update has already hidden a disabled or removed account and cleared its selection, **When** a later update confirms it available again, **Then** its row returns without restoring the old selection. The earlier toast is not repeated.
-23. **Given** GOA remains present but stops answering, **When** the next ten-second check fails or times out, **Then** known rows and selection remain with a problem indicator; Mailbag does not infer account removal or invalid credentials.
-24. **Given** an account check has failed, **When** GOA starts answering again without restarting, **Then** a later periodic check confirms current account state and clears resolved problems. Failures do not schedule additional automatic attempts.
-25. **Given** current account information is confirmed, **When** a routine background check is pending or finds no changes, **Then** rows and selection remain stable without a loading flash or success toast. A pending check is reused by Retry Check; no parallel attempts accumulate. If an account-change event was missed, a successful list check applies the actual current state using the same display and notice rules.
-
----
-
-### User Story 3 - Open system account management (Priority: P2)
-
-As a user, I want to open GNOME Online Accounts from Mailbag to add an account, enable Mail or resolve an account problem in the system interface.
-
-**Why this priority**: It provides the next action for missing or unavailable accounts while preserving GNOME as the account authority.
-
-**Independent Test**: Activate both the existing Online Accounts menu action and the account-empty status button with system Settings available and unavailable. Account discovery and mail access are not prerequisites for this test.
-
-**Acceptance Scenarios**:
-
-1. **Given** the installed application is open, **When** I activate Online Accounts from its existing menu or the account-empty status button, **Then** the system Online Accounts panel opens without an in-app setup or credential form.
-2. **Given** Settings cannot be opened or does not respond, **When** I activate the action, **Then** Mailbag ends the pending attempt with a visible failure explanation and remains usable.
-3. **Given** opening Settings is pending, **When** I activate the action repeatedly or quit Mailbag, **Then** repeated activation does not accumulate launch attempts and quitting does not wait indefinitely.
-4. **Given** no available accounts or an account needing attention, **When** I navigate by keyboard or use the narrow layout, **Then** the existing Online Accounts menu action and, when shown, the account-empty status button remain reachable without hover or right-click. The button also works by touch.
-
-### Edge Cases
-
-- The account service is absent at startup, restarts repeatedly, or returns an incomplete account list: show service-wide uncertainty, never infer a confirmed empty account set. Retain rows already known in this run with problem indicators; cold startup without known accounts has no rows to retain.
-- A startup check is pending or GOA is unavailable: do not substitute an account-empty setup invitation for loading or uncertainty. The account-empty status follows trusted observation, not a first-run flag; no account setup is required to navigate or quit.
-- Mail enablement and Mail-service availability change in either order: apply their distinct meanings and do not invent explicit disablement.
-- Unsupported providers coexist with eligible accounts: do not hide eligible accounts or expose unsupported accounts as available mail accounts.
-- Several exclusion reasons coexist: explain all applicable reasons when there are no eligible accounts. Initially excluded accounts remain hidden when other eligible accounts exist; temporary problems with already listed accounts are explained through their problem icons.
-- Account information is malformed, mandatory identity is missing, or records claim the same account identity: do not fabricate identity, merge accounts or infer removal from invalid details. Isolate affected accounts when the account list and unaffected identities remain trustworthy; otherwise mark service-wide uncertainty. A never-confirmed account is not added as available, while a previously known affected row remains marked as unconfirmed.
-- An account's optional presentation information cannot be displayed: use a neutral presentation without changing identity or availability.
-- Account changes arrive faster than the UI updates: apply the latest confirmed state without replaying superseded intermediate changes. A quick disable/re-enable or removal/reappearance can leave the row and selection unchanged with no toast. If the actual service data is lost or cannot be trusted, keep known rows and selection marked as unconfirmed until a new check succeeds; combining valid updates is not itself a service failure.
-- Selected account is confirmed removed or explicitly Mail-disabled: hide its row and return to a neutral state rather than selecting another account automatically.
-- Account service becomes unavailable while an account is selected: preserve its row and selection with an unconfirmed indicator. On recovery, clear that indicator only after resolving the problem; confirmed removal or explicit Mail disablement hides the row and clears its selection.
-- An account check has failed: the failure remains visible, ten-second checks continue, and manual Retry Check can start a fresh bounded attempt. Manual and automatic attempts must not compete or accumulate. Observation success must not clear an unrelated attention/authentication problem.
-- Confirmed exclusions affect unselected accounts too: explain them once, group simultaneous exclusions, and never infer removal from service failure. Repeat observations, Retry Check and removal of an already hidden Mail-disabled account do not repeat the same exclusion toast. A new exclusion after confirmed reappearance is a new event.
-- Application closes during discovery, recovery or Settings launch: no late result may reopen UI or keep the application waiting indefinitely.
-
-## Approved implementation boundary
-
-Account rules depend on a source-independent account data contract, not GOA types
-or property names. The small shared crate contains data and validity checks only.
-The GOA adapter translates its protocol into that one public format; Mailbag owns
-provider support, display, selection and notices. Preserve safe diagnostic causes
-without requiring account rules to interpret GIO codes. This does not add another
-account authority, source registry or generic runtime; GOA remains the F01 source.
-See [the account contract](contracts/accounts.md).
+1. **US1 — See available accounts (P1).** Start with existing GNOME accounts,
+   identify and select them, and understand empty states and account problems.
+   Verify this independently of Settings and mail access (FR-001–005, FR-014–015).
+2. **US2 — Trust account changes (P1).** Add, disable, remove or rename an account,
+   interrupt GOA and retry observation. Verify retention, recovery and notices
+   against the same displayed list (FR-006–010, FR-012, FR-017).
+3. **US3 — Open system account management (P2).** Open Online Accounts from the
+   menu and empty-state button; handle unavailable or unresponsive Settings.
+   Verify both entry points independently of GOA (FR-011, FR-015–016).
 
 ## Requirements
 
-### Functional Requirements
-
-Display and hide decisions below use the latest confirmed state applied by the UI, as defined in FR-006. Superseded intermediate changes are not replayed.
+These requirements own the user-visible behavior. Contracts describe its data and
+protocol representation; other feature documents reference these rules.
 
 - **FR-001**: Mailbag MUST use GNOME Online Accounts as the sole account authority. Account creation, removal, Mail enablement and account repair MUST remain in the system interface.
 - **FR-002**: Mailbag MUST recognize Generic IMAP, Google and Microsoft 365 as the providers in this feature's planned mail scope. The separate consumer Microsoft/Outlook.com provider and other providers MUST remain unsupported; a display name or email domain MUST NOT alone determine support.
@@ -153,53 +35,72 @@ Display and hide decisions below use the latest confirmed state applied by the U
 - **FR-009**: After recovery, a complete trustworthy current account list is required to confirm absence; valid current information for each account is required to renew its confirmed availability. An invalid account MUST NOT prevent unaffected accounts from recovering when the list itself is trustworthy. Resolved problems MUST clear their indicators; confirmed removed or explicitly disabled accounts MUST be hidden. Older results and loss of observation continuity MUST NOT restore outdated eligibility.
 - **FR-010**: When applying the current confirmed state excludes the selected account, Mailbag MUST hide its row, clear selection and show a neutral state without automatically choosing another account. Temporary account problems or service-wide uncertainty MUST preserve existing rows and selection with explicit problem indicators; they MUST NOT be treated as confirmed exclusion.
 - **FR-011**: The existing Online Accounts menu action and the account-empty status button MUST open the same system Online Accounts panel. Failed or unresponsive launches MUST produce a visible error; repeated pending activations MUST NOT accumulate launch attempts.
-- **FR-012**: Users MUST remain able to navigate and quit while discovery, recovery or Settings launch is pending or failing. Individual attempts MUST be bounded; failure or overload MUST be explicit, and later recovery MUST accept only confirmed current state. In addition to automatic recovery, the GOA problem explanation MUST offer Retry Check; when no account rows are known, the account-service status area MUST offer the same action. Manual retry MUST initiate or reuse one bounded observation attempt, show pending state, and leave failure visible if unresolved. Repeated activation MUST NOT accumulate parallel attempts. Manual retry MUST remain possible after failure and MUST NOT request credentials or initiate mail authentication. In addition to listening for changes and checking at startup, Mailbag MUST check GOA every ten seconds when idle, skip ticks while a check is pending, and continue periodic checks after failure without scheduling fast automatic retries. Routine background checks MUST NOT mark confirmed accounts unavailable merely because a check is pending, flash loading or show a success toast. Their failures MUST follow FR-008; successful checks MUST apply current account data and clear only resolved problems.
+- **FR-012**: Users MUST remain able to navigate and quit while discovery, recovery or Settings launch is pending or failing. Individual attempts MUST be bounded; failure or overload MUST be explicit, and later recovery MUST accept only confirmed current state. In addition to automatic recovery, the GOA problem explanation MUST offer Retry Check; when no account rows are known, the account-service status area MUST offer the same action. Manual retry MUST initiate or reuse one bounded observation attempt, show pending state, and leave failure visible if unresolved. Repeated activation MUST NOT accumulate parallel attempts. Manual retry MUST remain possible after failure and MUST NOT request credentials or initiate mail authentication. In addition to listening for changes and checking at startup, Mailbag MUST check GOA every ten seconds when idle, skip ticks while a check is pending, and continue periodic checks after failure without scheduling fast automatic retries. Starting or joining any check MUST preserve the last observation result and account availability until new evidence arrives. A pending retry MUST keep its unresolved error visible. Routine background checks MUST NOT flash loading or show a success toast. Their failures MUST follow FR-008; successful checks MUST apply current account data and clear only resolved problems.
 - **FR-013**: F01 MUST NOT request or retain passwords/tokens, attempt mail authentication, connect to mail servers, fetch messages, change remote mail, or persist application account/mail data. Diagnostics and fixtures MUST NOT expose personal account details, credentials or mail.
 - **FR-014**: Integration MUST preserve the approved application layout, dimensions, spacing, adaptive behavior and action/menu placement, with the agreed account problem indicator occupying the message-count position. Account selection, state explanations and the agreed Retry Check action MUST use the existing account and status areas and the indicator explanation. The Online Accounts button MUST occupy the existing account-empty status area while preserving the menu action and surrounding layout; unrealized mail actions MUST remain unavailable.
 - **FR-015**: Account navigation, explanations and Online Accounts action MUST be usable by keyboard and at the existing narrow width, with enlarged text and high contrast. Hovering over a problem icon MUST show a tooltip; clicking, tapping, or pressing Enter/Space on the focused icon MUST open the same problem explanation. The icon and Retry Check action MUST be keyboard-accessible; Retry Check MUST also be usable by touch. Essential actions MUST NOT depend on hover/right-click; application-authored text MUST be English.
 - **FR-016**: The feature MUST operate in the installed application with only the host access required for account observation and opening Settings. Broad filesystem/bus access, host-command escape and direct keyring access MUST NOT be introduced as integration shortcuts.
-
 - **FR-017**: When confirmed GOA removal or explicit Mail disablement hides an account previously displayed in the current run, Mailbag MUST show an informational toast regardless of selection. The message MUST use one combined explanation that the account was removed or Mail was turned off in Online Accounts. A single-account notice MUST include its display label; a group MUST use the account count without splitting notices by cause. The message MUST NOT claim that remote mail was deleted or offer an in-app Undo of the system decision. Simultaneous exclusions MUST be grouped into one toast even when some accounts were removed and others had Mail turned off. Each applied transition from displayed to hidden MUST be notified once; superseded intermediate changes that never hide a row MUST NOT generate a toast; subsequent observations, manual retries and further changes to an already excluded account MUST NOT repeat it. A later confirmed reappearance followed by a new exclusion is a new event. Service outages, incomplete information and initially excluded accounts MUST NOT generate this toast. F01 MUST NOT persist account history or notification receipts to detect or replay exclusions across application runs.
 
-### Key Entities
+## Implementation boundary
 
-- **GNOME account**: A system-owned identity, provider, presentation identity, address and service availability. Mailbag observes it; users manage it in GNOME.
-- **GOA account list and check status**: The latest accepted account information, whether the list can confirm which accounts exist, individual account problems, and any pending or failed check.
-- **Account availability**: The derived eligibility, confirmed/unconfirmed availability and attention state. Visible row presence is separate from confirmed availability; provider recognition is separate from implemented mail access. A problem indicator conveys temporary trouble without implying account removal, invalid credentials or stopped mail access. GOA observation health is distinct from the future mail connection/authentication state.
-- **Account selection**: The identity the user chose, independent of row position or display name. Temporary problems preserve it; confirmed exclusion clears it.
-- **Account hidden notice**: A message produced when applying the current confirmed state hides a previously displayed account because it is absent from GOA or Mail is disabled. For one account it briefly retains the display label; for a group it stores the count, with the same combined explanation for both causes. It describes that UI change; it does not require a history of intermediate GOA changes or account data from earlier runs.
+Account rules depend on the data-only `account-model` crate. The GOA adapter
+translates source data; Mailbag owns provider support, display, selection and
+notices. Application wiring selects the adapter. The shared contract introduces
+no source registry, universal trait, persistence or second account authority.
+See [the account contract](contracts/accounts.md).
 
-## Success Criteria
+The 2026-09-13 review authorizes simplifying the existing PR 1 implementation:
+separate pending work from the last result, discard malformed/ambiguous identity
+records without reconstructing IDs from old paths, ignore unrelated service
+changes, centralize data limits, share snapshots and remove the publication
+counter. A malformed record cannot supply a disablement fact for a guessed account.
+Unaffected identifiable records can still supply facts; an incomplete list cannot
+confirm absence. [The GOA contract](contracts/observation.md) defines this boundary.
 
-### Measurable Outcomes
+## Acceptance
 
-- **SC-001**: In the account-discovery acceptance matrix, every eligible account appears exactly once and no disabled or unsupported account is presented as available, including a 30-account case with duplicate display names.
-- **SC-002**: All account-change and recovery scenarios complete without restarting Mailbag. A single-account error leaves unaffected verified accounts available; service-wide outages preserve known rows and selection as unconfirmed. Recovery clears resolved indicators and hides confirmed removed or explicitly disabled accounts. No incomplete information is reported as confirmed removal and no late result restores an excluded account.
-- **SC-003**: For every state listed in FR-005, users receive a distinct explanation; none claims authenticated access, initial synchronization in progress, synchronized mail or an empty mailbox that has not been read. Confirmed account-empty states at startup and after the last displayed account is excluded offer an Online Accounts button in the existing status area; newly confirmed eligible accounts replace that state without an onboarding step. A GOA observation failure is explained without claiming an authentication failure or stopped mail access that has not been established.
-- **SC-004**: Both the existing menu action and the account-empty status button open the actual system Online Accounts panel in the supported installed environment. Unavailable or unresponsive Settings produces a visible error rather than indefinite pending state.
-- **SC-005**: The user can select accounts, read state explanations, open account settings and quit using the keyboard and at the approved minimum window width of 360 logical units, including enlarged text and high contrast. The account-empty Online Accounts button is reachable by keyboard and touch. Each problem explanation is accessible through hover, click, touch and Enter/Space activation of the focused indicator. Retry Check is reachable by keyboard and touch both from the GOA problem explanation and, when there are no known rows, from the account-service status area.
-- **SC-006**: In failure, rapid-change and shutdown scenarios, users can still navigate or quit. Temporary failures do not drop known rows or selection; confirmed exclusion clears selection without choosing another account. Cold startup without GOA information shows zero fabricated or persisted account rows. Periodic checks detect an unresponsive GOA process and recover when it answers again after failed checks. Healthy background checks do not flash loading or disturb selection. A user-triggered retry works after failure; rapid repeated activation produces no parallel attempts and unresolved problems remain visible. No stale-state restoration or late UI reopening occurs.
-- **SC-007**: All F01 acceptance scenarios run without requiring mail credentials or a mail-server connection, and no application-managed account/mail data is persisted or remote mail modified.
+| Criterion | Required evidence |
+|---|---|
+| SC-001 | FR-001–004 account/provider matrix, including 30 distinct accounts with duplicate labels |
+| SC-002 | FR-006–009 events, individual/list errors, restart, recovery and stale replies |
+| SC-003 | Every FR-005 status and transition to/from the account-empty state |
+| SC-004 | Both FR-011 entry points open the actual installed Settings panel and explain failures |
+| SC-005 | FR-014–015 input, focus, 360-width, enlarged-text and high-contrast matrix |
+| SC-006 | FR-010/012 selection, retry, silent failure, periodic recovery and responsive shutdown |
+| SC-007 | FR-013/016 scope, safe diagnostics and installed permissions |
+| SC-008 | FR-017 single/group notices, deduplication, unselected accounts and superseded switches |
 
-- **SC-008**: Every applied update that hides a previously displayed account for confirmed removal or Mail disablement produces exactly one informational toast, or is included in one grouped toast for simultaneous exclusions, irrespective of selection. Single-account notices name the account; mixed removal/disablement groups produce one combined count-based notice, not separate notices by cause. Repeated observations/retries produce zero duplicates; outages, incomplete information and cold-start exclusions without current-run display history produce zero removal/disablement toasts. A displayed reappearance followed by another applied exclusion produces one new notification event. Disable/re-enable and removal/reappearance completed and confirmed before the UI update leave the row and selection unchanged and produce zero exclusion toasts.
+Automate behavioral and failure cases using synthetic accounts and private
+services. Include adapter-to-account-list tests so separately correct components
+cannot disagree about pending, malformed or superseded updates. Graphical and
+installed-host evidence remains separate; component tests do not establish it.
+Commands and manual acceptance are in [quickstart.md](quickstart.md); task ownership
+and review boundaries are in [tasks.md](tasks.md).
 
-### Required Validation
+## Assumptions and future work
 
-Automated tests for account classification, state changes, isolation of individual account errors, service-wide uncertainty, preservation of rows/selection, indicator recovery, cold startup without GOA, explicit disablement during other account errors, stale results, overload recovery, manual retry after failure, periodic detection of an unresponsive GOA process, recovery without process replacement after failure, background checks without loading flashes, correction of missed account changes, repeated retry activation, cold-start retry access, single-account toast labels, mixed-cause toast grouping/deduplication, unselected-account exclusions, reappearance followed by new exclusion, absence of false exclusion toasts, rapid changes superseded before UI update, reappearance after a row was actually hidden, account-empty startup and last-account exclusion states, transition from account-empty to an eligible account, and Settings failure handling from both entry points are explicitly required for later task generation. They must exercise behavior, not merely repeat implementation structure. Use synthetic accounts and an isolated account service for destructive or malformed scenarios.
-
-Separately verify discovery of the existing Generic IMAP account and actual Settings panel presentation in the installed application, plus keyboard, narrow-layout, enlarged-text and high-contrast behavior. Verify problem explanations by hover, click, touch and Enter/Space on the focused indicator. Verify the account-empty Online Accounts button and its failure explanation, including keyboard and touch access. With synthetic account changes, verify visible exclusion toasts and grouped messages in the application window. Record which checks ran and which remain unverified. Native builds or synthetic tests alone do not establish installed-host compatibility. Real account removal is not required; any real Mail-toggle or service-restart checks are supervised by the maintainer.
-
-## Assumptions
-
-- F01 means account observation and navigation to system settings only. Existing Generic IMAP account suitability has been confirmed and does not need to be re-established. Retaining account rows means in-memory presentation during the current run only; cached mail, recording user actions and queuing their later transmission are future-feature context and remain outside F01.
-- A dedicated Welcome/onboarding screen and initial-synchronization presentation are deferred to a later feature with real mail synchronization. F01 uses the existing status area for account-empty guidance and does not introduce first-run tracking or a setup gate. The future Welcome flow, including any distinction between startup and removal during a run, is not specified here.
-- GOA recovery in F01 assumes the desktop session bus remains running. Reconnecting after loss of the whole session bus, or guaranteeing that Mailbag survives that loss, is outside this feature. This does not weaken account retention during a GOA-only outage.
-- The initial acceptance environment is Fedora 44, GNOME 50, Wayland, x86_64, with the application's GNOME Flatpak runtime 50. Other platforms are outside this feature's compatibility claim.
-- The UI approved in locally available `origin/main` at `7a69c49` is the integration baseline. Updating the checkout and technical implementation choices belong to the later planning/implementation stages.
-- Thirty accounts is an acceptance scenario, not a product maximum. No unvalidated latency promise is introduced; technical budgets and test deadlines belong to the implementation plan.
-- Google and Microsoft 365 recognition does not claim working mail backends or that live provider integration has been verified.
-- Exclusion toasts describe confirmed changes to accounts displayed during the current run. Detecting account deletion or Mail disablement between runs requires persisted prior state and belongs to the later feature that introduces account/mail storage; F01 does not add persistence just for startup notifications. These toasts are application-window feedback, not system desktop notifications.
-- Hiding an account and deleting stored mail are separate functions. F01 only hides rows and stores no account/mail data. A later storage feature must define its own retention, deletion and crash-recovery rules; F01 does not prescribe wiping a cache on Mail disablement or carry the historical automatic-purge rule into its implementation.
-- Future mail-feature policy accepted in the renewed clarification round: after account inclusion/configuration was confirmed during the current run, loss of contact with GOA alone does not stop server requests or invalidate already obtained credentials. Mail work, including remote actions, continues using the last confirmed configuration while an existing authenticated connection or usable credentials permit it. Work requiring unavailable credentials or reauthentication waits; credential rejection is handled as an authentication failure, not ignored. Recovery reconciles account changes before further work uses newly observed state; confirmed Mail disablement/removal stops account work; this does not by itself prescribe deletion of stored mail. This deliberately allows GOA changes to take effect after observation recovers. It supersedes the blanket network-suspension direction in the historical product reference §3.2.4 for an already confirmed account in the current session; it does not change cold-start confirmation or F01's prohibition on credentials, mail access and persistence. Later mail features must validate continuation with usable credentials, waiting without usable credentials, and stopping on confirmed exclusion.
-- Sources are the F01 scope in [the roadmap](../../docs/implementation-plan.md), [product reference](../../docs/spec.md) §§3.2 and 3.11.1, [project constitution](../../.specify/memory/constitution.md), and explicit scope decisions in the planning conversation. Historical architecture proposals and deleted draft artifacts are not additional requirements.
-- This document remains a draft for review. It does not authorize plan generation, tasks, code changes, commits or PR creation as automatic next steps.
+- The supported acceptance environment is Fedora 44, GNOME 50, Wayland, x86_64,
+  GNOME runtime 50. The approved UI baseline is commit `7a69c49`.
+- GOA recovery assumes the desktop session bus remains running. Whole-bus recovery
+  is outside F01. Thirty accounts is an acceptance fixture, not a product maximum.
+- All retained account/selection data belongs to this run. Cross-run notifications,
+  cached mail, queued mail actions, Welcome/onboarding and initial synchronization
+  require later features. F01 does not add storage for any of them.
+- Hiding accounts and deleting stored mail are separate. Later storage work defines
+  retention, deletion and crash recovery; F01 prescribes no automatic cache wipe.
+- In future mail features, after account inclusion/configuration was confirmed
+  during the current run, loss of contact with GOA alone does not stop server
+  requests or invalidate already obtained credentials. Mail work, including remote
+  actions, continues using the last confirmed configuration while an existing
+  authenticated connection or usable credentials permit it. Work requiring
+  unavailable credentials or reauthentication waits; credential rejection is
+  handled as an authentication failure, not ignored. Recovery reconciles account
+  changes before further work uses newly observed state; confirmed Mail
+  disablement/removal stops account work; this does not by itself prescribe
+  deletion of stored mail. This deliberately allows GOA changes to take effect
+  after observation recovers. It does not change cold-start confirmation or F01's
+  prohibition on credentials, mail access and persistence. Later mail features
+  must validate continuation with usable credentials, waiting without usable
+  credentials, and stopping on confirmed exclusion.
+- Governing principles: [constitution](../../.specify/memory/constitution.md).
