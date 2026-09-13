@@ -8,14 +8,14 @@ use std::{
     fmt,
 };
 
-pub(crate) const ROOT: &str = "/org/gnome/OnlineAccounts";
-pub(crate) const NAME: &str = "org.gnome.OnlineAccounts";
-pub(crate) const ACCOUNT: &str = "org.gnome.OnlineAccounts.Account";
-pub(crate) const MAIL: &str = "org.gnome.OnlineAccounts.Mail";
-pub(crate) const MANAGER: &str = "org.freedesktop.DBus.ObjectManager";
-const STRING_LIMIT: usize = 4096;
-const RECORD_LIMIT: usize = 4096;
-const DATA_LIMIT: usize = 16 * 1024 * 1024;
+pub(crate) const GOA_ROOT_PATH: &str = "/org/gnome/OnlineAccounts";
+pub(crate) const GOA_BUS_NAME: &str = "org.gnome.OnlineAccounts";
+pub(crate) const ACCOUNT_INTERFACE: &str = "org.gnome.OnlineAccounts.Account";
+pub(crate) const MAIL_INTERFACE: &str = "org.gnome.OnlineAccounts.Mail";
+pub(crate) const OBJECT_MANAGER_INTERFACE: &str = "org.freedesktop.DBus.ObjectManager";
+const MAX_STRING_BYTES: usize = 4096;
+const MAX_ACCOUNTS: usize = 4096;
+const MAX_ACCOUNT_STRING_BYTES: usize = 16 * 1024 * 1024;
 
 /// Opaque GOA identity. Debug output deliberately omits the value.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -45,12 +45,12 @@ pub struct GoaAccountDetails {
     pub presentation_identity: Option<String>,
     pub email_address: Option<String>,
     pub icon_name: Option<String>,
-    pub problems: Vec<AccountField>,
+    pub invalid_fields: Vec<AccountField>,
 }
 impl fmt::Debug for GoaAccountDetails {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("GoaAccountDetails")
-            .field("problems", &self.problems)
+            .field("invalid_fields", &self.invalid_fields)
             .finish_non_exhaustive()
     }
 }
@@ -133,7 +133,7 @@ pub struct GoaAccountList {
     pub update_number: u64,
     pub accounts: BTreeMap<GoaAccountId, GoaAccountDetails>,
     /// Only true when the current successful check can establish membership.
-    pub complete: bool,
+    pub membership_confirmed: bool,
     pub status: CheckStatus,
     pub error: Option<AccountError>,
 }
@@ -142,14 +142,14 @@ impl GoaAccountList {
         Self {
             update_number: 0,
             accounts: BTreeMap::new(),
-            complete: false,
+            membership_confirmed: false,
             status: CheckStatus::Checking,
             error: None,
         }
     }
 }
 
-fn value(dict: &Variant, key: &str) -> Option<Variant> {
+fn lookup_unique_value(dict: &Variant, key: &str) -> Option<Variant> {
     // Reject duplicate dictionary keys instead of silently choosing one.
     let mut found = None;
     for entry in dict.iter() {
@@ -167,20 +167,20 @@ fn value(dict: &Variant, key: &str) -> Option<Variant> {
     }
     found
 }
-fn text(dict: &Variant, key: &str) -> Option<String> {
-    let v = value(dict, key)?;
-    if v.type_() != glib::VariantTy::STRING {
+fn read_valid_text(dict: &Variant, key: &str) -> Option<String> {
+    let field_value = lookup_unique_value(dict, key)?;
+    if field_value.type_() != glib::VariantTy::STRING {
         return None;
     }
-    let s = v.str()?;
-    (!s.is_empty() && s.len() <= STRING_LIMIT && !s.chars().any(char::is_control))
-        .then(|| s.to_owned())
+    let text = field_value.str()?;
+    (!text.is_empty() && text.len() <= MAX_STRING_BYTES && !text.chars().any(char::is_control))
+        .then(|| text.to_owned())
 }
-fn boolean(dict: &Variant, key: &str) -> Option<bool> {
-    value(dict, key)?.get()
+fn read_bool(dict: &Variant, key: &str) -> Option<bool> {
+    lookup_unique_value(dict, key)?.get()
 }
-fn icon(dict: &Variant) -> Option<String> {
-    let serialized = text(dict, "ProviderIcon")?;
+fn read_icon_name(dict: &Variant) -> Option<String> {
+    let serialized = read_valid_text(dict, "ProviderIcon")?;
     // GOA serializes GThemedIcon, which may carry several fallback names.
     // Parsing an icon does not load it; reject every non-themed result.
     let icon = gio::Icon::for_string(&serialized)
@@ -198,72 +198,75 @@ fn icon(dict: &Variant) -> Option<String> {
         .map(ToString::to_string)
 }
 
-pub(crate) fn parse_list(reply: &Variant) -> Result<GoaAccountList, AccountError> {
+pub(crate) fn parse_account_list(reply: &Variant) -> Result<GoaAccountList, AccountError> {
     let error = |cause| AccountError::new("GetManagedObjects", cause);
     if reply.type_().as_str() != "(a{oa{sa{sv}}})" {
         return Err(error(ErrorCause::InvalidReply));
     }
-    let mut result = GoaAccountList {
+    let mut account_list = GoaAccountList {
         status: CheckStatus::Ready,
-        complete: true,
+        membership_confirmed: true,
         ..GoaAccountList::initial()
     };
     let mut duplicate_ids = BTreeSet::new();
-    let mut paths = BTreeSet::new();
-    let mut bytes = 0;
-    let mut records = 0;
+    let mut seen_paths = BTreeSet::new();
+    let mut account_string_bytes = 0;
+    let mut account_count = 0;
     for entry in reply.child_value(0).iter() {
         let path_value = entry.child_value(0);
         let path = path_value.str().expect("validated object-path type");
         let interfaces = entry.child_value(1);
-        let account = value(&interfaces, ACCOUNT);
-        if !path.starts_with(&format!("{ROOT}/")) {
+        let account_properties = lookup_unique_value(&interfaces, ACCOUNT_INTERFACE);
+        if !path.starts_with(&format!("{GOA_ROOT_PATH}/")) {
             continue;
         }
-        if account.is_none() && !path.starts_with(&format!("{ROOT}/Accounts/")) {
+        if account_properties.is_none() && !path.starts_with(&format!("{GOA_ROOT_PATH}/Accounts/"))
+        {
             continue;
         }
-        records += 1;
-        if records > RECORD_LIMIT {
+        account_count += 1;
+        if account_count > MAX_ACCOUNTS {
             return Err(error(ErrorCause::DataLimit));
         }
-        if path.len() > STRING_LIMIT {
+        if path.len() > MAX_STRING_BYTES {
             return Err(error(ErrorCause::DataLimit));
         }
-        bytes += path.len();
-        if !paths.insert(path.to_owned()) {
-            result.complete = false;
+        account_string_bytes += path.len();
+        if !seen_paths.insert(path.to_owned()) {
+            account_list.membership_confirmed = false;
         }
-        let Some(fields) = account else {
-            result.complete = false;
+        let Some(account_properties) = account_properties else {
+            account_list.membership_confirmed = false;
             continue;
         };
-        let Some(id) = text(&fields, "Id").map(GoaAccountId) else {
-            result.complete = false;
+        let Some(id) = read_valid_text(&account_properties, "Id").map(GoaAccountId) else {
+            account_list.membership_confirmed = false;
             continue;
         };
-        let mail = value(&interfaces, MAIL);
+        let mail_properties = lookup_unique_value(&interfaces, MAIL_INTERFACE);
         let mut details = GoaAccountDetails {
-            provider_type: text(&fields, "ProviderType"),
-            mail_disabled: boolean(&fields, "MailDisabled"),
-            attention_needed: boolean(&fields, "AttentionNeeded"),
-            mail_present: mail.is_some(),
-            provider_name: text(&fields, "ProviderName"),
-            presentation_identity: text(&fields, "PresentationIdentity"),
-            email_address: mail.as_ref().and_then(|m| text(m, "EmailAddress")),
-            icon_name: icon(&fields),
-            problems: Vec::new(),
+            provider_type: read_valid_text(&account_properties, "ProviderType"),
+            mail_disabled: read_bool(&account_properties, "MailDisabled"),
+            attention_needed: read_bool(&account_properties, "AttentionNeeded"),
+            mail_present: mail_properties.is_some(),
+            provider_name: read_valid_text(&account_properties, "ProviderName"),
+            presentation_identity: read_valid_text(&account_properties, "PresentationIdentity"),
+            email_address: mail_properties
+                .as_ref()
+                .and_then(|m| read_valid_text(m, "EmailAddress")),
+            icon_name: read_icon_name(&account_properties),
+            invalid_fields: Vec::new(),
         };
         if details.provider_type.is_none() {
-            details.problems.push(AccountField::ProviderType);
+            details.invalid_fields.push(AccountField::ProviderType);
         }
         if details.mail_disabled.is_none() {
-            details.problems.push(AccountField::MailDisabled);
+            details.invalid_fields.push(AccountField::MailDisabled);
         }
         if details.attention_needed.is_none() {
-            details.problems.push(AccountField::AttentionNeeded);
+            details.invalid_fields.push(AccountField::AttentionNeeded);
         }
-        bytes += id.0.len()
+        account_string_bytes += id.0.len()
             + [
                 &details.provider_type,
                 &details.provider_name,
@@ -275,23 +278,23 @@ pub(crate) fn parse_list(reply: &Variant) -> Result<GoaAccountList, AccountError
             .flatten()
             .map(String::len)
             .sum::<usize>();
-        if bytes > DATA_LIMIT {
+        if account_string_bytes > MAX_ACCOUNT_STRING_BYTES {
             return Err(error(ErrorCause::DataLimit));
         }
-        if result.accounts.contains_key(&id) {
+        if account_list.accounts.contains_key(&id) {
             duplicate_ids.insert(id.clone());
-            result.complete = false;
+            account_list.membership_confirmed = false;
         }
-        result.accounts.insert(id, details);
+        account_list.accounts.insert(id, details);
     }
     for id in duplicate_ids {
-        result.accounts.remove(&id);
+        account_list.accounts.remove(&id);
     }
-    if !result.complete {
-        result.status = CheckStatus::Failed;
-        result.error = Some(error(ErrorCause::InvalidMembership));
+    if !account_list.membership_confirmed {
+        account_list.status = CheckStatus::Failed;
+        account_list.error = Some(error(ErrorCause::InvalidMembership));
     }
-    Ok(result)
+    Ok(account_list)
 }
 
 #[cfg(test)]

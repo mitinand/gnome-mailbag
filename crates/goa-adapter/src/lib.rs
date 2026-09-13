@@ -22,76 +22,79 @@ use std::{
 /// One consumer takes the latest state. Clones share one worker; dropping the last
 /// handle requests shutdown without blocking the caller.
 #[derive(Clone)]
-pub struct GoaClient(Arc<Handle>);
-struct Handle {
-    shared: Arc<Shared>,
+pub struct GoaClient(Arc<ClientHandle>);
+struct ClientHandle {
+    shared: Arc<SharedClientState>,
 }
-impl Drop for Handle {
+impl Drop for ClientHandle {
     fn drop(&mut self) {
-        self.shared.stop();
+        self.shared.request_stop();
     }
 }
 
 #[derive(Default)]
-struct State {
-    update: Option<GoaAccountList>,
-    consumer: Option<Waker>,
-    command: Option<Waker>,
-    refresh: bool,
-    busy: bool,
-    stop: bool,
-    closed: bool,
+struct ClientState {
+    pending_update: Option<GoaAccountList>,
+    update_waker: Option<Waker>,
+    command_waker: Option<Waker>,
+    refresh_requested: bool,
+    check_pending: bool,
+    stop_requested: bool,
+    worker_stopped: bool,
 }
 #[derive(Default)]
-struct Shared(Mutex<State>);
-impl Shared {
-    fn lock(&self) -> MutexGuard<'_, State> {
+struct SharedClientState(Mutex<ClientState>);
+impl SharedClientState {
+    fn lock(&self) -> MutexGuard<'_, ClientState> {
         self.0.lock().expect("account exchange lock")
     }
-    fn stop(&self) {
-        let wake = {
-            let mut s = self.lock();
-            s.stop = true;
-            s.command.take()
+    fn request_stop(&self) {
+        let waker = {
+            let mut state = self.lock();
+            state.stop_requested = true;
+            state.command_waker.take()
         };
-        if let Some(wake) = wake {
-            wake.wake();
+        if let Some(waker) = waker {
+            waker.wake();
         }
     }
-    fn publish(&self, update: GoaAccountList) {
-        let wake = {
-            let mut s = self.lock();
-            if s.stop {
+    fn publish_update(&self, update: GoaAccountList) {
+        let waker = {
+            let mut state = self.lock();
+            if state.stop_requested {
                 return;
             }
-            s.update = Some(update);
-            s.consumer.take()
+            state.pending_update = Some(update);
+            state.update_waker.take()
         };
-        if let Some(wake) = wake {
-            wake.wake();
+        if let Some(waker) = waker {
+            waker.wake();
         }
     }
-    fn finish(&self) {
-        let wake = {
-            let mut s = self.lock();
-            if !s.stop {
-                let mut update = s.update.take().unwrap_or_else(GoaAccountList::initial);
+    fn mark_worker_stopped(&self) {
+        let waker = {
+            let mut state = self.lock();
+            if !state.stop_requested {
+                let mut update = state
+                    .pending_update
+                    .take()
+                    .unwrap_or_else(GoaAccountList::initial);
                 update.status = CheckStatus::Failed;
-                update.complete = false;
+                update.membership_confirmed = false;
                 update.error = Some(AccountError::new(
                     "account worker",
                     ErrorCause::WorkerStopped,
                 ));
-                s.update = Some(update);
+                state.pending_update = Some(update);
             } else {
-                s.update = None;
+                state.pending_update = None;
             }
-            s.closed = true;
-            s.command = None;
-            s.consumer.take()
+            state.worker_stopped = true;
+            state.command_waker = None;
+            state.update_waker.take()
         };
-        if let Some(wake) = wake {
-            wake.wake();
+        if let Some(waker) = waker {
+            waker.wake();
         }
     }
 }
@@ -102,36 +105,36 @@ impl GoaClient {
     }
     pub async fn next_account_update(&self) -> Option<GoaAccountList> {
         poll_fn(|cx| {
-            let mut s = self.0.shared.lock();
-            if let Some(update) = s.update.take() {
+            let mut state = self.0.shared.lock();
+            if let Some(update) = state.pending_update.take() {
                 Poll::Ready(Some(update))
-            } else if s.closed {
+            } else if state.worker_stopped {
                 Poll::Ready(None)
             } else {
-                s.consumer = Some(cx.waker().clone());
+                state.update_waker = Some(cx.waker().clone());
                 Poll::Pending
             }
         })
         .await
     }
     pub fn refresh_accounts(&self) {
-        let wake = {
-            let mut s = self.0.shared.lock();
-            if s.stop || s.closed || s.busy {
+        let waker = {
+            let mut state = self.0.shared.lock();
+            if state.stop_requested || state.worker_stopped || state.check_pending {
                 return;
             }
-            s.refresh = true;
-            s.command.take()
+            state.refresh_requested = true;
+            state.command_waker.take()
         };
-        if let Some(wake) = wake {
-            wake.wake();
+        if let Some(waker) = waker {
+            waker.wake();
         }
     }
     pub fn stop(&self) {
-        self.0.shared.stop();
+        self.0.shared.request_stop();
     }
     #[cfg(test)]
-    fn shared_for_test(&self) -> Arc<Shared> {
+    fn shared_for_test(&self) -> Arc<SharedClientState> {
         self.0.shared.clone()
     }
 }

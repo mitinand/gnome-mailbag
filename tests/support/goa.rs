@@ -10,19 +10,19 @@ use std::{
     time::Duration,
 };
 
-pub const ROOT: &str = "/org/gnome/OnlineAccounts";
-pub const NAME: &str = "org.gnome.OnlineAccounts";
-pub const ACCOUNT: &str = "org.gnome.OnlineAccounts.Account";
-pub const MAIL: &str = "org.gnome.OnlineAccounts.Mail";
-pub const MANAGER: &str = "org.freedesktop.DBus.ObjectManager";
+pub const GOA_ROOT_PATH: &str = "/org/gnome/OnlineAccounts";
+pub const GOA_BUS_NAME: &str = "org.gnome.OnlineAccounts";
+pub const ACCOUNT_INTERFACE: &str = "org.gnome.OnlineAccounts.Account";
+pub const MAIL_INTERFACE: &str = "org.gnome.OnlineAccounts.Mail";
+pub const OBJECT_MANAGER_INTERFACE: &str = "org.freedesktop.DBus.ObjectManager";
 pub type Properties = BTreeMap<String, Variant>;
 pub type Interfaces = BTreeMap<String, Properties>;
 pub type Objects = BTreeMap<ObjectPath, Interfaces>;
 
-pub fn account(id: &str) -> Interfaces {
+pub fn make_account(id: &str) -> Interfaces {
     BTreeMap::from([
         (
-            ACCOUNT.into(),
+            ACCOUNT_INTERFACE.into(),
             BTreeMap::from([
                 ("Id".into(), id.to_variant()),
                 ("ProviderType".into(), "imap_smtp".to_variant()),
@@ -35,7 +35,7 @@ pub fn account(id: &str) -> Interfaces {
             ]),
         ),
         (
-            MAIL.into(),
+            MAIL_INTERFACE.into(),
             BTreeMap::from([(
                 "EmailAddress".into(),
                 "synthetic@example.invalid".to_variant(),
@@ -43,36 +43,36 @@ pub fn account(id: &str) -> Interfaces {
         ),
     ])
 }
-pub fn objects(accounts: Vec<Interfaces>) -> Objects {
+pub fn make_object_map(accounts: Vec<Interfaces>) -> Objects {
     accounts
         .into_iter()
         .enumerate()
-        .map(|(i, a)| {
+        .map(|(i, account)| {
             (
-                ObjectPath::try_from(format!("{ROOT}/Accounts/account_{i}")).unwrap(),
-                a,
+                ObjectPath::try_from(format!("{GOA_ROOT_PATH}/Accounts/account_{i}")).unwrap(),
+                account,
             )
         })
         .collect()
 }
-pub fn reply(accounts: Vec<Interfaces>) -> Variant {
-    (objects(accounts),).to_variant()
+pub fn make_account_reply(accounts: Vec<Interfaces>) -> Variant {
+    (make_object_map(accounts),).to_variant()
 }
 
 #[derive(Clone)]
-pub enum Reply {
+pub enum ReplyBehavior {
     Value(Variant),
-    Error,
+    AccessDenied,
     Hang,
     /// Emit a changed property before completing this now-outdated request.
     ChangeBeforeCompletion {
-        old: Variant,
-        disabled: bool,
+        stale_reply: Variant,
+        mail_disabled: bool,
     },
     WrongType,
 }
 #[derive(Clone, Debug)]
-pub struct Call {
+pub struct RecordedCall {
     pub destination: String,
     pub path: String,
     pub interface: String,
@@ -80,13 +80,13 @@ pub struct Call {
     pub body_type: String,
 }
 
-pub struct Goa {
-    pub calls: Arc<Mutex<Vec<Call>>>,
+pub struct FakeGoaService {
+    pub calls: Arc<Mutex<Vec<RecordedCall>>>,
     calls_changed: Arc<Condvar>,
     main_loop: glib::MainLoop,
     thread: Option<thread::JoinHandle<()>>,
 }
-impl Goa {
+impl FakeGoaService {
     pub fn wait_for_calls(&self, count: usize) {
         let (calls, _) = self
             .calls_changed
@@ -99,7 +99,7 @@ impl Goa {
         assert!(calls.len() >= count, "fixture call deadline");
     }
 
-    pub fn new(address: &str, replies: Vec<Reply>) -> Self {
+    pub fn new(address: &str, replies: Vec<ReplyBehavior>) -> Self {
         assert!(!replies.is_empty());
         let address = address.to_owned();
         let calls = Arc::new(Mutex::new(Vec::new()));
@@ -116,7 +116,7 @@ impl Goa {
                 let recorded_filter = recorded.clone();
                 let filter = connection.add_filter(move |_, message, incoming| {
                     if incoming && message.message_type() == gio::DBusMessageType::MethodCall {
-                        recorded_filter.lock().unwrap().push(Call {
+                        recorded_filter.lock().unwrap().push(RecordedCall {
                             destination: message.destination().unwrap_or_default().into(),
                             path: message.path().unwrap_or_default().into(),
                             interface: message.interface().unwrap_or_default().into(),
@@ -128,29 +128,29 @@ impl Goa {
                     Some(message.clone())
                 });
                 let info = gio::DBusNodeInfo::for_xml(r#"<node><interface name="org.freedesktop.DBus.ObjectManager"><method name="GetManagedObjects"><arg type="a{oa{sa{sv}}}" direction="out"/></method><signal name="InterfacesAdded"><arg type="o"/><arg type="a{sa{sv}}"/></signal><signal name="InterfacesRemoved"><arg type="o"/><arg type="as"/></signal></interface></node>"#).unwrap();
-                let mut sequence = replies.into_iter(); let mut last = sequence.next().unwrap();
-                let next = std::cell::RefCell::new(move || { let result = last.clone(); if let Some(value) = sequence.next() { last = value; } result });
-                let pending = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-                let held = pending.clone();
-                let registration = connection.register_object(ROOT, &info.interfaces()[0]).method_call(move |conn, _, _, _, _, _, invocation| {
-                    match next.borrow_mut()() {
-                        Reply::Value(value) => invocation.return_value(Some(&value)),
-                        Reply::Error => invocation.return_dbus_error("org.freedesktop.DBus.Error.AccessDenied", "synthetic-private-detail"),
-                        Reply::Hang => held.borrow_mut().push(invocation),
-                        Reply::ChangeBeforeCompletion { old, disabled } => {
-                            let changed = BTreeMap::from([("MailDisabled", disabled.to_variant())]);
-                            conn.emit_signal(None, &format!("{ROOT}/Accounts/account_0"), "org.freedesktop.DBus.Properties", "PropertiesChanged", Some(&(ACCOUNT, changed, Vec::<String>::new()).to_variant())).unwrap();
-                            invocation.return_value(Some(&old));
+                let mut sequence = replies.into_iter(); let mut current_reply = sequence.next().unwrap();
+                let next_reply = std::cell::RefCell::new(move || { let result = current_reply.clone(); if let Some(value) = sequence.next() { current_reply = value; } result });
+                let pending_invocations = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+                let handler_invocations = pending_invocations.clone();
+                let registration = connection.register_object(GOA_ROOT_PATH, &info.interfaces()[0]).method_call(move |connection, _, _, _, _, _, invocation| {
+                    match next_reply.borrow_mut()() {
+                        ReplyBehavior::Value(value) => invocation.return_value(Some(&value)),
+                        ReplyBehavior::AccessDenied => invocation.return_dbus_error("org.freedesktop.DBus.Error.AccessDenied", "synthetic-private-detail"),
+                        ReplyBehavior::Hang => handler_invocations.borrow_mut().push(invocation),
+                        ReplyBehavior::ChangeBeforeCompletion { stale_reply, mail_disabled } => {
+                            let changed = BTreeMap::from([("MailDisabled", mail_disabled.to_variant())]);
+                            connection.emit_signal(None, &format!("{GOA_ROOT_PATH}/Accounts/account_0"), "org.freedesktop.DBus.Properties", "PropertiesChanged", Some(&(ACCOUNT_INTERFACE, changed, Vec::<String>::new()).to_variant())).unwrap();
+                            invocation.return_value(Some(&stale_reply));
                         }
-                        Reply::WrongType => {
+                        ReplyBehavior::WrongType => {
                             // Bypass invocation's reply validation to exercise the client's wire check.
                             let message = invocation.message().new_method_reply();
                             message.set_body(&("wrong",).to_variant());
-                            conn.send_message(&message, gio::DBusSendMessageFlags::NONE).unwrap();
+                            connection.send_message(&message, gio::DBusSendMessageFlags::NONE).unwrap();
                         }
                     }
                 }).build().unwrap();
-                connection.call_sync(Some("org.freedesktop.DBus"), "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", Some(&(NAME, 0u32).to_variant()), None, gio::DBusCallFlags::NONE, 1000, None::<&gio::Cancellable>).unwrap();
+                connection.call_sync(Some("org.freedesktop.DBus"), "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", Some(&(GOA_BUS_NAME, 0u32).to_variant()), None, gio::DBusCallFlags::NONE, 1000, None::<&gio::Cancellable>).unwrap();
                 let main_loop = glib::MainLoop::new(Some(&context), false);
                 let stop_loop = main_loop.clone();
                 let deadline = context.spawn_local(async move { glib::timeout_future(Duration::from_secs(10)).await; stop_loop.quit(); });
@@ -159,7 +159,7 @@ impl Goa {
                 deadline.abort();
                 connection.unregister_object(registration).unwrap();
                 connection.remove_filter(filter);
-                pending.borrow_mut().clear();
+                pending_invocations.borrow_mut().clear();
                 connection.close_sync(None::<&gio::Cancellable>).unwrap();
             }).unwrap();
         });
@@ -173,7 +173,7 @@ impl Goa {
         }
     }
 }
-impl Drop for Goa {
+impl Drop for FakeGoaService {
     fn drop(&mut self) {
         let main_loop = self.main_loop.clone();
         self.main_loop.context().invoke(move || main_loop.quit());

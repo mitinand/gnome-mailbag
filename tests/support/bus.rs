@@ -11,15 +11,15 @@ use std::{
 
 /// A separate daemon with no service directories: host services cannot activate.
 /// A watchdog kills it even if a fixture stops dispatching its GLib context.
-pub struct Bus {
+pub struct TestBus {
     pub address: String,
     directory: std::path::PathBuf,
-    child: Arc<Mutex<Child>>,
-    done: Arc<(Mutex<bool>, Condvar)>,
+    daemon: Arc<Mutex<Child>>,
+    shutdown_requested: Arc<(Mutex<bool>, Condvar)>,
     watchdog: Option<thread::JoinHandle<()>>,
 }
 
-impl Bus {
+impl TestBus {
     pub fn new() -> Self {
         static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let directory = std::env::temp_dir().join(format!(
@@ -33,7 +33,7 @@ impl Bus {
 <type>session</type><listen>unix:tmpdir=/tmp</listen><auth>EXTERNAL</auth>
 <policy context="default"><allow send_destination="*"/><allow receive_sender="*"/><allow own="*"/></policy>
 </busconfig>"#).unwrap();
-        let mut child = Command::new("dbus-daemon")
+        let mut daemon = Command::new("dbus-daemon")
             .args(["--nofork", "--print-address=1", "--config-file"])
             .arg(&config)
             .stdin(Stdio::null())
@@ -41,27 +41,27 @@ impl Bus {
             .stderr(Stdio::inherit())
             .spawn()
             .expect("private dbus-daemon (install dbus-daemon)");
-        let stdout = child.stdout.take().unwrap();
-        let child = Arc::new(Mutex::new(child));
-        let done = Arc::new((Mutex::new(false), Condvar::new()));
+        let stdout = daemon.stdout.take().unwrap();
+        let daemon = Arc::new(Mutex::new(daemon));
+        let shutdown_requested = Arc::new((Mutex::new(false), Condvar::new()));
         let watchdog = {
-            let child = child.clone();
-            let done = done.clone();
+            let daemon = daemon.clone();
+            let shutdown_requested = shutdown_requested.clone();
             thread::spawn(move || {
-                let (lock, wake) = &*done;
+                let (lock, wake) = &*shutdown_requested;
                 let (finished, _) = wake
                     .wait_timeout_while(lock.lock().unwrap(), Duration::from_secs(15), |v| !*v)
                     .unwrap();
                 if !*finished {
-                    let _ = child.lock().unwrap().kill();
+                    let _ = daemon.lock().unwrap().kill();
                 }
             })
         };
         let mut bus = Self {
             address: String::new(),
             directory,
-            child,
-            done,
+            daemon,
+            shutdown_requested,
             watchdog: Some(watchdog),
         };
         BufReader::new(stdout).read_line(&mut bus.address).unwrap();
@@ -73,14 +73,14 @@ impl Bus {
         bus
     }
 }
-impl Drop for Bus {
+impl Drop for TestBus {
     fn drop(&mut self) {
-        *self.done.0.lock().unwrap() = true;
-        self.done.1.notify_one();
-        let mut child = self.child.lock().unwrap();
-        let _ = child.kill();
-        let _ = child.wait();
-        drop(child);
+        *self.shutdown_requested.0.lock().unwrap() = true;
+        self.shutdown_requested.1.notify_one();
+        let mut daemon = self.daemon.lock().unwrap();
+        let _ = daemon.kill();
+        let _ = daemon.wait();
+        drop(daemon);
         self.watchdog.take().unwrap().join().unwrap();
         std::fs::remove_dir_all(&self.directory).unwrap();
     }
