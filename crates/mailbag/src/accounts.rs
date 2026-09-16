@@ -143,9 +143,26 @@ impl AccountList {
             return Vec::new();
         }
         self.excluded_reasons.clear();
+        let hidden_notices = self.hide_removed_or_disabled_accounts(&update.accounts);
+        self.update_visible_accounts(&update.accounts);
+        if self
+            .selected_id
+            .as_ref()
+            .is_some_and(|id| !self.visible_accounts.contains_key(id))
+        {
+            self.selected_id = None;
+        }
+        self.assign_display_labels();
+        hidden_notices
+    }
+
+    fn hide_removed_or_disabled_accounts(
+        &mut self,
+        accounts: &BTreeMap<AccountId, AccountDetails>,
+    ) -> Vec<AccountHiddenNotice> {
         let mut hidden_notices = Vec::new();
         self.visible_accounts.retain(|id, row| {
-            let details = update.accounts.get(id);
+            let details = accounts.get(id);
             let disabled = details.is_some_and(|details| !details.mail_enabled);
             let removed = details.is_none();
             if disabled || removed {
@@ -157,7 +174,11 @@ impl AccountList {
                 true
             }
         });
-        for (id, details) in &update.accounts {
+        hidden_notices
+    }
+
+    fn update_visible_accounts(&mut self, accounts: &BTreeMap<AccountId, AccountDetails>) {
+        for (id, details) in accounts {
             if details.provider == AccountProvider::Other {
                 self.visible_accounts.remove(id);
                 self.excluded_reasons
@@ -186,15 +207,6 @@ impl AccountList {
                     .insert(ExclusionReason::MailUnavailable);
             }
         }
-        if self
-            .selected_id
-            .as_ref()
-            .is_some_and(|id| !self.visible_accounts.contains_key(id))
-        {
-            self.selected_id = None;
-        }
-        self.assign_display_labels();
-        hidden_notices
     }
 
     fn assign_display_labels(&mut self) {

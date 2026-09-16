@@ -4,7 +4,8 @@
 use crate::{
     AccountCheckError, AccountCheckResult, AccountDetails, AccountId, AccountUpdate,
     accounts::{
-        GOA_BUS_NAME, GOA_ROOT_PATH, OBJECT_MANAGER_INTERFACE, map_glib_error, parse_accounts,
+        GOA_ACCOUNT_PATH_PREFIX, GOA_BUS_NAME, GOA_ROOT_PATH, OBJECT_MANAGER_INTERFACE,
+        map_glib_error, parse_accounts,
     },
 };
 use gio::prelude::*;
@@ -13,6 +14,55 @@ use std::{
     collections::BTreeMap,
     rc::Rc,
 };
+
+/// One bus signal that means the account list may have changed.
+struct AccountChangeSignal {
+    sender: &'static str,
+    interface: &'static str,
+    member: &'static str,
+    /// Exact object path, when every interesting signal arrives on one path.
+    path: Option<&'static str>,
+    first_argument: Option<&'static str>,
+    /// Accept only paths below this prefix when signals arrive on many paths.
+    accepted_path_prefix: Option<&'static str>,
+}
+
+/// GOA property changes arrive on individual account paths, so they are
+/// subscribed without a path and filtered by prefix instead.
+const ACCOUNT_CHANGE_SIGNALS: [AccountChangeSignal; 4] = [
+    AccountChangeSignal {
+        sender: "org.freedesktop.DBus",
+        interface: "org.freedesktop.DBus",
+        member: "NameOwnerChanged",
+        path: Some("/org/freedesktop/DBus"),
+        first_argument: Some(GOA_BUS_NAME),
+        accepted_path_prefix: None,
+    },
+    AccountChangeSignal {
+        sender: GOA_BUS_NAME,
+        interface: OBJECT_MANAGER_INTERFACE,
+        member: "InterfacesAdded",
+        path: Some(GOA_ROOT_PATH),
+        first_argument: None,
+        accepted_path_prefix: None,
+    },
+    AccountChangeSignal {
+        sender: GOA_BUS_NAME,
+        interface: OBJECT_MANAGER_INTERFACE,
+        member: "InterfacesRemoved",
+        path: Some(GOA_ROOT_PATH),
+        first_argument: None,
+        accepted_path_prefix: None,
+    },
+    AccountChangeSignal {
+        sender: GOA_BUS_NAME,
+        interface: "org.freedesktop.DBus.Properties",
+        member: "PropertiesChanged",
+        path: None,
+        first_argument: None,
+        accepted_path_prefix: Some(GOA_ACCOUNT_PATH_PREFIX),
+    },
+];
 
 /// A local handle to GOA observation on the calling thread's GLib main context.
 /// Clones share one observer; dropping the last handle stops it.
@@ -172,53 +222,28 @@ impl AccountObserver {
     }
 
     fn subscribe_to_changes(self: &Rc<Self>, connection: &gio::DBusConnection) {
-        let mut subscriptions = self.subscriptions.borrow_mut();
-        let weak = Rc::downgrade(self);
-        subscriptions.push(connection.subscribe_to_signal(
-            Some("org.freedesktop.DBus"),
-            Some("org.freedesktop.DBus"),
-            Some("NameOwnerChanged"),
-            Some("/org/freedesktop/DBus"),
-            Some(GOA_BUS_NAME),
-            gio::DBusSignalFlags::NONE,
-            move |_| {
-                if let Some(observer) = weak.upgrade() {
-                    observer.request_read();
-                }
-            },
-        ));
-        for member in ["InterfacesAdded", "InterfacesRemoved"] {
+        for signal in ACCOUNT_CHANGE_SIGNALS {
             let weak = Rc::downgrade(self);
-            subscriptions.push(connection.subscribe_to_signal(
-                Some(GOA_BUS_NAME),
-                Some(OBJECT_MANAGER_INTERFACE),
-                Some(member),
-                Some(GOA_ROOT_PATH),
-                None,
-                gio::DBusSignalFlags::NONE,
-                move |_| {
-                    if let Some(observer) = weak.upgrade() {
-                        observer.request_read();
-                    }
-                },
-            ));
+            let accepted_path_prefix = signal.accepted_path_prefix;
+            self.subscriptions
+                .borrow_mut()
+                .push(connection.subscribe_to_signal(
+                    Some(signal.sender),
+                    Some(signal.interface),
+                    Some(signal.member),
+                    signal.path,
+                    signal.first_argument,
+                    gio::DBusSignalFlags::NONE,
+                    move |received| {
+                        if accepted_path_prefix
+                            .is_none_or(|prefix| received.object_path.starts_with(prefix))
+                            && let Some(observer) = weak.upgrade()
+                        {
+                            observer.request_read();
+                        }
+                    },
+                ));
         }
-        let weak = Rc::downgrade(self);
-        subscriptions.push(connection.subscribe_to_signal(
-            Some(GOA_BUS_NAME),
-            Some("org.freedesktop.DBus.Properties"),
-            Some("PropertiesChanged"),
-            None,
-            None,
-            gio::DBusSignalFlags::NONE,
-            move |signal| {
-                if signal.object_path.starts_with("/org/gnome/OnlineAccounts/")
-                    && let Some(observer) = weak.upgrade()
-                {
-                    observer.request_read();
-                }
-            },
-        ));
     }
 
     fn finish_read(

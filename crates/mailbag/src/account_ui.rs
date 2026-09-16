@@ -41,48 +41,18 @@ pub struct AccountUi {
 impl AccountUi {
     pub fn new(builder: &gtk::Builder) -> Rc<RefCell<Self>> {
         let tree: gtk::ListView = builder.object("folder_tree").expect("folder_tree");
+        let status: adw::StatusPage = builder.object("account_status").expect("account_status");
+        let list_stack = builder.object("list_stack").expect("list_stack");
+        let mail_split = builder.object("mail_split").expect("mail_split");
+        let folders_split = builder.object("folders_split").expect("folders_split");
+        let toasts = builder.object("toasts").expect("toasts");
         let store = gio::ListStore::new::<glib::BoxedAnyObject>();
         let selection = gtk::SingleSelection::new(Some(store.clone()));
         selection.set_autoselect(false);
         selection.set_can_unselect(true);
         tree.set_model(Some(&selection));
-        let factory = gtk::SignalListItemFactory::new();
-        factory.connect_bind(|_, item| {
-            let item = item.downcast_ref::<gtk::ListItem>().expect("list item");
-            // Single-click activation otherwise also selects rows on hover.
-            item.set_selectable(false);
-            let object = item
-                .item()
-                .unwrap()
-                .downcast::<glib::BoxedAnyObject>()
-                .unwrap();
-            item.set_child(Some(&object.borrow::<AccountWidgets>().root));
-        });
-        factory.connect_unbind(|_, item| {
-            let item = item.downcast_ref::<gtk::ListItem>().unwrap();
-            if let Some(object) = item.item() {
-                object
-                    .downcast::<glib::BoxedAnyObject>()
-                    .unwrap()
-                    .borrow::<AccountWidgets>()
-                    .popover
-                    .popdown();
-            }
-            item.set_child(None::<&gtk::Widget>);
-        });
-        tree.set_factory(Some(&factory));
-        let status: adw::StatusPage = builder.object("account_status").expect("account_status");
-        let retry = gtk::Button::with_label("Retry Check");
-        let online_accounts = gtk::Button::with_label("Online Accounts");
-        online_accounts.set_action_name(Some("app.accounts"));
-        let actions = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        actions.set_halign(gtk::Align::Center);
-        actions.append(&retry);
-        actions.append(&online_accounts);
-        status.set_child(Some(&actions));
-        let retry_check = gio::SimpleAction::new("retry-accounts", None);
-        let retry_callback = retry_check.clone();
-        retry.connect_clicked(move |_| retry_callback.activate(None));
+        tree.set_factory(Some(&create_row_factory()));
+        let status_buttons = create_status_buttons(&status);
         let ui = Rc::new(RefCell::new(Self {
             accounts: AccountList::default(),
             rows: BTreeMap::new(),
@@ -90,13 +60,13 @@ impl AccountUi {
             selection,
             tree: tree.clone(),
             status,
-            list_stack: builder.object("list_stack").expect("list_stack"),
-            retry,
-            online_accounts,
-            mail_split: builder.object("mail_split").expect("mail_split"),
-            folders_split: builder.object("folders_split").expect("folders_split"),
-            retry_check,
-            toasts: builder.object("toasts").expect("toasts"),
+            list_stack,
+            retry: status_buttons.retry,
+            online_accounts: status_buttons.online_accounts,
+            mail_split,
+            folders_split,
+            retry_check: status_buttons.retry_check,
+            toasts,
         }));
         let weak = Rc::downgrade(&ui);
         tree.connect_activate(move |_, position| {
@@ -227,6 +197,60 @@ impl AccountUi {
         } else {
             "empty"
         });
+    }
+}
+
+fn create_row_factory() -> gtk::SignalListItemFactory {
+    let factory = gtk::SignalListItemFactory::new();
+    factory.connect_bind(|_, item| {
+        let item = item.downcast_ref::<gtk::ListItem>().expect("list item");
+        // Single-click activation otherwise also selects rows on hover.
+        item.set_selectable(false);
+        let object = item
+            .item()
+            .unwrap()
+            .downcast::<glib::BoxedAnyObject>()
+            .unwrap();
+        item.set_child(Some(&object.borrow::<AccountWidgets>().root));
+    });
+    factory.connect_unbind(|_, item| {
+        let item = item.downcast_ref::<gtk::ListItem>().unwrap();
+        if let Some(object) = item.item() {
+            object
+                .downcast::<glib::BoxedAnyObject>()
+                .unwrap()
+                .borrow::<AccountWidgets>()
+                .popover
+                .popdown();
+        }
+        item.set_child(None::<&gtk::Widget>);
+    });
+    factory
+}
+
+/// Buttons of the account status page and the action their Retry activates.
+struct StatusButtons {
+    retry: gtk::Button,
+    online_accounts: gtk::Button,
+    retry_check: gio::SimpleAction,
+}
+
+fn create_status_buttons(status: &adw::StatusPage) -> StatusButtons {
+    let retry = gtk::Button::with_label("Retry Check");
+    let online_accounts = gtk::Button::with_label("Online Accounts");
+    online_accounts.set_action_name(Some("app.accounts"));
+    let actions = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    actions.set_halign(gtk::Align::Center);
+    actions.append(&retry);
+    actions.append(&online_accounts);
+    status.set_child(Some(&actions));
+    let retry_check = gio::SimpleAction::new("retry-accounts", None);
+    let retry_callback = retry_check.clone();
+    retry.connect_clicked(move |_| retry_callback.activate(None));
+    StatusButtons {
+        retry,
+        online_accounts,
+        retry_check,
     }
 }
 

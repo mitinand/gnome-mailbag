@@ -53,14 +53,12 @@ fn create_window(app: &adw::Application) -> gtk::Builder {
     let split: adw::OverlaySplitView = builder
         .object("folders_split")
         .expect("mailbag.ui: folders_split");
-    let folders = gio::SimpleAction::new("folders", None);
-    folders.connect_activate(move |_, _| split.set_show_sidebar(!split.shows_sidebar()));
-    app.add_action(&folders);
-    app.set_accels_for_action("app.folders", &["<Primary><Shift>s"]);
+    register_action(app, "folders", Some("<Primary><Shift>s"), move || {
+        split.set_show_sidebar(!split.shows_sidebar());
+    });
 
-    let shortcuts = gio::SimpleAction::new("shortcuts", None);
     let window_weak = window.downgrade();
-    shortcuts.connect_activate(move |_, _| {
+    register_action(app, "shortcuts", Some("<Primary>question"), move || {
         if let Some(window) = window_weak.upgrade() {
             let builder = gtk::Builder::from_string(include_str!("../resources/ui/shortcuts.ui"));
             let dialog: adw::ShortcutsDialog = builder
@@ -69,8 +67,6 @@ fn create_window(app: &adw::Application) -> gtk::Builder {
             dialog.present(Some(&window));
         }
     });
-    app.add_action(&shortcuts);
-    app.set_accels_for_action("app.shortcuts", &["<Primary>question"]);
 
     // Mail data and operations are not implemented yet.
     for name in ["search_button", "unread_filter"] {
@@ -80,19 +76,15 @@ fn create_window(app: &adw::Application) -> gtk::Builder {
             .set_sensitive(false);
     }
 
-    let quit = gio::SimpleAction::new("quit", None);
     let app_weak = app.downgrade();
-    quit.connect_activate(move |_, _| {
+    register_action(app, "quit", Some("<Primary>q"), move || {
         if let Some(app) = app_weak.upgrade() {
             app.quit();
         }
     });
-    app.add_action(&quit);
-    app.set_accels_for_action("app.quit", &["<Primary>q"]);
 
-    let about = gio::SimpleAction::new("about", None);
     let window_weak = window.downgrade();
-    about.connect_activate(move |_, _| {
+    register_action(app, "about", None, move || {
         if let Some(window) = window_weak.upgrade() {
             adw::AboutDialog::builder()
                 .application_name("Mailbag")
@@ -105,9 +97,23 @@ fn create_window(app: &adw::Application) -> gtk::Builder {
                 .present(Some(&window));
         }
     });
-    app.add_action(&about);
     window.present();
     builder
+}
+
+fn register_action(
+    app: &impl IsA<gtk::Application>,
+    name: &str,
+    shortcut: Option<&str>,
+    activate: impl Fn() + 'static,
+) {
+    let app = app.as_ref();
+    let action = gio::SimpleAction::new(name, None);
+    action.connect_activate(move |_, _| activate());
+    app.add_action(&action);
+    if let Some(shortcut) = shortcut {
+        app.set_accels_for_action(&format!("app.{name}"), &[shortcut]);
+    }
 }
 
 fn connect_account_updates(builder: &gtk::Builder, window: &adw::Window) {
@@ -128,11 +134,9 @@ fn connect_account_updates(builder: &gtk::Builder, window: &adw::Window) {
             ui.borrow().show_settings_error(error);
         }
     });
-    let action = gio::SimpleAction::new("accounts", None);
     let action_launcher = launcher.clone();
-    action.connect_activate(move |_, _| action_launcher.open());
     let app = window.application().expect("application window");
-    app.add_action(&action);
+    register_action(&app, "accounts", None, move || action_launcher.open());
     let window_ui = std::cell::RefCell::new(Some(account_ui));
     window.connect_destroy(move |_| {
         app.remove_action("accounts");

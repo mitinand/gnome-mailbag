@@ -9,6 +9,8 @@ use glib::{
 use std::collections::BTreeMap;
 
 pub(crate) const GOA_ROOT_PATH: &str = "/org/gnome/OnlineAccounts";
+/// Account objects live below the root; used to filter their property signals.
+pub(crate) const GOA_ACCOUNT_PATH_PREFIX: &str = "/org/gnome/OnlineAccounts/";
 pub(crate) const GOA_BUS_NAME: &str = "org.gnome.OnlineAccounts";
 pub(crate) const ACCOUNT_INTERFACE: &str = "org.gnome.OnlineAccounts.Account";
 pub(crate) const MAIL_INTERFACE: &str = "org.gnome.OnlineAccounts.Mail";
