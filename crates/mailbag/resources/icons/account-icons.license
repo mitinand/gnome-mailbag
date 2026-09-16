@@ -1,0 +1,15 @@
+goa-account-google-symbolic.svg
+Author: Tobias Bernard (GNOME)
+License: LGPL-2.0-or-later (upstream COPYING, reproduced in
+LICENSES/LGPL-2.0-or-later.txt in the source tree)
+Source: https://gitlab.gnome.org/GNOME/gnome-online-accounts/-/blob/b8a6f2a8e58e695185b1183439d888f59e297850/data/icons/symbolic/goa-account-google-symbolic.svg
+Changes (2026-09-14): reduced SVG viewBox padding to match the visible size of
+other account icons; paths unchanged. The resource alias gives it an
+application-specific name.
+
+mailbag-account-ms365-symbolic.svg
+Copyright: GNOME Design Team; 2026 Andrey Mitin
+License: CC-BY-SA-4.0 (see LICENSES/CC-BY-SA-4.0.txt in the source tree)
+Source: https://gitlab.gnome.org/GNOME/gnome-online-accounts/-/blob/master/data/icons/scalable/goa-account-ms365.svg
+Changes: removed the background and gradients; simplified the three ribbon
+contours and added gaps for monochrome rendering at 16 pixels.

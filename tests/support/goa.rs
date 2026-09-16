@@ -4,10 +4,14 @@
 use gio::prelude::*;
 use glib::{Variant, variant::ObjectPath};
 use std::{
-    collections::{BTreeMap, VecDeque},
-    sync::{Arc, Condvar, Mutex, mpsc},
+    collections::BTreeMap,
+    sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicUsize, Ordering},
+        mpsc,
+    },
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 pub const GOA_ROOT_PATH: &str = "/org/gnome/OnlineAccounts";
@@ -64,21 +68,7 @@ pub enum ReplyBehavior {
     Value(Variant),
     AccessDenied,
     Hang,
-    /// Emit a changed property before completing this now-outdated request.
-    ChangeBeforeCompletion {
-        stale_reply: Variant,
-        mail_disabled: bool,
-    },
     WrongType,
-}
-#[derive(Clone, Debug)]
-pub struct RecordedCall {
-    pub received_at: Instant,
-    pub destination: String,
-    pub path: String,
-    pub interface: String,
-    pub method: String,
-    pub body_type: String,
 }
 
 #[derive(Default)]
@@ -88,15 +78,18 @@ struct HeldReplies {
 }
 
 pub struct FakeGoaService {
-    pub calls: Arc<Mutex<Vec<RecordedCall>>>,
-    calls_changed: Arc<Condvar>,
+    read_count: Arc<AtomicUsize>,
     connection: gio::DBusConnection,
-    reply_sequence: Arc<Mutex<VecDeque<ReplyBehavior>>>,
+    reply: Arc<Mutex<ReplyBehavior>>,
     held_replies: Arc<HeldReplies>,
     main_loop: glib::MainLoop,
     thread: Option<thread::JoinHandle<()>>,
 }
 impl FakeGoaService {
+    pub fn read_count(&self) -> usize {
+        self.read_count.load(Ordering::Relaxed)
+    }
+
     pub fn complete_held_reply(&self, body: &Variant) {
         let (mut pending_calls, _) = self
             .held_replies
@@ -119,7 +112,7 @@ impl FakeGoaService {
     }
 
     pub fn set_reply(&self, reply: ReplyBehavior) {
-        *self.reply_sequence.lock().unwrap() = VecDeque::from([reply]);
+        *self.reply.lock().unwrap() = reply;
     }
 
     pub fn emit_signal(&self, path: &str, interface: &str, member: &str, body: &Variant) {
@@ -142,29 +135,14 @@ impl FakeGoaService {
         );
     }
 
-    pub fn wait_for_calls(&self, count: usize) {
-        let (calls, _) = self
-            .calls_changed
-            .wait_timeout_while(
-                self.calls.lock().unwrap(),
-                Duration::from_secs(2),
-                |calls| calls.len() < count,
-            )
-            .unwrap();
-        assert!(calls.len() >= count, "fixture call deadline");
-    }
-
-    pub fn new(address: &str, reply_sequence: Vec<ReplyBehavior>) -> Self {
-        assert!(!reply_sequence.is_empty());
-        let reply_sequence = Arc::new(Mutex::new(VecDeque::from(reply_sequence)));
-        let handler_sequence = reply_sequence.clone();
+    pub fn new(address: &str, reply: ReplyBehavior) -> Self {
+        let reply = Arc::new(Mutex::new(reply));
+        let handler_reply = reply.clone();
         let held_replies = Arc::new(HeldReplies::default());
         let handler_pending_calls = held_replies.clone();
         let address = address.to_owned();
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let recorded = calls.clone();
-        let calls_changed = Arc::new(Condvar::new());
-        let notify_calls = calls_changed.clone();
+        let read_count = Arc::new(AtomicUsize::new(0));
+        let handler_read_count = read_count.clone();
         let (ready, receiver) = mpsc::sync_channel(1);
         let thread = thread::spawn(move || {
             let context = glib::MainContext::new();
@@ -172,27 +150,12 @@ impl FakeGoaService {
                 let connection = gio::DBusConnection::for_address_sync(&address,
                     gio::DBusConnectionFlags::AUTHENTICATION_CLIENT | gio::DBusConnectionFlags::MESSAGE_BUS_CONNECTION,
                     None::<&gio::DBusAuthObserver>, None::<&gio::Cancellable>).unwrap();
-                let recorded_filter = recorded.clone();
-                let filter = connection.add_filter(move |_, message, incoming| {
-                    if incoming && message.message_type() == gio::DBusMessageType::MethodCall {
-                        let received_at = Instant::now();
-                        recorded_filter.lock().unwrap().push(RecordedCall {
-                            received_at,
-                            destination: message.destination().unwrap_or_default().into(),
-                            path: message.path().unwrap_or_default().into(),
-                            interface: message.interface().unwrap_or_default().into(),
-                            method: message.member().unwrap_or_default().into(),
-                            body_type: message.body().map(|v| v.type_().to_string()).unwrap_or_else(|| "()".into()),
-                        });
-                        notify_calls.notify_all();
-                    }
-                    Some(message.clone())
-                });
                 let info = gio::DBusNodeInfo::for_xml(r#"<node><interface name="org.freedesktop.DBus.ObjectManager"><method name="GetManagedObjects"><arg type="a{oa{sa{sv}}}" direction="out"/></method><signal name="InterfacesAdded"><arg type="o"/><arg type="a{sa{sv}}"/></signal><signal name="InterfacesRemoved"><arg type="o"/><arg type="as"/></signal></interface></node>"#).unwrap();
                 let pending_invocations = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
                 let handler_invocations = pending_invocations.clone();
                 let registration = connection.register_object(GOA_ROOT_PATH, &info.interfaces()[0]).method_call(move |connection, _, _, _, _, _, invocation| {
-                    let reply = { let mut reply_sequence = handler_sequence.lock().unwrap(); if reply_sequence.len() > 1 { reply_sequence.pop_front().unwrap() } else { reply_sequence.front().unwrap().clone() } };
+                    handler_read_count.fetch_add(1, Ordering::Relaxed);
+                    let reply = handler_reply.lock().unwrap().clone();
                     match reply {
                         ReplyBehavior::Value(value) => invocation.return_value(Some(&value)),
                         ReplyBehavior::AccessDenied => invocation.return_dbus_error("org.freedesktop.DBus.Error.AccessDenied", "synthetic-private-detail"),
@@ -202,11 +165,6 @@ impl FakeGoaService {
                             handler_pending_calls.call_received.notify_all();
                             handler_invocations.borrow_mut().push(invocation);
                         },
-                        ReplyBehavior::ChangeBeforeCompletion { stale_reply, mail_disabled } => {
-                            let changed_properties = BTreeMap::from([("MailDisabled", mail_disabled.to_variant())]);
-                            connection.emit_signal(None, &format!("{GOA_ROOT_PATH}/Accounts/account_0"), "org.freedesktop.DBus.Properties", "PropertiesChanged", Some(&(ACCOUNT_INTERFACE, changed_properties, Vec::<String>::new()).to_variant())).unwrap();
-                            invocation.return_value(Some(&stale_reply));
-                        }
                         ReplyBehavior::WrongType => {
                             // Send a reply with the wrong type so the client must reject it.
                             let message = invocation.message().new_method_reply();
@@ -223,7 +181,6 @@ impl FakeGoaService {
                 main_loop.run();
                 deadline.abort();
                 connection.unregister_object(registration).unwrap();
-                connection.remove_filter(filter);
                 pending_invocations.borrow_mut().clear();
                 connection.close_sync(None::<&gio::Cancellable>).unwrap();
             }).unwrap();
@@ -233,10 +190,9 @@ impl FakeGoaService {
             .expect("GOA fixture startup deadline");
         Self {
             connection,
-            reply_sequence,
+            reply,
             held_replies,
-            calls,
-            calls_changed,
+            read_count,
             main_loop,
             thread: Some(thread),
         }
@@ -247,33 +203,5 @@ impl Drop for FakeGoaService {
         let main_loop = self.main_loop.clone();
         self.main_loop.context().invoke(move || main_loop.quit());
         self.thread.take().unwrap().join().unwrap();
-    }
-}
-
-/// The private test bus runs this function as the fake GOA service.
-#[test]
-#[ignore = "private D-Bus activation subprocess; exercised by activation tests"]
-fn activated_service_process() {
-    let Ok(directory) = std::env::var("MAILBAG_ACTIVATION_DIRECTORY") else {
-        return;
-    };
-    let directory = std::path::PathBuf::from(directory);
-    let mode = std::fs::read_to_string(directory.join("mode")).unwrap();
-    let _service = if mode == "ready" {
-        Some(FakeGoaService::new(
-            &std::env::var("DBUS_STARTER_ADDRESS").unwrap(),
-            vec![ReplyBehavior::Value(make_account_reply(vec![
-                make_account("activated"),
-            ]))],
-        ))
-    } else {
-        None
-    };
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while directory.join("run").exists() && std::time::Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    if mode == "hang" {
-        std::process::exit(1);
     }
 }

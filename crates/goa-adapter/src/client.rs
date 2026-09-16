@@ -2,387 +2,298 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::{
-    AccountCheckError, ClientHandle, ErrorCause, GoaAdapter, GoaUpdates, SharedClientState,
+    AccountCheckError, AccountCheckResult, AccountDetails, AccountId, AccountUpdate,
     accounts::{
-        AccountSnapshot, GOA_BUS_NAME, GOA_ROOT_PATH, OBJECT_MANAGER_INTERFACE, map_glib_error,
-        parse_account_snapshot,
+        GOA_ACCOUNT_PATH_PREFIX, GOA_BUS_NAME, GOA_ROOT_PATH, OBJECT_MANAGER_INTERFACE,
+        map_glib_error, parse_accounts,
     },
 };
 use gio::prelude::*;
 use std::{
-    cell::RefCell,
-    future::{Future, poll_fn},
-    pin::pin,
+    cell::{Cell, RefCell},
+    collections::BTreeMap,
     rc::Rc,
-    sync::Arc,
-    task::Poll,
-    time::{Duration, Instant},
 };
 
-#[cfg(test)]
-use crate::AccountUpdate;
-
-mod worker_state;
-use worker_state::GoaWorkerState;
-
-#[derive(Clone, Copy)]
-struct CheckTiming {
-    attempt_timeout: Duration,
-    health_interval: Duration,
+/// One bus signal that means the account list may have changed.
+struct AccountChangeSignal {
+    sender: &'static str,
+    interface: &'static str,
+    member: &'static str,
+    /// Exact object path, when every interesting signal arrives on one path.
+    path: Option<&'static str>,
+    first_argument: Option<&'static str>,
+    /// Accept only paths below this prefix when signals arrive on many paths.
+    accepted_path_prefix: Option<&'static str>,
 }
-impl Default for CheckTiming {
-    fn default() -> Self {
-        Self {
-            attempt_timeout: Duration::from_secs(5),
-            health_interval: Duration::from_secs(10),
+
+/// GOA property changes arrive on individual account paths, so they are
+/// subscribed without a path and filtered by prefix instead.
+const ACCOUNT_CHANGE_SIGNALS: [AccountChangeSignal; 4] = [
+    AccountChangeSignal {
+        sender: "org.freedesktop.DBus",
+        interface: "org.freedesktop.DBus",
+        member: "NameOwnerChanged",
+        path: Some("/org/freedesktop/DBus"),
+        first_argument: Some(GOA_BUS_NAME),
+        accepted_path_prefix: None,
+    },
+    AccountChangeSignal {
+        sender: GOA_BUS_NAME,
+        interface: OBJECT_MANAGER_INTERFACE,
+        member: "InterfacesAdded",
+        path: Some(GOA_ROOT_PATH),
+        first_argument: None,
+        accepted_path_prefix: None,
+    },
+    AccountChangeSignal {
+        sender: GOA_BUS_NAME,
+        interface: OBJECT_MANAGER_INTERFACE,
+        member: "InterfacesRemoved",
+        path: Some(GOA_ROOT_PATH),
+        first_argument: None,
+        accepted_path_prefix: None,
+    },
+    AccountChangeSignal {
+        sender: GOA_BUS_NAME,
+        interface: "org.freedesktop.DBus.Properties",
+        member: "PropertiesChanged",
+        path: None,
+        first_argument: None,
+        accepted_path_prefix: Some(GOA_ACCOUNT_PATH_PREFIX),
+    },
+];
+
+/// A local handle to GOA observation on the calling thread's GLib main context.
+/// Clones share one observer; dropping the last handle stops it.
+#[derive(Clone)]
+pub struct GoaAdapter(Rc<AccountObserver>);
+
+struct AccountObserver {
+    on_update: Box<dyn Fn(&AccountUpdate)>,
+    update: RefCell<Rc<AccountUpdate>>,
+    connection: RefCell<Option<gio::DBusConnection>>,
+    subscriptions: RefCell<Vec<gio::SignalSubscription>>,
+    read_cancellable: RefCell<Option<gio::Cancellable>>,
+    refetch_needed: Cell<bool>,
+    stopped: Cell<bool>,
+    #[cfg(test)]
+    bus_address: Option<String>,
+    timeout_msec: i32,
+}
+
+impl GoaAdapter {
+    /// Subscribe before the initial full read. Updates run on the current GLib
+    /// context; keep that context running and use this handle on the same thread.
+    pub fn start(on_update: impl Fn(&AccountUpdate) + 'static) -> Self {
+        let observer = Rc::new(AccountObserver::new(on_update));
+        observer.request_read();
+        Self(observer)
+    }
+
+    /// Request an explicit Retry, preserving the previous result until completion.
+    pub fn refresh_accounts(&self) {
+        if self.0.stopped.get() {
+            return;
         }
+        let was_pending = {
+            let mut update = self.0.update.borrow_mut();
+            std::mem::replace(&mut Rc::make_mut(&mut update).retry_pending, true)
+        };
+        self.0.request_read();
+        if !was_pending {
+            self.0.publish_update();
+        }
+    }
+
+    /// Cancel the current read and unsubscribe. Repeated calls are harmless.
+    pub fn stop(&self) {
+        self.0.stop();
+    }
+
+    #[cfg(test)]
+    fn start_for_test(
+        address: String,
+        timeout_msec: i32,
+        on_update: impl Fn(&AccountUpdate) + 'static,
+    ) -> Self {
+        let mut observer = AccountObserver::new(on_update);
+        observer.bus_address = Some(address);
+        observer.timeout_msec = timeout_msec;
+        let observer = Rc::new(observer);
+        observer.request_read();
+        Self(observer)
     }
 }
 
-// Private test connections cannot be selected in production builds.
-enum BusTarget {
-    Session,
-    #[cfg(test)]
-    Private(String),
-}
-pub(crate) fn start() -> (GoaAdapter, GoaUpdates) {
-    spawn_worker(BusTarget::Session, CheckTiming::default())
-}
-#[cfg(test)]
-fn start_for_test(address: String, timeout: Duration) -> (GoaAdapter, GoaUpdates) {
-    spawn_worker(
-        BusTarget::Private(address),
-        CheckTiming {
-            attempt_timeout: timeout,
-            ..CheckTiming::default()
-        },
-    )
-}
+impl AccountObserver {
+    fn new(on_update: impl Fn(&AccountUpdate) + 'static) -> Self {
+        Self {
+            on_update: Box::new(on_update),
+            update: RefCell::new(Rc::new(AccountUpdate::default())),
+            connection: RefCell::new(None),
+            subscriptions: RefCell::new(Vec::new()),
+            read_cancellable: RefCell::new(None),
+            refetch_needed: Cell::new(false),
+            stopped: Cell::new(false),
+            #[cfg(test)]
+            bus_address: None,
+            timeout_msec: -1,
+        }
+    }
 
-fn spawn_worker(target: BusTarget, timing: CheckTiming) -> (GoaAdapter, GoaUpdates) {
-    let shared = Arc::new(SharedClientState::default());
-    let client = GoaAdapter(Arc::new(ClientHandle {
-        shared: shared.clone(),
-    }));
-    let shared_state = shared.clone();
-    if std::thread::Builder::new()
-        .name("goa-accounts".into())
-        .spawn(move || {
-            struct WorkerExitGuard(Arc<SharedClientState>);
-            impl Drop for WorkerExitGuard {
-                fn drop(&mut self) {
-                    self.0.mark_worker_stopped();
+    fn request_read(self: &Rc<Self>) {
+        if self.stopped.get() {
+            return;
+        }
+        if self.read_cancellable.borrow().is_some() {
+            self.refetch_needed.set(true);
+            return;
+        }
+        let cancellable = gio::Cancellable::new();
+        self.read_cancellable.replace(Some(cancellable.clone()));
+        let connection = self.connection.borrow().clone();
+        if let Some(connection) = connection {
+            self.read_accounts(&connection, &cancellable);
+        } else {
+            self.connect_to_bus(&cancellable);
+        }
+    }
+
+    fn connect_to_bus(self: &Rc<Self>, cancellable: &gio::Cancellable) {
+        let weak = Rc::downgrade(self);
+        let connected = move |result: Result<gio::DBusConnection, glib::Error>| {
+            let Some(observer) = weak.upgrade().filter(|observer| !observer.stopped.get()) else {
+                return;
+            };
+            match result {
+                Ok(connection) => {
+                    observer.subscribe_to_changes(&connection);
+                    observer.connection.replace(Some(connection.clone()));
+                    let cancellable = observer.read_cancellable.borrow().as_ref().unwrap().clone();
+                    observer.read_accounts(&connection, &cancellable);
+                }
+                Err(error) => {
+                    observer.finish_read(Err(map_glib_error("connect to session bus", error)))
                 }
             }
-            let _exit_guard = WorkerExitGuard(shared_state.clone());
-            let context = glib::MainContext::new();
-            let _ = context
-                .with_thread_default(|| context.block_on(run_worker(shared_state, target, timing)));
-        })
-        .is_err()
-    {
-        shared.mark_worker_stopped();
-    }
-    (client, GoaUpdates { shared })
-}
-
-/// Cancel the whole attempt, including connection and activation, at one deadline.
-/// Dropping pending GIO futures cancels their individual operations.
-async fn await_account_check(
-    shared: &SharedClientState,
-    timeout: Duration,
-    future: impl Future<Output = Result<AccountSnapshot, AccountCheckError>>,
-) -> Option<Result<AccountSnapshot, AccountCheckError>> {
-    let mut future = pin!(future);
-    let mut deadline_timer = pin!(glib::timeout_future(timeout));
-    poll_fn(|cx| {
-        {
-            let mut state = shared.lock();
-            if state.stop_requested {
-                return Poll::Ready(None);
-            }
-            state.command_waker = Some(cx.waker().clone());
-            // Repeated refresh commands join the active request.
-            state.refresh_requested = false;
-        }
-        if deadline_timer.as_mut().poll(cx).is_ready() {
-            return Poll::Ready(Some(Err(AccountCheckError::new(
-                "account check",
-                ErrorCause::Timeout,
-            ))));
-        }
-        future.as_mut().poll(cx).map(Some)
-    })
-    .await
-}
-
-struct GoaConnection {
-    connection: gio::DBusConnection,
-    // GIO runs these callbacks on the GOA worker thread. Weak references prevent
-    // callbacks from keeping its state alive or changing another client's accounts.
-    _subscriptions: Vec<gio::SignalSubscription>,
-}
-
-async fn connect_and_subscribe(
-    target: &BusTarget,
-    worker_state: &Rc<RefCell<GoaWorkerState>>,
-) -> Result<GoaConnection, AccountCheckError> {
-    let connection = match target {
-        BusTarget::Session => gio::bus_get_future(gio::BusType::Session).await,
+        };
         #[cfg(test)]
-        BusTarget::Private(address) => {
-            gio::DBusConnection::for_address_future(
+        if let Some(address) = &self.bus_address {
+            gio::DBusConnection::for_address(
                 address,
                 gio::DBusConnectionFlags::AUTHENTICATION_CLIENT
                     | gio::DBusConnectionFlags::MESSAGE_BUS_CONNECTION,
                 None::<&gio::DBusAuthObserver>,
-            )
-            .await
+                Some(cancellable),
+                connected,
+            );
+            return;
         }
+        gio::bus_get(gio::BusType::Session, Some(cancellable), connected);
     }
-    .map_err(|error| map_glib_error("connect to session bus", error))?;
-    let mut subscriptions = Vec::new();
-    let callback_state = Rc::downgrade(worker_state);
-    subscriptions.push(connection.subscribe_to_signal(
-        Some("org.freedesktop.DBus"),
-        Some("org.freedesktop.DBus"),
-        Some("NameOwnerChanged"),
-        Some("/org/freedesktop/DBus"),
-        Some(GOA_BUS_NAME),
-        gio::DBusSignalFlags::NONE,
-        move |signal| {
-            let Some(worker_state) = callback_state.upgrade() else {
-                return;
-            };
-            if let Some((name, _, goa_owner)) = signal.parameters.get::<(String, String, String)>()
-                && name == GOA_BUS_NAME
-            {
-                worker_state.borrow_mut().record_owner_change(&goa_owner);
-            }
-        },
-    ));
-    for (interface, member, path) in [
-        (
-            OBJECT_MANAGER_INTERFACE,
-            "InterfacesAdded",
-            Some(GOA_ROOT_PATH),
-        ),
-        (
-            OBJECT_MANAGER_INTERFACE,
-            "InterfacesRemoved",
-            Some(GOA_ROOT_PATH),
-        ),
-        ("org.freedesktop.DBus.Properties", "PropertiesChanged", None),
-    ] {
-        let callback_state = Rc::downgrade(worker_state);
-        subscriptions.push(connection.subscribe_to_signal(
+
+    fn read_accounts(
+        self: &Rc<Self>,
+        connection: &gio::DBusConnection,
+        cancellable: &gio::Cancellable,
+    ) {
+        let weak = Rc::downgrade(self);
+        connection.call(
             Some(GOA_BUS_NAME),
-            Some(interface),
-            Some(member),
-            path,
+            GOA_ROOT_PATH,
+            OBJECT_MANAGER_INTERFACE,
+            "GetManagedObjects",
             None,
-            gio::DBusSignalFlags::NONE,
-            move |signal| {
-                if let Some(worker_state) = callback_state.upgrade() {
-                    worker_state.borrow_mut().apply_account_signal(
-                        signal.sender_name,
-                        signal.object_path,
-                        member,
-                        signal.parameters,
+            Some(glib::VariantTy::new("(a{oa{sa{sv}}})").unwrap()),
+            gio::DBusCallFlags::NONE,
+            self.timeout_msec,
+            Some(cancellable),
+            move |reply| {
+                if let Some(observer) = weak.upgrade().filter(|observer| !observer.stopped.get()) {
+                    observer.finish_read(
+                        reply
+                            .map_err(|error| map_glib_error("read accounts", error))
+                            .and_then(|reply| parse_accounts(&reply)),
                     );
                 }
             },
-        ));
+        );
     }
-    Ok(GoaConnection {
-        connection,
-        _subscriptions: subscriptions,
-    })
-}
 
-fn remaining_timeout_ms(deadline: Instant) -> i32 {
-    deadline
-        .saturating_duration_since(Instant::now())
-        .as_millis()
-        .clamp(1, i32::MAX as u128) as i32
-}
-
-async fn resolve_goa_owner(
-    connection: &gio::DBusConnection,
-    deadline: Instant,
-) -> Result<String, glib::Error> {
-    let reply = connection
-        .call_future(
-            Some("org.freedesktop.DBus"),
-            "/org/freedesktop/DBus",
-            "org.freedesktop.DBus",
-            "GetNameOwner",
-            Some(&(GOA_BUS_NAME,).to_variant()),
-            Some(glib::VariantTy::new("(s)").expect("owner reply signature")),
-            gio::DBusCallFlags::NONE,
-            remaining_timeout_ms(deadline),
-        )
-        .await?;
-    Ok(reply.get::<(String,)>().expect("validated owner reply").0)
-}
-
-async fn fetch_accounts(
-    goa_connection: &GoaConnection,
-    deadline: Instant,
-    worker_state: &RefCell<GoaWorkerState>,
-) -> Result<AccountSnapshot, AccountCheckError> {
-    loop {
-        if Instant::now() >= deadline {
-            return Err(AccountCheckError::new("account check", ErrorCause::Timeout));
+    fn subscribe_to_changes(self: &Rc<Self>, connection: &gio::DBusConnection) {
+        for signal in ACCOUNT_CHANGE_SIGNALS {
+            let weak = Rc::downgrade(self);
+            let accepted_path_prefix = signal.accepted_path_prefix;
+            self.subscriptions
+                .borrow_mut()
+                .push(connection.subscribe_to_signal(
+                    Some(signal.sender),
+                    Some(signal.interface),
+                    Some(signal.member),
+                    signal.path,
+                    signal.first_argument,
+                    gio::DBusSignalFlags::NONE,
+                    move |received| {
+                        if accepted_path_prefix
+                            .is_none_or(|prefix| received.object_path.starts_with(prefix))
+                            && let Some(observer) = weak.upgrade()
+                        {
+                            observer.request_read();
+                        }
+                    },
+                ));
         }
-        let request_change_number = worker_state.borrow().account_change_number;
-        // Waiting for the bus reply lets it process our earlier signal subscriptions
-        // before we request the account list.
-        let goa_owner = match resolve_goa_owner(&goa_connection.connection, deadline).await {
-            Ok(goa_owner) => goa_owner,
-            Err(error) if error.matches(gio::DBusError::NameHasNoOwner) => {
-                goa_connection
-                    .connection
-                    .call_future(
-                        Some("org.freedesktop.DBus"),
-                        "/org/freedesktop/DBus",
-                        "org.freedesktop.DBus",
-                        "StartServiceByName",
-                        Some(&(GOA_BUS_NAME, 0u32).to_variant()),
-                        Some(glib::VariantTy::new("(u)").expect("activation reply signature")),
-                        gio::DBusCallFlags::NONE,
-                        remaining_timeout_ms(deadline),
-                    )
-                    .await
-                    .map_err(|e| map_glib_error("activate GOA service", e))?;
-                resolve_goa_owner(&goa_connection.connection, deadline)
-                    .await
-                    .map_err(|e| map_glib_error("find GOA service", e))?
-            }
-            Err(error) => return Err(map_glib_error("find GOA service", error)),
-        };
-        if worker_state.borrow().account_change_number != request_change_number {
-            continue;
-        }
+    }
+
+    fn finish_read(
+        self: &Rc<Self>,
+        result: Result<BTreeMap<AccountId, AccountDetails>, AccountCheckError>,
+    ) {
+        self.read_cancellable.borrow_mut().take();
         {
-            let mut worker_state = worker_state.borrow_mut();
-            if worker_state.goa_owner.as_deref() != Some(&goa_owner) {
-                worker_state.account_paths.clear();
-            }
-            worker_state.goa_owner = Some(goa_owner.clone());
-        }
-        let reply = goa_connection
-            .connection
-            .call_future(
-                Some(&goa_owner),
-                GOA_ROOT_PATH,
-                OBJECT_MANAGER_INTERFACE,
-                "GetManagedObjects",
-                Some(&().to_variant()),
-                Some(glib::VariantTy::new("(a{oa{sa{sv}}})").expect("GOA reply signature")),
-                gio::DBusCallFlags::NONE,
-                remaining_timeout_ms(deadline),
-            )
-            .await;
-        if worker_state.borrow().account_change_number != request_change_number {
-            continue;
-        }
-        let reply = reply.map_err(|error| map_glib_error("GetManagedObjects", error))?;
-        return parse_account_snapshot(&reply);
-    }
-}
-
-/// Request a periodic account check only when no check is running.
-/// Keep at most one pending request; do not queue missed timer ticks.
-struct HealthTimer(glib::JoinHandle<()>);
-impl Drop for HealthTimer {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
-fn start_health_timer(
-    worker_state: &Rc<RefCell<GoaWorkerState>>,
-    interval: Duration,
-) -> HealthTimer {
-    let worker_state = Rc::downgrade(worker_state);
-    HealthTimer(
-        glib::MainContext::ref_thread_default().spawn_local(async move {
-            loop {
-                glib::timeout_future(interval).await;
-                let Some(worker_state) = worker_state.upgrade() else {
-                    break;
-                };
-                let mut worker_state = worker_state.borrow_mut();
-                if !worker_state.account_list.check_pending {
-                    worker_state.request_recheck();
+            let mut update = self.update.borrow_mut();
+            let update = Rc::make_mut(&mut update);
+            match result {
+                Ok(accounts) => {
+                    update.accounts = accounts;
+                    update.last_check = AccountCheckResult::Complete;
                 }
+                Err(error) => update.last_check = AccountCheckResult::Failed(error),
             }
-        }),
-    )
-}
-
-async fn run_worker(shared: Arc<SharedClientState>, target: BusTarget, timing: CheckTiming) {
-    let worker_state = Rc::new(RefCell::new(GoaWorkerState::new(shared.clone())));
-    let health_timer = start_health_timer(&worker_state, timing.health_interval);
-    let mut goa_connection = None;
-    loop {
-        worker_state.borrow_mut().begin_check();
-        let deadline = Instant::now() + timing.attempt_timeout;
-        let result = await_account_check(&shared, timing.attempt_timeout, async {
-            if goa_connection.is_none() {
-                goa_connection = Some(connect_and_subscribe(&target, &worker_state).await?);
+            if !self.refetch_needed.get() {
+                update.retry_pending = false;
             }
-            fetch_accounts(
-                goa_connection.as_ref().expect("connected observer"),
-                deadline,
-                &worker_state,
-            )
-            .await
-        })
-        .await;
-        let Some(result) = result else {
-            break;
-        };
-        worker_state.borrow_mut().finish_check(result);
-        let next_check = poll_fn(|cx| {
-            let mut commands = shared.lock();
-            if commands.stop_requested {
-                return Poll::Ready(None);
-            }
-            commands.command_waker = Some(cx.waker().clone());
-            let manual_check = std::mem::take(&mut commands.refresh_requested);
-            drop(commands);
-            let mut worker_state = worker_state.borrow_mut();
-            worker_state.worker_waker = Some(cx.waker().clone());
-            if manual_check || worker_state.recheck_requested {
-                return Poll::Ready(Some(()));
-            }
-            Poll::Pending
-        })
-        .await;
-        if next_check.is_none() {
-            break;
         }
+        // Settle scheduling before calling application code, which may retry or stop.
+        if self.refetch_needed.replace(false) {
+            self.request_read();
+        }
+        self.publish_update();
     }
-    drop(health_timer);
-    drop(goa_connection);
-    worker_state.borrow_mut().worker_waker = None;
-    drop(worker_state);
-    // Let GIO finish callbacks for cancelled requests without waiting for GOA replies.
-    glib::timeout_future(Duration::from_millis(1)).await;
+
+    fn publish_update(&self) {
+        let update = self.update.borrow().clone();
+        (self.on_update)(&update);
+    }
+
+    fn stop(&self) {
+        self.stopped.set(true);
+        if let Some(cancellable) = self.read_cancellable.borrow_mut().take() {
+            cancellable.cancel();
+        }
+        self.subscriptions.borrow_mut().clear();
+        self.connection.borrow_mut().take();
+    }
 }
 
-#[cfg(test)]
-mod tests;
+impl Drop for AccountObserver {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
 
 #[cfg(test)]
 mod event_tests;
-
 #[cfg(test)]
-mod health_tests;
-
-#[cfg(test)]
-mod concurrency_tests;
-
-#[cfg(test)]
-mod account_list_tests;
+mod tests;

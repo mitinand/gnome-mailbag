@@ -3,10 +3,6 @@
 version = 4
 
 [[package]]
-name = "account-model"
-version = "0.1.0-dev"
-
-[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -263,7 +259,6 @@ dependencies = [
 name = "goa-adapter"
 version = "0.1.0-dev"
 dependencies = [
- "account-model",
  "gio",
  "glib",
 ]
@@ -445,7 +440,7 @@ checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 name = "mailbag"
 version = "0.1.0-dev"
 dependencies = [
- "account-model",
+ "goa-adapter",
  "libadwaita",
 ]
 

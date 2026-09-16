@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: 2026 Andrey Mitin
+     SPDX-License-Identifier: GPL-3.0-or-later -->
+<gresources>
+  <gresource prefix="/io/github/mitinand/Mailbag">
+    <file alias="icons/scalable/places/mailbag-account-google-symbolic.svg">icons/scalable/places/goa-account-google-symbolic.svg</file>
+    <file>icons/scalable/places/mailbag-account-ms365-symbolic.svg</file>
+  </gresource>
+</gresources>

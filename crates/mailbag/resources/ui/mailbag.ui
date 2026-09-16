@@ -252,7 +252,7 @@
                                 <child>
                                   <object class="GtkStackPage">
                                     <property name="child">
-                                      <object class="AdwStatusPage">
+                                      <object class="AdwStatusPage" id="account_status">
                                         <property name="description" translatable="yes">This folder is empty.</property>
                                         <property name="icon-name">mail-unread-symbolic</property>
                                         <property name="title" translatable="yes">No messages</property>

@@ -1,305 +1,208 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
-use super::*;
-use crate::{
-    AccountCheckResult, ErrorCause,
-    test_bus::TestBus,
-    test_goa::{self as fixture, FakeGoaService, ReplyBehavior},
-};
+use super::GoaAdapter;
+use crate::{AccountId, AccountProvider, AccountUpdate};
+use crate::{ErrorCause, test_bus::TestBus, test_goa::*};
+use gio::prelude::*;
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 use std::{
-    future::Future,
-    pin::pin,
-    sync::Arc,
-    task::{Context, Poll, Wake, Waker},
-    thread,
+    collections::VecDeque,
     time::{Duration, Instant},
 };
 
-struct ThreadWake(thread::Thread);
-impl Wake for ThreadWake {
-    fn wake(self: Arc<Self>) {
-        self.0.unpark();
-    }
+pub(super) fn run_in_context(test: impl FnOnce()) {
+    glib::MainContext::new().with_thread_default(test).unwrap();
 }
-// Deliberately never iterate GLib's default context (or any GLib context).
-pub(super) fn await_with_timeout<T>(future: impl Future<Output = T>) -> T {
-    let deadline = Instant::now() + Duration::from_secs(3);
-    let waker = Waker::from(Arc::new(ThreadWake(thread::current())));
-    let mut cx = Context::from_waker(&waker);
-    let mut future = pin!(future);
-    loop {
-        if let Poll::Ready(value) = future.as_mut().poll(&mut cx) {
-            return value;
+
+pub(super) fn wait_until(mut condition: impl FnMut() -> bool) {
+    glib::MainContext::ref_thread_default().block_on(async {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !condition() {
+            assert!(Instant::now() < deadline, "account update deadline");
+            glib::timeout_future(Duration::from_millis(1)).await;
         }
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        assert!(!remaining.is_zero(), "client outer test deadline");
-        thread::park_timeout(remaining);
+    });
+}
+
+pub(super) fn dispatch_for(duration: Duration) {
+    glib::MainContext::ref_thread_default().block_on(glib::timeout_future(duration));
+}
+
+pub(super) struct RecordedUpdates(Rc<RefCell<VecDeque<AccountUpdate>>>);
+impl RecordedUpdates {
+    pub fn next(&self) -> AccountUpdate {
+        wait_until(|| !self.0.borrow().is_empty());
+        self.0.borrow_mut().pop_front().unwrap()
     }
-}
-pub(super) fn start_test_client(bus: &TestBus) -> (crate::GoaAdapter, crate::GoaUpdates) {
-    start_for_test(bus.address.clone(), Duration::from_millis(400))
-}
-pub(super) fn await_check_result(updates: &mut crate::GoaUpdates) -> Arc<crate::AccountUpdate> {
-    await_with_timeout(async {
+    pub fn completed(&self) -> AccountUpdate {
         loop {
-            let update = updates.next_account_update().await.expect("client open");
-            if !update.check_pending {
-                break update;
+            let update = self.next();
+            if !update.retry_pending {
+                return update;
             }
         }
-    })
-}
-/// Wait for worker progress without consuming the update intended for AccountList.
-pub(super) fn await_published_update(
-    client: &crate::GoaAdapter,
-    matches: impl Fn(&crate::AccountUpdate) -> bool,
-) {
-    let shared = client.shared_for_test();
-    await_with_timeout(std::future::poll_fn(|cx| {
-        let mut state = shared.lock();
-        if state.latest_update.as_deref().is_some_and(&matches) {
-            Poll::Ready(())
-        } else {
-            state.update_waker = Some(cx.waker().clone());
-            Poll::Pending
-        }
-    }));
-}
-fn assert_only_account_reads(goa: &FakeGoaService) {
-    let calls = goa.calls.lock().unwrap();
-    assert!(!calls.is_empty());
-    for call in calls.iter() {
-        assert!(
-            call.destination.starts_with(':'),
-            "request must target a unique GOA owner"
-        );
-        assert_eq!(call.path, fixture::GOA_ROOT_PATH);
-        assert_eq!(call.interface, fixture::OBJECT_MANAGER_INTERFACE);
-        assert_eq!(call.method, "GetManagedObjects");
-        assert_eq!(call.body_type, "()");
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.borrow().is_empty()
     }
 }
-#[test]
-fn initial_accounts_arrive_without_default_context_and_use_exact_read_protocol() {
-    let bus = TestBus::new();
-    let goa = FakeGoaService::new(
-        &bus.address,
-        vec![ReplyBehavior::Value(fixture::make_account_reply(vec![
-            fixture::make_account("one"),
-        ]))],
-    );
-    let (client, mut updates) = start_test_client(&bus);
-    let update = await_check_result(&mut updates);
-    assert!(update.last_check.is_complete());
-    assert_eq!(update.accounts.len(), 1);
-    assert_only_account_reads(&goa);
-    client.stop();
-    assert!(await_with_timeout(updates.next_account_update()).is_none());
+
+pub(super) fn start_test_client(bus: &TestBus) -> (GoaAdapter, RecordedUpdates) {
+    let updates = Rc::new(RefCell::new(VecDeque::new()));
+    let recorded = updates.clone();
+    let context = glib::MainContext::ref_thread_default();
+    let client = GoaAdapter::start_for_test(bus.address.clone(), 400, move |update| {
+        assert!(
+            context.is_owner(),
+            "updates must run on the subscribing context"
+        );
+        recorded.borrow_mut().push_back(update.clone());
+    });
+    (client, RecordedUpdates(updates))
 }
+
 #[test]
-fn healthy_empty_and_absent_service_are_different() {
-    let bus = TestBus::new();
-    let (client, mut updates) = start_test_client(&bus);
-    let update = await_check_result(&mut updates);
-    assert!(matches!(update.last_check, AccountCheckResult::Failed(_)));
-    assert!(!update.last_check.is_complete());
-    client.stop();
-    let goa = FakeGoaService::new(
-        &bus.address,
-        vec![ReplyBehavior::Value(fixture::make_account_reply(vec![]))],
-    );
-    let (_client, mut updates) = start_test_client(&bus);
-    let update = await_check_result(&mut updates);
-    assert!(update.last_check.is_complete());
-    assert!(update.accounts.is_empty());
-    assert_only_account_reads(&goa);
+fn startup_reads_accounts_and_recognizes_providers() {
+    run_in_context(|| {
+        let bus = TestBus::new();
+        let providers = [
+            ("imap_smtp", AccountProvider::ImapSmtp),
+            ("google", AccountProvider::Google),
+            ("ms_graph", AccountProvider::Microsoft365),
+            ("exchange", AccountProvider::Other),
+        ];
+        let reply = make_account_reply(
+            providers
+                .iter()
+                .map(|(name, _)| {
+                    let mut account = make_account(name);
+                    account
+                        .get_mut(ACCOUNT_INTERFACE)
+                        .unwrap()
+                        .insert("ProviderType".into(), name.to_variant());
+                    account
+                })
+                .collect(),
+        );
+        let goa = FakeGoaService::new(&bus.address, ReplyBehavior::Value(reply));
+        let (_client, updates) = start_test_client(&bus);
+        let update = updates.completed();
+        assert!(update.last_check.is_complete());
+        assert_eq!(update.accounts.len(), providers.len());
+        for (name, expected) in providers {
+            assert_eq!(
+                update.accounts[&AccountId::try_from(name).unwrap()].provider,
+                expected
+            );
+        }
+        assert_eq!(goa.read_count(), 1);
+    });
 }
+
 #[test]
-fn startup_timeout_covers_initial_acquisition() {
-    let bus = TestBus::new();
-    let _goa = FakeGoaService::new(&bus.address, vec![ReplyBehavior::Hang]);
-    let started = Instant::now();
-    let (_client, mut updates) = start_test_client(&bus);
-    let update = await_check_result(&mut updates);
-    assert_eq!(
-        update.last_check.error().unwrap().cause,
-        ErrorCause::Timeout
-    );
-    assert!(!update.last_check.is_complete());
-    assert!(started.elapsed() < Duration::from_secs(2));
+fn absent_goa_reports_a_read_error_without_accounts() {
+    run_in_context(|| {
+        let bus = TestBus::new();
+        let (_client, updates) = start_test_client(&bus);
+        let update = updates.completed();
+        assert_eq!(
+            update.last_check.error().unwrap().cause,
+            ErrorCause::Unavailable
+        );
+        assert!(update.accounts.is_empty());
+    });
 }
+
 #[test]
-fn wrong_reply_and_remote_error_are_safe_failures() {
+fn failed_reads_keep_accounts_and_retry_keeps_the_error_until_completion() {
     for (response, cause) in [
+        (ReplyBehavior::Hang, ErrorCause::Timeout),
         (ReplyBehavior::WrongType, ErrorCause::InvalidReply),
         (ReplyBehavior::AccessDenied, ErrorCause::AccessDenied),
     ] {
+        run_in_context(|| {
+            let bus = TestBus::new();
+            let reply = make_account_reply(vec![make_account("one")]);
+            let goa = FakeGoaService::new(&bus.address, ReplyBehavior::Value(reply.clone()));
+            let (client, updates) = start_test_client(&bus);
+            let accepted = updates.completed();
+            goa.set_reply(response);
+            client.refresh_accounts();
+            assert!(updates.next().retry_pending);
+            let failed = updates.completed();
+            assert_eq!(failed.accounts, accepted.accounts);
+            assert_eq!(failed.last_check.error().unwrap().cause, cause);
+            assert!(!format!("{failed:?}").contains("synthetic-private-detail"));
+            goa.set_reply(ReplyBehavior::Value(reply));
+            client.refresh_accounts();
+            let pending = updates.next();
+            assert!(pending.retry_pending);
+            assert_eq!(pending.last_check, failed.last_check);
+            assert_eq!(pending.accounts, accepted.accounts);
+            assert!(updates.completed().last_check.is_complete());
+        });
+    }
+}
+
+#[test]
+fn rejected_record_keeps_the_entire_previous_list() {
+    run_in_context(|| {
         let bus = TestBus::new();
-        let goa = FakeGoaService::new(&bus.address, vec![response]);
-        let (_client, mut updates) = start_test_client(&bus);
-        let update = await_check_result(&mut updates);
-        assert!(matches!(update.last_check, AccountCheckResult::Failed(_)));
-        assert!(!update.last_check.is_complete());
-        assert!(!format!("{update:?}").contains("synthetic-private-detail"));
-        let error = update.last_check.error().unwrap();
-        assert_eq!(error.cause, cause);
-        assert!(error.domain.is_some());
-        assert!(error.code.is_some());
-        assert_only_account_reads(&goa);
-    }
-}
-#[test]
-fn change_during_initial_check_rejects_the_old_reply() {
-    let bus = TestBus::new();
-    let stale_reply = fixture::make_account_reply(vec![fixture::make_account("one")]);
-    let mut disabled_account = fixture::make_account("one");
-    disabled_account
-        .get_mut(fixture::ACCOUNT_INTERFACE)
-        .unwrap()
-        .insert("MailDisabled".into(), true.to_variant());
-    let goa = FakeGoaService::new(
-        &bus.address,
-        vec![
-            ReplyBehavior::ChangeBeforeCompletion {
-                stale_reply,
-                mail_disabled: true,
-            },
-            ReplyBehavior::Value(fixture::make_account_reply(vec![disabled_account])),
-        ],
-    );
-    let (_client, mut updates) = start_test_client(&bus);
-    let update = await_check_result(&mut updates);
-    assert_eq!(
-        update.accounts.values().next().unwrap().mail_enabled,
-        Some(false)
-    );
-    assert!(goa.calls.lock().unwrap().len() >= 2);
-    assert_only_account_reads(&goa);
-}
-#[test]
-fn repeated_stale_replies_cannot_extend_attempt_deadline() {
-    let bus = TestBus::new();
-    let stale_reply = fixture::make_account_reply(vec![fixture::make_account("one")]);
-    let _goa = FakeGoaService::new(
-        &bus.address,
-        vec![ReplyBehavior::ChangeBeforeCompletion {
-            stale_reply,
-            mail_disabled: true,
-        }],
-    );
-    let start = Instant::now();
-    let (_client, mut updates) = start_test_client(&bus);
-    let update = await_check_result(&mut updates);
-    assert_eq!(
-        update.last_check.error().unwrap().cause,
-        ErrorCause::Timeout
-    );
-    assert!(start.elapsed() < Duration::from_secs(2));
-}
-#[test]
-fn refresh_keeps_old_data_on_failure_and_can_be_repeated() {
-    let bus = TestBus::new();
-    let reply = fixture::make_account_reply(vec![fixture::make_account("one")]);
-    let goa = FakeGoaService::new(
-        &bus.address,
-        vec![
-            ReplyBehavior::Value(reply.clone()),
-            ReplyBehavior::AccessDenied,
-            ReplyBehavior::Value(reply),
-        ],
-    );
-    let (client, mut updates) = start_test_client(&bus);
-    let first = await_check_result(&mut updates);
-    client.refresh_accounts();
-    let failed = await_check_result(&mut updates);
-    assert!(matches!(failed.last_check, AccountCheckResult::Failed(_)));
-    assert!(!failed.last_check.is_complete());
-    assert_eq!(first.accounts, failed.accounts);
-    client.refresh_accounts();
-    assert!(await_check_result(&mut updates).last_check.is_complete());
-    assert_only_account_reads(&goa);
-}
-#[test]
-fn stop_and_last_handle_drop_finish_pending_worker() {
-    let bus = TestBus::new();
-    let goa = FakeGoaService::new(&bus.address, vec![ReplyBehavior::Hang]);
-    let (client, _updates) = start_test_client(&bus);
-    goa.wait_for_calls(1);
-    let shared = client.shared_for_test();
-    let clone = client.clone();
-    drop(client);
-    assert!(!shared.lock().stop_requested);
-    drop(clone);
-    let start = Instant::now();
-    await_with_timeout(std::future::poll_fn(|cx| {
-        let mut state = shared.lock();
-        if state.worker_stopped {
-            Poll::Ready(())
-        } else {
-            state.update_waker = Some(cx.waker().clone());
-            Poll::Pending
-        }
-    }));
-    assert!(start.elapsed() < Duration::from_secs(1));
-}
-
-#[test]
-fn repeated_refresh_reuses_pending_check_and_stop_is_idempotent() {
-    let bus = TestBus::new();
-    let goa = FakeGoaService::new(&bus.address, vec![ReplyBehavior::Hang]);
-    let (client, mut updates) = start_test_client(&bus);
-    goa.wait_for_calls(1);
-    for _ in 0..100 {
+        let goa = FakeGoaService::new(
+            &bus.address,
+            ReplyBehavior::Value(make_account_reply(vec![make_account("one")])),
+        );
+        let (client, updates) = start_test_client(&bus);
+        let accepted = updates.completed();
+        let mut invalid = make_account("two");
+        invalid
+            .get_mut(ACCOUNT_INTERFACE)
+            .unwrap()
+            .remove("MailDisabled");
+        let mut renamed = make_account("one");
+        renamed.get_mut(ACCOUNT_INTERFACE).unwrap().insert(
+            "PresentationIdentity".into(),
+            "Must not be applied".to_variant(),
+        );
+        goa.set_reply(ReplyBehavior::Value(make_account_reply(vec![
+            renamed, invalid,
+        ])));
         client.refresh_accounts();
+        let rejected = updates.completed();
+        assert_eq!(rejected.accounts, accepted.accounts);
+        assert_eq!(
+            rejected.last_check.error().unwrap().cause,
+            ErrorCause::InvalidReply
+        );
+    });
+}
+
+#[test]
+fn stop_and_last_handle_drop_cancel_reads_and_prevent_late_callbacks() {
+    for explicit_stop in [false, true] {
+        run_in_context(|| {
+            let bus = TestBus::new();
+            let goa = FakeGoaService::new(&bus.address, ReplyBehavior::Hang);
+            let (client, updates) = start_test_client(&bus);
+            wait_until(|| goa.read_count() == 1);
+            let clone = client.clone();
+            drop(client);
+            if explicit_stop {
+                clone.stop();
+                clone.stop();
+                clone.refresh_accounts();
+            } else {
+                drop(clone);
+            }
+            goa.complete_held_reply(&make_account_reply(vec![make_account("late")]));
+            goa.change_properties(
+                ACCOUNT_INTERFACE,
+                BTreeMap::new(),
+                vec!["PresentationIdentity".into()],
+            );
+            dispatch_for(Duration::from_millis(40));
+            assert!(updates.is_empty());
+            assert_eq!(goa.read_count(), 1);
+        });
     }
-    let update = await_check_result(&mut updates);
-    assert_eq!(
-        update.last_check.error().unwrap().cause,
-        ErrorCause::Timeout
-    );
-    assert_eq!(goa.calls.lock().unwrap().len(), 1);
-    client.stop();
-    client.stop();
-    assert!(await_with_timeout(updates.next_account_update()).is_none());
-}
-
-#[test]
-fn malformed_membership_is_not_reported_as_healthy_empty() {
-    let bus = TestBus::new();
-    let mut damaged = fixture::make_account("one");
-    damaged
-        .get_mut(fixture::ACCOUNT_INTERFACE)
-        .unwrap()
-        .remove("Id");
-    let _goa = FakeGoaService::new(
-        &bus.address,
-        vec![ReplyBehavior::Value(fixture::make_account_reply(vec![
-            damaged,
-            fixture::make_account("two"),
-        ]))],
-    );
-    let (_client, mut updates) = start_test_client(&bus);
-    let update = await_check_result(&mut updates);
-    assert!(matches!(update.last_check, AccountCheckResult::Failed(_)));
-    assert_eq!(
-        update.last_check.error().unwrap().cause,
-        ErrorCause::InvalidList
-    );
-    assert!(!update.last_check.is_complete());
-    assert_eq!(update.accounts.len(), 1);
-}
-
-#[test]
-fn unavailable_connection_is_reported_by_the_worker() {
-    let bus = TestBus::new();
-    let address = bus.address.clone();
-    drop(bus);
-    let (_client, mut updates) = start_for_test(address, Duration::from_millis(400));
-    let update = await_check_result(&mut updates);
-    assert!(matches!(update.last_check, AccountCheckResult::Failed(_)));
-    assert_eq!(
-        update.last_check.error().unwrap().operation,
-        "connect to session bus"
-    );
-    assert!(!update.last_check.is_complete());
 }

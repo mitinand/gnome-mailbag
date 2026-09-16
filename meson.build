@@ -32,7 +32,12 @@ install_data('data' / app_id + '.desktop', install_dir: get_option('datadir') / 
 install_data('data' / app_id + '.metainfo.xml', install_dir: get_option('datadir') / 'metainfo')
 install_data('data' / app_id + '.svg', install_dir: get_option('datadir') / 'icons/hicolor/scalable/apps')
 license_dir = get_option('datadir') / 'licenses' / app_id
-install_data('LICENSE', 'LICENSES/CC0-1.0.txt', install_dir: license_dir)
+install_data(
+    'LICENSE', 'LICENSES/CC0-1.0.txt', 'LICENSES/CC-BY-SA-4.0.txt',
+    'LICENSES/LGPL-2.0-or-later.txt',
+    'crates/mailbag/resources/icons/account-icons.license',
+    install_dir: license_dir,
+)
 
 # Preserve upstream notices, including their paths and package versions.
 # Vendoring is required before configuring an installable build.
