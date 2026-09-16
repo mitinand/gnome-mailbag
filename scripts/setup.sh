@@ -9,7 +9,7 @@ if [[ $(uname -s) != Linux ]]; then
 fi
 export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 missing=()
-for tool in git cc pkg-config python3 desktop-file-validate appstreamcli dbus-daemon meson ninja flatpak flatpak-builder; do
+for tool in git cc pkg-config glib-compile-resources python3 desktop-file-validate appstreamcli dbus-daemon meson ninja flatpak flatpak-builder; do
     command -v "$tool" >/dev/null || missing+=("$tool")
 done
 if command -v pkg-config >/dev/null; then

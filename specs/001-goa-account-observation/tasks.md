@@ -1,150 +1,105 @@
 # Tasks: GNOME Mail Accounts
 
-**Feature**: F01 / `001-goa-account-observation` · **Branch**: `codex/goa`
-**Status**: Portions 1–6 implemented and checked; portion 6 awaiting maintainer review.
+**Feature**: F01 / `001-goa-account-observation`
+**Revised**: 2026-09-16 · **Status**: Account presentation cleanup ready for review; manual acceptance remains
 
-This is the execution list. [Spec](spec.md) owns behavior; [plan](plan.md) owns
-component boundaries; the [GOA](contracts/observation.md),
-[account](contracts/accounts.md) and [UI](contracts/ui.md) contracts own details.
-[Quickstart](quickstart.md) owns validation commands and installed acceptance.
+This list replaces the previous completed implementation/mechanism tasks after the
+new maintainer decisions. Portions A and B are implemented. Automated and graphical
+checks have passed; the remaining manual and installed cases are unchecked below.
+Component tests do not establish installed acceptance.
 
-Follow [AGENTS.md](../../AGENTS.md#commits-prs-and-review-pauses): implement one
-agreed portion with its tests and required checks, then stop for explicit maintainer
-review. A checked STOP records handoff, not permission to proceed. The maintainer
-creates commits and PRs. Tests precede the behavior they verify. No task authorizes
-spawning agents or crossing a review boundary.
+[Spec](spec.md) owns behavior, [plan](plan.md) owns boundaries, contracts own details,
+and [quickstart](quickstart.md) owns commands and acceptance scenarios.
+Follow [AGENTS.md](../../AGENTS.md#commits-prs-and-review-pauses): implement one agreed
+portion, run its checks, report and stop. A checked handoff does not mean approval.
+The maintainer creates commits and PRs. Do not start code before document approval.
 
-| Portion | PR | Tasks | Suggested commit subject |
+| Portion | Tasks | Suggested commit subject | Intended PR |
 |---|---|---|---|
-| 1. Design | 1 | T001–002 | docs: define GOA account observation |
-| 2. Initial client | 1 | T003–010 | feat(goa): read accounts on a dedicated GLib thread |
-| 3. Changes and recovery | 1 | T011–018 | feat(goa): follow changes and recover failed checks |
-| 4. Account rules | 1 | T019–023 | feat(accounts): define availability and selection rules |
-| 4b. Shared contract | 1 | T045–049 | refactor(accounts): separate account data from GOA |
-| 4c. Review fixes | 1 | T050–057 | refactor(goa): simplify account observation and state handling |
-| 5. Account UI | 2 | T024–033 | feat(ui): show GOA accounts and explain changes |
-| 6. Settings | 2 | T034–039 | feat(settings): open Online Accounts from Mailbag |
-| 7. Acceptance | 2 | T040–044 | test: verify GOA integration and account UI |
+| Documents | T069–070 | docs(goa): simplify F01 observation design | Current F01 PR |
+| A. Account observation and UI | T071–081 | refactor(goa): observe full account lists in the main context | Current F01 PR |
+| B. Settings | T082–085 | refactor(settings): simplify Online Accounts launch | Current F01 PR |
+| C. Acceptance | T086–089 | docs(goa): track remaining manual acceptance | Current F01 PR |
+| D. Test cleanup | T090–091 | test(goa): remove redundant coverage and simplify fixtures | Current F01 PR |
+| E. Account presentation cleanup | T092–094 | refactor(accounts): centralize status and simplify selection | Current F01 PR |
 
-## Completed PR 1 foundation
+## Phase 1: documents and review
 
-- [X] T001 Check feature documents against the accepted scope and constitution.
-- [X] T002 STOP: hand over design for PR 1 review under AGENTS.md.
-- [X] T003 Verify the approved baseline 7a69c49 is present; run scripts/check.sh.
-- [X] T004 Create the GOA workspace crate with the locked GIO/GLib dependencies.
-- [X] T005 Add isolated D-Bus/GOA fixtures in tests/support with deadlines and cleanup.
-- [X] T006 Add decoder field, identity and data-limit tests.
-- [X] T007 Implement GOA account decoding and safe errors under contracts/observation.md.
-- [X] T008 Test initial acquisition, read-only protocol, failures and independence from GTK.
-- [X] T009 Implement the dedicated worker, acquisition, commands and latest-update receiver.
-- [X] T010 STOP: run required checks and hand over portion 2 for PR 1 review.
-- [X] T011 Test relevant events, ordering, process replacement, activation and stale replies.
-- [X] T012 Test delivery/command races, bounded bursts, data limits and shutdown.
-- [X] T013 Test periodic scheduling, silent hangs, recovery and command coalescing.
-- [X] T014 Implement event handling and guarded account acquisition under the GOA contract.
-- [X] T015 Implement event-driven latest-state delivery with no update history or polling.
-- [X] T016 Implement the ten-second idle health check and recovery.
-- [X] T017 Complete cancellation, teardown and unexpected worker-exit handling.
-- [X] T018 STOP: run required checks and hand over portion 3 for PR 1 review.
-- [X] T019 Test provider eligibility, display, statuses and selection in mailbag::accounts.
-- [X] T020 Test applied exclusions, notice grouping and reappearance.
-- [X] T021 Implement AccountList and its row/selection rules in crates/mailbag/src/accounts.rs.
-- [X] T022 Implement AccountHiddenNotice generation under FR-017.
-- [X] T023 STOP: run required checks and hand over portion 4 for PR 1 review.
-- [X] T045 Update the accepted documents for the source-independent account boundary.
-- [X] T046 Test shared validity and GOA translation without moving provider policy into the adapter.
-- [X] T047 Define one normalized account format for GOA and application rules (now in goa-adapter::account_model after review).
-- [X] T048 Preserve the single worker/receiver design and keep GOA protocol details out of account rules.
-- [X] T049 STOP: run required checks and hand over portion 4b for PR 1 review.
+- [X] T069 Revise specs/001-goa-account-observation/spec.md, plan.md, contracts/, research.md, data-model.md, quickstart.md and tasks.md for the accepted decisions and constitution 2.2.0.
+- [X] T070 STOP: present the document diff and transport evidence; leave every code task below pending until explicit maintainer approval under AGENTS.md.
 
-## Portion 4c: approved review fixes (PR 1)
+## Phase 2: shared foundation for portion A
 
-- [X] T050 Update contracts first: stateless identity validation, separate pending/result state and shared snapshots.
-- [X] T051 Add regression tests for conflicting paths/IDs, manual pending state and irrelevant events.
-- [X] T052 Separate decoding from worker reconciliation; remove old-path identity reconstruction.
-- [X] T053 Unify data-limit validation and prepare property candidates without rollback.
-- [X] T054 Remove the public publication counter and deep copy at receipt; update AccountList to borrow snapshots.
-- [X] T055 Replace redundant notice assertions with adapter-to-AccountList tests for superseded/applied changes.
-- [X] T056 Consolidate feature documents around their owners; align statuses and acceptance references.
-- [X] T057 STOP: run scripts/check.sh and relevant integration/graphical checks, review principles I/II, and hand over all seven fixes for PR 1. Maintainer creates the commit/PR; wait before portion 5.
+Keep the existing workspace, build tooling and private-bus fixtures. No setup
+framework or temporary compatibility interface is needed.
 
-## Portion 5: accounts in the existing UI (PR 2)
+- [X] T071 Adapt tests/support/goa.rs and tests/support/bus.rs for synchronous full snapshots, property/interface triggers and service replacement; retain private-bus isolation, synthetic identities, outer deadlines and cleanup.
 
-- [X] T024 [US1] Add graphical account/status/input tests under contracts/ui.md.
-- [X] T025 [US1] Bind stable account rows by AccountId using the approved forms and selection policy.
-- [X] T026 [US1] Connect AccountPage to the existing status area; preserve the approved layout.
-- [X] T027 [US1] Wire the agreed problem button, tooltip and accessible explanation.
-- [X] T028 [US1] Wire GOA startup/receiver and GTK consumer lifetime; yield between updates.
-- [X] T029 [US2] Test graphical changes, retained focus/selection, retry and notices.
-- [X] T030 [US2] Apply AccountList results in place; handle disappearing rows/icons and popovers.
-- [X] T031 [US2] Connect both retry entry points using the shared pending/result contract.
-- [X] T032 [US2] Present notices through the bounded toast owner in contracts/ui.md#notices.
-- [X] T033 [US2] STOP: run headless and graphical checks and hand over portion 5 for PR 2 review.
+## Phase 3: US1 — see available accounts (P1, portion A)
 
-Portion 5 validation: `scripts/check.sh` passed (84 unit tests and two
-compile-fail doctests); both graphical cases in quickstart.md passed separately.
-The UI cases use synthetic snapshots and cover status, row identity, selection,
-focus, popovers, retry, notices and collapsed navigation. Physical keyboard/touch,
-enlarged text/high contrast, combined load/shutdown and installed-host acceptance
-remain for portions 6–7. The Online Accounts button targets `app.accounts`; its
-launcher was subsequently connected in portion 6. No installed compatibility is claimed.
+**Goal:** Typed account records, correct initial/empty/problem states and unchanged
+approved UI. **Independent check:** supply accepted and rejected full lists without
+Settings or mail access; verify stable IDs, labels, selection and missing Mail.
 
-## Portion 6: Settings and packaging (PR 2)
+- [X] T072 [US1] Keep required-field/optional-string parsing in crates/goa-adapter/src/accounts/tests.rs and whole-read rejection in crates/goa-adapter/src/client/tests.rs; remove standalone model and cross-component tests.
+- [X] T073 [US1] Simplify crates/goa-adapter/src/account_model.rs and crates/goa-adapter/src/accounts.rs under contracts/accounts.md: remove unknown required fields, invalid_fields, unused metadata/domain/code and custom data-limit machinery.
+- [X] T074 [US1] Update crates/mailbag/src/accounts.rs and crates/mailbag/src/accounts/tests.rs for one list error, retained rows, cold-start missing Mail with Retry, and typed provider/boolean fields; preserve label, icon and selection policy.
 
-- [X] T034 [US3] Add private Settings fixtures using tests/support/bus.rs.
-- [X] T035 [US3] Test the Settings protocol, failures, coalescing and cancellation.
-- [X] T036 [US3] Implement the shared async Settings launcher under contracts/ui.md.
-- [X] T037 [US3] Wire/test both Settings entry points and persistent failure explanations.
-- [X] T038 [US3] Add the two named Flatpak permissions and verify path-crate packaging.
-- [X] T039 [US3] STOP: run required checks and hand over portion 6 for PR 2 review.
+## Phase 4: US2 — trust account changes (P1, portion A)
 
-Portion 6 validation: scripts/check.sh and both graphical cases passed. The private
-Settings fixture covers the exact action parameters, successful launch replies,
-access denial, invalid arguments, unavailable service, timeout before/after bus
-acquisition, coalesced requests and ignored late replies after timeout/shutdown.
-Flatpak built without installation; package metadata contains only the two named
-bus permissions in addition to the existing Wayland/GPU permissions. Actual GNOME
-panel presentation and installed-host acceptance remain for portion 7.
+**Goal:** Full reads follow GOA changes and preserve truthful UI through failures.
+**Independent check:** a private GOA service drives the observer; AccountList unit tests separately
+assert rows, selection, errors and notices.
 
-## Portion 7: combined acceptance (PR 2)
+- [X] T075 [US2] Adapt crates/goa-adapter/src/client/event_tests.rs and crates/goa-adapter/src/client/tests.rs for changes during reads, one follow-up after coalesced triggers, failure preservation, Retry, owner replacement and successful removal. Use producer-valid message sequences.
+- [X] T076 [US2] Implement main-context asynchronous full reads and signal triggers in crates/goa-adapter/src/client.rs under contracts/observation.md, and remove crates/goa-adapter/src/client/worker_state.rs; retain only one active operation and refetch_needed for read scheduling.
+- [X] T077 [US2] Update crates/goa-adapter/src/lib.rs and crates/mailbag/src/main.rs for GoaAdapter::start(on_update), manual refresh and cleanup. Remove GoaUpdates, worker/exchange files and SourceStopped; keep callbacks and widget updates in the main context.
+- [X] T078 [US2] Update crates/mailbag/src/account_ui.rs, crates/mailbag/src/account_ui/tests.rs and crates/mailbag/src/accounts/notice_tests.rs for successful removal without a global error, manual-only “Checking…”, initial loading, last-row empty state and one ordinary toast per applied exclusion. Preserve approved geometry, icons and focus behavior.
+- [X] T079 [US2] Remove mechanism-only tests under crates/goa-adapter/src/client/ and obsolete receiver doctests in crates/goa-adapter/src/lib.rs: counters, Mutex/Waker exchanges, independent-worker progress, polling, shutdown drain periods, data limits and partial-record rescue. Retain failure, timeout and cancellation behavior tests.
+- [X] T080 [US2] Retain account_ui_transitions in crates/mailbag/src/account_ui/tests.rs for row reuse, hover without selection and focus after removal; remove graphical subprocess cases.
+- [X] T081 [US2] STOP: run scripts/check.sh, git diff --check and the graphical cases in specs/001-goa-account-observation/quickstart.md. Review constitution I/II, report limits and hand over portion A; wait before portion B.
 
-- [ ] T040 Run combined client/UI tests, the 30-account 250-ms target, yielding and shutdown under load.
-- [ ] T041 Run the graphical/input acceptance matrix in quickstart.md; report unavailable cases.
-- [ ] T042 Run installed Flatpak acceptance in quickstart.md on the supported GNOME environment.
-- [ ] T043 Review scope/diagnostics, update README prerequisites and align test commands.
-- [ ] T044 STOP: run required checks and hand over portion 7 for PR 2 review; leave unmet acceptance unchecked.
+## Phase 5: US3 — open system account management (P2, portion B)
 
-## Dependencies and acceptance
+**Goal:** Both existing entry points share one launch; failure produces one ordinary
+toast. **Independent check:** the private Settings fixture verifies parameters,
+exact action parameters, repeated activation, one error notification and another attempt.
 
-Complete portion 4c and PR 1 review before GTK work. Portion 5 builds US1 and US2
-presentation on the shared rules; portion 6 supplies the Settings action and
-packaging required by the empty-state button. Portion 7 establishes installed
-acceptance. No earlier portion claims complete F01 or installed compatibility.
+- [X] T082 [US3] Update crates/mailbag/src/settings/tests.rs for one pending launch, exact action parameters, one failure notification and another attempt. Preserve private-bus tests and exact action parameters.
+- [X] T083 [US3] Simplify crates/mailbag/src/settings.rs under contracts/ui.md: use one pending flag, the D-Bus method timeout and a weak task reference; remove the overall deadline, stopped flag, stop/Drop and stored task handle.
+- [X] T084 [US3] Update crates/mailbag/src/main.rs, crates/mailbag/src/account_ui.rs and crates/mailbag/src/account_ui/tests.rs to present launch failures only through AdwToastOverlay. Remove retained Settings status and its effect on account pages; keep both entry points.
+- [X] T085 [US3] STOP: run scripts/check.sh, git diff --check and relevant graphical checks from specs/001-goa-account-observation/quickstart.md; hand over portion B and wait before portion C.
 
-Each feature criterion SC-001–008 is mapped to its requirements in
-[spec.md#acceptance](spec.md#acceptance). Tests accompany the responsible component;
-combined tests verify boundaries, and T041–042 establish graphical/host evidence.
-Do not duplicate that matrix here or treat skipped/zero tests as passing evidence.
+## Phase 6: combined acceptance (portion C)
 
-## Phase 8: Convergence
+- [X] T086 Run all automated and graphical cases in specs/001-goa-account-observation/quickstart.md on the revised implementation. Verify user-visible intermediate states, cancellation and scope; do not replace them with mechanism assertions.
+- [X] T087 Run the manual input/display matrix in specs/001-goa-account-observation/quickstart.md: keyboard, touch, narrow layout, enlarged text, high contrast and focus. Record unavailable cases as unverified. Completion confirmed by the maintainer.
+- [X] T088 Run installed Flatpak acceptance in specs/001-goa-account-observation/quickstart.md and verify io.github.mitinand.Mailbag.yml permissions, actual GOA discovery and both Settings entry points. Do not claim real-account acceptance when no suitable account exists. Completion confirmed by the maintainer, including installed account activation, Settings menu/button activation and cross-workspace presentation.
+- [X] T089 STOP: run scripts/check.sh and git diff --check, review constitution I/II and hand over portion C. Keep unmet acceptance unchecked in specs/001-goa-account-observation/tasks.md and report it; do not declare F01 complete from synthetic tests alone.
 
-These completion checks trace the remaining PR 2 work already scheduled in
-portions 5–7. Complete the referenced tasks in their original order and mark each
-corresponding convergence item when its acceptance evidence is available. Preserve
-the review pauses at T033, T039 and T044, and complete PR 1 review before starting
-portion 5.
+## Phase 7: test cleanup (portion D)
 
-- [X] T058 CRITICAL: Connect the existing GOA adapter and receiver to the application through T028; verify the path dependency in crates/mailbag/Cargo.toml, startup in crates/mailbag/src/main.rs, GTK yielding and receiver/shutdown lifetime per FR-001, FR-006, FR-012 and plan: GOA application wiring (missing).
-- [X] T059 Bind AccountList to stable GTK account rows and ID-based selection through T025 and T030 in mailbag::account_ui; verify updates, retained focus and confirmed exclusion per FR-003, FR-004 and FR-006–010 (partial).
-- [X] T060 Present AccountPage and account problems, and connect accessible status actions and Retry Check through T026, T027 and T031 in mailbag::account_ui per FR-005, FR-008, FR-009, FR-012, FR-014 and FR-015 (partial).
-- [X] T061 Present AccountHiddenNotice through the bounded toast owner in T032; verify single/group wording and notifications for applied exclusions per FR-017 and SC-008 (partial).
-- [X] T062 Implement and test the shared Settings launcher and both entry points through T034–T037 in mailbag::settings, including safe failures, coalescing and cancellation per FR-011, SC-004 and plan: Settings launch (missing).
-- [X] T063 Complete T038 in io.github.mitinand.Mailbag.yml; add the two named D-Bus permissions and verify packaging of the application path dependencies per FR-016, SC-007 and plan: Flatpak integration (partial).
-- [ ] T064 Complete the GTK behavioral/input coverage in T024 and T029 and combined acceptance in T040 and T041; verify focus, status transitions, retry, notices, yielding, shutdown and the 30-account/250-ms target per SC-001, SC-003, SC-005, SC-006, SC-008 and plan: graphical validation (partial).
-- [ ] T065 Run supported installed-Flatpak acceptance and complete prerequisite/evidence documentation through T042 and T043; verify actual GOA discovery, both Settings entry points, input access and installed permissions per SC-004, SC-005, SC-007 and plan: installed acceptance (partial).
+- [X] T090 Remove duplicate F01 tests and unused fixture mechanisms. Keep distinct decoding, presentation, private-bus integration and visible GTK behavior checks under contracts/observation.md#verification; remove the graphical observation/closure subprocess and activation fixtures under quickstart.md.
+- [X] T091 STOP: run scripts/check.sh, the graphical cases and git diff --check; review constitution I/II and report removed coverage, remaining checks and limitations. Leave T087/T088 open and wait for maintainer review.
 
-## Portion 5 review: consolidate the account contract
+## Phase 8: account presentation cleanup (portion E)
 
-- [X] T066 Update the accepted boundary: normalized account data belongs to the public goa-adapter contract; no separate account-model crate.
-- [X] T067 Move data, validation and their tests into goa-adapter::account_model; export public data types and keep validation helpers internal. Remove the workspace member and dependency entries, and update imports without changing behavior.
-- [X] T068 Run scripts/check.sh and the graphical cases, then hand over the current portion for maintainer review under PR 2. No new account service interface is introduced.
+- [X] T092 Remove the unused availability classification and unused selection-command variants in crates/mailbag/src/accounts.rs. Let AccountPage own read-error priority and simplify crates/mailbag/src/account_ui.rs accordingly; preserve visible selection, problem indicators and Retry behavior.
+- [X] T093 Fix account-empty guidance for unsupported providers with disabled Mail. First reproduce the misleading enable-Mail advice in the existing model/GTK tests, then classify provider support before Mail enablement under contracts/accounts.md.
+- [X] T094 STOP: run scripts/check.sh, the graphical cases and git diff --check; review the final diff under constitution I/II and hand over portion E. Keep T087/T088 open and wait for maintainer review.
+
+## Dependencies and parallel opportunities
+
+Documents → explicit approval → portion A → review → portion B → review → portion C.
+Within A, US1 data changes precede US2 transport/application integration. They ship
+as one buildable portion because the observer's public data and consumers change
+together. Settings is independently testable and remains a separate portion.
+
+For US1, field decoding and AccountList assertions may be prepared independently
+once the contract is fixed. For US2, transport and graphical test review may run
+independently after wiring is available. For US3, private protocol checks and UI
+toast checks are independent after integration. Shared-file edits remain sequential;
+these opportunities never override review pauses or authorize additional agents.
+
+The first useful increment is portion A. No UI redesign, credentials, mail sync,
+background lifetime or new runtime is included in any portion.

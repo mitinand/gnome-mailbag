@@ -1,20 +1,23 @@
 # Account State in Memory
 
-All state belongs to the current run; F01 has no database, credentials or mail cache.
+All state belongs to the current run. F01 has no database, credentials or mail cache.
 
 | Data | Owner | Definition |
 |---|---|---|
-| AccountId, AccountDetails, AccountCheckResult, AccountUpdate, AccountCheckError | goa-adapter::account_model | [Shared account contract](contracts/accounts.md) |
-| Parsed account records and D-Bus paths | GOA decoder | [Parsing and acceptance](contracts/observation.md#parsing-and-acceptance) |
-| Current account facts, valid path mappings and active request | GOA worker | [GOA client contract](contracts/observation.md) |
-| Latest shared snapshot and waiting task | GOA exchange | [Delivery and shutdown](contracts/observation.md#delivery-and-shutdown) |
-| Visible AccountRow values, selected ID, AccountPage and excluded reasons | Mailbag AccountList | [Application representation](contracts/accounts.md#application-representation) |
+| AccountId, AccountDetails, AccountCheckResult, AccountUpdate, AccountCheckError | goa-adapter::account_model | [Account contract](contracts/accounts.md) |
+| Last accepted full list and read result | GOA observer | [Parsing and acceptance](contracts/observation.md#parsing-and-acceptance) |
+| Active operation, refetch_needed, retry progress and subscriptions | GOA observer | [Read scheduling](contracts/observation.md#events-and-request-ordering) |
+| Visible rows, selected ID, page state and excluded reasons | Mailbag AccountList | [Application representation](contracts/accounts.md#application-representation) |
 | AccountHiddenNotice | Caller presenting the notice | [FR-017](spec.md#requirements) and [UI contract](contracts/ui.md#notices) |
-| Row objects, focus, popovers and toast presentation | GTK account UI | [UI contract](contracts/ui.md) |
-| Pending launch | Settings launcher | [Settings protocol](contracts/ui.md#settings-launch-protocol) |
-| Last Settings launch failure | GTK account UI | [Settings protocol](contracts/ui.md#settings-launch-protocol) |
+| Row widgets, focus and explanations | GTK account UI | [UI contract](contracts/ui.md) |
+| Settings launch_pending flag and error callback | Settings launcher | [Settings protocol](contracts/ui.md#settings-launch-protocol) |
+| Displayed/queued account and Settings toasts | Standard AdwToastOverlay | [Notices](contracts/ui.md#notices) |
 
-The adapter retains source facts; AccountList retains the rows actually applied by
-the UI. These serve different purposes: replacing a pending source snapshot does
-not itself hide a displayed row or produce a notice. No intermediate-change
-history or acknowledgment protocol connects them.
+The source list describes the last successful read; AccountList describes the rows
+actually displayed. Failed reads preserve both while changing the visible error.
+A successful full list replaces source data, then AccountList applies eligibility
+and generates notices only for actual displayed-to-hidden transitions.
+
+Missing Mail and explicit disablement are separate typed facts. Required fields
+have no unknown variants. There is no path/property cache, cross-thread snapshot
+exchange, notification history or retained Settings error model.

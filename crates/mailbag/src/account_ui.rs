@@ -1,21 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use crate::accounts::{
-    AccountHiddenNotice, AccountList, AccountPage, AccountProblem, ExclusionReason,
-};
+use crate::accounts::{AccountList, AccountPage, AccountProblem, AccountRow, ExclusionReason};
+use crate::settings::LaunchError;
 use adw::{gio, glib, gtk, prelude::*};
-use goa_adapter::{AccountField, AccountId, AccountUpdate, ErrorCause};
-use std::{
-    cell::{Cell, RefCell},
-    collections::BTreeMap,
-    rc::Rc,
-};
+use goa_adapter::{AccountId, AccountUpdate, ErrorCause};
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 #[cfg(test)]
 mod tests;
 
 struct AccountWidgets {
+    id: AccountId,
     root: gtk::Box,
     details: adw::ActionRow,
     icon: gtk::Image,
@@ -24,29 +20,26 @@ struct AccountWidgets {
     explanation: gtk::Label,
     retry: gtk::Button,
     settings: gtk::Button,
-    item: glib::BoxedAnyObject,
 }
 
 pub struct AccountUi {
     accounts: AccountList,
-    settings_error: Option<crate::settings::LaunchError>,
-    settings_pending: bool,
-    rows: BTreeMap<AccountId, AccountWidgets>,
+    rows: BTreeMap<AccountId, glib::BoxedAnyObject>,
     store: gio::ListStore,
     selection: gtk::SingleSelection,
-    reconciling: Rc<Cell<bool>>,
     tree: gtk::ListView,
     status: adw::StatusPage,
+    list_stack: gtk::Stack,
     retry: gtk::Button,
     online_accounts: gtk::Button,
     mail_split: adw::NavigationSplitView,
     folders_split: adw::OverlaySplitView,
-    retry_check: Rc<dyn Fn()>,
-    notices: Rc<RefCell<AccountNotices>>,
+    retry_check: gio::SimpleAction,
+    toasts: adw::ToastOverlay,
 }
 
 impl AccountUi {
-    pub fn new(builder: &gtk::Builder, retry_check: impl Fn() + 'static) -> Rc<RefCell<Self>> {
+    pub fn new(builder: &gtk::Builder) -> Rc<RefCell<Self>> {
         let tree: gtk::ListView = builder.object("folder_tree").expect("folder_tree");
         let store = gio::ListStore::new::<glib::BoxedAnyObject>();
         let selection = gtk::SingleSelection::new(Some(store.clone()));
@@ -56,13 +49,14 @@ impl AccountUi {
         let factory = gtk::SignalListItemFactory::new();
         factory.connect_bind(|_, item| {
             let item = item.downcast_ref::<gtk::ListItem>().expect("list item");
+            // Single-click activation otherwise also selects rows on hover.
+            item.set_selectable(false);
             let object = item
                 .item()
                 .unwrap()
                 .downcast::<glib::BoxedAnyObject>()
                 .unwrap();
-            let (_, root, _) = &*object.borrow::<(AccountId, gtk::Box, gtk::Popover)>();
-            item.set_child(Some(root));
+            item.set_child(Some(&object.borrow::<AccountWidgets>().root));
         });
         factory.connect_unbind(|_, item| {
             let item = item.downcast_ref::<gtk::ListItem>().unwrap();
@@ -70,8 +64,8 @@ impl AccountUi {
                 object
                     .downcast::<glib::BoxedAnyObject>()
                     .unwrap()
-                    .borrow::<(AccountId, gtk::Box, gtk::Popover)>()
-                    .2
+                    .borrow::<AccountWidgets>()
+                    .popover
                     .popdown();
             }
             item.set_child(None::<&gtk::Widget>);
@@ -86,51 +80,38 @@ impl AccountUi {
         actions.append(&retry);
         actions.append(&online_accounts);
         status.set_child(Some(&actions));
-        let retry_check: Rc<dyn Fn()> = Rc::new(retry_check);
+        let retry_check = gio::SimpleAction::new("retry-accounts", None);
         let retry_callback = retry_check.clone();
-        retry.connect_clicked(move |_| retry_callback());
-        let reconciling = Rc::new(Cell::new(false));
+        retry.connect_clicked(move |_| retry_callback.activate(None));
         let ui = Rc::new(RefCell::new(Self {
             accounts: AccountList::default(),
-            settings_error: None,
-            settings_pending: false,
             rows: BTreeMap::new(),
             store,
-            selection: selection.clone(),
-            reconciling: reconciling.clone(),
+            selection,
             tree: tree.clone(),
             status,
+            list_stack: builder.object("list_stack").expect("list_stack"),
             retry,
             online_accounts,
             mail_split: builder.object("mail_split").expect("mail_split"),
             folders_split: builder.object("folders_split").expect("folders_split"),
             retry_check,
-            notices: AccountNotices::new(builder.object("toasts").expect("toasts")),
+            toasts: builder.object("toasts").expect("toasts"),
         }));
-        let weak = Rc::downgrade(&ui);
-        selection.connect_selected_notify(move |selection| {
-            if reconciling.get() {
-                return;
-            }
-            if let Some(ui) = weak.upgrade() {
-                let id = selection.selected_item().map(|item| {
-                    item.downcast::<glib::BoxedAnyObject>()
-                        .unwrap()
-                        .borrow::<(AccountId, gtk::Box, gtk::Popover)>()
-                        .0
-                        .clone()
-                });
-                let mut ui = ui.borrow_mut();
-                ui.accounts.select_account(id);
-                ui.show_status();
-            }
-        });
         let weak = Rc::downgrade(&ui);
         tree.connect_activate(move |_, position| {
             if let Some(ui) = weak.upgrade() {
-                let selection = ui.borrow().selection.clone();
-                selection.set_selected(position);
-                let ui = ui.borrow();
+                let mut ui = ui.borrow_mut();
+                let item = ui
+                    .store
+                    .item(position)
+                    .unwrap()
+                    .downcast::<glib::BoxedAnyObject>()
+                    .unwrap();
+                let id = item.borrow::<AccountWidgets>().id.clone();
+                ui.accounts.select_account(id);
+                ui.selection.set_selected(position);
+                ui.show_status();
                 ui.mail_split.set_show_content(false);
                 if ui.folders_split.is_collapsed() {
                     ui.folders_split.set_show_sidebar(false);
@@ -142,9 +123,12 @@ impl AccountUi {
         ui
     }
 
+    pub fn connect_retry_check(&self, retry_check: impl Fn() + 'static) {
+        self.retry_check.connect_activate(move |_, _| retry_check());
+    }
+
     pub fn apply_update(&mut self, update: &AccountUpdate) {
-        let notice = self.accounts.apply_update(update);
-        self.reconciling.set(true);
+        let hidden_notices = self.accounts.apply_update(update);
         let removed: Vec<_> = self
             .rows
             .keys()
@@ -153,159 +137,101 @@ impl AccountUi {
             .collect();
         let mut removed_focus = false;
         for id in removed {
-            let row = self.rows.remove(&id).unwrap();
+            let item = self.rows.remove(&id).unwrap();
+            let row = item.borrow::<AccountWidgets>();
             if contains_focus(&row.root) || contains_focus(&row.popover) {
                 removed_focus = true;
             }
             row.popover.popdown();
-            if let Some(position) = self.store.find(&row.item) {
+            if let Some(position) = self.store.find(&item) {
                 self.store.remove(position);
             }
         }
-        for (id, account) in self.accounts.visible_accounts() {
-            let row = self.rows.entry(id.clone()).or_insert_with(|| {
-                let row = AccountWidgets::new(id, self.retry_check.clone());
-                self.store.append(&row.item);
-                row
+        for (position, (id, account)) in self.accounts.visible_accounts().iter().enumerate() {
+            let item = self.rows.entry(id.clone()).or_insert_with(|| {
+                let item = glib::BoxedAnyObject::new(AccountWidgets::new(id, &self.retry_check));
+                self.store.insert(position as u32, &item);
+                item
             });
-            row.details.set_title(&account.label);
-            row.details.set_subtitle(&match &account.email_address {
-                Some(email) => format!("{} · {email}", account.provider_name),
-                None => account.provider_name.clone(),
-            });
-            row.icon.set_icon_name(Some(&account.icon_name));
-            let explanation = account
-                .problems
-                .iter()
-                .map(problem_text)
-                .collect::<Vec<_>>()
-                .join("\n");
-            if explanation.is_empty() {
-                if contains_focus(&row.problem) || contains_focus(&row.popover) {
-                    focus_widget(&row.root);
-                }
-                row.popover.popdown();
-            }
-            row.problem.set_visible(!explanation.is_empty());
-            row.problem.set_tooltip_text(Some(&explanation));
-            row.problem
-                .update_property(&[gtk::accessible::Property::Label(&explanation)]);
-            row.explanation.set_text(&explanation);
-            row.settings
-                .set_visible(account.problems.contains(&AccountProblem::AttentionNeeded));
-            row.retry
-                .set_visible(account.problems.iter().any(|problem| {
-                    !matches!(
-                        problem,
-                        AccountProblem::AttentionNeeded | AccountProblem::UnsupportedProvider
-                    )
-                }));
-            if self
-                .accounts
-                .check_error()
-                .is_some_and(|error| error.cause == ErrorCause::SourceStopped)
-            {
-                row.retry.set_visible(false);
-            }
-            row.retry.set_sensitive(!self.accounts.check_pending());
-            row.retry.set_label(if self.accounts.check_pending() {
-                "Checking…"
-            } else {
-                "Retry Check"
-            });
+            item.borrow::<AccountWidgets>()
+                .update(account, self.accounts.retry_pending());
         }
         let selected_position = self
             .accounts
             .selected_id()
-            .and_then(|id| self.store.find(&self.rows[id].item));
+            .and_then(|id| self.store.find(&self.rows[id]));
         self.selection
             .set_selected(selected_position.unwrap_or(gtk::INVALID_LIST_POSITION));
-        self.reconciling.set(false);
         self.show_status();
         if removed_focus {
             focus_widget(&self.tree);
         }
-        if let Some(notice) = notice {
-            AccountNotices::push(&self.notices, notice);
+        for notice in hidden_notices {
+            self.show_toast(&format!(
+                "{} was removed or Mail was turned off in Online Accounts.",
+                notice.label
+            ));
         }
     }
 
-    pub fn show_settings_result(
-        &mut self,
-        pending: bool,
-        error: Option<crate::settings::LaunchError>,
-    ) {
-        self.settings_pending = pending;
-        self.settings_error = error;
-        self.show_status();
-        if let Some(error) = error {
-            AccountNotices::show_settings_error(&self.notices, error);
-        }
+    pub fn show_settings_error(&self, error: LaunchError) {
+        self.show_toast(error.message());
+    }
+
+    fn show_toast(&self, title: &str) {
+        self.toasts
+            .add_toast(adw::Toast::builder().title(title).use_markup(false).build());
     }
 
     fn show_status(&self) {
-        let (title, description) = if let Some(error) = self.accounts.check_error() {
-            ("Unable to get accounts", check_error_text(error.cause))
-        } else {
-            match self.accounts.page() {
-                AccountPage::Checking => ("Checking accounts", ""),
-                AccountPage::Unavailable => ("Unable to get accounts", "Try checking again."),
-                AccountPage::NoAccounts | AccountPage::NoEligibleAccounts => (
-                    "No mail accounts",
-                    if self
+        let page = self.accounts.page();
+        let (title, description) = match page {
+            AccountPage::Loading => ("Loading accounts", ""),
+            AccountPage::MailUnavailable => (
+                "Mail settings unavailable",
+                "Unable to get mail settings from Online Accounts. Try checking again.",
+            ),
+            AccountPage::ReadFailed(cause) => ("Unable to get accounts", check_error_text(cause)),
+            AccountPage::NoAccounts | AccountPage::NoEligibleAccounts => (
+                "No mail accounts",
+                if self
+                    .accounts
+                    .excluded_reasons()
+                    .contains(&ExclusionReason::MailDisabled)
+                    && !self
                         .accounts
                         .excluded_reasons()
-                        .contains(&ExclusionReason::MailDisabled)
-                        && !self
-                            .accounts
-                            .excluded_reasons()
-                            .contains(&ExclusionReason::UnsupportedProvider)
-                    {
-                        "Enable Mail for your account in Online Accounts."
-                    } else {
-                        "Add a mail account or enable Mail in Online Accounts."
-                    },
-                ),
-                AccountPage::SelectAccount => ("Select an account", ""),
-                AccountPage::SelectedAccount => ("", ""),
-            }
+                        .contains(&ExclusionReason::UnsupportedProvider)
+                {
+                    "Enable Mail for your account in Online Accounts."
+                } else {
+                    "Add a mail account or enable Mail in Online Accounts."
+                },
+            ),
+            AccountPage::SelectAccount => ("Select an account", ""),
+            AccountPage::SelectedAccount => ("", ""),
         };
-        let description = match self.settings_error {
-            Some(error) if description.is_empty() => error.message().to_owned(),
-            Some(error) => format!("{description}\n{}", error.message()),
-            None => description.to_owned(),
-        };
-        let title = if title.is_empty() && self.settings_error.is_some() {
-            "Could not open Online Accounts"
-        } else {
-            title
-        };
-        self.status.set_visible(!title.is_empty());
         self.status.set_title(title);
-        self.status.set_description(Some(&description));
-        self.retry.set_visible(
-            self.accounts
-                .check_error()
-                .is_some_and(|error| error.cause != ErrorCause::SourceStopped),
-        );
-        self.retry.set_sensitive(!self.accounts.check_pending());
-        self.retry.set_label(if self.accounts.check_pending() {
-            "Checking…"
+        self.status.set_description(Some(description));
+        self.retry.set_visible(matches!(
+            page,
+            AccountPage::ReadFailed(_) | AccountPage::MailUnavailable
+        ));
+        show_check_progress(&self.retry, self.accounts.retry_pending());
+        self.online_accounts.set_visible(matches!(
+            page,
+            AccountPage::NoAccounts | AccountPage::NoEligibleAccounts
+        ));
+        self.list_stack.set_visible_child_name(if title.is_empty() {
+            "messages"
         } else {
-            "Retry Check"
+            "empty"
         });
-        self.online_accounts.set_visible(
-            matches!(
-                self.accounts.page(),
-                AccountPage::NoAccounts | AccountPage::NoEligibleAccounts
-            ) || self.settings_error.is_some(),
-        );
-        self.online_accounts.set_sensitive(!self.settings_pending);
     }
 }
 
 impl AccountWidgets {
-    fn new(id: &AccountId, retry_check: Rc<dyn Fn()>) -> Self {
+    fn new(id: &AccountId, retry_check: &gio::SimpleAction) -> Self {
         let builder = gtk::Builder::from_string(include_str!("../resources/ui/folder-row.ui"));
         let root: gtk::Box = builder.object("folder_row").unwrap();
         root.set_focusable(true);
@@ -313,6 +239,7 @@ impl AccountWidgets {
         let badge: gtk::Label = builder.object("folder_badge").unwrap();
         details.remove(&badge);
         details.set_focusable(false);
+        details.add_css_class("heading");
         let problem = gtk::MenuButton::builder()
             .icon_name("dialog-warning-symbolic")
             .valign(gtk::Align::Center)
@@ -327,7 +254,8 @@ impl AccountWidgets {
             .use_markup(false)
             .build();
         let retry = gtk::Button::with_label("Retry Check");
-        retry.connect_clicked(move |_| retry_check());
+        let retry_check = retry_check.clone();
+        retry.connect_clicked(move |_| retry_check.activate(None));
         content.append(&explanation);
         content.append(&retry);
         let settings = gtk::Button::with_label("Online Accounts");
@@ -337,8 +265,8 @@ impl AccountWidgets {
         popover.set_child(Some(&content));
         problem.set_popover(Some(&popover));
         details.add_suffix(&problem);
-        let item = glib::BoxedAnyObject::new((id.clone(), root.clone(), popover.clone()));
         Self {
+            id: id.clone(),
             root,
             details,
             icon: builder.object("folder_icon").unwrap(),
@@ -347,9 +275,48 @@ impl AccountWidgets {
             explanation,
             retry,
             settings,
-            item,
         }
     }
+
+    fn update(&self, account: &AccountRow, retry_pending: bool) {
+        self.details.set_title(&account.label);
+        self.icon.set_icon_name(Some(account.icon_name));
+        let explanation = account
+            .problems
+            .iter()
+            .map(problem_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if explanation.is_empty() {
+            if contains_focus(&self.problem) || contains_focus(&self.popover) {
+                focus_widget(&self.root);
+            }
+            self.popover.popdown();
+        }
+        self.problem.set_visible(!explanation.is_empty());
+        self.problem.set_tooltip_text(Some(&explanation));
+        self.problem
+            .update_property(&[gtk::accessible::Property::Label(&explanation)]);
+        self.explanation.set_text(&explanation);
+        self.settings
+            .set_visible(account.problems.contains(&AccountProblem::AttentionNeeded));
+        self.retry.set_visible(
+            account
+                .problems
+                .iter()
+                .any(|problem| *problem != AccountProblem::AttentionNeeded),
+        );
+        show_check_progress(&self.retry, retry_pending);
+    }
+}
+
+fn show_check_progress(button: &gtk::Button, pending: bool) {
+    button.set_sensitive(!pending);
+    button.set_label(if pending {
+        "Checking…"
+    } else {
+        "Retry Check"
+    });
 }
 
 fn focus_widget(widget: &impl IsA<gtk::Widget>) {
@@ -370,19 +337,9 @@ fn problem_text(problem: &AccountProblem) -> &'static str {
         AccountProblem::CheckUnconfirmed => {
             "This account could not be checked. Try checking again."
         }
-        AccountProblem::InvalidField(AccountField::Provider) => {
-            "Online Accounts did not provide the account type. Try checking again."
-        }
-        AccountProblem::InvalidField(AccountField::MailEnabled) => {
-            "Online Accounts did not report whether Mail is enabled. Try checking again."
-        }
-        AccountProblem::InvalidField(AccountField::Attention) => {
-            "Online Accounts did not report whether this account needs attention. Try checking again."
-        }
         AccountProblem::MailUnavailable => {
             "Unable to get this account's mail settings. Try checking again."
         }
-        AccountProblem::UnsupportedProvider => "This account provider is not supported.",
         AccountProblem::AttentionNeeded => {
             "Open Online Accounts to resolve a problem with this account."
         }
@@ -395,84 +352,8 @@ fn check_error_text(cause: ErrorCause) -> &'static str {
             "Access to Online Accounts was denied. Check that Mailbag has permission to use Online Accounts."
         }
         ErrorCause::Timeout => "Online Accounts did not respond in time. Try checking again.",
-        ErrorCause::InvalidReply | ErrorCause::InvalidList => {
+        ErrorCause::InvalidReply => {
             "Online Accounts returned an incomplete or invalid account list. Try checking again."
         }
-        ErrorCause::DataLimit => "The account list is too large for Mailbag to process.",
-        ErrorCause::SourceStopped => "Account updates stopped. Restart Mailbag to try again.",
-    }
-}
-
-/// One visible notice and one pending aggregate; no per-update toast queue.
-struct AccountNotices {
-    overlay: adw::ToastOverlay,
-    active: Option<adw::Toast>,
-    pending: Option<AccountHiddenNotice>,
-}
-impl AccountNotices {
-    fn show_settings_error(owner: &Rc<RefCell<Self>>, error: crate::settings::LaunchError) {
-        let active = owner.borrow().active.clone();
-        if let Some(toast) = active {
-            toast.set_title(error.message());
-        } else {
-            Self::show_toast(owner, error.message().to_owned());
-        }
-    }
-
-    fn new(overlay: adw::ToastOverlay) -> Rc<RefCell<Self>> {
-        Rc::new(RefCell::new(Self {
-            overlay,
-            active: None,
-            pending: None,
-        }))
-    }
-    fn push(owner: &Rc<RefCell<Self>>, notice: AccountHiddenNotice) {
-        let mut notices = owner.borrow_mut();
-        if notices.active.is_some() {
-            notices.pending = Some(match notices.pending.take() {
-                None => notice,
-                Some(previous) => {
-                    AccountHiddenNotice::Group(notice_count(&previous) + notice_count(&notice))
-                }
-            });
-            return;
-        }
-        let title = match notice {
-            AccountHiddenNotice::Single(label) => {
-                format!("{label} was removed or Mail was turned off in Online Accounts.")
-            }
-            AccountHiddenNotice::Group(count) => {
-                format!("{count} accounts were removed or had Mail turned off in Online Accounts.")
-            }
-        };
-        drop(notices);
-        Self::show_toast(owner, title);
-    }
-    fn show_toast(owner: &Rc<RefCell<Self>>, title: String) {
-        let mut notices = owner.borrow_mut();
-        let toast = adw::Toast::builder().title(title).use_markup(false).build();
-        let weak = Rc::downgrade(owner);
-        toast.connect_dismissed(move |_| {
-            if let Some(owner) = weak.upgrade() {
-                let pending = {
-                    let mut notices = owner.borrow_mut();
-                    notices.active = None;
-                    notices.pending.take()
-                };
-                if let Some(pending) = pending {
-                    Self::push(&owner, pending);
-                }
-            }
-        });
-        notices.active = Some(toast.clone());
-        let overlay = notices.overlay.clone();
-        drop(notices);
-        overlay.add_toast(toast);
-    }
-}
-fn notice_count(notice: &AccountHiddenNotice) -> usize {
-    match notice {
-        AccountHiddenNotice::Single(_) => 1,
-        AccountHiddenNotice::Group(count) => *count,
     }
 }

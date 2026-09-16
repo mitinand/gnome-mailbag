@@ -24,6 +24,7 @@
             <child type="prefix">
               <object class="GtkImage" id="folder_icon">
                 <property name="icon-name">mail-unread-symbolic</property>
+                <property name="pixel-size">16</property>
               </object>
             </child>
             <child type="suffix">

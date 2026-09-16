@@ -22,6 +22,9 @@ Setup installs the pinned development tools, Spec Kit, and the Flatpak SDK/runti
 and runs the checks. It requires internet access. On other Linux distributions,
 install equivalent system packages; these environments are not yet validated.
 
+Accounts are configured in GNOME Settings → Online Accounts. Mailbag requires
+GNOME Online Accounts and GNOME Settings in the desktop session.
+
 ## Run and check
 
 ```bash
@@ -44,10 +47,10 @@ only builds and exports the package. The build uses GNOME SDK/runtime 50.
 | Path | Contents |
 | --- | --- |
 | `crates/mailbag/src/` | Application Rust code |
-| `crates/mailbag/resources/ui/` | Approved UI forms awaiting application integration |
+| `crates/mailbag/resources/ui/` | Approved UI forms |
 | `data/` | App icon, desktop entry and AppStream metadata |
 | `scripts/` | Setup, checks and Flatpak build tools |
 | `specs/` | Accepted feature requirements and design |
 
 The root Cargo workspace owns shared dependencies, lints and `Cargo.lock`.
-Other architecture crates will be added with their implementations.
+`crates/goa-adapter/` provides the account data contract and GNOME account integration.

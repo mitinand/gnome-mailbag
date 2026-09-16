@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 use adw::{gio, glib, prelude::*};
-use std::{cell::RefCell, collections::BTreeMap, rc::Rc, time::Duration};
+use std::{cell::Cell, collections::BTreeMap, future::Future, rc::Rc};
 
 #[cfg(test)]
 mod tests;
@@ -47,87 +47,59 @@ impl LaunchError {
         }
     }
 }
-#[derive(Default)]
-struct LaunchAttempt {
-    serial: u64,
-    cancellable: Option<gio::Cancellable>,
-    deadline: Option<glib::JoinHandle<()>>,
-    stopped: bool,
+
+/// Shares one pending launch across the window's Online Accounts actions.
+pub struct SettingsLauncher {
+    launch_pending: Cell<bool>,
+    on_error: Box<dyn Fn(LaunchError)>,
 }
 
-/// Coalesces Settings requests from every Online Accounts action in the window.
-pub struct SettingsLauncher {
-    attempt: RefCell<LaunchAttempt>,
-    timeout: Duration,
-    report: Rc<dyn Fn(bool, Option<LaunchError>)>,
-}
 impl SettingsLauncher {
-    pub fn new(report: impl Fn(bool, Option<LaunchError>) + 'static) -> Rc<Self> {
+    pub fn new(on_error: impl Fn(LaunchError) + 'static) -> Rc<Self> {
         Rc::new(Self {
-            attempt: RefCell::new(LaunchAttempt::default()),
-            timeout: Duration::from_secs(5),
-            report: Rc::new(report),
+            launch_pending: Cell::new(false),
+            on_error: Box::new(on_error),
         })
     }
+
     pub fn open(self: &Rc<Self>) {
-        let Some((serial, cancellable)) = self.begin_launch() else {
+        self.open_with_connection(gio::bus_get_future(gio::BusType::Session));
+    }
+
+    fn open_with_connection(
+        self: &Rc<Self>,
+        connection_request: impl Future<Output = Result<gio::DBusConnection, glib::Error>> + 'static,
+    ) {
+        if self.launch_pending.replace(true) {
             return;
-        };
+        }
         let weak = Rc::downgrade(self);
-        gio::bus_get(gio::BusType::Session, Some(&cancellable), move |result| {
+        glib::MainContext::ref_thread_default().spawn_local(async move {
+            let result = async {
+                let connection = connection_request.await?;
+                activate_online_accounts(&connection).await
+            }
+            .await;
             if let Some(launcher) = weak.upgrade() {
-                match result {
-                    Ok(connection) => launcher.call_panel(serial, &connection),
-                    Err(error) => launcher.finish(serial, Some(LaunchError::from_error(&error))),
+                launcher.launch_pending.set(false);
+                if let Err(error) = result {
+                    (launcher.on_error)(LaunchError::from_error(&error));
                 }
             }
         });
     }
-    fn begin_launch(self: &Rc<Self>) -> Option<(u64, gio::Cancellable)> {
-        let mut attempt = self.attempt.borrow_mut();
-        if attempt.stopped || attempt.cancellable.is_some() {
-            return None;
-        }
-        attempt.serial += 1;
-        let serial = attempt.serial;
-        let cancellable = gio::Cancellable::new();
-        attempt.cancellable = Some(cancellable.clone());
-        let weak = Rc::downgrade(self);
-        // Attach to the caller's context, also used by GIO's asynchronous callbacks.
-        let timeout = self.timeout;
-        attempt.deadline = Some(
-            glib::MainContext::ref_thread_default().spawn_local(async move {
-                glib::timeout_future(timeout).await;
-                if let Some(launcher) = weak.upgrade()
-                    && launcher.attempt.borrow().serial == serial
-                {
-                    launcher.attempt.borrow_mut().deadline.take();
-                    launcher.finish(serial, Some(LaunchError::Timeout));
-                }
-            }),
-        );
-        drop(attempt);
-        (self.report)(true, None);
-        Some((serial, cancellable))
-    }
-    fn call_panel(self: &Rc<Self>, serial: u64, connection: &gio::DBusConnection) {
-        let attempt = self.attempt.borrow();
-        if attempt.stopped || attempt.serial != serial {
-            return;
-        }
-        let Some(cancellable) = attempt.cancellable.clone() else {
-            return;
-        };
-        drop(attempt);
-        let panel = ("online-accounts", Vec::<glib::Variant>::new()).to_variant();
-        let body = (
-            "launch-panel",
-            vec![panel],
-            BTreeMap::<String, glib::Variant>::new(),
-        )
-            .to_variant();
-        let weak = Rc::downgrade(self);
-        connection.call(
+}
+
+async fn activate_online_accounts(connection: &gio::DBusConnection) -> Result<(), glib::Error> {
+    let panel = ("online-accounts", Vec::<glib::Variant>::new()).to_variant();
+    let body = (
+        "launch-panel",
+        vec![panel],
+        BTreeMap::<String, glib::Variant>::new(),
+    )
+        .to_variant();
+    connection
+        .call_future(
             Some("org.gnome.Settings"),
             "/org/gnome/Settings",
             "org.gtk.Actions",
@@ -136,50 +108,7 @@ impl SettingsLauncher {
             Some(glib::VariantTy::UNIT),
             gio::DBusCallFlags::NONE,
             -1,
-            Some(&cancellable),
-            move |result| {
-                if let Some(launcher) = weak.upgrade() {
-                    launcher.finish(serial, result.err().as_ref().map(LaunchError::from_error));
-                }
-            },
-        );
-    }
-    fn finish(&self, serial: u64, error: Option<LaunchError>) {
-        let mut attempt = self.attempt.borrow_mut();
-        if attempt.stopped || attempt.serial != serial || attempt.cancellable.is_none() {
-            return;
-        }
-        let cancellable = attempt.cancellable.take().unwrap();
-        let deadline = attempt.deadline.take();
-        drop(attempt);
-        if let Some(deadline) = deadline {
-            deadline.abort();
-        }
-        cancellable.cancel();
-        (self.report)(false, error);
-    }
-    pub fn stop(&self) {
-        let mut attempt = self.attempt.borrow_mut();
-        attempt.stopped = true;
-        let cancellable = attempt.cancellable.take();
-        let deadline = attempt.deadline.take();
-        drop(attempt);
-        if let Some(deadline) = deadline {
-            deadline.abort();
-        }
-        if let Some(cancellable) = cancellable {
-            cancellable.cancel();
-        }
-    }
-    #[cfg(test)]
-    fn open_on(self: &Rc<Self>, connection: &gio::DBusConnection) {
-        if let Some((serial, _)) = self.begin_launch() {
-            self.call_panel(serial, connection);
-        }
-    }
-}
-impl Drop for SettingsLauncher {
-    fn drop(&mut self) {
-        self.stop();
-    }
+        )
+        .await
+        .map(|_| ())
 }

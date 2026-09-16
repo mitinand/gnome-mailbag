@@ -1,150 +1,152 @@
 # GOA Client Contract
 
-The adapter supplies the [shared account data](accounts.md) to Mailbag. User-visible
-rules belong to [FR-001–017](../spec.md#requirements); this contract owns transport,
-request ordering, data acceptance and resource limits.
+The adapter supplies [typed account data](accounts.md) to Mailbag. User-visible
+rules belong to [FR-001–017](../spec.md#requirements). This contract owns full-list
+reads, their triggers and the observer's lifetime.
 
 ## Client operations
 
-- `GoaAdapter::start()` returns cloneable commands and one non-cloneable GoaUpdates
-  receiver, then performs work on a dedicated GLib thread.
-- `GoaUpdates::next_account_update(&mut self)` waits for the newest shared
-  `Arc<AccountUpdate>`, or None after shutdown. The mutable borrow excludes
-  overlapping waits. Receiving does not clone the account map.
-- `refresh_accounts()` starts a check or joins the active one. All checks expose
-  check_pending; the last result changes only on new evidence (FR-012).
-- `stop()`, dropping the receiver or dropping the last command handle requests
-  shutdown without joining the worker from GTK.
+- `GoaAdapter::start(on_update)` starts observation and returns a handle. The
+  callback receives `&AccountUpdate` in the application's main GLib context.
+- `refresh_accounts()` requests a read and exposes manual retry progress. If a
+  read is active, it requests one follow-up instead of starting another.
+- `stop()` cancels pending work and removes subscriptions. Dropping the last
+  handle performs the same cleanup. Repeated stop is harmless.
 
-Only ordinary Rust data crosses this boundary. Diagnostic rules are in
-[the account contract](accounts.md#validation-and-diagnostics).
+The handle and callbacks are local to the main context. UI actions may share the
+handle; no Send/Sync interface, receiver or cross-thread exchange is required.
+Callbacks carry ordinary Rust data; GOA/GIO objects remain inside the adapter.
 
 ## D-Bus protocol
 
 | Item | Value |
 |---|---|
-| Bus / name | Session / org.gnome.OnlineAccounts |
+| Bus / destination | Session / org.gnome.OnlineAccounts |
 | Root | /org/gnome/OnlineAccounts |
-| Full check | org.freedesktop.DBus.ObjectManager.GetManagedObjects |
-| Request / reply | () / (a{oa{sa{sv}}}) |
+| Full read | org.freedesktop.DBus.ObjectManager.GetManagedObjects |
+| Request / expected reply | () / (a{oa{sa{sv}}}) |
 | Account interface | org.gnome.OnlineAccounts.Account |
 | Mail interface | org.gnome.OnlineAccounts.Mail |
 
-Use direct GIO signal subscriptions on the worker's thread-default context before
-resolving the unique GOA owner and requesting its list. GIO handles the transport.
-When no owner exists, permit normal bus activation and resolve again. No proxy
-cache, credential method, account mutation or mail-server access is needed.
+Acquire the session connection asynchronously. Install subscriptions on that
+connection in the main context before the initial read. Use the well-known GOA
+name, normal bus activation and GIO's default method timeout (`-1`, 25 seconds in
+GLib 2.88). There is no GetNameOwner round trip or ObjectManager client.
 
-| Source property | Shared field |
+| Source property | Account field |
 |---|---|
-| Id | AccountId |
-| ProviderType | imap_smtp → ImapSmtp; google → Google; ms_graph → Microsoft365; other valid text → Other; invalid/missing → None |
-| MailDisabled | Valid inverted boolean → mail_enabled; otherwise None |
-| AttentionNeeded | needs_attention |
-| Mail interface presence | mail_service_available |
-| ProviderName, PresentationIdentity, ProviderIcon | provider_name, display_name, theme icon_name |
-| Mail.EmailAddress | email_address |
+| Account.Id | AccountId |
+| Account.ProviderType | imap_smtp → ImapSmtp; google → Google; ms_graph → Microsoft365; other valid text → Other |
+| Account.MailDisabled | Inverted mail_enabled bool |
+| Account.AttentionNeeded | needs_attention bool |
+| Mail interface presence | mail_service_available bool |
+| Account.PresentationIdentity | display_name |
+| Mail.EmailAddress, when available | email_address |
 
 ## Events and request ordering
 
-| Signal | Accepted effect |
-|---|---|
-| NameOwnerChanged for GOA, from the bus daemon | Invalidate the list and path mappings; check the new owner |
-| InterfacesAdded at the GOA root | Recheck when Account or Mail was added |
-| InterfacesRemoved at the GOA root | Recheck when Account or Mail was removed; losing a known Account interface makes membership incomplete; missing Mail marks its known account unavailable immediately |
-| PropertiesChanged under the GOA root | Apply only properties in the mapping above, on the corresponding Account or Mail interface |
+The following all request a full list:
 
-Validate signal sender, path and body. Ignore unrelated properties and interface
-changes before invalidating an in-flight check or publishing. Relevant property
-signals still advance the internal account-change counter when their supplied
-value matches current data: their ordering can invalidate an older full reply.
-Publish property updates only when account fields change. Check state transitions
-and failure reports also publish updates; the same failure may be reported again.
+- Startup and explicit Retry Check.
+- NameOwnerChanged for org.gnome.OnlineAccounts, from the bus daemon.
+- InterfacesAdded or InterfacesRemoved at the GOA root, from GOA.
+- PropertiesChanged under the GOA root, from GOA.
 
-Invalidated required properties become unknown and request a full check; optional
-ones become absent display data. An Id change/invalidation is an identity error:
-discard that path mapping and recheck without applying the record to its old ID.
-Removing a known Account interface likewise reports Failed(InvalidList), retains
-account facts and discards its path mapping until a full check confirms membership.
-Unknown paths also require a check before attributing property data to an account.
+Use GIO subscriptions with the sender/interface/path filters above. Signal bodies
+do not contribute account facts. A stale signal can at most request another read
+of the current well-known service; no application-owned owner or path cache is
+needed. Other services are not triggers.
 
-Capture the account-change counter before owner resolution/acquisition. Request the
-list from the unique owner. If a relevant signal intervened, discard the reply and
-repeat within the original deadline. One owned request future prevents cancelled
-or timed-out replies from being accepted. Weak callback references keep old clients
-from affecting new ones. No publication or request-instance counter is needed.
+```text
+request_read():
+    if read_pending:
+        refetch_needed = true
+    else:
+        start_read()
+
+start_read():
+    read_pending = true
+    asynchronously call GetManagedObjects
+    success and complete decoding:
+        replace accepted accounts; last_check = Complete
+    call or decoding failure:
+        keep accepted accounts; last_check = Failed(error)
+    read_pending = false
+    if refetch_needed:
+        refetch_needed = false
+        start_read()
+    else:
+        retry_pending = false
+    publish the resulting AccountUpdate
+```
+
+Only one read is active. Every trigger during it is represented by the same
+follow-up flag. This applies to both successful and failed reads. Once changes
+settle and the subsequent read succeeds, the accepted list comes from a request
+started after the last received trigger. Results from cancelled/stopped observation
+are never published.
+
+Each accepted full list may update the UI under FR-006–010. A signal alone cannot
+hide a row, reset selection or create a notice. A read error cannot confirm
+absence. Retry presentation follows [the account contract](accounts.md); callbacks
+must see the final retry flag when a read sequence finishes.
+
+There is no health timer or automatic retry on failure alone. If the same GOA
+process resumes without emitting an event after a timeout, Retry Check is the
+recovery path. A later owner/property/interface event also requests a read.
 
 ## Parsing and acceptance
 
-The decoder is stateless: it reads one reply, validates records, excludes all
-records with conflicting paths or IDs, and returns valid account facts, their path
-mappings and any list error. It never reads previous state or guesses a damaged ID
-from an old object path. An account-shaped object with a missing interface or ID
-makes membership incomplete. A valid ID with another invalid field stays a record.
+Decode the full response into a new account map, without consulting prior source
+data. Account properties are required as specified in [the data contract](accounts.md).
+Ignore non-account objects. A violation rejects the entire new map; only a
+completely decoded response replaces accepted accounts and clears the error.
 
-The worker alone combines observations. A complete snapshot replaces accounts and
-path mappings. An incomplete snapshot updates only unambiguous records and keeps
-previous account facts for omitted records, with Failed(InvalidList). Only mappings
-validated in the new reply remain usable for signals. Previously shown rows follow
-FR-008; no ambiguous record can supply an exclusion fact. Later valid full checks
-restore availability and confirm removal under FR-009.
-
-Whole-reply or merged-list limit failures retain previous accounts, clear uncertain
-path mappings and report DataLimit. For property updates, prepare a candidate
-record and validate the resulting collection before committing. If new display
-strings exceed the total limit, omit that record's optional display fields while
-preserving valid boolean/provider changes and invalidations, then report DataLimit
-and request a check. The UI retains its prior usable display during that failure.
-There is no mutation followed by restoration of old display fields.
+GOA's producer constructs unique objects and typed properties. Do not reconstruct
+IDs, maintain path mappings, merge incomplete replies, rescue valid records from a
+bad reply or separately reconcile property changes. Missing Mail is a legitimate
+state with the behavior specified in FR-007, not a decoding failure.
 
 ## Limits
 
-| Resource | Limit / behavior |
-|---|---|
-| Active checks | One at a time; five seconds including connection, activation and rescheduled acquisition |
-| Periodic check | Every ten seconds if idle; skip busy ticks without queued catch-up |
-| Recovery | GOA events, periodic checks or manual retry; failures add no fast retry sequence |
-| Accepted account data | Up to 4,096 records, 4 KiB per normalized string, 16 MiB total retained strings including IDs and paths |
-| Pending UI data | One immutable snapshot, replaced by newer data |
-| Commands | One refresh flag and one stop flag; stop takes precedence |
-| Shutdown fixture | Worker finishes within one second; GTK does not wait |
+One pending read and one follow-up flag bound scheduled work. Use the GIO method
+timeout and cancellation; retain only the accepted list and the current response.
+GIO's existing D-Bus message-size validation remains in force.
 
-One validation function counts normalized account/path data for decoded snapshots,
-merged candidates and property replacements. Input record counts are also capped
-before normalization. Limits govern accepted application data, not GIO message
-allocations or transient candidate construction. Never truncate IDs or publish a
-truncated list as complete.
-
-The periodic request uses GetManagedObjects to detect silent hangs and repair
-missed events. Request pending state follows the shared contract; no separate
-presentation status is maintained by the transport. Whole-session-bus recovery
-and changing a shared GIO connection's exit-on-close policy remain outside F01.
+There is no application-specific account-count, per-string or aggregate byte
+budget in F01. The former 4,096-account limit is removed. Do not add multi-stage
+accounting or partial recovery to enforce speculative maxima.
 
 ## Delivery and shutdown
 
-A short mutex protects the latest Arc, pending notification and command flags.
-Register and take task wakers under the same lock; wake outside it. Build, copy and
-drop account collections outside the lock. Retain the latest shared snapshot after
-consumption so unexpected worker exit can report failure with known facts.
+The application owns observer lifetime and calls account presentation in the main
+context. Keep callbacks short and avoid invoking a consumer while holding a
+mutable borrow needed by its possible Retry/stop actions. Widgets remain owned by
+the UI. F01 does not introduce background application lifetime.
 
-GTK consumes at most one snapshot per dispatch and yields before reading another.
-There is no per-event task queue or command/UI polling timer. Stop cancels the
-request and timer, removes subscriptions, clears wakers and releases shared bus
-references without closing a connection used elsewhere. Allow cancelled GIO
-callbacks a bounded cleanup period. Expected cancellation is silent; an unexpected
-worker exit supplies Failed(SourceStopped) and ends the receiver. Requested
-shutdown releases pending data without copying accounts into an unused failure.
+Stop cancels the active operation, removes subscriptions on the same context and
+releases its references. It does not close a shared session connection, wait for
+a worker, drain callbacks for a fixed period or emit a source-stopped error. Weak
+references or owned cancellation prevent late completion from reaching detached
+consumers. Expected cancellation is silent.
 
 ## Verification
 
-Private services exercise this protocol without iterating GTK: initial acquisition,
-relevant and irrelevant events, malformed identities, owner replacement, stale
-replies, activation, deadlines, periodic recovery, command/wakeup races, bounded
-bursts and shutdown. Tests across the adapter and AccountList cover pending checks,
-conflicting identities and actual superseded/applied exclusions. Test commands and
-installed-host limits are in [quickstart.md](../quickstart.md).
+Keep the private D-Bus service fixtures and dispatch callbacks in a main context.
+Use one private-bus test for each scenario: initial accounts and provider mapping;
+GOA absent; failed reads retaining accounts; all four signal triggers; one
+follow-up for signals during a read with the final reply winning; manual-only
+retry_pending and coalesced Retry; whole-read rejection; stop and last-handle drop
+suppressing late updates. Test required-field decoding, empty optional strings and
+ignored non-account objects together in one unit test.
 
-Sources: [GOA Account](https://gnome.pages.gitlab.gnome.org/gnome-online-accounts/dbus-org.gnome.OnlineAccounts.Account.html),
-[GOA Mail](https://gnome.pages.gitlab.gnome.org/gnome-online-accounts/dbus-org.gnome.OnlineAccounts.Mail.html),
-[D-Bus interfaces](https://dbus.freedesktop.org/doc/dbus-specification.html),
-[GIO subscriptions](https://docs.gtk.org/gio/method.DBusConnection.signal_subscribe.html).
+Test labels, eligibility, notices, failed-read presentation and page states in
+AccountList without D-Bus. Do not compile application rules into the adapter.
+The graphical test owns row reuse, hover without selection and focus after removal.
+Keep private-bus isolation and fixture deadlines. Activation subprocesses and
+cross-component UI subprocess tests are not part of this suite.
+
+In ordering tests, a trigger can arrive while a method is pending, before the
+fixture constructs its reply. Do not construct an old snapshot, emit newer state
+and then return that old snapshot as evidence for GOA behavior. Test commands and installed acceptance are in
+[quickstart](../quickstart.md).

@@ -1,13 +1,14 @@
 <!-- Sync Impact Report
-Version: 2.0.2 -> 2.1.0 (expanded guidance).
+Version: 2.1.0 -> 2.2.0 (expanded guidance).
 Modified principles:
-- I. Necessary complexity only: require a current failure scenario and compare
-  dependency costs with an in-project implementation.
-- II. Concrete domain language -> Clear language and concrete names: cover code,
-  documents and reviewability explicitly.
-Governance: state amendment versioning and compliance review expectations.
+- I. Necessary complexity only: apply the failure-scenario test to requirements,
+  require the scenario to be possible with the supported dependencies, and limit
+  specification edge cases to cases that pass this test.
+Rationale: the F01 review found requirements and code for situations that GNOME
+Online Accounts cannot produce, while Spec Kit prompts ask for more edge cases.
 Added sections: none. Removed sections: none.
-Templates: unchanged; Spec Kit reads the constitution at runtime.
+Templates: unchanged. The pinned Spec Kit spec template still prompts for edge
+cases; Spec Kit reads the constitution at runtime and this principle governs them.
 Deferred items: none.
 -->
 # Mailbag Constitution
@@ -16,11 +17,16 @@ Deferred items: none.
 
 ### I. Necessary complexity only
 
-Use the simplest design that meets current requirements. Before adding an
-abstraction, configuration option or recovery mechanism, identify a concrete
-scenario in the current feature that fails without it and explain the consequence.
-Defer mechanisms justified only by future features. Required security and
-data-integrity safeguards remain part of the current requirements.
+Use the simplest design that meets current requirements. Before adding a
+requirement, abstraction, configuration option or recovery mechanism, identify a
+concrete scenario in the current feature that can occur with the supported
+dependencies and fails without it, and explain the consequence. Defer mechanisms
+justified only by future features. Required security and data-integrity safeguards
+remain part of the current requirements.
+
+Specifications list an edge case only when it passes this test, and state its
+user-visible result. Record other considered cases as out of scope without
+adding requirements.
 
 Before adding a dependency, compare the functionality needed now with the cost of
 implementing and maintaining it in the project. Consider correctness, testing,
@@ -97,4 +103,4 @@ an implementation. Review design and code changes against these principles. Use
 semantic versioning for amendments; constitution versions are independent of
 application releases.
 
-**Version**: 2.1.0 | **Ratified**: 2026-09-08 | **Last Amended**: 2026-09-12
+**Version**: 2.2.0 | **Ratified**: 2026-09-08 | **Last Amended**: 2026-09-15

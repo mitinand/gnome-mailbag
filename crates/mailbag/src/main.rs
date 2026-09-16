@@ -14,12 +14,24 @@ mod account_notice_tests;
 #[path = "accounts/tests.rs"]
 mod account_tests;
 
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../../tests/support/bus.rs"]
+mod test_bus;
+
 const APP_ID: &str = "io.github.mitinand.Mailbag";
 
 fn main() -> glib::ExitCode {
     let app = adw::Application::builder().application_id(APP_ID).build();
+    app.connect_startup(|_| register_resources());
     app.connect_activate(build_window);
     app.run()
+}
+
+fn register_resources() {
+    gio::resources_register_include!("mailbag.gresource").expect("bundled account icons");
+    gtk::IconTheme::for_display(&gtk::gdk::Display::default().expect("GTK display"))
+        .add_resource_path("/io/github/mitinand/Mailbag/icons");
 }
 
 fn build_window(app: &adw::Application) {
@@ -99,14 +111,21 @@ fn create_window(app: &adw::Application) -> gtk::Builder {
 }
 
 fn connect_account_updates(builder: &gtk::Builder, window: &adw::Window) {
-    let (adapter, mut updates) = goa_adapter::GoaAdapter::start();
+    let account_ui = account_ui::AccountUi::new(builder);
+    let weak_ui = std::rc::Rc::downgrade(&account_ui);
+    let adapter = goa_adapter::GoaAdapter::start(move |update| {
+        if let Some(ui) = weak_ui.upgrade() {
+            ui.borrow_mut().apply_update(update);
+        }
+    });
     let refresh_adapter = adapter.clone();
-    let account_ui =
-        account_ui::AccountUi::new(builder, move || refresh_adapter.refresh_accounts());
+    account_ui
+        .borrow()
+        .connect_retry_check(move || refresh_adapter.refresh_accounts());
     let settings_ui = std::rc::Rc::downgrade(&account_ui);
-    let launcher = settings::SettingsLauncher::new(move |pending, error| {
+    let launcher = settings::SettingsLauncher::new(move |error| {
         if let Some(ui) = settings_ui.upgrade() {
-            ui.borrow_mut().show_settings_result(pending, error);
+            ui.borrow().show_settings_error(error);
         }
     });
     let action = gio::SimpleAction::new("accounts", None);
@@ -114,65 +133,10 @@ fn connect_account_updates(builder: &gtk::Builder, window: &adw::Window) {
     action.connect_activate(move |_, _| action_launcher.open());
     let app = window.application().expect("application window");
     app.add_action(&action);
-    let weak_ui = std::rc::Rc::downgrade(&account_ui);
-    let consumer = glib::MainContext::default().spawn_local(async move {
-        while let Some(update) = updates.next_account_update().await {
-            let Some(account_ui) = weak_ui.upgrade() else {
-                break;
-            };
-            account_ui.borrow_mut().apply_update(&update);
-            drop(account_ui);
-            glib::timeout_future_with_priority(
-                glib::Priority::DEFAULT_IDLE,
-                std::time::Duration::ZERO,
-            )
-            .await;
-        }
-    });
     let window_ui = std::cell::RefCell::new(Some(account_ui));
     window.connect_destroy(move |_| {
-        launcher.stop();
         app.remove_action("accounts");
         window_ui.borrow_mut().take();
         adapter.stop();
-        consumer.abort();
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    #[ignore = "requires a graphical GTK session"]
-    fn empty_window_and_about() {
-        adw::init().expect("GTK display");
-        let app = adw::Application::builder()
-            .application_id("io.github.mitinand.Mailbag.LayoutTest")
-            .flags(gio::ApplicationFlags::NON_UNIQUE)
-            .build();
-        app.register(None::<&gio::Cancellable>).unwrap();
-        let builder = create_window(&app);
-        let _account_ui = account_ui::AccountUi::new(&builder, || {});
-        let window = app.windows()[0].clone().downcast::<adw::Window>().unwrap();
-        assert!(window.content().unwrap().is::<adw::ToastOverlay>());
-        assert_eq!(window.default_width(), 1440);
-        app.lookup_action("about").unwrap().activate(None);
-        let about = window
-            .visible_dialog()
-            .unwrap()
-            .downcast::<adw::AboutDialog>()
-            .unwrap();
-        assert_eq!(about.application_name(), "Mailbag");
-        assert_eq!(about.application_icon(), APP_ID);
-        about.force_close();
-        app.lookup_action("shortcuts").unwrap().activate(None);
-        assert!(
-            window
-                .visible_dialog()
-                .unwrap()
-                .is::<adw::ShortcutsDialog>()
-        );
-        window.destroy();
-    }
 }

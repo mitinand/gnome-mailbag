@@ -7,7 +7,7 @@ Account rules: `mailbag::accounts`. GTK display: `mailbag::account_ui`. Settings
 | Surface | F01 integration |
 |---|---|
 | `folder_tree` (`GtkListView`) | Flat account model; reuse `folder-row.ui`, no fabricated child folders. |
-| `folder_details` (`AdwActionRow`) | Plain account identity/provider text. Stable row objects keyed by GOA ID. |
+| `folder_details` (`AdwActionRow`) | One plain account label without a subtitle. Stable row objects keyed by GOA ID. |
 | `folder_badge` position | No healthy message count; a focusable problem button occupies the agreed suffix when needed. |
 | `list_stack` existing `empty` page | Assign an ID to its `AdwStatusPage`; project account status text and relevant actions here. |
 | `mail_split` / `list_page` | Show list page initially and on account activation so status is visible when collapsed. |
@@ -20,7 +20,28 @@ Preserve 1440×900 defaults, 360×294 minimum, 1100sp/720sp breakpoints, pane fr
 
 ## Selection and focus
 
-Use `GtkSingleSelection` with autoselect disabled and unselection allowed. The policy owns `selected_id`; GTK selection translates to ID-based commands. Reconcile by ID rather than clearing/recreating the list or remembering a row index. Presentation updates, individual problems and GOA outages preserve selection. An update that actually hides the selected row clears it; later reappearance does not restore it; another account is not automatically selected.
+AccountList owns `selected_id`; clicking, tapping or pressing Enter on a row selects
+that account by ID and opens the list page. Keep single-click activation, but
+disable automatic item selection so pointer hover and focus alone do not select
+an account. Reflect the selected ID in `GtkSingleSelection`, with autoselect
+disabled and unselection allowed. Reconcile by ID rather than clearing/recreating
+the list or remembering a row index. Presentation updates, individual problems
+and GOA outages preserve selection. An update that actually hides the selected
+row clears it; later reappearance does not restore it; another account is not
+automatically selected.
+
+AccountUi keeps rows in ascending AccountId order at startup and after updates.
+Added accounts and accounts whose Mail is re-enabled enter at their ordered
+position, preserving surviving row objects and the selected account.
+AccountUi reconciles row membership and selection. Each model item holds the
+account ID and its widgets together; the row updates its own text, problem
+explanation and controls from AccountRow. The list factory binds those same widgets.
+Account rows use 16-pixel symbolic icons, the `heading` label style and standard
+Adwaita spacing. Google and Microsoft 365 use bundled symbolic icons. Google's
+system SVG retains its contours with reduced outer padding to match the visible
+size of the Microsoft 365 icon. Neither requires GOA icons to be installed.
+Generic IMAP uses the system `mail-unread-symbolic` envelope.
+GTK recolors the icons for light, dark and high-contrast themes.
 
 A problem icon has an accessible name describing the account problem, a tooltip and a keyboard-focusable button. Hover shows the explanation text; click, touch, Enter or Space opens the same explanation with relevant actions. Icon activation must not accidentally activate another account or open mail. If a resolved problem removes a focused icon, move focus to its surviving row. If a focused row disappears, focus the account list or the relevant status action without selecting another account. Close/reanchor an explanation whose account was excluded; never leave a detached popover referring to another row after list recycling.
 
@@ -30,19 +51,28 @@ Use plain text (`use-markup=false`); provider-supplied text is data. Explain dup
 
 Present AccountPage, row problems and excluded reasons from AccountList according
 to FR-005; widgets do not recalculate eligibility. The shared
-[account contract](accounts.md) defines last_check and check_pending. Use pending
-state at retry controls without changing an established status page, row
-availability, selection or unresolved error. First discovery has no previous result.
+[account contract](accounts.md) defines last_check and retry_pending. Only a user
+Retry changes its controls to “Checking…”; automatic reads leave their labels and
+sensitivity unchanged. Preserve the established page, availability, selection and
+unresolved error while retrying. First discovery shows “Loading accounts”.
+At cold start, an enabled supported account without Mail shows the account problem
+and Retry Check, rather than the confirmed “No mail accounts” page. A successful
+normal removal has no global error or transient warning on the surviving rows.
 Show the common check error once in the status area; keep account-specific explanations at the row. Follow the wording and action rules in the specification.
+Select the existing `list_stack` page explicitly: `empty` when presenting account
+status and `messages` for the neutral area after selection. Updating status text
+alone must not leave the status page hidden after the last account is excluded.
 
 ## Notices
 
-AccountList returns AccountHiddenNotice under [FR-017](../spec.md#requirements).
-Present Single(label) using the existing disambiguated label, or Group(count), with
-one combined removed-or-Mail-disabled wording. Keep one active toast and one pending
-aggregate, releasing single labels when dismissed or aggregated. Settings failures
-share this bounded presentation owner; retain their explanation separately so an
-exclusion burst cannot hide a failed user action. No desktop notification is added.
+AccountList returns one AccountHiddenNotice per excluded account under
+[FR-017](../spec.md#requirements). Present each as a separate toast using the
+existing disambiguated label and combined removed-or-Mail-disabled wording.
+Use the existing AdwToastOverlay queue for both account notices and Settings launch
+failures. Mailbag does not group notices or track active and pending toasts.
+Settings failures exist only as ordinary launch-error toasts. Do not retain a
+second Settings error in the account status or row explanations.
+No desktop notification is added.
 
 ## Settings launch protocol
 
@@ -60,7 +90,15 @@ Reply:       ()
 
 The action parameter inside the variant is `(sav)`, not a bare string. Do not use an account ID or credentials as parameters. No shell command or host-spawn fallback.
 
-Use asynchronous bus acquisition and method invocation with a shared 5-second overall deadline, expected reply-type validation, cancellable and attempt serial. Only one attempt can be pending across both entry points. Keep the window usable; pending activations reuse the existing attempt. On timeout/unavailable/access-denied/protocol failure, end pending state and show a visible safe explanation. Retain the last launch failure in the status explanation until retry/success so a burst of exclusion toasts cannot silently displace the failed user action. The user can retry after completion. On application shutdown, cancel and ignore expected cancellation and late completion; use weak UI references.
+Acquire the bus and invoke Settings asynchronously. Use the D-Bus method's default
+timeout and validate the unit reply. One pending flag covers both entry points;
+ignore repeated activations until completion. On failure, clear the flag and
+report one error through on_error so the user can try again. The task holds only
+a weak reference to the launcher; it cannot report an error after the launcher
+is dropped. No separate overall deadline, stop state or stored task handle is needed.
+
+AccountUi does not retain an Idle/Pending/Failed Settings model or include a
+Settings failure in account-list status.
 
 A successful reply means Settings accepted the action, not that Mailbag observed a visible panel. Do not show a success toast. Installed GNOME/Wayland acceptance must verify presentation with Settings closed and already open on another panel/workspace. Empty platform data is the initial supported call; any activation metadata needed to satisfy this target must come from a valid current user interaction, not fabricated or reused tokens.
 
@@ -77,6 +115,6 @@ Existing Wayland and GPU permissions remain. No network, keyring, home/filesyste
 
 ## Acceptance ownership (PR 2)
 
-Automated model/GTK checks cover row identity, no auto-selection, focus after updates/exclusion, icon activation, retry/button access, neutral reader, absence of fake counts and narrow list-page visibility. Fake Settings checks assert exact parameter nesting, error/timeout, pending coalescing, shutdown cancellation and late completion.
+Automated model checks cover eligibility, notices, labels, failed reads and page states. The graphical test covers row identity, hover without selection and focus after row removal. Fake Settings checks assert exact parameter nesting, one pending launch, one error notification and a new attempt after failure.
 
-Installed checks prove the existing Generic IMAP row, both Settings entry points and actual panel presentation, keyboard/mouse/touch explanations, 360-width and breakpoint behavior, enlarged text/high contrast, plus synthetic exclusion grouping. A machine without the appropriate display/input path reports that case unverified rather than equating click with touch.
+Installed checks prove the existing Generic IMAP row, both Settings entry points and actual panel presentation, keyboard/mouse/touch explanations, 360-width and breakpoint behavior, enlarged text/high contrast, plus individual toasts for synthetic exclusions. A machine without the appropriate display/input path reports that case unverified rather than equating click with touch.
