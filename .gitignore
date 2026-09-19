@@ -3,7 +3,6 @@
 /.flatpak-builder/
 /build-dir/
 /repo/
-/vendor/
 *.flatpak
 .env
 .env.*

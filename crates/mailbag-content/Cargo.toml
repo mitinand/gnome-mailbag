@@ -1,5 +1,5 @@
 [package]
-name = "mailbag"
+name = "mailbag-content"
 version = "0.1.0-dev"
 edition = "2024"
 rust-version = "1.95"
@@ -8,10 +8,7 @@ repository = "https://github.com/mitinand/gnome-mailbag"
 publish = false
 
 [dependencies]
-adw = { workspace = true, features = ["gtk_v4_10"] }
-goa-adapter = { path = "../goa-adapter" }
-mailbag-content = { path = "../mailbag-content" }
-mailbag-imap = { path = "../mailbag-imap" }
+mail-parser = { version = "0.11.9", features = ["full_encoding"] }
 
 [lints]
 workspace = true

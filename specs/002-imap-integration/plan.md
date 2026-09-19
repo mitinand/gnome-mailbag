@@ -156,7 +156,7 @@ tools/make-certs.sh             disposable test certificates; no trust installat
 scripts/setup-cargo-generator.sh
 scripts/generate-cargo-sources.sh
 cargo-sources.json, meson.options
-third-party-notices/            explicit missing-license exceptions and origins
+third-party-notices/            the stop-token missing-license exception and its origin
 ```
 
 Integrate with the existing client/lib, main/account UI, Cargo, manifest, Meson,
@@ -180,7 +180,7 @@ the 14 synthetic MIME samples and roughly 25–35 focused scenarios, reusing the
 prototype's relevant coverage rather than requiring its exact test count.
 
 Packaging adds two tooling scripts, a Meson option file, generated JSON and
-the two sets of legal notices; certificate generation adds one test script.
+the stop-token fallback notices; certificate generation adds one test script.
 These costs are separate from production Rust. Reassess before exceeding about
 1.5 times this estimate or expanding a portion beyond one reviewable change.
 
@@ -189,7 +189,7 @@ and the PR. Implement in this order:
 
 | Portion | Reviewable result | Required checks and proposed commit |
 |---|---|---|
-| 1 — Packaging and dependency policy | Skeleton `mailbag-imap` and `mailbag-content` crates declaring the pinned dependencies, so Cargo.lock and the Flatpak build include the forks; generated sources; manifest/Meson; license policy and explicit exceptions; crate dependency-rule check; setup, build/check scripts and CI generator setup. Runtime network permission waits for portion 5. | `./scripts/check.sh`, including a rejected forbidden dependency, and Flatpak compilation without build-network access; inspect installed notices. `build: prepare Flatpak sources and IMAP dependencies` |
+| 1 — Packaging and dependency policy | Skeleton `mailbag-imap` and `mailbag-content` crates declaring the pinned dependencies, so Cargo.lock and the Flatpak build include the forks; generated sources; manifest/Meson; license policy and the stop-token notice exception; crate dependency-rule check; setup, build/check scripts and CI generator setup. Runtime network permission waits for portion 5. | `./scripts/check.sh`, including a rejected forbidden dependency, and Flatpak compilation without build-network access; inspect installed notices. `build: prepare Flatpak sources and IMAP dependencies` |
 | 2 — GOA access | **After shared-contract approval**, cancellable settings/password retrieval on the existing context. Observer alone owns exclusion. | Private-bus success/failure/cancellation tests and F01 regression checks. `feat(goa): provide IMAP access for the selected account` |
 | 3 — Secure connection and acquisition | Implement `mailbag-imap`: GIO bridge, TLS/STARTTLS, authentication, EXAMINE, separate row and structure requests, structure isolation, BODYSTRUCTURE projection, grouped section retrieval, cancellation and timeout. Rust/GIO scripted server. | Security/read-only transcripts, parser/transport failure separation, grouping, cancellation and stall cases. `feat(imap): receive Inbox data over GIO` |
 | 4 — Content | Implement `mailbag-content`: MIME selection, permissive mail-parser decoding and header display fields. Worker and load sequence in `mailbag` producing complete received batches. | MIME fixtures, encoding/replacement cases, no unselected payload requests. `feat(content): select and decode received plain text` |

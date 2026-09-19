@@ -3,7 +3,5 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 scripts/check-flatpak-tools.sh
-# Cargo.lock is the only dependency list; the sandbox builds without network access.
-mkdir -p .flatpak-builder
-cargo vendor --locked vendor > .flatpak-builder/cargo-config.toml
+# cargo-sources.json lists the crates from Cargo.lock; Cargo builds offline in the sandbox.
 flatpak-builder --user --force-clean --repo=repo "$@" build-dir io.github.mitinand.Mailbag.yml

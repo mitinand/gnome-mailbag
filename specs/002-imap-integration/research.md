@@ -234,16 +234,20 @@ allow-git entries for the two named forks. Preserve their package license files.
 
 | Package / expression | Chosen treatment |
 |---|---|
-| hashify: Apache-2.0 OR MIT | Missing package texts: preserve upstream texts from its repository's LICENSES directory and record their exact origin. |
+| hashify: Apache-2.0 OR MIT | The package supplies both texts in a REUSE-style `LICENSES/` directory (`Apache-2.0.txt`, `MIT.txt`); install them as supplied notices. No fallback is needed. |
 | stop-token: MIT OR Apache-2.0 | No supplied texts: preserve standard license texts with an explicit provenance explanation and authors from the resolved Cargo.toml; do not claim upstream supplied these files. |
 | self_cell: Apache-2.0 OR GPL-2.0-only | Select Apache-2.0; do not select GPL-2.0-only for this GPL-3 project. |
 | memchr: Unlicense OR MIT | Select MIT. |
 | unicode-ident: (MIT OR Apache-2.0) AND Unicode-3.0 | Preserve the Unicode-3.0 obligation as well as the selected permissive license. |
 | encoding_rs: (Apache-2.0 OR MIT) AND BSD-3-Clause | Add BSD-3-Clause to the allowed set and preserve its notice. |
 
-Meson exceptions are explicitly keyed by the two crate names, hashify and
-stop-token. New packages without license texts fail the build. Fallback notices
-live in `third-party-notices/`, not the repository's REUSE `LICENSES/` directory.
+Meson treats files named as license, licence, copying, copyright or notice
+files, and every file in a crate's `LICENSES/` directory, as supplied notices.
+hashify was first listed as missing texts because the name-based search did not
+look inside `LICENSES/`; the maintainer approved recognizing that directory on
+2026-09-19. The only Meson exception is keyed by the crate name stop-token. New
+packages without license texts fail the build. Fallback notices live in
+`third-party-notices/`, not the repository's REUSE `LICENSES/` directory.
 Install per-crate notices below `share/licenses/io.github.mitinand.Mailbag`.
 
 ## 9. Crate layout

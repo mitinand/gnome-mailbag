@@ -86,25 +86,26 @@ fork repository URLs. Do not allow arbitrary git sources or weaken other gates.
 
 Install each crate's license/notice files and Cargo.toml beneath
 `$FLATPAK_DEST/share/licenses/$FLATPAK_ID`, preserving crate/version and relative
-notice paths. The vendor option is an absolute source path; never append that
-absolute path to the destination. The installed tree must not escape the
-application's license directory.
+notice paths. Notice files are those named as license, licence, copying,
+copyright or notice files, plus every file in the crate's `LICENSES/` directory
+(the REUSE layout, used by hashify). The vendor option is an absolute source
+path; never append that absolute path to the destination. The installed tree
+must not escape the application's license directory.
 
 Use an explicit exception map in meson.build keyed by package name from
 Cargo.toml, containing only:
 
 | Crate | Fallback notice source |
 |---|---|
-| hashify | Upstream license texts from the repository's LICENSES directory; retain the source revision/URLs. |
 | stop-token | Standard MIT and Apache-2.0 texts with the resolved Cargo.toml author information and an explanation that upstream did not supply license files. |
 
 Store these texts and an ORIGIN.md explanation under
-`third-party-notices/hashify/` and `third-party-notices/stop-token/`. Do not put
-them in the root REUSE-owned LICENSES directory. Record the resolved crate version,
-declared license expression, source of each text and any supplied author notice;
-do not invent upstream attribution.
+`third-party-notices/stop-token/`. Do not put them in the root REUSE-owned
+LICENSES directory. Record the resolved crate version, declared license
+expression, source of each text and any supplied author notice; do not invent
+upstream attribution.
 
-For normal crates, install their supplied notices. Only these named exceptions
+For normal crates, install their supplied notices. Only the named exception
 may use the saved fallback texts. A new package lacking license files must stop
 the build. Neither a license field in Cargo.toml alone nor an arbitrary standard
 text is a general fallback. Include the saved explanation in the installed notices.
@@ -134,9 +135,9 @@ uploading a bundle or creating a release is not part of this documentation task.
   Both debug and release log levels are compiled out.
 - Source preparation followed by `./scripts/build-flatpak.sh` compiles the app
   without network access in the build sandbox and with Cargo offline.
-- Inspect the installed license tree: both fork notices, the two explicit
-  exceptions and their origins, required Unicode/BSD notices, correct destination
-  paths, and failure for a synthetic newly missing notice.
+- Inspect the installed license tree: both fork notices, hashify's `LICENSES/`
+  texts, the stop-token exception and its origin, required Unicode/BSD notices,
+  correct destination paths, and failure for a synthetic newly missing notice.
 - Confirm no root vendor directory/config generation is required by the build
   script and no generated config deprecation warning remains.
 

@@ -1,0 +1,6 @@
+option(
+    'cargo_vendor_dir',
+    type: 'string',
+    value: '',
+    description: 'Absolute path of the vendored Cargo sources whose license notices are installed',
+)
