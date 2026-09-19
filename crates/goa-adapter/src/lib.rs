@@ -4,11 +4,13 @@
 mod account_model;
 mod accounts;
 mod client;
+mod imap_access;
 pub use account_model::{
     AccountCheckError, AccountCheckResult, AccountDetails, AccountId, AccountProvider,
     AccountUpdate, ErrorCause,
 };
 pub use client::GoaAdapter;
+pub use imap_access::{ImapAccess, ImapAccessError, ImapAccessRequest, ImapEncryption};
 
 #[cfg(test)]
 #[path = "../../../tests/support/bus.rs"]

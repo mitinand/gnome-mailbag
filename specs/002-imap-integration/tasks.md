@@ -1,7 +1,7 @@
 # Tasks: IMAP Integration
 
 **Feature**: F02 / `002-imap-integration`
-**Created**: 2026-09-18 · **Status**: Documents approved 2026-09-19; portion 1 implemented 2026-09-19 and awaiting review
+**Created**: 2026-09-18 · **Status**: Documents approved 2026-09-19; portions 1 and 2 implemented 2026-09-19 and awaiting review
 
 [Spec](spec.md) owns behavior, [plan](plan.md) owns boundaries and portions,
 [research](research.md) owns decisions and evidence, contracts own details, and
@@ -55,12 +55,12 @@ worker; settings without encryption are refused before any password request.
 **Independent check:** the private GOA fixture drives `request_imap_access`
 without IMAP code or UI. Details: [GOA access contract](contracts/goa-access.md).
 
-- [ ] T013 [US1] STOP before code: obtain explicit maintainer approval of the shared interface in specs/002-imap-integration/contracts/goa-access.md.
-- [ ] T014 [US1] Extend tests/support/goa.rs with the Mail interface properties (ImapHost, ImapUserName, ImapUseSsl, ImapUseTls, ImapAcceptSslErrors) and PasswordBased.GetPassword for `imap-password`, using synthetic credentials only.
-- [ ] T015 [US1] Add tests in crates/goa-adapter/src/imap_access/tests.rs for the returned object path, host with an explicit port, SSL and STARTTLS selection, AttentionNeeded and a prior observation failure not blocking access, Settings versus Password failures, absent account versus missing Mail interface, cancellation and stop, and no observer refresh or exclusion side effects.
-- [ ] T016 [US3] Add tests in crates/goa-adapter/src/imap_access/tests.rs showing that false/false settings return a Settings failure with the no-encryption cause, GetPassword is never called and ImapAcceptSslErrors changes nothing (spec US3-6).
-- [ ] T017 [US1] Implement `GoaAdapter::request_imap_access` in crates/goa-adapter/src/imap_access.rs and expose it through crates/goa-adapter/src/lib.rs: ImapAccess, ImapEncryption, ImapAccessStep, ImapAccessError and ImapAccessRequest under contracts/goa-access.md, asynchronous D-Bus calls on the adapter's context, no Debug, Display or Clone of secrets.
-- [ ] T018 [US1] STOP: run scripts/check.sh, git diff --check and the F01 regression tests; review constitution I/II, report and wait before portion 3.
+- [X] T013 [US1] STOP before code: obtain explicit maintainer approval of the shared interface in specs/002-imap-integration/contracts/goa-access.md. Approved 2026-09-19; revised the same day after the maintainer's portion 2 review (flat five-variant ImapAccessError, no step callback, no fallback connection or stop tracking).
+- [X] T014 [US1] Extend tests/support/goa.rs with the Mail interface properties (ImapHost, ImapUserName, ImapUseSsl, ImapUseTls, ImapAcceptSslErrors) and PasswordBased.GetPassword for `imap-password`, using synthetic credentials only.
+- [X] T015 [US1] Add tests in crates/goa-adapter/src/imap_access/tests.rs for success with the returned object path and a host with an explicit port, SSL chosen over STARTTLS, an absent account and a missing Mail interface as Settings, a service error at each step as Settings or Password, a hang at each step as Timeout, cancelling and dropping the request as one Cancelled, no observer refresh or exclusion side effects, and AttentionNeeded with a failed observation read over the existing connection.
+- [X] T016 [US3] Add tests in crates/goa-adapter/src/imap_access/tests.rs showing that false/false settings return NoEncryption, GetPassword is never called and ImapAcceptSslErrors changes nothing (spec US3-6).
+- [X] T017 [US1] Implement `GoaAdapter::request_imap_access` in crates/goa-adapter/src/imap_access.rs and expose it through crates/goa-adapter/src/lib.rs: ImapAccess, ImapEncryption, the five-variant ImapAccessError and ImapAccessRequest under contracts/goa-access.md, asynchronous D-Bus calls over the observer's connection, no Debug, Display or Clone of secrets.
+- [X] T018 [US1] STOP: run scripts/check.sh, git diff --check and the F01 regression tests; review constitution I/II, report and wait before portion 3.
 
 ## Phase 4: secure connection and acquisition (portion 3)
 

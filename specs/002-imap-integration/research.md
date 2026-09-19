@@ -199,8 +199,8 @@ subsystem in this stage.
 
 AccountList/F01 remains the only owner of exclusion. A settings/password request
 can return a failed step but cannot clear rows/mail or request an observer refresh
-as a second exclusion path. The proposed shared API still needs approval before
-portion 2. F01 account errors keep their page priority.
+as a second exclusion path. The shared API was approved on 2026-09-19. F01
+account errors keep their page priority.
 
 ## 7. Packaging and dependency policy
 

@@ -7,13 +7,13 @@ existing loading box and spinner; no widget replacement or reader redesign.
 ## One page decision
 
 WindowUi projects account and mail state after selection, account updates, load
-steps and completion. AccountUi and MailUi must not independently overwrite
+start and completion. AccountUi and MailUi must not independently overwrite
 list_stack. AccountList remains the owner of F01 rules.
 
 | Priority | Existing surface |
 |---|---|
 | F01 page is not SelectedAccount | Existing account loading/error/setup/missing-Mail page and its controls. This takes priority over mail states. |
-| Selected account's load is running | Existing status page says Loading Inbox and identifies the current step. |
+| Selected account's load is running | Existing status page says Loading Inbox with the spinner; it does not name the current step. |
 | Selected account has a batch with rows | Message list. |
 | Selected account has a confirmed empty batch | Empty-Inbox status. |
 | Selected account's last load failed | Status names the failed step; Refresh Inbox tries again. |
@@ -79,6 +79,7 @@ Replace embedded NUL before GTK APIs; never interpret remote text as markup.
 | Settings | Unable to get IMAP settings from Online Accounts. |
 | Encryption setting | The account has no encryption configured; choose SSL or STARTTLS for it in Online Accounts. No password was requested and no connection was made. |
 | Password | Unable to get the password from Online Accounts; no server sign-in was attempted. |
+| Online Accounts timeout | Online Accounts did not respond in time. |
 | Connection | Unable to reach the mail server. |
 | Secure connection | Unable to establish a verified encrypted connection. |
 | Server sign-in | The mail server rejected sign-in; the password can be changed in Online Accounts. Do not claim that rejection proves a wrong password. |

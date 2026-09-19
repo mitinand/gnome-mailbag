@@ -1,48 +1,52 @@
-# Proposed goa-adapter IMAP Access Contract
+# goa-adapter IMAP Access Contract
 
-**Approval required before portion 2:** This extends the shared
-[F01 contract](../../001-goa-account-observation/contracts/accounts.md).
-It is a proposal, not authorization to implement a shared interface change.
+**Approved by the maintainer 2026-09-19. Revised 2026-09-19 after the
+maintainer's review of portion 2:** one flat error, no step callback, no
+fallback bus connection and no request tracking in `stop()`. This extends the
+shared [F01 contract](../../001-goa-account-observation/contracts/accounts.md).
 Existing observation and account exclusion remain unchanged.
 
 ## Public operation
 
-`GoaAdapter::request_imap_access(account_id, on_step, on_complete)` returns an
-opaque `ImapAccessRequest` with `cancel()`. Call it on the adapter's existing
-GLib main context. Step notifications and completion run on that context.
-While the context is running, complete exactly once, including cancellation,
-so the caller knows its load has ended. Dropping the request cancels work.
+`GoaAdapter::request_imap_access(account_id, on_complete)` returns an opaque
+`ImapAccessRequest` with `cancel()`. Call it on the adapter's GLib main context;
+completion runs on that context exactly once, including cancellation, so the
+caller knows its load has ended. Dropping the request cancels it.
 
-| Public role | Proposed contents |
+| Public role | Contents |
 |---|---|
 | ImapAccess | AccountId, original GOA host string, login, ImapEncryption and password. Owned data consumed by the caller; no sensitive Debug/Display or automatic Clone. |
 | ImapEncryption | ImplicitTls or StartTls; no plaintext variant. |
-| ImapAccessStep | Settings or Password; moving to Password confirms settings retrieval completed. |
-| ImapAccessError | Step and a safe cause: unavailable, denied, timeout, invalid settings, no encryption configured, unsupported provider or cancelled. Reuse existing safe causes where applicable. |
-| ImapAccessRequest | Main-context cancellation handle; retains no credentials after completion. |
+| ImapAccessError | Settings: Online Accounts did not return the settings. NoEncryption: neither SSL nor STARTTLS is set (US3-6). Password: Online Accounts did not return the password. Timeout: Online Accounts did not answer in time at either step. Cancelled. |
+| ImapAccessRequest | Cancellation handle owned by the load; retains no credentials. |
 
 Only owned Rust data crosses to the mail worker. Proxies and GOA object paths
-stay on the adapter's context. The adapter uses asynchronous D-Bus calls with
-GIO's finite call timeout, without another timer or retry loop. Mailbag cancels
-the request on confirmed exclusion of the account or exit. `stop()` also cancels outstanding access
-requests; late callbacks cannot restart stopped work.
+stay on the adapter's context. The request uses the observer's existing bus
+connection; without one there is no account list to select from, and the
+request fails as Settings. D-Bus calls are asynchronous with GIO's finite call
+timeout, without another timer or retry loop. A D-Bus timeout at either step is
+Timeout: for example, GetPassword waits while the keyring asks to be unlocked.
+Any other D-Bus error is the failure of its step. The load owns the request;
+Mailbag cancels the load on confirmed exclusion of the account or exit, which
+drops the request.
 
 ## Preparation algorithm
 
-1. Read GetManagedObjects through the normal GOA service and existing connection.
-   A previous observation failure or AttentionNeeded does not block an attempt.
+1. Read GetManagedObjects over the observer's connection. A failed previous
+   observation read or AttentionNeeded does not block an attempt.
 2. Find the exact opaque AccountId and use its returned object path; never
    construct a path from an account ID.
-3. Read the current Generic IMAP provider, Mail availability, ImapHost,
-   ImapUserName and encryption flags with their declared types. Missing required
-   settings or an account that is no longer available returns a Settings failure.
+3. Read the Mail interface's ImapHost, ImapUserName and encryption flags. An
+   account that is no longer listed, a missing Mail interface or a missing
+   setting is Settings. GIO checks the reply signature against the type passed
+   to the call; empty values from edited configuration fail later at address
+   parsing or sign-in.
 4. Choose implicit TLS when ImapUseSsl is true; otherwise choose STARTTLS when
-   ImapUseTls is true. When both are false, return a Settings failure with the
-   no-encryption cause before notifying Password (spec US3-6). Never substitute
-   implicit TLS for false/false. Ignore ImapAcceptSslErrors.
-5. Notify Password and call
-   `org.gnome.OnlineAccounts.PasswordBased.GetPassword("imap-password")` on that
-   object's path. Return the owned access data or a Password failure.
+   ImapUseTls is true. When both are false, return NoEncryption before the
+   password is requested (spec US3-6). Never substitute implicit TLS for
+   false/false. Ignore ImapAcceptSslErrors.
+5. Call `org.gnome.OnlineAccounts.PasswordBased.GetPassword("imap-password")`
+   on that object's path. Return the owned access data or Password.
 
 Preserve the host syntax, including an explicit port, for GIO's address parser.
 Do not fabricate missing required settings or silently change the login.
@@ -52,8 +56,8 @@ False/false never reaches the password request or a socket.
 
 This fresh read prepares access; it does not update the account list or repeat
 F01's exclusion policy in the mail controller. If the request discovers an absent
-or disabled account, return a failed Settings step. Do not clear received mail,
-ask the observer to refresh, or emit a substitute account update from this path.
+or disabled account, return Settings. Do not clear received mail, ask the
+observer to refresh, or emit a substitute account update from this path.
 
 The existing observer independently reports confirmed exclusion. AccountList
 then discards the account's mail and cancels its load. A failed or incomplete GOA
@@ -76,9 +80,13 @@ a failed access attempt is an ordinary load failure.
 ## Contract verification
 
 Extend the existing private D-Bus fixture for the selected object/path and the
-`imap-password` key; SSL, STARTTLS and false/false refused before Password;
-AttentionNeeded; access after an observation failure; Settings versus Password
-failure; cancellation/stop; and absent account versus missing Mail interface.
+`imap-password` key. Cover success with the returned object path and a host
+with an explicit port; SSL chosen over STARTTLS; false/false refused before the
+password with ImapAcceptSslErrors changing nothing; an absent account and a
+missing Mail interface as Settings; a service error at each step as Settings or
+Password; a hang at each step as Timeout; cancelling and dropping the request as
+one Cancelled; AttentionNeeded and a failed observation read over the existing
+connection.
 
 Assert that preparation failure never starts IMAP work or invokes an observer
 refresh. A separate observer update must still exclude the account, and a late

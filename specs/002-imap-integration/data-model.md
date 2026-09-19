@@ -15,7 +15,7 @@ the combined page decision.
 | ReceivedMessage | UID, decoded subject/from/to display fields, INTERNALDATE, observed `\Seen` and ReceivedContent. No previews, attachment bytes or remote action state. |
 | ReceivedContent | Complete decoded plain text or a message-specific explanation: no supported plain text, encrypted content, unusable or unreadable structure or unsupported encoding. Invalid bytes alone do not replace the body with an error. |
 | OpenedMessage | UID in the selected account's batch, or none. Cleared by a refresh and by selecting another account. No body-fetch or server-revalidation state. |
-| ActiveLoad | AccountId, current step and cancellation handle; at most one. Lives until its connection has closed. No byte counter, progress clock or application watchdog. |
+| ActiveLoad | AccountId and cancellation handle; at most one. Lives until its connection has closed. No byte counter, progress clock or application watchdog. |
 | LoadFailure | Safe failing step/cause and any ALERT text received for that attempt. Server text is for plain-text UI presentation only, never diagnostics. |
 
 UID identifies a message within an Inbox version; UIDVALIDITY identifies that

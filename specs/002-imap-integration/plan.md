@@ -2,7 +2,7 @@
 
 **Branch**: `claude/imap` | **Feature**: `002-imap-integration`
 **Revised**: 2026-09-18 | **Spec**: [spec.md](spec.md)
-**Status**: Approved by the maintainer 2026-09-19. Implement by portions with review pauses; the shared goa-adapter contract still needs its own approval before portion 2.
+**Status**: Approved by the maintainer 2026-09-19. Implement by portions with review pauses; the shared goa-adapter contract was approved separately on 2026-09-19.
 
 ## Summary
 
@@ -54,9 +54,9 @@ follow explicit maintainer decisions. Prototype facts are accepted without
 rerunning them. [Research](research.md) records evidence, rejected alternatives
 and fork maintenance; versions will be checked before implementation.
 
-The shared [goa-adapter access contract](contracts/goa-access.md) still requires
-explicit approval **before portion 2**. It adds settings/password retrieval but
-no second owner of account exclusion. Review the function map and five portions
+The shared [goa-adapter access contract](contracts/goa-access.md) was approved
+on 2026-09-19. It adds settings/password retrieval but no second owner of
+account exclusion. Review the function map and five portions
 below before implementation. No widget replacement is proposed; the Refresh
 Inbox menu addition was already approved.
 
@@ -132,7 +132,7 @@ exclusion event. Detailed transitions are in [data-model.md](data-model.md).
 ```text
 specs/002-imap-integration/
   spec.md, plan.md, research.md, data-model.md, quickstart.md
-  contracts/goa-access.md       shared API proposal
+  contracts/goa-access.md       shared goa-adapter access API
   contracts/imap-reading.md     transport, acquisition and content rules
   contracts/ui.md               existing surfaces and page priority
   contracts/packaging.md        source generation, licenses and build policy
@@ -225,4 +225,4 @@ After design:
 
 No constitutional exception is proposed. Deferred choices include IDLE, Graph,
 attachment fetching, database/UI interaction and account thread/pool allocation.
-The shared API still awaits review. Implementation remains a separate step.
+The shared API was approved on 2026-09-19.

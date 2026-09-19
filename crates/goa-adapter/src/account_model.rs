@@ -6,6 +6,11 @@ use std::{collections::BTreeMap, fmt};
 /// Account ID supplied by the account source.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AccountId(String);
+impl AccountId {
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 impl TryFrom<&str> for AccountId {
     type Error = AccountCheckError;
 

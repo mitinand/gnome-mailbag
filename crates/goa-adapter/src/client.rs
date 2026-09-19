@@ -67,19 +67,19 @@ const ACCOUNT_CHANGE_SIGNALS: [AccountChangeSignal; 4] = [
 /// A local handle to GOA observation on the calling thread's GLib main context.
 /// Clones share one observer; dropping the last handle stops it.
 #[derive(Clone)]
-pub struct GoaAdapter(Rc<AccountObserver>);
+pub struct GoaAdapter(pub(crate) Rc<AccountObserver>);
 
-struct AccountObserver {
+pub(crate) struct AccountObserver {
     on_update: Box<dyn Fn(&AccountUpdate)>,
     update: RefCell<Rc<AccountUpdate>>,
-    connection: RefCell<Option<gio::DBusConnection>>,
+    pub(crate) connection: RefCell<Option<gio::DBusConnection>>,
     subscriptions: RefCell<Vec<gio::SignalSubscription>>,
     read_cancellable: RefCell<Option<gio::Cancellable>>,
     refetch_needed: Cell<bool>,
     stopped: Cell<bool>,
     #[cfg(test)]
     bus_address: Option<String>,
-    timeout_msec: i32,
+    pub(crate) timeout_msec: i32,
 }
 
 impl GoaAdapter {
@@ -296,4 +296,4 @@ impl Drop for AccountObserver {
 #[cfg(test)]
 mod event_tests;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

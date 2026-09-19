@@ -14,10 +14,11 @@ pub(crate) const GOA_ACCOUNT_PATH_PREFIX: &str = "/org/gnome/OnlineAccounts/";
 pub(crate) const GOA_BUS_NAME: &str = "org.gnome.OnlineAccounts";
 pub(crate) const ACCOUNT_INTERFACE: &str = "org.gnome.OnlineAccounts.Account";
 pub(crate) const MAIL_INTERFACE: &str = "org.gnome.OnlineAccounts.Mail";
+pub(crate) const PASSWORD_BASED_INTERFACE: &str = "org.gnome.OnlineAccounts.PasswordBased";
 pub(crate) const OBJECT_MANAGER_INTERFACE: &str = "org.freedesktop.DBus.ObjectManager";
 
-type Properties = BTreeMap<String, Variant>;
-type ManagedObjects = BTreeMap<ObjectPath, BTreeMap<String, Properties>>;
+pub(crate) type Properties = BTreeMap<String, Variant>;
+pub(crate) type ManagedObjects = BTreeMap<ObjectPath, BTreeMap<String, Properties>>;
 
 /// Accept the complete response or return one read error; no partial records escape.
 pub(crate) fn parse_accounts(
@@ -53,14 +54,16 @@ pub(crate) fn parse_accounts(
     Ok(accounts)
 }
 
+/// The property's value, or None when it is absent or has another type.
+pub(crate) fn read_property<T: FromVariant>(properties: &Properties, name: &str) -> Option<T> {
+    properties.get(name).and_then(Variant::get)
+}
+
 fn read_required<T: FromVariant>(
     properties: &Properties,
     name: &str,
 ) -> Result<T, AccountCheckError> {
-    properties
-        .get(name)
-        .and_then(Variant::get)
-        .ok_or_else(invalid_reply)
+    read_property(properties, name).ok_or_else(invalid_reply)
 }
 
 fn read_optional_text(
@@ -79,7 +82,11 @@ fn invalid_reply() -> AccountCheckError {
 }
 
 pub(crate) fn map_glib_error(operation: &'static str, error: glib::Error) -> AccountCheckError {
-    let cause = if error.matches(gio::IOErrorEnum::TimedOut)
+    AccountCheckError::new(operation, classify_glib_error(&error))
+}
+
+pub(crate) fn classify_glib_error(error: &glib::Error) -> ErrorCause {
+    if error.matches(gio::IOErrorEnum::TimedOut)
         || error.matches(gio::DBusError::Timeout)
         || error.matches(gio::DBusError::NoReply)
     {
@@ -94,8 +101,7 @@ pub(crate) fn map_glib_error(operation: &'static str, error: glib::Error) -> Acc
         ErrorCause::InvalidReply
     } else {
         ErrorCause::Unavailable
-    };
-    AccountCheckError::new(operation, cause)
+    }
 }
 
 #[cfg(test)]
