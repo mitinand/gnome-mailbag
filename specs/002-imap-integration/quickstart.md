@@ -99,11 +99,14 @@ Additional fixtures exercise the changed integration directly:
 - Error origins: transport errors, timeout, incomplete literal and library
   response ceiling never enter the structure-isolation path. No failed parser
   session is reused. UIDVALIDITY change on fallback reconnect stops the attempt.
-- Disappearing UID: omit that message; distinguish a successful absent UID from
-  a missing section in a returned response and from a broken transfer.
-- Authentication: PLAIN including non-ASCII credentials; ASCII LOGIN fallback;
-  LOGINDISABLED; capability refresh after authentication; no alternate method
-  after rejection. Do not claim reliable non-ASCII LOGIN.
+- Per-message results: a message without a response after a tagged OK
+  disappeared and is omitted; a structure or text missing after a tagged NO, and
+  NIL or a missing section in a returned response, keep the row with an
+  explanation while the other messages load; a broken transfer fails the load.
+- Authentication: PLAIN including non-ASCII credentials; LOGIN fallback with
+  non-ASCII credentials sent as literals; LOGINDISABLED; no alternate method
+  after rejection; the server's text and RFC 5530 code of a rejection, such as
+  AUTHENTICATIONFAILED or UNAVAILABLE.
 - MIME: UTF-8/Windows-1251/KOI8-R, Asian encoding through full_encoding, base64/QP,
   invalid bytes with replacement characters, unknown charset/transfer encoding,
   encoded Subject/From/To, multiple mixed plain parts, a later plain part without

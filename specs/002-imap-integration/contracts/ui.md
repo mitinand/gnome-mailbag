@@ -80,13 +80,17 @@ Replace embedded NUL before GTK APIs; never interpret remote text as markup.
 | Encryption setting | The account has no encryption configured; choose SSL or STARTTLS for it in Online Accounts. No password was requested and no connection was made. |
 | Password | Unable to get the password from Online Accounts; no server sign-in was attempted. |
 | Online Accounts timeout | Online Accounts did not respond in time. |
-| Connection | Unable to reach the mail server. |
+| Connection | Unable to reach the mail server. When the server refused the connection with BYE, for example at its connection limit, show its text. |
 | Secure connection | Unable to establish a verified encrypted connection. |
-| Server sign-in | The mail server rejected sign-in; the password can be changed in Online Accounts. Do not claim that rejection proves a wrong password. |
+| Server sign-in | The mail server rejected sign-in, with the server's text. Add that the password can be changed in Online Accounts only when the rejection has the RFC 5530 code AUTHENTICATIONFAILED or no code; with another code, such as UNAVAILABLE for a temporary server problem, show only the server's text. Do not claim that rejection proves a wrong password. |
 | Inbox / metadata / text | Identify which receiving step failed. |
 | Inactivity | State which step stopped responding; no user-facing application size-limit error. |
 | Unsupported content | Explain it in the message reader without failing the batch. |
 | Unreadable structure | Explain in the reader that this message's content could not be read; its row stays in the list. |
+| Text not received | Explain in the reader that the server did not return this message's text; its row stays in the list. |
+
+When the server gave a reason for a failed step (the text of its NO, BAD or
+BYE), show that text with the step, as inert plain text beside any ALERT texts.
 
 A library response-limit failure is an acquisition failure, never a clipped
 message or a successful empty result.

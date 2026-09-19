@@ -20,9 +20,11 @@ Protocol and content code form two new crates, `mailbag-imap` and
 `mailbag-content`, joined by a load sequence in `mailbag`
 ([crate layout](research.md#9-crate-layout)).
 
-A message whose part structure cannot be read keeps its row and gets a content
-explanation; no message is skipped. A network interruption fails the load and
-leaves the list empty. All other permanent guarantees remain unchanged.
+A message whose part structure cannot be read, or whose data the server does not
+return, keeps its row and gets a content explanation; no other message is
+affected. A network interruption fails the load and leaves the list empty; the
+failure shows the server's own reason when it gave one. All other permanent
+guarantees remain unchanged.
 
 ## Behavior for this stage
 
@@ -34,6 +36,7 @@ leaves the list empty. All other permanent guarantees remain unchanged.
 | Switch accounts during a load | The load continues; its result is stored for the account it was started for. |
 | Load fails | The list stays empty; the status page names the failing step. Refresh again to retry. |
 | Unreadable part structure | Keep the row; the reader explains that the content could not be read. Other messages load normally. |
+| Server does not return one message's data | Keep the row; the reader explains that the server did not return its text. Other messages load normally. |
 | GOA observation failure | No mail change; F01's account page covers the list until recovery. |
 | Confirmed exclusion from F01 | Discard the account's mail and cancel its load; a late result cannot restore it. |
 | Text over 64 KiB decoded UTF-8 | GtkLabel shows the first 64 KiB without an explanation; the stored text is complete. |
@@ -140,7 +143,9 @@ specs/002-imap-integration/
 
 crates/goa-adapter/src/imap_access.rs
 crates/mailbag-imap/src/        new crate: protocol
-  lib.rs                       session and acquisition operations
+  lib.rs                       public types
+  reader.rs                    Inbox reading: rows, structures and text, per message
+  session.rs                   greeting, STARTTLS, sign-in, EXAMINE and server reasons
   transport.rs                 GIO stream bridge, secure connection and errors
   part_tree.rs                 BODYSTRUCTURE projection with section paths
   test_server.rs               Rust/GIO scripted server; tests and `test-support` only

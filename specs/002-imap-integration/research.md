@@ -44,7 +44,7 @@ mail-parser = { version = "0.11.9", features = ["full_encoding"] }
 log = { version = "0.4", features = ["max_level_off", "release_max_level_off"] }
 
 [patch.crates-io]
-async-imap = { git = "https://github.com/mitinand/async-imap", rev = "c4378d17cbf34938def1ff33f9dd7df6a064f2b7" }
+async-imap = { git = "https://github.com/mitinand/async-imap", rev = "89badf82c3af2173c6d839481be7aa5825d3ba42" }
 imap-proto = { git = "https://github.com/mitinand/imap-proto", rev = "caa2c81038d7674c46fb038f90ccf74034380c18" }
 ```
 
@@ -81,10 +81,10 @@ text in the UI.
 
 | Fork | Pinned revision | Tag and base |
 |---|---|---|
-| [async-imap](https://github.com/mitinand/async-imap) | `c4378d17cbf34938def1ff33f9dd7df6a064f2b7` | `mailbag-2026-09-17-2`, based on upstream main |
+| [async-imap](https://github.com/mitinand/async-imap) | `89badf82c3af2173c6d839481be7aa5825d3ba42` | `mailbag-2026-09-19-5`, based on upstream main |
 | [imap-proto](https://github.com/mitinand/imap-proto) | `caa2c81038d7674c46fb038f90ccf74034380c18` | `mailbag-2026-09-17-4`, based on release 0.16.7 |
 
-The [async-imap revision](https://github.com/mitinand/async-imap/commit/c4378d17cbf34938def1ff33f9dd7df6a064f2b7)
+The [async-imap revision](https://github.com/mitinand/async-imap/commit/89badf82c3af2173c6d839481be7aa5825d3ba42)
 contains:
 
 1. runtime-futures using futures-io without Tokio or async-std.
@@ -93,6 +93,47 @@ contains:
 4. `Client::capabilities()` before authentication.
 5. Password redaction in trace output.
 6. CAPABILITY NO/BAD handling as an error rather than an empty capability set.
+7. ALERTs of a rejected sign-in or command: a tagged NO/BAD with an ALERT code
+   is forwarded like a successful one, and `Client::unsolicited_responses()`
+   reads them after a failed sign-in. Added 2026-09-19 with the maintainer's
+   approval, because the previous revision lost the ALERT of a rejected
+   sign-in, for example a request for an application-specific password.
+8. The code and text of a NO or BAD response in `Error::No` and `Error::Bad`
+   (`StatusResponse`), including RFC 5530 codes such as `AUTHENTICATIONFAILED`
+   and `UNAVAILABLE`, which imap-proto leaves in the text. The previous error
+   held only a debug-formatted string.
+9. A NO or BAD completion of FETCH, and a connection closed before the
+   completion, reported as an error after the responses received before it.
+   The previous revision ended the response stream silently, so a server's
+   partial failure or a BYE looked like success.
+10. LOGIN arguments sent as literals when a quoted string cannot carry them, such
+    as a non-ASCII password.
+11. The buffer-limit error as the typed `ResponseTooLarge` instead of a plain
+    message, so it is recognized by type.
+12. ALERT from the matching tagged completion of the FETCH stream, for OK,
+    NO and BAD. The original command result is preserved and the ALERT is
+    delivered once. The stream has its own completion handler, separate from
+    `check_done_ok_from`.
+13. `Fetch::has_flags()` so a missing FLAGS field does not clear the last
+    received flags, while `FLAGS ()` does. The parsed attributes already preserve
+    this distinction; Mailbag does not need another wire parser.
+14. EXAMINE/SELECT succeeds only after its matching tagged OK. A connection
+    closed before that completion returns `ConnectionLost`, instead of a
+    mailbox with partial or default data that can falsely confirm an empty Inbox.
+15. ALERT from untagged mailbox replies and tagged EXAMINE/SELECT completions,
+    including NO and BAD, forwarded once without changing the command result.
+
+Items 8–11 were added on 2026-09-19 after the maintainer's review of portion 3:
+different IMAP servers must not cost the user the whole Inbox because of one
+message, or hide the server's own reason for a failure.
+
+Items 12–13 accompany the FETCH response corrections: split replies must retain
+the last explicitly supplied flags, and an ALERT must remain available to
+explain a later failure in the same load.
+
+Items 14–15 fix the mailbox parser's own completion and notice handling. Mailbag
+also collects pre-authentication CAPABILITY notices before handling its result,
+so a command failure or missing sign-in method does not discard an ALERT.
 
 The [imap-proto revision](https://github.com/mitinand/imap-proto/commit/caa2c81038d7674c46fb038f90ccf74034380c18)
 contains:
@@ -110,7 +151,6 @@ button or `gh repo sync` without explicitly targeting `--branch main`.
 An update means rebuilding the branch from the chosen base, carrying the fixes,
 running the fork tests, tagging the result, then updating the application revision
 and lock/source manifests. Do not submit upstream PRs or issues for this work.
-No fork operation is performed by this documentation revision.
 
 **Trade-off:** The project owns a small patch set and its regression checks.
 This is accepted maintenance, not a claim that the dependencies are unmodified.
@@ -191,7 +231,9 @@ status page names the failed step. Selecting an account shows the mail received
 for it in this run and never loads. No toast. The UI exists only to evaluate the
 integration, so each temporary mechanism is kept to the minimum.
 
-ALERT support is limited to including received ALERT text in a failure explanation.
+ALERT support is limited to including received ALERT text, together with the
+server's reason for the failure (NO, BAD or BYE text and RFC 5530 code), in a
+failure explanation.
 It is plain text, not a separate notification, history or success-side UI.
 This intentionally does not claim complete standalone ALERT presentation under
 RFC 3501. The fork's ability to retain replies does not require a notification

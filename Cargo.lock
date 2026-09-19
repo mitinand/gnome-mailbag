@@ -46,7 +46,7 @@ dependencies = [
 [[package]]
 name = "async-imap"
 version = "0.11.3"
-source = "git+https://github.com/mitinand/async-imap?rev=c4378d17cbf34938def1ff33f9dd7df6a064f2b7#c4378d17cbf34938def1ff33f9dd7df6a064f2b7"
+source = "git+https://github.com/mitinand/async-imap?rev=89badf82c3af2173c6d839481be7aa5825d3ba42#89badf82c3af2173c6d839481be7aa5825d3ba42"
 dependencies = [
  "async-channel 2.5.0",
  "async-compression",
@@ -683,6 +683,7 @@ name = "mailbag-imap"
 version = "0.1.0-dev"
 dependencies = [
  "async-imap",
+ "futures-util",
  "gio",
  "glib",
  "log",

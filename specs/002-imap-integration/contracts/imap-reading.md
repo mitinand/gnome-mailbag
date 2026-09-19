@@ -45,7 +45,7 @@ Quit cancels work without blocking GTK on a thread join. No command queue.
 | STARTTLS | Read the greeting, reject PREAUTH, get capabilities, require STARTTLS and wait for tagged OK. Discard the plaintext client's parser buffers and capabilities, then wrap the same socket in TLS. |
 | After STARTTLS | Create a fresh async-imap client over the verified TLS stream. Do not expect a second greeting. Read capabilities again through TLS. |
 | Sign-in | Prefer AUTHENTICATE PLAIN if advertised; otherwise LOGIN only without LOGINDISABLED. A rejected attempt does not trigger another authentication method. |
-| After sign-in | Read capabilities again. iCloud did not advertise IDLE until authenticated; do not retain the pre-login set as the session's capabilities. |
+| After sign-in | 002 uses no capability after sign-in, so none is requested. When a later feature needs one (iCloud advertised IDLE only after authentication), read capabilities again then; never reuse the pre-login set. |
 | Inbox | EXAMINE INBOX; obtain UIDVALIDITY and EXISTS. Never SELECT. |
 | Finish | Close the connection after the batch. No retained idle connection and no mail-changing CLOSE/EXPUNGE/STORE/COPY/MOVE commands. |
 
@@ -53,24 +53,26 @@ A missing/rejected STARTTLS command, handshake error or invalid certificate ends
 the attempt before password transmission. No cleartext fallback, second insecure
 connection or trust exception. Bytes buffered before STARTTLS must never be
 interpreted as authenticated TLS replies. PREAUTH before TLS is a failure, not
-permission to bypass encryption. PREAUTH received after verified implicit TLS
-may proceed as authenticated without sending a password.
+permission to bypass encryption. PREAUTH after verified implicit TLS is not
+supported either: async-imap starts a session only through sign-in, and
+password accounts in Online Accounts do not need it.
 
 AUTHENTICATE PLAIN supplies raw `NUL + login + NUL + password` to the library's
 authenticator; async-imap owns base64 framing. Do not add an application base64
 dependency or resend credentials on an unexpected additional challenge.
-The fallback LOGIN command interpolates strings in the chosen library.
-Non-ASCII passwords are reliable only through PLAIN; this limitation must remain
-explicit in compatibility reporting. Do not claim universal LOGIN support or
-mislabel a local command-encoding failure as server rejection.
+The fallback LOGIN command sends each argument as a quoted string when IMAP
+allows one, and otherwise as a literal, so non-ASCII logins and passwords work
+with LOGIN as well as with PLAIN (async-imap fork, research §3).
 
 If no supported password method is available, explain that sign-in method support
 is missing. OAuth and other SASL methods are outside 002.
 
 ## Metadata and the selected window
 
-After EXAMINE, let N be EXISTS. N = 0 yields a confirmed empty batch. Otherwise
-calculate explicit sequence bounds max(1, N-99) through N and issue two commands:
+After the matching successful EXAMINE completion, let N be EXISTS. A connection
+closed before that completion is an opening failure, not confirmation of an
+empty Inbox. N = 0 yields a confirmed empty batch. Otherwise calculate explicit
+sequence bounds max(1, N-99) through N and issue two commands:
 
 ```text
 FETCH low:high (UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT)])
@@ -86,6 +88,17 @@ sorted by descending UID. INTERNALDATE is display data, not the sort key.
 Handle normal unsolicited mailbox responses needed by these commands, without
 building incremental synchronization.
 
+A server may split one message's fields between multiple FETCH responses in any
+order ([RFC 2683 §3.4.4](https://www.rfc-editor.org/rfc/rfc2683.html#section-3.4.4)).
+For the row command, collect fields by message sequence number until the command
+ends, then establish each row's UID and check its data. A response without FLAGS
+leaves the collected flags unchanged; the last response containing FLAGS wins,
+including `FLAGS ()`. The fork's `Fetch::has_flags()` distinguishes those cases.
+For UID FETCH, collect structures and text sections by UID instead: EXPUNGE can
+change sequence numbers during a UID command, and its requested FETCH responses
+include UID ([RFC 3501 §6.4.8 and §7.4.1](https://www.rfc-editor.org/rfc/rfc3501.html#section-6.4.8)).
+Check for missing sections only after collecting all responses to that command.
+
 `mailbag-content` parses the returned From/To/Subject header block with mail-parser,
 including encoded words in subjects and display names. ENVELOPE is not requested.
 Malformed or missing display text gets replacement characters or neutral labels;
@@ -99,6 +112,28 @@ missing, unusable or unparseable keeps its row and gets a content explanation.
 A structure response that the protocol parser cannot parse uses the isolation
 path below. If the row command itself cannot be parsed, the metadata step fails.
 
+### One message's problem stays with that message
+
+A server can end a FETCH with a tagged NO after answering for the other
+messages, for example when another client expunged a message meanwhile or a
+message is damaged on the server ("Some messages could not be FETCHed"). The
+row command addresses messages by sequence number, so such races happen there
+too. Collect the responses one by one and keep everything received before the
+completion; the fork reports a NO or BAD completion of FETCH, and a connection
+closed before the completion, as an error after the responses.
+
+| Command | A requested message without data, after a tagged OK | ... after a tagged NO |
+|---|---|---|
+| Rows | Absent. No row at all although EXISTS was not zero: the Inbox changed. | Absent. No row at all: the metadata step fails with the server's text. |
+| Structures | It disappeared; omit its row. | Its row stays with an unreadable-structure explanation. |
+| Text | It disappeared; omit its row. | Its row stays with a text-not-received explanation. |
+
+A returned message whose requested section is NIL or missing also gets the
+text-not-received explanation. The other messages load normally. Only a network
+error, timeout, BAD, BYE, a literal cut off by a closed connection and the
+library's buffer limit end the whole load; an unparseable structure response
+uses the isolation path.
+
 ### Isolating an unreadable structure
 
 One BODYSTRUCTURE that the parser rejects, for example one nested deeper than the
@@ -110,29 +145,36 @@ not a general retry policy:
    its parser buffer. The rows already received stay in the candidate.
 2. Open a fresh secure session, authenticate and EXAMINE again. If UIDVALIDITY
    changed, stop with an Inbox-changed explanation.
-3. Fetch `UID BODYSTRUCTURE` separately for each row's UID. A parsed response
-   supplies that message's structure. A parser failure isolated to that UID gives
-   the message an unreadable-structure content explanation.
-4. After an individual parse failure, close the unusable session and reopen
-   securely before continuing with the remaining UIDs. Verify UIDVALIDITY each
-   time. Each UID gets only one isolation attempt; at most 100 are examined.
+3. Keep structures already parsed, then fetch `UID BODYSTRUCTURE` separately
+   for each remaining row's UID. A reply containing only FLAGS does not supply
+   a structure and must not exclude its UID from isolation. Discard provisional
+   entries without structures before these individual requests, so their results
+   also determine whether a message disappeared. A parser failure isolated to
+   that UID gives the message an unreadable-structure content explanation.
+4. After an individual parse failure, close the unusable session immediately.
+   InboxReader remembers that it needs a new session and reopens securely before
+   the next command, including a text command after the last isolated UID.
+   Verify UIDVALIDITY each time; a failed reconnection ends the load. If no
+   command remains, do not reconnect. Each UID gets only one isolation attempt;
+   at most 100 are examined.
 5. Fetch selected text for messages with usable structures through the normal
    grouped path. Publish a completed batch in which every row is present.
 
 Do not use this fallback for transport failures, timeouts, authentication failures,
-NO/BAD, truncated literals or the library response ceiling. Any such failure
-stops the attempt, and no batch is published. There is no recursive
-fallback or repeated attempt for an already isolated UID.
+BAD, truncated literals or the library's buffer limit. Any such failure stops
+the attempt, and no batch is published. A NO completion is handled per message
+as described above. There is no recursive fallback or repeated attempt for an
+already isolated UID.
 
 The pinned async-imap parser reports some syntax errors as `io::ErrorKind::Other`
-and leaves the offending buffer intact. Its buffer-limit error also uses Other.
-Mark errors produced by the GIO bridge with a private error wrapper so their
-origin survives conversion to std::io::Error. In the mapper for this pinned
-revision, distinguish the library's fixed ceiling error from its decoder errors;
-do not search or print raw response text to classify a failure. Do not treat every
-Io error as an unreadable structure or add a wire parser. Exercise these distinct origins
-in integration tests. This session-replacement rule follows
-the pinned [ImapStream source](https://github.com/mitinand/async-imap/blob/c4378d17cbf34938def1ff33f9dd7df6a064f2b7/src/imap_stream.rs).
+and leaves the offending buffer intact. Mark errors produced by the GIO bridge
+with a private error wrapper so their origin survives conversion to
+std::io::Error. The fork reports its buffer limit as the typed error
+`ResponseTooLarge`; recognize it by type. Do not search or print raw response
+text to classify a failure, treat every Io error as an unreadable structure or
+add a wire parser. Exercise these distinct origins in integration tests. This
+session-replacement rule follows the pinned
+[ImapStream source](https://github.com/mitinand/async-imap/blob/89badf82c3af2173c6d839481be7aa5825d3ba42/src/imap_stream.rs).
 
 An isolated structure failure affects only that message's content. A
 disconnected transfer never becomes a completed batch.
@@ -161,10 +203,10 @@ Decode each complete returned MIME entity and release raw buffers as it is
 processed. No whole-message/body shortcut (`BODY[]`, `BODY[TEXT]` or a multipart
 container payload). Metadata and selected part headers are allowed.
 
-An empty literal is valid content. A completed tagged OK with no response for a
-requested UID means that message disappeared; omit it without fabricating an
-empty row. A returned UID missing a requested header/body section, NIL instead
-of required bytes or an incomplete literal is a load failure.
+An empty literal is valid content. A message without the requested text follows
+the table in "One message's problem stays with that message": omitted after a
+tagged OK, text not received after a NO or with NIL or a missing section. An
+incomplete literal is a load failure.
 
 If every UID from a nonempty window disappears, report that Inbox changed and
 allow Refresh. Do not infer
@@ -223,9 +265,20 @@ request.
 ## ALERT and diagnostics
 
 Retain ALERT text encountered during the attempt only to explain a simultaneous
-or subsequent load failure. This covers greeting, authentication, untagged and
-tagged replies that the fork exposes. An OK with ALERT can continue. Successful
-attempts do not produce a standalone ALERT notification.
+or subsequent load failure. This covers the greeting, untagged replies and
+tagged completions, including a rejected sign-in, which the fork exposes
+through `Client::unsolicited_responses()`. Collect notices before returning from
+CAPABILITY, including failure or no supported sign-in method. Preserve ALERTs
+from EXAMINE's untagged replies and tagged completion. An OK with ALERT can
+continue. Successful attempts do not produce a standalone ALERT notification.
+
+Also keep the server's reason for the failure that ends a load: the text of the
+NO or BAD completion of the failed command, a BYE greeting, or a BYE received
+during the session, for example at a server's connection limit. Keep its
+RFC 5530 response code, such as `AUTHENTICATIONFAILED` or `UNAVAILABLE`, when the
+server sent one. The fork keeps the code and text of NO and BAD in its error;
+imap-proto does not parse RFC 5530 codes, so the fork reads them from the start
+of the text. This is inert server text for the failure explanation only.
 
 Do not build a notification service, history, sync popover or extra error for
 dependent steps that never ran. Map errors to safe step/cause information.

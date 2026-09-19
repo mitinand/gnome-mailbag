@@ -9,7 +9,7 @@ if [[ $(uname -s) != Linux ]]; then
 fi
 export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 missing=()
-for tool in git curl cc pkg-config glib-compile-resources python3 desktop-file-validate appstreamcli dbus-daemon meson ninja flatpak flatpak-builder; do
+for tool in git curl openssl cc pkg-config glib-compile-resources python3 desktop-file-validate appstreamcli dbus-daemon meson ninja flatpak flatpak-builder; do
     command -v "$tool" >/dev/null || missing+=("$tool")
 done
 if command -v pkg-config >/dev/null; then
@@ -23,7 +23,7 @@ if ((${#missing[@]})); then
         source /etc/os-release
         if [[ ${ID:-} == fedora ]]; then
             echo 'Install prerequisites, then rerun setup:' >&2
-            echo 'sudo dnf install git curl gcc pkgconf-pkg-config gtk4-devel libadwaita-devel python3 python3-pip desktop-file-utils appstream dbus-daemon meson ninja-build flatpak flatpak-builder' >&2
+            echo 'sudo dnf install git curl openssl gcc pkgconf-pkg-config gtk4-devel libadwaita-devel python3 python3-pip desktop-file-utils appstream dbus-daemon meson ninja-build flatpak flatpak-builder' >&2
         fi
     fi
     exit 1

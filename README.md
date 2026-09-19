@@ -9,7 +9,7 @@ Linux is required; Fedora is the primary development environment.
 Install [rustup](https://rustup.rs/) and the system prerequisites:
 
 ```bash
-sudo dnf install git curl gcc pkgconf-pkg-config gtk4-devel libadwaita-devel python3 python3-pip desktop-file-utils appstream dbus-daemon meson ninja-build flatpak flatpak-builder
+sudo dnf install git curl openssl gcc pkgconf-pkg-config gtk4-devel libadwaita-devel python3 python3-pip desktop-file-utils appstream dbus-daemon meson ninja-build flatpak flatpak-builder
 ```
 
 Then run from the repository root:

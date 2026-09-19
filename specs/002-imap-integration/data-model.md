@@ -13,10 +13,10 @@ the combined page decision.
 | AccountInbox | For one account in this run: loading, a ReceivedBatch or a LoadFailure; absent means not loaded. Discarded on confirmed exclusion and at exit. |
 | ReceivedBatch | AccountId, Inbox UIDVALIDITY and up to 100 ReceivedMessages. Replaced only by that account's next refresh. |
 | ReceivedMessage | UID, decoded subject/from/to display fields, INTERNALDATE, observed `\Seen` and ReceivedContent. No previews, attachment bytes or remote action state. |
-| ReceivedContent | Complete decoded plain text or a message-specific explanation: no supported plain text, encrypted content, unusable or unreadable structure or unsupported encoding. Invalid bytes alone do not replace the body with an error. |
+| ReceivedContent | Complete decoded plain text or a message-specific explanation: no supported plain text, encrypted content, unusable or unreadable structure, text the server did not return or unsupported encoding. Invalid bytes alone do not replace the body with an error. |
 | OpenedMessage | UID in the selected account's batch, or none. Cleared by a refresh and by selecting another account. No body-fetch or server-revalidation state. |
 | ActiveLoad | AccountId and cancellation handle; at most one. Lives until its connection has closed. No byte counter, progress clock or application watchdog. |
-| LoadFailure | Safe failing step/cause and any ALERT text received for that attempt. Server text is for plain-text UI presentation only, never diagnostics. |
+| LoadFailure | Safe failing step/cause, the server's reason (the text of its NO, BAD or BYE and any RFC 5530 response code) and any ALERT text received for that attempt. Server text is for plain-text UI presentation only, never diagnostics. |
 
 UID identifies a message within an Inbox version; UIDVALIDITY identifies that
 version. Sort rows by descending UID, which follows Inbox addition order, rather
@@ -25,7 +25,8 @@ These identities do not establish persistent reconciliation across refreshes.
 
 The batch is built on the worker and published only when all required commands
 complete. Every message returned by the row command keeps its row; an unreadable
-part structure changes only that message's ReceivedContent.
+part structure or text the server did not return changes only that message's
+ReceivedContent.
 
 Unsupported content is a represented message, not an interrupted transfer.
 Network failures, incomplete literals and other unfinished acquisition publish
