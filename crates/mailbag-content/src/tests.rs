@@ -222,6 +222,51 @@ fn an_unknown_charset_or_encoding_explains_the_missing_text() {
     }
 }
 
+/// The same text as valid base64, in groups of four characters.
+const BASE64_HELLO: &str = "SGVsbG8gd29ybGQh";
+
+fn decode_base64(body: &str) -> Result<String, ContentExplanation> {
+    decode_text_part(
+        b"Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n",
+        body.as_bytes(),
+    )
+}
+
+#[test]
+fn a_payload_the_parser_cannot_decode_is_explained_not_shown() {
+    // A stray character makes mail-parser answer with the encoded body itself.
+    // The replacement keeps whole groups of four, so only the parser's mark
+    // tells that the content was not decoded.
+    let replaced = format!("!{}", &BASE64_HELLO[1..]);
+    for body in [
+        replaced,
+        format!("{BASE64_HELLO}!"),
+        format!("{BASE64_HELLO}!!!!"),
+    ] {
+        assert_eq!(
+            decode_base64(&body),
+            Err(ContentExplanation::Undecodable),
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn a_base64_body_cut_short_is_explained_instead_of_shortened() {
+    // Two characters short of a group: the parser would drop them silently.
+    assert_eq!(
+        decode_base64(&BASE64_HELLO[..BASE64_HELLO.len() - 2]),
+        Err(ContentExplanation::Undecodable)
+    );
+    assert_eq!(decode_base64(BASE64_HELLO).as_deref(), Ok("Hello world!"));
+}
+
+#[test]
+fn base64_folded_into_lines_still_decodes() {
+    let folded = format!("{}\r\n {}\r\n", &BASE64_HELLO[..8], &BASE64_HELLO[8..]);
+    assert_eq!(decode_base64(&folded).as_deref(), Ok("Hello world!"));
+}
+
 #[test]
 fn a_nul_byte_never_reaches_the_reader() {
     let text = decode_text_part(

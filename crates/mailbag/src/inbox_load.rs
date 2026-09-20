@@ -266,7 +266,8 @@ async fn load_inbox_batch(access: ImapAccess) -> Result<ReceivedBatch, ServerFai
         selections.insert(*uid, selection);
     }
 
-    // Each message's text is decoded as it arrives, so no raw MIME is kept.
+    // Each message's text is decoded as the reader reports it, and the raw
+    // MIME is released with the request group it belongs to.
     let mut texts = BTreeMap::new();
     reader
         .fetch_text(requests, |uid, text| {

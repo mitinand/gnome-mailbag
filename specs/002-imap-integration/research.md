@@ -201,11 +201,21 @@ header and selected body section together, then pass that MIME entity to
 mail-parser. This includes HEADER for a single-part message and section.MIME
 for a multipart leaf.
 
-Decoding is permissive: invalid bytes become replacement characters and do not
-hide the whole body. Unknown charset or Content-Transfer-Encoding gets an explicit
-content explanation. Unsupported content types, encryption and absent plain text
-retain their existing explanations. Do not restore strict base64/QP validators
-or a second charset decoder.
+Decoding is permissive about characters: invalid bytes become replacement
+characters and do not hide the whole body. Unknown charset or
+Content-Transfer-Encoding gets an explicit content explanation. Unsupported
+content types, encryption and absent plain text retain their existing
+explanations. Do not restore strict base64/QP validators or a second charset
+decoder.
+
+It is not permissive about a transfer encoding that did not deliver the
+content. mail-parser answers content it cannot decode with the still-encoded
+body and its encoding-problem mark, and it drops the last characters of a
+base64 payload that ends inside a group of four without any mark. Both cases
+would show an unreadable payload or a silently shortened message as the text,
+so both get the undecodable explanation: reading the mark, and counting the
+base64 characters of the body, cost far less than a decoder of our own and
+report the failure instead of hiding it.
 
 The sample rules choose the last supported alternative, first signed/related
 part, all appropriate mixed plain-text parts, and exclude attachments and nested

@@ -185,10 +185,19 @@ pub fn decode_text_part(mime_header: &[u8], body: &[u8]) -> Result<String, Conte
         .parts
         .first()
         .ok_or(ContentExplanation::Undecodable)?;
-    if let Some(encoding) = part.content_transfer_encoding()
-        && !is_known_encoding(encoding)
-    {
+    let encoding = part.content_transfer_encoding().unwrap_or_default();
+    if !encoding.is_empty() && !is_known_encoding(encoding) {
         return Err(ContentExplanation::UnknownEncoding(encoding.to_owned()));
+    }
+    // The parser answers content it cannot decode with the still-encoded body,
+    // which would otherwise be shown as the message text.
+    if part.is_encoding_problem {
+        return Err(ContentExplanation::Undecodable);
+    }
+    // A base64 payload that ends inside a group of four loses its last
+    // characters silently, so the text would be short without saying so.
+    if encoding.eq_ignore_ascii_case("base64") && !base64_groups_are_complete(body) {
+        return Err(ContentExplanation::Undecodable);
     }
     if let Some(charset) = part.content_type().and_then(|ty| ty.attribute("charset"))
         && !is_known_charset(charset)
@@ -200,6 +209,16 @@ pub fn decode_text_part(mime_header: &[u8], body: &[u8]) -> Result<String, Conte
         PartType::Text(text) => Ok(text.replace('\0', "\u{FFFD}")),
         _ => Err(ContentExplanation::Undecodable),
     }
+}
+
+/// Whether a base64 body ends on a complete group of four characters.
+/// Line endings and spaces separate the groups and do not belong to them.
+fn base64_groups_are_complete(body: &[u8]) -> bool {
+    let characters = body
+        .iter()
+        .filter(|byte| !byte.is_ascii_whitespace())
+        .count();
+    characters % 4 == 0
 }
 
 fn is_known_encoding(encoding: &str) -> bool {
