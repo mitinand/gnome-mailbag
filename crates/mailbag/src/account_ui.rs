@@ -200,7 +200,8 @@ impl AccountUi {
         self.show_toast(error.message());
     }
 
-    fn show_toast(&self, title: &str) {
+    /// Shows a short notice in the window's existing toast area.
+    pub fn show_toast(&self, title: &str) {
         self.toasts
             .add_toast(adw::Toast::builder().title(title).use_markup(false).build());
     }

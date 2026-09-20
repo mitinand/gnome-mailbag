@@ -121,6 +121,17 @@ pub struct MessageRow {
     pub list_headers: Vec<u8>,
 }
 
+/// The message list as one command delivered it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MessageList {
+    /// Newest first.
+    pub rows: Vec<MessageRow>,
+    /// What the server said when it refused to finish the command, which
+    /// means the list is missing messages it did not answer for. `None` when
+    /// the command completed.
+    pub refusal: Option<ServerReply>,
+}
+
 /// The text parts to read from one message.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TextRequest {

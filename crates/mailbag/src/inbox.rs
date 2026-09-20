@@ -18,6 +18,9 @@ pub struct ReceivedBatch {
     pub uid_validity: Option<u32>,
     /// Newest first, at most 100.
     pub messages: Vec<ReceivedMessage>,
+    /// What the server said when it refused to finish the message list, which
+    /// means messages are missing from this batch. `None` when it is complete.
+    pub list_refusal: Option<ServerReply>,
 }
 
 /// One message of a batch. Raw MIME is released once it is decoded.
@@ -219,6 +222,10 @@ impl fmt::Debug for ReceivedBatch {
             .debug_struct("ReceivedBatch")
             .field("account_id", &self.account_id)
             .field("uid_validity", &self.uid_validity)
+            .field(
+                "list_refusal",
+                &self.list_refusal.as_ref().map(|reply| &reply.code),
+            )
             .field("messages", &self.messages)
             .finish()
     }

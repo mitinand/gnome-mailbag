@@ -208,10 +208,10 @@ fn host_trust_decides_the_connection() {
     match std::env::var("MAILBAG_IMAP_EXPECT").as_deref() {
         Ok("success") | Err(_) => {
             let mut reader = expect_success(opened);
-            let rows = expect_success(run(reader.fetch_rows()));
+            let listed = expect_success(run(reader.fetch_rows()));
             println!(
                 "{host} accepted by the host's trust store: {} rows",
-                rows.len()
+                listed.rows.len()
             );
         }
         Ok("rejected") => {

@@ -14,7 +14,7 @@ use crate::inbox_load::LoadsInbox;
 use crate::mail_ui::{MailUi, inert_text, show_inert_text};
 use adw::{gio, gtk, prelude::*};
 use goa_adapter::{AccountId, AccountProvider, AccountUpdate, ImapAccessError};
-use mailbag_imap::{ImapFailure, ImapStep};
+use mailbag_imap::{ImapFailure, ImapStep, ServerReply};
 use std::{cell::RefCell, rc::Rc};
 
 pub struct WindowUi {
@@ -144,6 +144,15 @@ impl WindowUi {
     }
 
     fn finish_load(&self, account_id: &AccountId, result: LoadResult) {
+        // A short list explains nothing by itself, so the refusal that caused
+        // it is said once, as the load ends.
+        if let LoadResult::Received(batch) = &result
+            && let Some(refusal) = &batch.list_refusal
+        {
+            let accounts = self.accounts.borrow();
+            let notice = incomplete_list_notice(accounts.label_of(account_id), refusal);
+            accounts.show_toast(&notice);
+        }
         self.inboxes.borrow_mut().finish_load(account_id, result);
         self.render();
     }
@@ -220,6 +229,19 @@ impl MailStatus {
             explanation: explanation.to_owned(),
         }
     }
+}
+
+/// The server refused to finish the message list, so messages are missing from
+/// the batch that is now on screen.
+fn incomplete_list_notice(account: Option<String>, refusal: &ServerReply) -> String {
+    let where_from = match account {
+        Some(label) => format!("in {label}"),
+        None => "in this account".to_owned(),
+    };
+    format!(
+        "Some messages {where_from} could not be loaded. The mail server said: {}",
+        inert_text(&refusal.text)
+    )
 }
 
 /// Nothing has been loaded for this account in this run, which never means an

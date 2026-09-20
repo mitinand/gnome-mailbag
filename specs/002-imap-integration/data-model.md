@@ -11,7 +11,7 @@ the combined page decision.
 |---|---|
 | ImapAccess | Account ID, host, login, TLS mode and password from goa-adapter. Owned by the current attempt; released after success, failure or cancellation. No Debug output or persistent cache. |
 | AccountInbox | For one account in this run: loading, a ReceivedBatch or a LoadFailure; absent means not loaded. Discarded on confirmed exclusion and at exit. |
-| ReceivedBatch | AccountId, Inbox UIDVALIDITY and up to 100 ReceivedMessages. Replaced only by that account's next refresh. |
+| ReceivedBatch | AccountId, Inbox UIDVALIDITY, up to 100 ReceivedMessages and, when the server refused to finish the message list, its reason for the missing rows. Replaced only by that account's next refresh. |
 | ReceivedMessage | UID, decoded subject/from/to display fields, INTERNALDATE, observed `\Seen` and ReceivedContent. No previews, attachment bytes or remote action state. |
 | ReceivedContent | Complete decoded plain text or a message-specific explanation: no supported plain text, encrypted content, unusable or unreadable structure, text the server did not return or unsupported encoding. Invalid bytes alone do not replace the body with an error, but content the transfer encoding did not deliver — a payload the parser could not decode, or a base64 body that ends mid-group — is an explanation rather than partial text. |
 | OpenedMessage | UID in the selected account's batch, or none. Cleared by a refresh and by selecting another account. No body-fetch or server-revalidation state. |

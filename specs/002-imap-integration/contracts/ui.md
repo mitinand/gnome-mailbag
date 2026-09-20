@@ -36,9 +36,16 @@ observation, never a mail refresh.
   spinner in `sync_icon_list`. Do not show a success checkmark or warning icon,
   replace the box, open `sync_popover` or implement `app.sync-status`. Keep
   Synchronization Status unavailable in this feature.
-- A failed load is shown on its account's status page. No toast, persistent
-  synchronization error panel, progress percentages, notification history or
-  successful-load notice. Cancellation is silent.
+- A failed load is shown on its account's status page, without a toast. A load
+  the server answered only in part keeps the rows it delivered and reports the
+  server's reason in a toast, the one toast this feature adds: silence would
+  show a short list as a complete Inbox. No persistent synchronization error
+  panel, progress percentages, notification history or successful-load notice.
+  Cancellation is silent.
+- A toast disappears, so afterwards the list looks complete again. This is a
+  known limitation of this stage: a lasting notice above the list belongs to the
+  error-handling work, together with the other error kinds and the actions
+  offered for them.
 
 ALERT handling is deliberately small: include any ALERT text received during
 the failed attempt in that failure's explanation. Use plain-text setters. An ALERT on an otherwise successful attempt does

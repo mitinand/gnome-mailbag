@@ -126,6 +126,7 @@ fn batch_with_two_messages(account_id: &AccountId) -> ReceivedBatch {
     ReceivedBatch {
         account_id: account_id.clone(),
         uid_validity: Some(7),
+        list_refusal: None,
         messages: vec![
             ReceivedMessage {
                 uid: 20,
@@ -163,6 +164,7 @@ fn unwrapped_and_ordinary_batch(account_id: &AccountId) -> ReceivedBatch {
     ReceivedBatch {
         account_id: account_id.clone(),
         uid_validity: Some(7),
+        list_refusal: None,
         messages: (1..)
             .zip(bodies)
             .map(|(number, (subject, body))| ReceivedMessage {
@@ -238,6 +240,26 @@ impl WindowWidgets {
             .downcast::<gtk::Label>()
             .expect("mail explanation label");
         label.is_visible().then(|| label.text().to_string())
+    }
+
+    /// Toasts the window has shown: everything the toast overlay holds
+    /// besides the window content.
+    fn toast_texts(&self) -> Vec<String> {
+        let overlay: adw::ToastOverlay = self.builder.object("toasts").expect("toasts");
+        let content = overlay.child();
+        let mut texts = Vec::new();
+        let mut child = overlay.first_child();
+        while let Some(current) = child {
+            if Some(&current) != content.as_ref() {
+                texts.extend(
+                    descendants::<gtk::Label>(&current)
+                        .into_iter()
+                        .map(|label| label.text().to_string()),
+                );
+            }
+            child = current.next_sibling();
+        }
+        texts
     }
 
     fn shows_load_feedback(&self) -> bool {
@@ -458,6 +480,30 @@ fn mail_ui_transitions() {
     dispatch_pending();
     assert_eq!(widgets.rows().len(), 2);
     assert_eq!(widgets.reader_page(), "message");
+
+    // A list the server refused to finish keeps its rows and says why once.
+    refresh.activate(None);
+    dispatch_pending();
+    let mut short_batch = batch_with_two_messages(&generic);
+    short_batch.messages.pop();
+    short_batch.list_refusal = Some(ServerReply {
+        code: None,
+        text: "Some messages could not be FETCHed".to_owned(),
+    });
+    loader.report(LoadResult::Received(short_batch));
+    dispatch_pending();
+    assert_eq!(widgets.rows().len(), 1);
+    assert_eq!(widgets.list_page(), "messages");
+    let notice = widgets
+        .toast_texts()
+        .into_iter()
+        .find(|text| text.contains("could not be loaded"))
+        .expect("a toast naming the refusal");
+    assert!(notice.contains("Generic"), "{notice}");
+    assert!(
+        notice.contains("Some messages could not be FETCHed"),
+        "{notice}"
+    );
 
     // A message the sender never wrapped opens without freezing the window,
     // and ordinary text keeps word wrapping.

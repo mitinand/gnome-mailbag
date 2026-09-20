@@ -124,9 +124,14 @@ closed before the completion, as an error after the responses.
 
 | Command | A requested message without data, after a tagged OK | ... after a tagged NO |
 |---|---|---|
-| Rows | Absent. No row at all although EXISTS was not zero: the Inbox changed. | Absent. No row at all: the metadata step fails with the server's text. |
+| Rows | Absent. No row at all although EXISTS was not zero: the Inbox changed. | Absent, and the rows that arrived are kept with the server's text, which says the list is incomplete. No row at all: the metadata step fails with that text. |
 | Structures | It disappeared; omit its row. | Its row stays with an unreadable-structure explanation. |
 | Text | It disappeared; omit its row. | Its row stays with a text-not-received explanation. |
+
+Keeping the rows of a refused command is not the same as hiding the refusal:
+the reason travels with the batch, because a message missing from the list
+leaves nothing else to explain it, unlike a missing structure or text, which
+their own row explains.
 
 A returned message whose requested section is NIL or missing also gets the
 text-not-received explanation. The other messages load normally. Only a network

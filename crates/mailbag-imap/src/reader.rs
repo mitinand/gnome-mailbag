@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::{
-    ImapAccount, ImapError, ImapFailure, ImapStep, MessagePart, MessageRow, MessageText,
-    ReceivedPart, ServerReply, TextParts, TextRequest,
+    ImapAccount, ImapError, ImapFailure, ImapStep, MessageList, MessagePart, MessageRow,
+    MessageText, ReceivedPart, ServerReply, TextParts, TextRequest,
     session::{self, InboxSession, ServerNotices, StepFailure, command_failure},
     transport,
 };
@@ -92,10 +92,17 @@ impl InboxReader {
 
     /// Reads the newest messages, at most 100, in descending UID order. A
     /// message the server did not answer for is left out.
-    pub async fn fetch_rows(&mut self) -> Result<Vec<MessageRow>, ImapError> {
+    /// Reads the newest rows of the Inbox. A server that answers for some
+    /// messages and then refuses the command leaves the list short; its
+    /// reason travels with the rows, because a missing row explains nothing
+    /// by itself.
+    pub async fn fetch_rows(&mut self) -> Result<MessageList, ImapError> {
         let count = self.inbox.message_count;
         if count == 0 {
-            return Ok(Vec::new());
+            return Ok(MessageList {
+                rows: Vec::new(),
+                refusal: None,
+            });
         }
         let first = count.saturating_sub(MESSAGE_WINDOW - 1).max(1);
         let responses = self
@@ -110,11 +117,18 @@ impl InboxReader {
                 failure: ImapFailure::Failed(ImapStep::FetchMessages),
                 server_reply: Some(server_reply),
             })),
+            FetchEnd::Rejected(server_reply) => Ok(MessageList {
+                rows,
+                refusal: Some(server_reply),
+            }),
             // Messages deleted since EXAMINE are missing; that is not an empty Inbox.
             FetchEnd::Completed if rows.is_empty() => {
                 Err(self.error(ImapFailure::InboxChanged.into()))
             }
-            _ => Ok(rows),
+            FetchEnd::Completed => Ok(MessageList {
+                rows,
+                refusal: None,
+            }),
         }
     }
 

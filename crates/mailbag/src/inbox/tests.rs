@@ -13,6 +13,7 @@ fn batch_of(account_id: &AccountId, uids: &[u32]) -> ReceivedBatch {
     ReceivedBatch {
         account_id: account_id.clone(),
         uid_validity: Some(1),
+        list_refusal: None,
         messages: uids
             .iter()
             .map(|uid| ReceivedMessage {

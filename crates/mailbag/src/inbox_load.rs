@@ -245,7 +245,8 @@ async fn run_load(access: ImapAccess, cancelled: &async_channel::Receiver<()>) -
 async fn load_inbox_batch(access: ImapAccess) -> Result<ReceivedBatch, ServerFailure> {
     let account_id = access.account_id.clone();
     let mut reader = InboxReader::open(server_account(access)).await?;
-    let rows = reader.fetch_rows().await?;
+    let listed = reader.fetch_rows().await?;
+    let rows = listed.rows;
     let window = rows.len();
     let uids: Vec<u32> = rows.iter().map(|row| row.uid).collect();
     let structures = reader.fetch_structures(&uids).await?;
@@ -311,6 +312,7 @@ async fn load_inbox_batch(access: ImapAccess) -> Result<ReceivedBatch, ServerFai
         account_id,
         uid_validity: reader.uid_validity(),
         messages,
+        list_refusal: listed.refusal,
     })
 }
 

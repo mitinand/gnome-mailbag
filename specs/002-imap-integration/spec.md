@@ -208,7 +208,11 @@ has no network failure or server-identity reconciliation of its own.
   including message content and show it when complete. Selecting an account
   MUST NOT start a load; it shows the batch received for that account earlier in
   this run, if any. A failed load leaves the list empty; it MUST NOT publish a
-  partial batch as complete. Not loaded, loading, a successful empty result and
+  partial batch as complete. When the server answered part of the message list
+  and then refused the command, Mailbag MUST show the messages it received and
+  MUST report that the list is incomplete, with the server's reason; losing the
+  whole batch over one refused message is not an acceptable answer either.
+  Not loaded, loading, a successful empty result, an incomplete result and
   failure MUST be distinguishable.
 - **FR-004 — Received text**: Mailbag MUST obtain message metadata and the
   description of its parts, then download the plain-text body parts needed for

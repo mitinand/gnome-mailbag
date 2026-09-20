@@ -273,6 +273,25 @@ fn the_next_load_starts_a_new_worker_after_one_stopped() {
     assert_eq!(published_batch(outcome).messages.len(), 1);
 }
 
+#[test]
+fn a_batch_short_of_a_refused_message_says_why() {
+    let fixture = ImapFixture::start(FixtureSetup {
+        messages: plain_messages(2),
+        // A damaged message the server cannot return.
+        unfetchable_uids: vec![10],
+        ..FixtureSetup::default()
+    });
+    let batch = published_batch(load_inbox(&fixture));
+    assert_eq!(
+        batch.messages.iter().map(|m| m.uid).collect::<Vec<_>>(),
+        [20]
+    );
+    assert_eq!(
+        batch.list_refusal.map(|refusal| refusal.text),
+        Some("Some messages could not be FETCHed".to_owned())
+    );
+}
+
 /// Manual acceptance of the whole chain against a running `serve_fixture`:
 /// the real Online Accounts service provides the settings and password, and
 /// the host's trust store decides the connection, see quickstart.md:
