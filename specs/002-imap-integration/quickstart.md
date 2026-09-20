@@ -37,7 +37,7 @@ No cargo vendor step, root vendor input or release source bundle is required.
 Portion 3 adds a scripted IMAP server to `mailbag-imap`, available to its own
 tests and, through the `test-support` feature, to `mailbag`. It runs on GIO with a GLib context and loopback
 sockets; it is not a Python server or production backend. Port the relevant
-prototype scenarios and the 17 synthetic MIME samples (`tests/fixtures/mime/`), then add Mailbag-specific
+prototype scenarios and the 20 synthetic MIME samples (`tests/fixtures/mime/`), then add Mailbag-specific
 batch/grouping/publication cases.
 
 Generate disposable certificates with `tools/make-certs.sh` using OpenSSL.
@@ -82,7 +82,7 @@ Do not introduce another application depth/size policy or a vendored codec patch
 |---|---|
 | SC-001 — Batch | Stable 0/1/100/101-message Inboxes yield 0/1/100/100 unique rows. Descending UID order follows addition. |
 | SC-002 — Acquisition/content | EXAMINE and exact selected BODY.PEEK sections; no mutation commands or changed flags. HTML, inline images, signatures, text attachments and nested messages are never fetched as payload. Opening sends nothing. |
-| SC-003 — Refresh | Selection never loads. Refresh clears rows and reader, then loads; a failure leaves the list empty and names its step; refreshing again recovers. A message with an unreadable structure keeps its row and shows an explanation. |
+| SC-003 — Refresh | Selection never loads. Refresh clears rows and reader, then loads; a failure leaves the list empty and names its step; refreshing again recovers. A message with an unreadable structure keeps its row and shows an explanation. A list the server refused after answering for part of it keeps those rows and names the reason in a toast, and is never shown as complete. |
 | SC-004 — Privacy/storage | Synthetic markers never enter diagnostics; command tracing stays compiled out in debug/release. Permanent: no application password files. This stage: no application mail files or restoration after restart. |
 | SC-005 — Ownership | Switch accounts during GOA access, connect and text transfer: the result is stored only for its own account. No overlapping acquisitions. Confirmed exclusion during a load discards the account's mail, and the late result does not restore it. |
 | SC-006 — Access/responsiveness | F01 accessibility remains intact; Refresh Inbox and rows work by keyboard. Stalled loading permits navigation/quit; failures identify their step and differ from unsupported content. |
@@ -110,8 +110,9 @@ Additional fixtures exercise the changed integration directly:
 - MIME: UTF-8/Windows-1251/KOI8-R, Asian encoding through full_encoding, base64/QP,
   invalid bytes with replacement characters, unknown charset/transfer encoding,
   encoded Subject/From/To, multiple mixed plain parts, a later plain part without
-  disposition, name-without-inline, signed, encrypted, related-first-child,
-  HTML-only and nested message/rfc822.
+  disposition, name-without-inline, signed, encrypted, related with and without
+  a start parameter, flowed text with and without delsp, HTML-only and nested
+  message/rfc822.
 - ALERT: plain text included in a failing attempt's explanation, including
   authentication/tagged failures; no extra notification/history for success.
 - Timeout/cancellation: stalled versus slowly progressing input, cancellation

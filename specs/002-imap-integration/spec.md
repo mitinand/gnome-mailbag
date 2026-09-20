@@ -178,6 +178,7 @@ has no network failure or server-identity reconciliation of its own.
 | Received mail has attachments, several body alternatives or no readable plain-text body | Show the actual plain-text body, not an attached text file; explain unsupported or undecodable content for that message | [MIME body parts](https://datatracker.ietf.org/doc/html/rfc2046#section-5.1) |
 | A message disappears while its batch is being obtained | Do not fabricate an empty message for a missing server result; the batch may contain fewer messages | Another client can remove mail; [IMAP message access](https://datatracker.ietf.org/doc/html/rfc9051#section-6.4.9) |
 | The server does not return one message's data, while other messages load | Keep that message's row with an explanation; load the other messages normally | Servers can end a request with a failure after answering for the other messages, for example for a damaged message |
+| The server answers for part of the message list and then refuses the command | Keep the rows that arrived and say that the list is incomplete, with the server's reason; a short list is never shown as complete, and one refused message never costs the whole batch | A missing row explains nothing by itself, unlike a missing structure or text |
 | Account settings/password retrieval, connection, certificate validation, sign-in or mail retrieval fails | Identify the failing step once and stop dependent work; the list stays empty | These are separate stages of the loading operation |
 | The user switches accounts while a load is pending | The load continues; its result appears only for the account it was started for | Account selection remains available during loading |
 | GOA confirms removal or Mail disablement during loading | Clear that account's received mail; a late result cannot restore it | Existing [account lifecycle](../001-goa-account-observation/spec.md) |
@@ -221,7 +222,9 @@ has no network failure or server-identity reconciliation of its own.
   Opening MUST use received content, without a separate body request or a check
   of current server state. Display text as inert content; do not use an attached
   text file as the body, render or convert HTML, load external content or generate
-  list previews. Unsupported or undecodable content MUST have a message-specific
+  list previews. Text MUST be shown the way its format defines: plain text marked
+  `format=flowed` is unflowed before display, and a related set is read from the
+  root its `start` parameter names. Unsupported or undecodable content MUST have a message-specific
   explanation. The reader MAY show only the beginning of a long text.
 - **FR-005 — No remote changes**: Downloading, listing, refreshing and opening
   MUST NOT change message flags, contents or folder membership, including
@@ -301,7 +304,9 @@ has no network failure or server-identity reconciliation of its own.
 - **SC-003**: A refresh clears the list and reader, then reflects arrivals,
   removals and changed read status. A failed refresh leaves the list empty with
   an explanation of the failing step; refreshing again recovers without an
-  application restart. Selecting an account never starts a load (US3; FR-003,
+  application restart. A refresh the server answered only in part keeps the rows
+  it delivered and names the server's reason, so an incomplete list is never
+  shown as complete. Selecting an account never starts a load (US3; FR-003,
   FR-009).
 - **SC-004**: Verify storage and diagnostics as two distinct checks.
   **Permanent guarantee:** Inspection finds zero application-created password

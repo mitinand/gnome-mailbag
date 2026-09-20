@@ -37,6 +37,9 @@ guarantees remain unchanged.
 | Load fails | The list stays empty; the status page names the failing step. Refresh again to retry. |
 | Unreadable part structure | Keep the row; the reader explains that the content could not be read. Other messages load normally. |
 | Server does not return one message's data | Keep the row; the reader explains that the server did not return its text. Other messages load normally. |
+| Server refuses the message list after answering for part of it | Keep the rows that arrived; a toast names the server's reason. The list is never shown as complete, and the batch is not lost over one refused message. |
+| Plain text marked `format=flowed` | Unflow it before display: soft line breaks, `delsp`, quoting depth and the signature separator (RFC 3676). |
+| multipart/related | Read the root its `start` parameter names by Content-ID; otherwise the first child. |
 | GOA observation failure | No mail change; F01's account page covers the list until recovery. |
 | Confirmed exclusion from F01 | Discard the account's mail and cancel its load; a late result cannot restore it. |
 | Text over 64 KiB decoded UTF-8 | GtkLabel shows the first 64 KiB without an explanation; the stored text is complete. |
@@ -181,7 +184,7 @@ existing crates, roughly 1,500–2,500 production lines; around 16–22 small
 data/error/control types; one worker thread; two load lifecycle states;
 cancellation and bounded parser-error isolation.
 There is no application timer or size counter. Tests add one Rust/GIO server,
-the 17 synthetic MIME samples and roughly 25–35 focused scenarios, reusing the
+the 20 synthetic MIME samples and roughly 25–35 focused scenarios, reusing the
 prototype's relevant coverage rather than requiring its exact test count.
 
 Packaging adds two tooling scripts, a Meson option file, generated JSON and

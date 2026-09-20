@@ -124,7 +124,7 @@ closed before the completion, as an error after the responses.
 
 | Command | A requested message without data, after a tagged OK | ... after a tagged NO |
 |---|---|---|
-| Rows | Absent. No row at all although EXISTS was not zero: the Inbox changed. | Absent, and the rows that arrived are kept with the server's text, which says the list is incomplete. No row at all: the metadata step fails with that text. |
+| Rows | Absent. No row at all although EXISTS was not zero: the Inbox changed. | Absent, and the rows that arrived are kept with the server's text, which reports the list as incomplete. No row at all: the metadata step fails with that text. |
 | Structures | It disappeared; omit its row. | Its row stays with an unreadable-structure explanation. |
 | Text | It disappeared; omit its row. | Its row stays with a text-not-received explanation. |
 
@@ -132,6 +132,14 @@ Keeping the rows of a refused command is not the same as hiding the refusal:
 the reason travels with the batch, because a message missing from the list
 leaves nothing else to explain it, unlike a missing structure or text, which
 their own row explains.
+
+Plain text marked `format=flowed` is unflowed before it is shown
+([RFC 3676](https://www.rfc-editor.org/rfc/rfc3676.html)): soft line breaks,
+which are lines ending in a space, join the paragraph they belong to within the
+same quoting depth, `delsp=yes` drops that space while joining, one stuffed
+leading space is removed, and the `-- ` signature separator ends a paragraph.
+Senders wrap flowed text for a narrow terminal, so showing it as it arrives
+leaves ragged columns, and with `delsp=yes` words break apart.
 
 A returned message whose requested section is NIL or missing also gets the
 text-not-received explanation. The other messages load normally. Only a network
@@ -236,7 +244,7 @@ from extension data; absent disposition is not itself a reason to reject all tex
 | multipart/signed | Inspect only the first part. Do not fetch the signature or claim verification. |
 | multipart/encrypted | Explanation; no encrypted payload. |
 | application/pkcs7-mime or x-pkcs7-mime | Unsupported S/MIME explanation; do not download/decrypt it or claim signature verification. |
-| multipart/related | Inspect only the first child, as in the prototype. No Content-ID root resolver in 002. |
+| multipart/related | Inspect the root part: the child whose Content-ID matches the `start` parameter, or the first child when there is no `start`, the server reported no Content-ID for that child, or nothing matches ([RFC 2387](https://www.rfc-editor.org/rfc/rfc2387.html#section-3.2)). IMAP reports no Content-ID for a multipart child, so a `start` naming one falls back to the first child. |
 | message/rfc822 | Skip the entire nested message. |
 | text/html, images and other leaves | Skip payloads. HTML-only mail gets its ordinary unsupported-view explanation. |
 

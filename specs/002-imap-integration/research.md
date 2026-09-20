@@ -233,9 +233,15 @@ so both get the undecodable explanation: reading the mark, and counting the
 base64 characters of the body, cost far less than a decoder of our own and
 report the failure instead of hiding it.
 
-The sample rules choose the last supported alternative, first signed/related
-part, all appropriate mixed plain-text parts, and exclude attachments and nested
-messages. `text/plain` with a name parameter and no explicit inline disposition
+The sample rules choose the last supported alternative, the root of a related
+set, all appropriate mixed plain-text parts, and exclude attachments and nested
+messages. The root of a `multipart/related` set is the child its `start`
+parameter names by Content-ID, which BODYSTRUCTURE reports for single parts;
+without a usable `start` it is the first child, as before. Plain text marked
+`format=flowed` is unflowed, because Thunderbird and Apple Mail send ordinary
+mail that way and, unflowed, it reads as a narrow ragged column, while
+`delsp=yes` breaks words apart. Neither mail-parser nor the protocol library
+does this. `text/plain` with a name parameter and no explicit inline disposition
 is treated as an attachment, including the RFC 2231 forms `name*` and `name*0*`
 that a server may leave unfolded. There is no signature verification or decryption.
 

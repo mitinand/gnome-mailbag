@@ -50,6 +50,7 @@ runs at most one mail acquisition.
 | Select another account while Loading | Only the visible account changes; the load continues for its own account. |
 | Successful completion | Store the batch for the load's account and enter Idle. It is visible if that account is selected. |
 | Failed completion | Store the LoadFailure for the load's account and enter Idle. |
+| Completion with an incomplete list | Store the batch together with the server's reason for the missing rows and enter Idle. The window says once that the list is incomplete; the rows stay. |
 | The mail worker stopped | Report it as a failed completion, so the account leaves Loading and Refresh Inbox works again. The next refresh starts a new worker. |
 | Access request reports an unavailable account | An ordinary step failure; only the F01 observer can confirm exclusion. |
 | Confirmed F01 exclusion | Discard that account's AccountInbox and cancel its running load. |

@@ -37,9 +37,9 @@ observation, never a mail refresh.
   replace the box, open `sync_popover` or implement `app.sync-status`. Keep
   Synchronization Status unavailable in this feature.
 - A failed load is shown on its account's status page, without a toast. A load
-  the server answered only in part keeps the rows it delivered and reports the
+  that returned an incomplete list keeps the rows it delivered and reports the
   server's reason in a toast, the one toast this feature adds: silence would
-  show a short list as a complete Inbox. No persistent synchronization error
+  show an incomplete list as a complete Inbox. No persistent synchronization error
   panel, progress percentages, notification history or successful-load notice.
   Cancellation is silent.
 - A toast disappears, so afterwards the list looks complete again. This is a
@@ -104,6 +104,7 @@ screen. Ordinary mail, which senders wrap near 72 columns, keeps word wrapping.
 | Unreadable structure | Explain in the reader that this message's content could not be read; its row stays in the list. |
 | Text not received | Explain in the reader that the server did not return this message's text; its row stays in the list. |
 | Mail worker stopped | Mail could not be loaded; try Refresh Inbox again. The load is over, so Refresh Inbox becomes available. |
+| Incomplete list | Some messages of the named account could not be loaded, with the server's text. It is said in a toast while the rows that arrived stay in the list, never on the status page, which would hide them. |
 
 The status page names the failed step in its title, which is not parsed as
 markup, and puts every explanation below it in a plain-text label, because

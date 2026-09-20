@@ -1,7 +1,7 @@
 # Tasks: IMAP Integration
 
 **Feature**: F02 / `002-imap-integration`
-**Created**: 2026-09-18 · **Status**: Documents approved 2026-09-19; portions 1–4 committed; portion 5 and acceptance completed 2026-09-20 and awaiting review
+**Created**: 2026-09-18 · **Status**: Documents approved 2026-09-19; portions 1–5 and acceptance committed 2026-09-20; review follow-ups completed 2026-09-21. All tasks done; the last change awaits the maintainer's commit.
 
 [Spec](spec.md) owns behavior, [plan](plan.md) owns boundaries and portions,
 [research](research.md) owns decisions and evidence, contracts own details, and
@@ -26,6 +26,7 @@ every portion under AGENTS.md and live beside their modules.
 | 4. Content and load sequence | T030–T036 | feat(content): select and decode received plain text | IMAP integration |
 | 5. Visible integration | T037–T045 | feat: show and refresh received Inbox mail | IMAP integration |
 | Acceptance | T046–T048 | docs(imap): record IMAP integration acceptance | IMAP integration |
+| 6. Review follow-ups | T049–T055 | one commit per finding, see each task | IMAP integration |
 
 ## Phase 1: documents and review
 
@@ -133,10 +134,39 @@ account or password file after the run. Opening a 64 KiB message froze the
 window until the reader chose its wrapping by content; the fix and its
 regression test are part of portion 5. Servers with a private certificate
 authority stay unverified in the installed application and are out of scope.
+The fork revision and the content decoding changed after this run; what that
+means for these results is in phase 8.
 
 - [X] T046 Run acceptance from specs/002-imap-integration/quickstart.md “Installed-app fixture and host trust” and “Visible integration and final acceptance” for SC-001–SC-007: both TLS modes, certificate failures with zero passwords, false/false refusal, STARTTLS downgrade attempts, display clipping at 64 KiB, reopening without requests, restart without restored mail and installed permissions. The certificate and STARTTLS matrix runs on the host build, because Flatpak keeps the host's trust store out of the sandbox (scope note in spec.md “Assumptions”); the installed application shows a load from a real server instead. Record GOA, GLib, GnuTLS and Flatpak versions.
 - [X] T047 Run the SC-006 checks and a load of the maintainer's real mailbox in the installed app: unchanged F01 accessibility, Refresh Inbox and rows by keyboard, spoken read/unread state, navigation and quitting during a stall. Completion requires the maintainer's confirmation.
 - [X] T048 STOP: run scripts/check.sh and git diff --check, keep unmet acceptance unchecked in specs/002-imap-integration/tasks.md and report it; do not declare 002 complete from synthetic tests alone.
+
+## Phase 8: review follow-ups
+
+An external review on 2026-09-20 reproduced five defects and three limitations
+in the committed feature. Each one is a small change of its own, with the same
+review pause as a portion. Two of them changed accepted documents, which the
+maintainer approved before the work started.
+
+**Re-run on 2026-09-21** against the code of T049–T053, without the
+maintainer's session: the eight refusal cases on the host build — an
+uninstalled disposable CA, unknown CA, wrong host, expiry, and STARTTLS
+missing, rejected, PREAUTH or with injected bytes — all stop at the
+secure-connection step with zero credential transmissions and no plaintext
+sign-in; false/false through a disposable Online Accounts account with
+`ImapAcceptSslErrors=true` stops at the encryption setting without requesting
+the password, and the server saw no connection at all; the workspace suite and
+the graphical test pass. The disposable account and the test certificates were
+removed afterwards. The trusted-CA success cases and the installed application
+need the maintainer's session and are T055.
+
+- [X] T049 Recognize a file name in every form RFC 2231 allows (`name*`, `name*0*`) in crates/mailbag-content/src/lib.rs, so an attached text file is not read as the message body; update contracts/imap-reading.md and research.md §5. Committed as “Fix attachement name recognition”.
+- [X] T050 Explain content the transfer encoding did not deliver instead of showing it: honour mail-parser's encoding-problem mark and reject a base64 body that ends inside a group of four, both as the undecodable explanation; update research.md §5 and data-model.md. Committed as “Catch bad coded string”.
+- [X] T051 Fix the pinned async-imap fork on branches over `mailbag` and repin Mailbag: capability and system flag names compared without regard to case, untagged responses passed over during AUTHENTICATE, an untagged NO or BAD during EXAMINE treated as a warning, and an untagged BYE reported as `Error::Bye` with its reason. Tag `mailbag-2026-09-20`, revision `3c4cdde`; regenerate cargo-sources.json and update research.md §3. Committed as “Apply fixes in the dependencies forks”.
+- [X] T052 [US3] Keep the rows of a message list the server refused and carry its reason to the window, which says once in a toast that the list is incomplete; update spec.md FR-003 and SC-003, contracts/ui.md, contracts/imap-reading.md and data-model.md. Committed as “Fix server FETCH deny”.
+- [X] T053 [US2] Read the root of a `multipart/related` set by the Content-ID its `start` parameter names, and unflow `format=flowed` text under RFC 3676, with three new MIME samples (18–20); update contracts/imap-reading.md, research.md §5, quickstart.md and plan.md.
+- [X] T054 Re-run the acceptance that does not need the maintainer's session against the code of T049–T053: the certificate and STARTTLS refusals with zero credential transmissions, the false/false refusal through a disposable Online Accounts account, and the whole workspace test suite. Record the second run in this file.
+- [X] T055 STOP: re-run the trusted-CA success cases and one load of a real mailbox in the installed Flatpak after T049–T053, which changed the pinned fork and the content decoding following the 2026-09-20 acceptance run. Closed on the maintainer's confirmation of 2026-09-21; the evidence recorded in this file for that part is the maintainer's own, while the refusal, false/false and suite results of the same day are the re-run above.
 
 ## Dependencies and parallel opportunities
 
