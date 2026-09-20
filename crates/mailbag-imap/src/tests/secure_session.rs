@@ -277,3 +277,38 @@ fn utf8_texts_and_alerts_of_a_rejected_sign_in_are_kept() {
         ]
     );
 }
+
+/// A server may announce maintenance before it asks for the credentials.
+#[test]
+fn a_notice_before_the_sign_in_request_does_not_stop_it() {
+    let fixture = ImapFixture::start(FixtureSetup {
+        notice_before_sign_in: Some("* OK [ALERT] Maintenance tonight".to_owned()),
+        messages: plain_messages(1),
+        ..FixtureSetup::default()
+    });
+    open_reader(&fixture);
+    assert_eq!(fixture.log().credentials_received, 1);
+}
+
+/// Capability names are atoms, which a server may write in any case.
+#[test]
+fn capability_names_are_read_in_any_case() {
+    let starttls_fixture = ImapFixture::start(FixtureSetup {
+        lowercase_protocol_names: true,
+        messages: plain_messages(1),
+        ..starttls(StartTlsBehavior::Offered)
+    });
+    open_reader(&starttls_fixture);
+    assert_eq!(starttls_fixture.log().credentials_received, 1);
+
+    let login_disabled = ImapFixture::start(FixtureSetup {
+        lowercase_protocol_names: true,
+        offers_plain: false,
+        login_disabled: true,
+        messages: plain_messages(1),
+        ..FixtureSetup::default()
+    });
+    let error = expect_failure(run(InboxReader::open(login_disabled.account())));
+    assert_eq!(error.failure, ImapFailure::NoSignInMethod);
+    assert_eq!(login_disabled.log().credentials_received, 0);
+}

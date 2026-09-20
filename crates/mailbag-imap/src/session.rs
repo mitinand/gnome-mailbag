@@ -260,10 +260,11 @@ impl Authenticator for PlainCredentials<'_> {
     }
 }
 
-/// The failure of a command, with the server's text when it answered NO or BAD.
+/// The failure of a command, with the server's text when it answered NO or
+/// BAD, or closed the connection with BYE.
 pub(crate) fn command_failure(step: ImapStep, error: &Error) -> StepFailure {
     match error {
-        Error::No(status) | Error::Bad(status) => StepFailure {
+        Error::No(status) | Error::Bad(status) | Error::Bye(status) => StepFailure {
             failure: ImapFailure::Failed(step),
             server_reply: Some(ServerReply::from(status)),
         },

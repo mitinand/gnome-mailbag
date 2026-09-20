@@ -3,7 +3,7 @@
 
 use super::{expect_failure, expect_success, open_reader, plain_messages, run};
 use crate::{
-    ImapFailure, ImapStep, MessagePart, ServerReply, TextParts, TextRequest,
+    ImapFailure, ImapStep, InboxReader, MessagePart, ServerReply, TextParts, TextRequest,
     test_server::{
         FaultKind, FaultyCommand, FixtureMessage, FixtureSetup, ImapFixture, RecordedFetch,
     },
@@ -306,4 +306,53 @@ fn loading_sends_only_read_only_commands() {
     for item in log.fetches.iter().flat_map(|fetch| &fetch.items) {
         assert!(!item.starts_with("BODY["), "{item}");
     }
+}
+
+/// An untagged NO is a warning: the tagged completion decides.
+#[test]
+fn a_warning_before_the_inbox_completion_does_not_fail_it() {
+    let fixture = ImapFixture::start(FixtureSetup {
+        examine_completion: "* NO [ALERT] Mailbox is almost full\r\n\
+                             {tag} OK [READ-ONLY] done\r\n"
+            .to_owned(),
+        messages: plain_messages(1),
+        ..FixtureSetup::default()
+    });
+    let mut reader = open_reader(&fixture);
+    assert_eq!(expect_success(run(reader.fetch_rows())).len(), 1);
+}
+
+/// A server that closes the connection while opening the Inbox says why.
+#[test]
+fn a_bye_while_opening_the_inbox_keeps_its_reason() {
+    let fixture = ImapFixture::start(FixtureSetup {
+        examine_completion: "* BYE Server is shutting down for maintenance\r\n".to_owned(),
+        messages: plain_messages(1),
+        ..FixtureSetup::default()
+    });
+    let error = expect_failure(run(InboxReader::open(fixture.account())));
+    assert_eq!(error.failure, ImapFailure::Failed(ImapStep::OpenInbox));
+    assert_eq!(
+        error.server_reply,
+        Some(ServerReply {
+            code: None,
+            text: "Server is shutting down for maintenance".to_owned(),
+        })
+    );
+}
+
+/// System flag names are atoms, which a server may write in any case.
+#[test]
+fn the_read_flag_is_recognized_in_any_case() {
+    let fixture = ImapFixture::start(FixtureSetup {
+        lowercase_protocol_names: true,
+        messages: vec![FixtureMessage {
+            seen: true,
+            ..FixtureMessage::plain_text(10, "Text")
+        }],
+        ..FixtureSetup::default()
+    });
+    let mut reader = open_reader(&fixture);
+    let rows = expect_success(run(reader.fetch_rows()));
+    assert!(rows[0].seen);
 }

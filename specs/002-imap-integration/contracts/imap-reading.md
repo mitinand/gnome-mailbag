@@ -272,6 +272,12 @@ CAPABILITY, including failure or no supported sign-in method. Preserve ALERTs
 from EXAMINE's untagged replies and tagged completion. An OK with ALERT can
 continue. Successful attempts do not produce a standalone ALERT notification.
 
+An untagged NO or BAD is a warning under
+[RFC 3501 section 7.1.2](https://tools.ietf.org/html/rfc3501#section-7.1.2), so
+it keeps its ALERT text without failing the command; the tagged completion
+decides. An untagged response during the sign-in exchange, such as an ALERT
+before the server asks for the credentials, does not end that exchange either.
+
 Also keep the server's reason for the failure that ends a load: the text of the
 NO or BAD completion of the failed command, a BYE greeting, or a BYE received
 during the session, for example at a server's connection limit. Keep its

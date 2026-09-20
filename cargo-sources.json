@@ -2,8 +2,8 @@
   {
     "type": "git",
     "url": "https://github.com/mitinand/async-imap",
-    "commit": "89badf82c3af2173c6d839481be7aa5825d3ba42",
-    "dest": "flatpak-cargo/git/async-imap-89badf8"
+    "commit": "3c4cdde1cd5f4cbf264fe7fa18426c57dce8974d",
+    "dest": "flatpak-cargo/git/async-imap-3c4cdde"
   },
   {
     "type": "git",
@@ -66,7 +66,7 @@
   {
     "type": "shell",
     "commands": [
-      "cp -r --reflink=auto \"flatpak-cargo/git/async-imap-89badf8/.\" \"cargo/vendor/async-imap\""
+      "cp -r --reflink=auto \"flatpak-cargo/git/async-imap-3c4cdde/.\" \"cargo/vendor/async-imap\""
     ]
   },
   {
@@ -1479,7 +1479,7 @@
   },
   {
     "type": "inline",
-    "contents": "[source.vendored-sources]\ndirectory = \"cargo/vendor\"\n\n[source.crates-io]\nreplace-with = \"vendored-sources\"\n\n[source.\"https://github.com/mitinand/async-imap\"]\ngit = \"https://github.com/mitinand/async-imap\"\nreplace-with = \"vendored-sources\"\nrev = \"89badf82c3af2173c6d839481be7aa5825d3ba42\"\n\n[source.\"https://github.com/mitinand/imap-proto\"]\ngit = \"https://github.com/mitinand/imap-proto\"\nreplace-with = \"vendored-sources\"\nrev = \"caa2c81038d7674c46fb038f90ccf74034380c18\"\n",
+    "contents": "[source.vendored-sources]\ndirectory = \"cargo/vendor\"\n\n[source.crates-io]\nreplace-with = \"vendored-sources\"\n\n[source.\"https://github.com/mitinand/async-imap\"]\ngit = \"https://github.com/mitinand/async-imap\"\nreplace-with = \"vendored-sources\"\nrev = \"3c4cdde1cd5f4cbf264fe7fa18426c57dce8974d\"\n\n[source.\"https://github.com/mitinand/imap-proto\"]\ngit = \"https://github.com/mitinand/imap-proto\"\nreplace-with = \"vendored-sources\"\nrev = \"caa2c81038d7674c46fb038f90ccf74034380c18\"\n",
     "dest": "cargo",
     "dest-filename": "config.toml"
   }

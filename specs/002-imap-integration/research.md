@@ -81,10 +81,10 @@ text in the UI.
 
 | Fork | Pinned revision | Tag and base |
 |---|---|---|
-| [async-imap](https://github.com/mitinand/async-imap) | `89badf82c3af2173c6d839481be7aa5825d3ba42` | `mailbag-2026-09-19-5`, based on upstream main |
+| [async-imap](https://github.com/mitinand/async-imap) | `3c4cdde1cd5f4cbf264fe7fa18426c57dce8974d` | `mailbag-2026-09-20`, based on upstream main |
 | [imap-proto](https://github.com/mitinand/imap-proto) | `caa2c81038d7674c46fb038f90ccf74034380c18` | `mailbag-2026-09-17-4`, based on release 0.16.7 |
 
-The [async-imap revision](https://github.com/mitinand/async-imap/commit/89badf82c3af2173c6d839481be7aa5825d3ba42)
+The [async-imap revision](https://github.com/mitinand/async-imap/commit/3c4cdde1cd5f4cbf264fe7fa18426c57dce8974d)
 contains:
 
 1. runtime-futures using futures-io without Tokio or async-std.
@@ -122,6 +122,22 @@ contains:
     mailbox with partial or default data that can falsely confirm an empty Inbox.
 15. ALERT from untagged mailbox replies and tagged EXAMINE/SELECT completions,
     including NO and BAD, forwarded once without changing the command result.
+16. Capability names and system flag names compared without regard to case, as
+    [RFC 3501 section 9](https://tools.ietf.org/html/rfc3501#section-9) requires
+    of atoms. The previous revision compared them literally, so a server
+    answering `starttls` or `logindisabled` looked like one offering neither,
+    and a message flagged `\seen` looked unread with a custom keyword.
+17. Untagged responses during the AUTHENTICATE exchange passed over instead of
+    ending it: an ALERT before the continuation request left client and server
+    waiting for each other until the socket timeout, with no sign-in attempt.
+18. An untagged NO or BAD during EXAMINE/SELECT treated as the warning
+    [RFC 3501 section 7.1.2](https://tools.ietf.org/html/rfc3501#section-7.1.2)
+    defines, leaving the outcome to the tagged completion, and an untagged BYE
+    reported as the new `Error::Bye` with its code and text. The previous
+    revision failed the command on a warning and lost the reason for a BYE.
+
+Items 16 to 18 come from the external review of 2026-09-20 and are reproduced
+by Mailbag's own tests against the scripted server.
 
 Items 8–11 were added on 2026-09-19 after the maintainer's review of portion 3:
 different IMAP servers must not cost the user the whole Inbox because of one

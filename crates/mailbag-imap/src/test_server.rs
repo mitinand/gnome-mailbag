@@ -188,6 +188,12 @@ pub struct FixtureSetup {
     pub login_disabled: bool,
     /// Credentials the server accepts; `None` accepts any.
     pub credentials: Option<(String, String)>,
+    /// An untagged response sent before the sign-in continuation request, such
+    /// as `* OK [ALERT] Maintenance tonight`.
+    pub notice_before_sign_in: Option<String>,
+    /// Writes capability and system flag names in lower case, which RFC 3501
+    /// allows for atoms.
+    pub lowercase_protocol_names: bool,
     /// Reply to a rejected sign-in; `{tag}` is replaced with the command tag.
     pub rejection: String,
     pub messages: Vec<FixtureMessage>,
@@ -236,6 +242,8 @@ impl Default for FixtureSetup {
             offers_plain: true,
             login_disabled: false,
             credentials: Some((TEST_LOGIN.to_owned(), TEST_PASSWORD.to_owned())),
+            notice_before_sign_in: None,
+            lowercase_protocol_names: false,
             rejection: "{tag} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n".to_owned(),
             messages: Vec::new(),
             uid_validity: 1,
@@ -443,13 +451,20 @@ impl Server {
             self.record(|log| log.commands.push(format!("plaintext {name}")));
             match name.as_str() {
                 "CAPABILITY" => {
-                    let starttls = if behavior == StartTlsBehavior::NotOffered {
-                        ""
-                    } else {
-                        " STARTTLS"
+                    let starttls = match (
+                        behavior == StartTlsBehavior::NotOffered,
+                        self.setup.lowercase_protocol_names,
+                    ) {
+                        (true, _) => "",
+                        (false, true) => " starttls",
+                        (false, false) => " STARTTLS",
+                    };
+                    let disabled = match self.setup.lowercase_protocol_names {
+                        true => "logindisabled",
+                        false => "LOGINDISABLED",
                     };
                     io.send(format!(
-                        "* CAPABILITY IMAP4rev1 LOGINDISABLED{starttls}\r\n{tag} OK done\r\n"
+                        "* CAPABILITY IMAP4rev1 {disabled}{starttls}\r\n{tag} OK done\r\n"
                     ))
                     .await?;
                 }
@@ -490,10 +505,13 @@ impl Server {
                     } else {
                         ""
                     };
-                    let disabled = if self.setup.login_disabled {
-                        " LOGINDISABLED"
-                    } else {
-                        ""
+                    let disabled = match (
+                        self.setup.login_disabled,
+                        self.setup.lowercase_protocol_names,
+                    ) {
+                        (false, _) => "",
+                        (true, true) => " logindisabled",
+                        (true, false) => " LOGINDISABLED",
                     };
                     io.send(format!(
                         "* CAPABILITY IMAP4rev1{plain}{disabled}\r\n{tag} OK done\r\n"
@@ -501,6 +519,9 @@ impl Server {
                     .await?;
                 }
                 "AUTHENTICATE" => {
+                    if let Some(notice) = &self.setup.notice_before_sign_in {
+                        io.send(format!("{notice}\r\n")).await?;
+                    }
                     io.send("+ \r\n").await?;
                     let Some(line) = io.read_line().await? else {
                         return Ok(());
@@ -720,7 +741,11 @@ impl Server {
             match item.as_str() {
                 "UID" => fields.push(format!("UID {}", message.uid).into_bytes()),
                 "FLAGS" => {
-                    let flags = if message.seen { "\\Seen" } else { "" };
+                    let flags = match (message.seen, self.setup.lowercase_protocol_names) {
+                        (true, true) => "\\seen",
+                        (true, false) => "\\Seen",
+                        (false, _) => "",
+                    };
                     fields.push(format!("FLAGS ({flags})").into_bytes());
                 }
                 "INTERNALDATE" => {

@@ -46,7 +46,7 @@ dependencies = [
 [[package]]
 name = "async-imap"
 version = "0.11.3"
-source = "git+https://github.com/mitinand/async-imap?rev=89badf82c3af2173c6d839481be7aa5825d3ba42#89badf82c3af2173c6d839481be7aa5825d3ba42"
+source = "git+https://github.com/mitinand/async-imap?rev=3c4cdde1cd5f4cbf264fe7fa18426c57dce8974d#3c4cdde1cd5f4cbf264fe7fa18426c57dce8974d"
 dependencies = [
  "async-channel 2.5.0",
  "async-compression",
