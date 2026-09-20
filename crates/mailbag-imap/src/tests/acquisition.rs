@@ -266,6 +266,7 @@ fn the_structure_keeps_sections_types_parameters_and_dispositions() {
         media_subtype: subtype.to_owned(),
         parameters: Vec::new(),
         disposition: None,
+        content_id: None,
         children: Vec::new(),
     };
     let expected = MessagePart {
@@ -378,4 +379,41 @@ fn the_read_flag_is_recognized_in_any_case() {
     let mut reader = open_reader(&fixture);
     let rows = expect_success(run(reader.fetch_rows())).rows;
     assert!(rows[0].seen);
+}
+
+/// A related set names its root by Content-ID, so the description carries it.
+#[test]
+fn a_structure_carries_the_content_id_of_its_parts() {
+    let fixture = ImapFixture::start(FixtureSetup {
+        messages: vec![FixtureMessage::related_with_start(
+            10,
+            "Text inside related",
+        )],
+        ..FixtureSetup::default()
+    });
+    let mut reader = open_reader(&fixture);
+    let root = expect_success(run(reader.fetch_structures(&[10])))
+        .remove(&10)
+        .flatten()
+        .expect("readable structure");
+    assert_eq!(root.media_subtype, "related");
+    // The multipart itself has no Content-ID in BODYSTRUCTURE.
+    assert_eq!(root.content_id, None);
+    assert_eq!(
+        root.parameters
+            .iter()
+            .find(|(name, _)| name == "start")
+            .map(|(_, value)| value.as_str()),
+        Some("<text@fixture.invalid>")
+    );
+    let ids: Vec<Option<&str>> = root
+        .children
+        .iter()
+        .map(|child| child.content_id.as_deref())
+        .collect();
+    // Reported with angle brackets, kept without them.
+    assert_eq!(
+        ids,
+        [Some("image@fixture.invalid"), Some("text@fixture.invalid")]
+    );
 }

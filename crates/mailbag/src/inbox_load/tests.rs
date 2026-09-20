@@ -273,6 +273,24 @@ fn the_next_load_starts_a_new_worker_after_one_stopped() {
     assert_eq!(published_batch(outcome).messages.len(), 1);
 }
 
+/// The whole path: the server reports the Content-ID, the selection follows
+/// the start parameter, and the text of that part is what the reader gets.
+#[test]
+fn a_related_message_reads_the_part_its_start_names() {
+    let fixture = ImapFixture::start(FixtureSetup {
+        messages: vec![FixtureMessage::related_with_start(
+            10,
+            "Text inside related",
+        )],
+        ..FixtureSetup::default()
+    });
+    let batch = published_batch(load_inbox(&fixture));
+    assert_eq!(
+        text_of(&batch.messages[0].content).trim(),
+        "Text inside related"
+    );
+}
+
 #[test]
 fn a_batch_short_of_a_refused_message_says_why() {
     let fixture = ImapFixture::start(FixtureSetup {

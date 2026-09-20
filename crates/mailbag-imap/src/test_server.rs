@@ -105,6 +105,43 @@ impl FixtureMessage {
         }
     }
 
+    /// A `multipart/related` whose `start` parameter names the text part by
+    /// its Content-ID, with a resource before it.
+    pub fn related_with_start(uid: u32, text: &str) -> Self {
+        let text_id = "<text@fixture.invalid>";
+        let mut sections = BTreeMap::new();
+        sections.insert(
+            "1.MIME".to_owned(),
+            b"Content-Type: image/png\r\n\r\n".to_vec(),
+        );
+        sections.insert("1".to_owned(), b"resource".to_vec());
+        sections.insert(
+            "2.MIME".to_owned(),
+            format!("Content-Type: text/plain; charset=utf-8\r\nContent-ID: {text_id}\r\n\r\n")
+                .into_bytes(),
+        );
+        sections.insert("2".to_owned(), text.as_bytes().to_vec());
+        let resource =
+            "(\"IMAGE\" \"PNG\" NIL \"<image@fixture.invalid>\" NIL \"BASE64\" 8 NIL NIL NIL NIL)";
+        let body = format!(
+            "(\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") \"{text_id}\" NIL \"8BIT\" {} {} NIL NIL NIL NIL)",
+            text.len(),
+            text.lines().count()
+        );
+        Self {
+            uid,
+            seen: false,
+            header: message_header(
+                uid,
+                &format!("multipart/related; boundary=fixture; start=\"{text_id}\""),
+            ),
+            structure: format!(
+                "({resource}{body} \"RELATED\" (\"BOUNDARY\" \"fixture\" \"START\" \"{text_id}\") NIL NIL NIL)"
+            ),
+            sections,
+        }
+    }
+
     /// A message whose BODYSTRUCTURE nests message/rfc822 parts `depth` levels
     /// deep, beyond what the IMAP parser accepts when `depth` exceeds 32.
     pub fn deeply_nested(uid: u32, depth: usize) -> Self {

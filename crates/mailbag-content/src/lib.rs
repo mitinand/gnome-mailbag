@@ -24,11 +24,21 @@ pub struct MimePart {
     pub parameters: Vec<(String, String)>,
     /// Lowercase Content-Disposition type, such as `attachment`, if any.
     pub disposition: Option<String>,
+    /// Content-ID without angle brackets, by which a related set names its
+    /// root. A server reports it for single parts only.
+    pub content_id: Option<String>,
     /// Parts of a multipart. Nested messages are not expanded.
     pub children: Vec<MimePart>,
 }
 
 impl MimePart {
+    fn parameter(&self, name: &str) -> Option<&str> {
+        self.parameters
+            .iter()
+            .find(|(parameter, _)| parameter == name)
+            .map(|(_, value)| value.as_str())
+    }
+
     /// Whether the part carries a file name. A server may send it in any form
     /// RFC 2231 allows and need not fold the pieces back together, so the
     /// extended `name*` and continuations such as `name*0*` count as well.
@@ -120,8 +130,8 @@ fn visit(part: &MimePart, walk: &mut Walk) {
             walk.explanation
                 .get_or_insert(ContentExplanation::Encrypted);
         }
-        // The first child is the root of a related set; other parts are resources.
-        ("multipart", "related") => walk_first_child(part, walk),
+        // A related set has a root part; the others are resources it uses.
+        ("multipart", "related") => walk_related_root(part, walk),
         ("multipart", _) => {
             for child in &part.children {
                 visit(child, walk);
@@ -160,6 +170,22 @@ fn is_file_name_parameter(parameter: &str) -> bool {
 fn walk_first_child(part: &MimePart, walk: &mut Walk) {
     if let Some(child) = part.children.first() {
         visit(child, walk);
+    }
+}
+
+/// The root of a related set: the child whose Content-ID the `start`
+/// parameter names, or the first child when there is no `start`, the server
+/// reported no Content-ID for that child, or nothing matches.
+fn walk_related_root(part: &MimePart, walk: &mut Walk) {
+    let named_root = part.parameter("start").and_then(|start| {
+        let start = start.trim_start_matches('<').trim_end_matches('>');
+        part.children
+            .iter()
+            .find(|child| child.content_id.as_deref() == Some(start))
+    });
+    match named_root {
+        Some(root) => visit(root, walk),
+        None => walk_first_child(part, walk),
     }
 }
 
@@ -206,8 +232,65 @@ pub fn decode_text_part(mime_header: &[u8], body: &[u8]) -> Result<String, Conte
     }
     match &part.body {
         // NUL cannot reach GTK text APIs.
-        PartType::Text(text) => Ok(text.replace('\0', "\u{FFFD}")),
+        PartType::Text(text) => {
+            let text = text.replace('\0', "\u{FFFD}");
+            Ok(match flowed_join(part) {
+                Some(delete_space) => unflow_text(&text, delete_space),
+                None => text,
+            })
+        }
         _ => Err(ContentExplanation::Undecodable),
+    }
+}
+
+/// Whether the part is `format=flowed`, and whether `delsp=yes` says the space
+/// that marks a soft line break is not part of the text.
+fn flowed_join(part: &mail_parser::MessagePart<'_>) -> Option<bool> {
+    let content_type = part.content_type()?;
+    let format = content_type.attribute("format")?;
+    format.eq_ignore_ascii_case("flowed").then(|| {
+        content_type
+            .attribute("delsp")
+            .is_some_and(|delsp| delsp.eq_ignore_ascii_case("yes"))
+    })
+}
+
+/// Joins the soft line breaks of RFC 3676: a line ending in a space continues
+/// in the next line of the same quoting depth. The `-- ` signature separator
+/// ends a paragraph, and one space the sender put in front of a line to
+/// protect it is not part of the text.
+fn unflow_text(text: &str, delete_space: bool) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    // The quoting depth of the paragraph still waiting for its next line.
+    let mut open_paragraph: Option<usize> = None;
+    for raw_line in text.split('\n') {
+        let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+        let depth = line.bytes().take_while(|byte| *byte == b'>').count();
+        let quoted_text = &line[depth..];
+        let mut content = quoted_text
+            .strip_prefix(' ')
+            .unwrap_or(quoted_text)
+            .to_owned();
+        let ends_paragraph = content == "-- " || !content.ends_with(' ');
+        if !ends_paragraph && delete_space {
+            content.pop();
+        }
+        match open_paragraph {
+            Some(open) if open == depth => lines
+                .last_mut()
+                .expect("an open paragraph has its line")
+                .push_str(&content),
+            _ => lines.push(format!("{}{content}", quote_prefix(depth))),
+        }
+        open_paragraph = (!ends_paragraph).then_some(depth);
+    }
+    lines.join("\n")
+}
+
+fn quote_prefix(depth: usize) -> String {
+    match depth {
+        0 => String::new(),
+        depth => format!("{} ", ">".repeat(depth)),
     }
 }
 

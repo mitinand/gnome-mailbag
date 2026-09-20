@@ -16,6 +16,9 @@ pub struct MessagePart {
     pub parameters: Vec<(String, String)>,
     /// Lowercase Content-Disposition type, such as `attachment`, if any.
     pub disposition: Option<String>,
+    /// Content-ID without its angle brackets, by which a related set names its
+    /// root. BODYSTRUCTURE reports it for single parts only.
+    pub content_id: Option<String>,
     /// Parts of a multipart. Nested messages are not expanded.
     pub children: Vec<MessagePart>,
 }
@@ -36,18 +39,32 @@ fn project(structure: &BodyStructure<'_>, section: Vec<u32>) -> MessagePart {
                 .zip(bodies)
                 .map(|(number, body)| project(body, [section.as_slice(), &[number]].concat()))
                 .collect();
-            describe(common, section, children)
+            describe(common, section, children, None)
         }
-        BodyStructure::Basic { common, .. }
-        | BodyStructure::Text { common, .. }
-        | BodyStructure::Message { common, .. } => describe(common, section, Vec::new()),
+        BodyStructure::Basic { common, other, .. }
+        | BodyStructure::Text { common, other, .. }
+        | BodyStructure::Message { common, other, .. } => {
+            describe(common, section, Vec::new(), other.id.as_deref())
+        }
     }
+}
+
+/// A Content-ID is written `<name@host>` in the header and reported that way;
+/// the `start` parameter of a related set may carry it with or without the
+/// brackets.
+fn strip_angle_brackets(content_id: &str) -> String {
+    content_id
+        .strip_prefix('<')
+        .and_then(|id| id.strip_suffix('>'))
+        .unwrap_or(content_id)
+        .to_owned()
 }
 
 fn describe(
     common: &BodyContentCommon<'_>,
     section: Vec<u32>,
     children: Vec<MessagePart>,
+    content_id: Option<&str>,
 ) -> MessagePart {
     MessagePart {
         section,
@@ -64,6 +81,7 @@ fn describe(
             .disposition
             .as_ref()
             .map(|disposition| disposition.ty.to_ascii_lowercase()),
+        content_id: content_id.map(strip_angle_brackets),
         children,
     }
 }

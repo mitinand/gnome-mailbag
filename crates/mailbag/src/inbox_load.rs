@@ -337,6 +337,7 @@ fn describe_part(part: &MessagePart) -> MimePart {
         media_subtype: part.media_subtype.clone(),
         parameters: part.parameters.clone(),
         disposition: part.disposition.clone(),
+        content_id: part.content_id.clone(),
         children: part.children.iter().map(describe_part).collect(),
     }
 }

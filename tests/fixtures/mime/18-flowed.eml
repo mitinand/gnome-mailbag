@@ -1,0 +1,17 @@
+From: =?utf-8?B?0KLQtdGB0YLQvtCy0YvQuSDQvtGC0L/RgNCw0LLQuNGC0LXQu9GM?= <sender@example.invalid>
+To: reader@example.invalid
+Subject: Flowed text
+Content-Type: text/plain; charset=utf-8; format=flowed
+Content-Transfer-Encoding: 8bit
+
+Это абзац, который отправитель перенёс 
+по границе узкого окна, и он должен 
+снова стать одной строкой.
+
+> Цитата тоже переносится 
+> мягко.
+> Цитата обрывается на переносе 
+Ответ на другой глубине.
+Обычная строка без переноса.
+-- 
+Подпись

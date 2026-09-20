@@ -1,0 +1,17 @@
+From: sender@example.invalid
+To: reader@example.invalid
+Subject: Related with start
+Content-Type: multipart/related; boundary=fixture; start="<text@example.invalid>"
+
+--fixture
+Content-Type: image/png
+Content-ID: <image@example.invalid>
+Content-Transfer-Encoding: base64
+
+cmVzb3VyY2U=
+--fixture
+Content-Type: text/plain; charset=utf-8
+Content-ID: <text@example.invalid>
+
+Текст, на который указывает start.
+--fixture--

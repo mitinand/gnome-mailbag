@@ -107,6 +107,9 @@ fn describe(
         disposition: part
             .content_disposition()
             .map(|disposition| disposition.c_type.to_ascii_lowercase()),
+        content_id: part
+            .content_id()
+            .map(|id| id.trim_start_matches('<').trim_end_matches('>').to_owned()),
         children,
     }
 }
@@ -144,6 +147,8 @@ fn samples_select_the_plain_text_to_read() {
         ),
         // The first child of a related set, whose plain branch is section 1.1.
         ("14-related.eml", parts(&[&[1, 1]])),
+        // The child the start parameter names, not the first one.
+        ("20-related-start.eml", parts(&[&[2]])),
         // The nested message is skipped entirely.
         ("17-nested-message.eml", parts(&[&[1]])),
     ];
@@ -167,6 +172,7 @@ fn selected_parts_decode_to_their_text() {
         ("06-attachment-text.eml", "Основной текст письма."),
         ("07-signed.eml", "Подписанный текст."),
         ("14-related.eml", "Текст внутри related."),
+        ("20-related-start.eml", "Текст, на который указывает start."),
         ("17-nested-message.eml", "Пересылаю письмо."),
     ];
     for (name, expected) in cases {
@@ -180,6 +186,47 @@ fn selected_parts_decode_to_their_text() {
             "{name} must not include excluded parts: {text:?}"
         );
     }
+}
+
+#[test]
+fn flowed_text_becomes_whole_paragraphs_again() {
+    let sample = load_sample("18-flowed.eml");
+    let text = sample.text(&select_text_parts(&sample.root)).unwrap();
+    assert!(
+        text.contains("Это абзац, который отправитель перенёс по границе узкого окна, и он должен снова стать одной строкой."),
+        "{text:?}"
+    );
+    // Quoting depth keeps its own paragraph.
+    assert!(
+        text.contains("> Цитата тоже переносится мягко."),
+        "{text:?}"
+    );
+    // A soft break that meets another quoting depth ends its paragraph. The
+    // space that marked the break belongs to the line, so it stays.
+    assert!(
+        text.contains("> Цитата обрывается на переносе \nОтвет на другой глубине."),
+        "{text:?}"
+    );
+    assert!(text.contains("Обычная строка без переноса."), "{text:?}");
+    // The signature separator ends a paragraph instead of joining it.
+    assert!(text.contains("-- \nПодпись"), "{text:?}");
+}
+
+#[test]
+fn a_flowed_message_with_delsp_joins_words_without_a_space() {
+    let sample = load_sample("19-flowed-delsp.eml");
+    let text = sample.text(&select_text_parts(&sample.root)).unwrap();
+    assert!(
+        text.contains("interoperability без лишнего пробела."),
+        "{text:?}"
+    );
+}
+
+#[test]
+fn text_that_is_not_flowed_keeps_its_line_breaks() {
+    let sample = load_sample("11-mailman-footer.eml");
+    let text = sample.text(&select_text_parts(&sample.root)).unwrap();
+    assert!(text.contains('\n'), "{text:?}");
 }
 
 #[test]
@@ -303,6 +350,7 @@ fn part(section: &[u32], media_type: &str, subtype: &str) -> MimePart {
         media_subtype: subtype.to_owned(),
         parameters: Vec::new(),
         disposition: None,
+        content_id: None,
         children: Vec::new(),
     }
 }
@@ -381,6 +429,48 @@ fn a_parameter_that_only_starts_like_a_file_name_is_not_one() {
             select_text_parts(&message),
             parts(&[&[1], &[2]]),
             "{parameter}"
+        );
+    }
+}
+
+/// Builds a related set whose parts carry Content-IDs.
+fn related_set(start: Option<&str>) -> MimePart {
+    let resource = MimePart {
+        content_id: Some("image@example.invalid".to_owned()),
+        ..part(&[1], "image", "png")
+    };
+    let text = MimePart {
+        content_id: Some("text@example.invalid".to_owned()),
+        ..part(&[2], "text", "plain")
+    };
+    MimePart {
+        parameters: start
+            .map(|start| vec![("start".to_owned(), start.to_owned())])
+            .unwrap_or_default(),
+        children: vec![resource, text],
+        ..part(&[], "multipart", "related")
+    }
+}
+
+#[test]
+fn a_related_set_reads_the_root_its_start_parameter_names() {
+    // With and without the angle brackets the header uses.
+    for start in ["<text@example.invalid>", "text@example.invalid"] {
+        assert_eq!(
+            select_text_parts(&related_set(Some(start))),
+            parts(&[&[2]]),
+            "{start}"
+        );
+    }
+}
+
+#[test]
+fn a_related_set_without_a_usable_start_reads_its_first_child() {
+    for start in [None, Some("<missing@example.invalid>")] {
+        assert_eq!(
+            select_text_parts(&related_set(start)),
+            TextSelection::Explained(ContentExplanation::NoPlainText { has_html: false }),
+            "{start:?}"
         );
     }
 }
