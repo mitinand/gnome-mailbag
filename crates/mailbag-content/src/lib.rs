@@ -29,11 +29,13 @@ pub struct MimePart {
 }
 
 impl MimePart {
-    fn parameter(&self, name: &str) -> Option<&str> {
+    /// Whether the part carries a file name. A server may send it in any form
+    /// RFC 2231 allows and need not fold the pieces back together, so the
+    /// extended `name*` and continuations such as `name*0*` count as well.
+    fn has_file_name(&self) -> bool {
         self.parameters
             .iter()
-            .find(|(parameter, _)| parameter == name)
-            .map(|(_, value)| value.as_str())
+            .any(|(parameter, _)| is_file_name_parameter(parameter))
     }
 
     fn disposition_is(&self, disposition: &str) -> bool {
@@ -126,7 +128,7 @@ fn visit(part: &MimePart, walk: &mut Walk) {
             }
         }
         // A file name without an explicit inline disposition marks an attached file.
-        ("text", "plain") if part.parameter("name").is_none() || part.disposition_is("inline") => {
+        ("text", "plain") if !part.has_file_name() || part.disposition_is("inline") => {
             walk.parts.push(part.section.clone());
         }
         ("text", "html") => walk.has_html = true,
@@ -137,6 +139,22 @@ fn visit(part: &MimePart, walk: &mut Walk) {
         // Nested messages, images and other payloads are not the message text.
         _ => {}
     }
+}
+
+/// `name` itself, the extended `name*`, and continuations such as `name*0`
+/// and `name*1*`. Parameter names reach this crate in lower case.
+fn is_file_name_parameter(parameter: &str) -> bool {
+    let Some(suffix) = parameter.strip_prefix("name") else {
+        return false;
+    };
+    let Some(continuation) = suffix.strip_prefix('*') else {
+        // The plain `name` parameter, and nothing else that merely starts with it.
+        return suffix.is_empty();
+    };
+    // `name*` carries an extended value; a digit selects one continuation.
+    let section = continuation.strip_suffix('*').unwrap_or(continuation);
+    continuation.is_empty()
+        || (!section.is_empty() && section.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 fn walk_first_child(part: &MimePart, walk: &mut Walk) {

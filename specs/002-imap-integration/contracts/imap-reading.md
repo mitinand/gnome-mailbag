@@ -225,7 +225,7 @@ from extension data; absent disposition is not itself a reason to reject all tex
 
 | MIME form | Selection |
 |---|---|
-| text/plain | Include wherever it occurs, including later in multipart/mixed, unless excluded as an attachment. A name parameter without explicit inline marks an attached text file. |
+| text/plain | Include wherever it occurs, including later in multipart/mixed, unless excluded as an attachment. A name parameter without explicit inline marks an attached text file, in every form RFC 2231 allows: `name`, the extended `name*` and continuations such as `name*0*`, because a server need not fold them back into one parameter. |
 | multipart/mixed and other ordinary multipart subtypes | Walk children in order; join selected text with two newlines. Several inline text/plain siblings all contribute. |
 | multipart/alternative | Select the last branch containing supported plain text. Do not download other alternatives. |
 | multipart/signed | Inspect only the first part. Do not fetch the signature or claim verification. |

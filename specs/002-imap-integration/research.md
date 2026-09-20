@@ -210,7 +210,8 @@ or a second charset decoder.
 The sample rules choose the last supported alternative, first signed/related
 part, all appropriate mixed plain-text parts, and exclude attachments and nested
 messages. `text/plain` with a name parameter and no explicit inline disposition
-is treated as an attachment. There is no signature verification or decryption.
+is treated as an attachment, including the RFC 2231 forms `name*` and `name*0*`
+that a server may leave unfolded. There is no signature verification or decryption.
 
 **Evidence:** The prototype includes 14 MIME samples. On the maintainer's real
 mailbox, 42% of messages had only HTML. This is expected unsupported content in

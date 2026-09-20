@@ -301,6 +301,46 @@ fn a_named_text_part_counts_as_a_file_unless_it_is_inline() {
 }
 
 #[test]
+fn a_file_name_the_server_left_unfolded_still_marks_an_attachment() {
+    // The forms RFC 2231 allows, as a server may leave them in BODYSTRUCTURE.
+    for parameters in [
+        vec![("name*".to_owned(), "utf-8''notes.txt".to_owned())],
+        vec![("name*0*".to_owned(), "utf-8''long".to_owned())],
+        vec![
+            ("name*0".to_owned(), "long".to_owned()),
+            ("name*1*".to_owned(), "name.txt".to_owned()),
+        ],
+    ] {
+        let attached = MimePart {
+            parameters: parameters.clone(),
+            ..part(&[2], "text", "plain")
+        };
+        let message = multipart("mixed", vec![part(&[1], "text", "plain"), attached]);
+        assert_eq!(
+            select_text_parts(&message),
+            parts(&[&[1]]),
+            "{parameters:?}"
+        );
+    }
+}
+
+#[test]
+fn a_parameter_that_only_starts_like_a_file_name_is_not_one() {
+    for parameter in ["names", "nameless", "charset", "namex*"] {
+        let text = MimePart {
+            parameters: vec![(parameter.to_owned(), "value".to_owned())],
+            ..part(&[2], "text", "plain")
+        };
+        let message = multipart("mixed", vec![part(&[1], "text", "plain"), text]);
+        assert_eq!(
+            select_text_parts(&message),
+            parts(&[&[1], &[2]]),
+            "{parameter}"
+        );
+    }
+}
+
+#[test]
 fn signed_and_related_messages_use_only_their_first_part() {
     for subtype in ["signed", "related"] {
         let message = multipart(
