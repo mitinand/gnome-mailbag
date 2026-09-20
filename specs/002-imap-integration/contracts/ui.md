@@ -65,12 +65,20 @@ See the limited protocol-support decision in [research](../research.md#6-ui-and-
 
 Opening selects the received UID and uses existing mail_split navigation.
 Refresh clears the list, selection and reader before loading. Text
-selection/copy is local.
+selection/copy is local. A message without readable text shows its content
+explanation in reader_body instead of a body, as inert plain text.
 
 Keep GtkLabel. Body, header and ALERT text are cut at the 64 KiB presentation
 boundary at a character boundary, without an explanation or marker. This bounds
 presentation, not download or MIME-part size; the stored text is not truncated.
 Replace embedded NUL before GTK APIs; never interpret remote text as markup.
+
+Text whose longest run without a space or line break exceeds 100 characters is
+wrapped by character rather than by word. Searching for a word break in a run
+that has none costs time proportional to the square of its length: at the
+64 KiB boundary a message the sender never wrapped takes minutes to lay out and
+freezes the window, and a subject like that demands a window wider than any
+screen. Ordinary mail, which senders wrap near 72 columns, keeps word wrapping.
 
 ## Failure wording
 
@@ -89,6 +97,11 @@ Replace embedded NUL before GTK APIs; never interpret remote text as markup.
 | Unreadable structure | Explain in the reader that this message's content could not be read; its row stays in the list. |
 | Text not received | Explain in the reader that the server did not return this message's text; its row stays in the list. |
 | Mail worker stopped | Mail could not be loaded; try Refresh Inbox again. The load is over, so Refresh Inbox becomes available. |
+
+The status page names the failed step in its title, which is not parsed as
+markup, and puts every explanation below it in a plain-text label, because
+AdwStatusPage parses its description as markup. The same label carries the
+neutral not-loaded and empty-Inbox wording.
 
 When the server gave a reason for a failed step (the text of its NO, BAD or
 BYE), show that text with the step, as inert plain text beside any ALERT texts.

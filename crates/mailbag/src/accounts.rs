@@ -42,6 +42,8 @@ pub enum AccountPage {
 pub struct AccountRow {
     /// Final row label, including a number when account names match.
     pub label: String,
+    /// Last known provider, which decides whether mail can be loaded for it.
+    pub provider: AccountProvider,
     pub icon_name: &'static str,
     pub problems: Vec<AccountProblem>,
     /// Account name or address before adding a distinguishing number.
@@ -195,6 +197,7 @@ impl AccountList {
                 let mut row = AccountRow {
                     label: String::new(),
                     base_label: String::new(),
+                    provider: details.provider,
                     icon_name: GENERIC_ACCOUNT_ICON,
                     problems: vec![],
                     label_number: self.next_label_number,
@@ -251,6 +254,7 @@ impl AccountRow {
             .or(details.email_address.as_ref())
             .cloned()
             .unwrap_or_else(|| "Mail account".into());
+        self.provider = details.provider;
         self.icon_name = match details.provider {
             AccountProvider::Google => "mailbag-account-google-symbolic",
             AccountProvider::Microsoft365 => "mailbag-account-ms365-symbolic",

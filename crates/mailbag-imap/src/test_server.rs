@@ -16,7 +16,7 @@ use std::{
     path::PathBuf,
     process::Command,
     rc::Rc,
-    sync::{Arc, Mutex, Once, mpsc},
+    sync::{Arc, Mutex, Once, atomic, mpsc},
     thread,
     time::Duration,
 };
@@ -38,6 +38,7 @@ fn workspace_path(relative: &str) -> PathBuf {
 pub fn trust_test_certificates() {
     static TRUST: Once = Once::new();
     TRUST.call_once(|| {
+        TEST_CERTIFICATES_TRUSTED.store(true, atomic::Ordering::Relaxed);
         let directory = workspace_path("target/test-certs");
         if !directory.join("expired.pem").exists() {
             let status = Command::new(workspace_path("tools/make-certs.sh"))
@@ -50,6 +51,15 @@ pub fn trust_test_certificates() {
         gio::TlsBackend::default().set_default_database(Some(&database));
     });
 }
+
+/// Whether this process replaced GIO's trust database with the test CA.
+/// Acceptance against the host's own trust store must run in a process that
+/// never started a fixture.
+pub fn test_certificates_trusted() -> bool {
+    TEST_CERTIFICATES_TRUSTED.load(atomic::Ordering::Relaxed)
+}
+
+static TEST_CERTIFICATES_TRUSTED: atomic::AtomicBool = atomic::AtomicBool::new(false);
 
 /// A synthetic message as the server stores it.
 #[derive(Clone, Debug)]

@@ -6,6 +6,7 @@ use crate::inbox::ReceivedBatch;
 use goa_adapter::AccountId;
 use mailbag_imap::test_server::{
     FaultKind, FaultyCommand, FixtureMessage, FixtureSetup, ImapFixture, TEST_LOGIN, TEST_PASSWORD,
+    test_certificates_trusted,
 };
 use std::time::{Duration, Instant};
 
@@ -270,4 +271,77 @@ fn the_next_load_starts_a_new_worker_after_one_stopped() {
         outcomes.recv().await.expect("the load reports its outcome")
     });
     assert_eq!(published_batch(outcome).messages.len(), 1);
+}
+
+/// Manual acceptance of the whole chain against a running `serve_fixture`:
+/// the real Online Accounts service provides the settings and password, and
+/// the host's trust store decides the connection, see quickstart.md:
+/// `MAILBAG_TEST_ACCOUNT_ID=account_… cargo test --locked -p mailbag online_accounts -- --ignored --nocapture`
+///
+/// `MAILBAG_IMAP_EXPECT` is `success`, `rejected` or `no-encryption`.
+#[test]
+#[ignore = "needs a disposable Online Accounts account and a running serve_fixture"]
+fn online_accounts_settings_load_the_inbox() {
+    assert!(
+        !test_certificates_trusted(),
+        "run this test by its own filter: another test replaced the trust database"
+    );
+    let account_id = AccountId::try_from(
+        std::env::var("MAILBAG_TEST_ACCOUNT_ID")
+            .expect("set MAILBAG_TEST_ACCOUNT_ID to the disposable account")
+            .as_str(),
+    )
+    .expect("account id");
+    let loaded = run_on_context(load_with_online_accounts(account_id));
+    match (std::env::var("MAILBAG_IMAP_EXPECT").as_deref(), loaded) {
+        (Ok("success") | Err(_), Ok(LoadOutcome::Loaded(batch))) => {
+            println!("loaded {} messages", batch.messages.len());
+        }
+        (Ok("rejected"), Ok(LoadOutcome::Failed(failure))) => {
+            assert_eq!(
+                failure.failure,
+                mailbag_imap::ImapFailure::Failed(mailbag_imap::ImapStep::SecureConnection)
+            );
+            println!("refused at the secure-connection step, so no password was sent");
+        }
+        (Ok("no-encryption"), Err(error)) => {
+            assert_eq!(error, goa_adapter::ImapAccessError::NoEncryption);
+            println!("refused for its encryption setting, without requesting the password");
+        }
+        (expectation, loaded) => {
+            panic!("expected {expectation:?}, got {loaded:?}");
+        }
+    }
+}
+
+/// Reads the account's settings and password from Online Accounts, then loads
+/// its Inbox on the mail worker, as Refresh Inbox does. An account Online
+/// Accounts cannot give settings for never reaches the worker.
+async fn load_with_online_accounts(
+    account_id: AccountId,
+) -> Result<LoadOutcome, goa_adapter::ImapAccessError> {
+    let observed_account = account_id.clone();
+    let (observed, observations) = async_channel::unbounded();
+    let accounts = goa_adapter::GoaAdapter::start(move |update| {
+        observed
+            .try_send(update.accounts.contains_key(&observed_account))
+            .ok();
+    });
+    while !observations.recv().await.expect("an account update") {}
+    let (reported, access_results) = async_channel::bounded(1);
+    let _request = accounts.request_imap_access(&account_id, move |access| {
+        reported.try_send(access).ok();
+    });
+    let access = access_results
+        .recv()
+        .await
+        .expect("the access request reports its result");
+    accounts.stop();
+    let access = access?;
+    let (finished, outcomes) = async_channel::bounded(1);
+    let worker = MailWorker::new();
+    let _load = worker.load_inbox(access, move |outcome| {
+        finished.try_send(outcome).ok();
+    });
+    Ok(outcomes.recv().await.expect("the load reports its outcome"))
 }

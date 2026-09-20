@@ -46,6 +46,13 @@ flatpak run io.github.mitinand.Mailbag
 Use `--install` to update the locally installed application; without it, the script
 only builds and exports the package. The build uses GNOME SDK/runtime 50.
 
+The installed application verifies mail servers with the certificate authorities
+of the GNOME runtime. A mail server whose certificate comes from a private
+certificate authority, such as an internal one, is therefore not supported yet,
+even when that authority is installed on the host: Flatpak does not share the
+host's trust store with the sandbox. Servers with a publicly trusted certificate
+work normally.
+
 ## Repository layout
 
 | Path | Contents |

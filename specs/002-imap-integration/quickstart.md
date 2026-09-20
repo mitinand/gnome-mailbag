@@ -86,7 +86,7 @@ Do not introduce another application depth/size policy or a vendored codec patch
 | SC-004 — Privacy/storage | Synthetic markers never enter diagnostics; command tracing stays compiled out in debug/release. Permanent: no application password files. This stage: no application mail files or restoration after restart. |
 | SC-005 — Ownership | Switch accounts during GOA access, connect and text transfer: the result is stored only for its own account. No overlapping acquisitions. Confirmed exclusion during a load discards the account's mail, and the late result does not restore it. |
 | SC-006 — Access/responsiveness | F01 accessibility remains intact; Refresh Inbox and rows work by keyboard. Stalled loading permits navigation/quit; failures identify their step and differ from unsupported content. |
-| SC-007 — Security/permissions | Both verified TLS modes, host-trusted CA inside Flatpak, no certificate override, false/false refused before password retrieval or connection, no STARTTLS downgrade and only the permitted network addition. |
+| SC-007 — Security/permissions | Both verified TLS modes and the certificate, STARTTLS and false/false cases on the host build, where the disposable CA can be trusted; no certificate override and no password in a failing case. In the installed application: a load from a real server, whose certificate the runtime's own authorities verify, and only the permitted network addition. |
 
 Additional fixtures exercise the changed integration directly:
 
@@ -133,6 +133,29 @@ It accepts disposable test credentials in memory and supports the authentication
 needed by GOA and the command subset used by Mailbag. It must not print passwords,
 literal contents or real account data. Automated tests invoke the server directly.
 
+`MAILBAG_IMAP_SCENARIO` chooses `basic-<message count>` or `long-text`, whose
+three bodies of 65,535, 65,536 and 65,537 UTF-8 bytes test the display
+boundary. `MAILBAG_IMAP_CERTIFICATE` selects `localhost`, `unknown-ca`,
+`wrong-host` or `expired`, and `MAILBAG_IMAP_STARTTLS` selects `offered`,
+`not-offered`, `rejected`, `inject` or `preauth`. While it runs, the server
+prints its connections, sign-ins carrying credentials and command names, so a
+refused connection shows that it sent no password and no plaintext sign-in.
+
+Two ignored tests connect to that running server through the host's own trust
+store, each by its own filter so that no other test replaces the trust database:
+
+```bash
+MAILBAG_IMAP_EXPECT=rejected cargo test --locked -p mailbag-imap host_trust -- --ignored --nocapture
+MAILBAG_TEST_ACCOUNT_ID=account_… MAILBAG_IMAP_EXPECT=success \
+  cargo test --locked -p mailbag online_accounts -- --ignored --nocapture
+```
+
+The first checks the transport alone; the second runs the whole chain, taking
+the settings and password from the disposable Online Accounts account, and
+accepts `success`, `rejected` or `no-encryption`. They replace repeating the
+certificate, STARTTLS and false/false cases by hand in the interface; the
+installed application still has to load, open and refresh mail once.
+
 For SC-007, use a disposable CA trusted by the host and a matching localhost
 certificate, then configure a Generic IMAP account in Online Accounts. Leave
 SMTP unused. The test certificate script creates trusted-case, unknown-CA,
@@ -170,7 +193,11 @@ flatpak info --user --show-permissions io.github.mitinand.Mailbag
 flatpak run io.github.mitinand.Mailbag
 ```
 
-The graphical filter is a planned test. Check existing row/reader binding, page
+Each graphical test runs in its own process, because GTK is initialized once
+per process; run `mail_ui_transitions` and F01's `account_ui_transitions` by
+their own filters rather than together.
+
+The graphical filter checks existing row/reader binding, page
 priority, selection without loading, refresh clearing and loading, a failed load
 and a repeated refresh, disabled busy Refresh and spinner visibility only while a
 load runs. No synchronization popover or success/warning control.
@@ -187,11 +214,15 @@ at a character boundary, without an explanation. Verify headers/ALERT text are
 inert. If the threshold makes the reader unusable in Mailbag, bring back the
 result for a decision.
 
-In the installed app, complete both TLS modes against the host-trusted CA without
-passing any CA file or extra filesystem permission to Mailbag. Then test unknown
-CA, wrong hostname and expiry, including GOA's certificate-exception setting.
-Reset the fixture's credential counters after GOA account setup: GOA itself can
-contact the server. Mailbag must transmit zero passwords in failing TLS cases.
+Complete both TLS modes against the host-trusted CA, then unknown CA, wrong
+hostname and expiry, including GOA's certificate-exception setting, on the host
+build: Flatpak gives the sandbox the runtime's own certificate authorities and
+reserves `/etc`, so a disposable CA installed on the host never reaches the
+installed application (see the scope note in [spec.md](spec.md#assumptions)).
+Mailbag must transmit zero passwords in failing TLS cases. Reset the fixture's
+credential counters after GOA account setup: GOA itself can contact the server.
+The installed application shows instead that a real server with a publicly
+trusted certificate loads, which exercises the same transport.
 
 Test false/false settings through the private GOA fixture: the load stops with
 the encryption-setting explanation, the password is never requested and the

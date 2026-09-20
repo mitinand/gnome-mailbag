@@ -10,6 +10,8 @@ finish-args:
   - --device=dri
   - --talk-name=org.gnome.OnlineAccounts
   - --talk-name=org.gnome.Settings
+  # Mail is read directly from the account's IMAP server.
+  - --share=network
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
   env:

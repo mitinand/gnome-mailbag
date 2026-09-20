@@ -480,6 +480,10 @@
         <attribute name="action">app.sync-status</attribute>
         <attribute name="label" translatable="yes">_Synchronization Status</attribute>
       </item>
+      <item>
+        <attribute name="action">app.refresh-inbox</attribute>
+        <attribute name="label" translatable="yes">_Refresh Inbox</attribute>
+      </item>
     </section>
     <section>
       <item>

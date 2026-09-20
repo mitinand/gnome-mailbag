@@ -350,6 +350,14 @@ has no network failure or server-identity reconciliation of its own.
 - [The plan](plan.md) defines waiting behavior and how much text the reader shows.
   This stage has no application-defined download size limit. These are
   stage-specific design choices, not a future database interface.
+- Mail servers whose certificate comes from a private certificate authority are
+  outside scope in the installed application. Flatpak gives the sandbox the
+  runtime's own set of certificate authorities and reserves `/etc`, so a
+  certificate authority installed on the host is invisible to Mailbag while GOA,
+  which runs on the host, accepts the same account. Supporting those servers
+  needs either an extra trust anchor chosen by the user or host access beyond
+  the FR-013 baseline; both belong to a later feature. Servers with a publicly
+  trusted certificate are unaffected.
 - Automatic polling, server push, automatic reconnect/retry loops, older history,
   persistent storage, reading across restarts without a network, previews,
   HTML conversion/rendering, attachment retrieval/opening/saving, decryption, signature

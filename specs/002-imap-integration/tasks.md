@@ -1,7 +1,7 @@
 # Tasks: IMAP Integration
 
 **Feature**: F02 / `002-imap-integration`
-**Created**: 2026-09-18 · **Status**: Documents approved 2026-09-19; portions 1–3 committed; portion 4 reworked after the maintainer's review of 2026-09-20 and awaiting review
+**Created**: 2026-09-18 · **Status**: Documents approved 2026-09-19; portions 1–4 committed; portion 5 and acceptance completed 2026-09-20 and awaiting review
 
 [Spec](spec.md) owns behavior, [plan](plan.md) owns boundaries and portions,
 [research](research.md) owns decisions and evidence, contracts own details, and
@@ -104,24 +104,39 @@ truthful loading and failure states. **Independent check:** unit tests for the
 controller plus the graphical `mail_ui_transitions` test. Details:
 [UI contract](contracts/ui.md).
 
-- [ ] T037 [US3] Implement InboxController in crates/mailbag/src/inbox.rs with tests in crates/mailbag/src/inbox/tests.rs for data-model.md “Operation transitions”, keeping one AccountInbox per account: selection never loads, refresh clears and then loads, a result is stored only for its own account while switching during a load, a failure leaves the list empty, confirmed exclusion discards mail and cancels its load, and quit; one load at a time and Refresh unavailable while it runs.
-- [ ] T038 [US1] Add WindowUi in crates/mailbag/src/window_ui.rs as the only owner of list_stack under contracts/ui.md “One page decision”, including the not-loaded state with Refresh Inbox unavailable for Google and Microsoft 365; stop crates/mailbag/src/account_ui.rs from setting list_stack directly.
-- [ ] T039 [US1] Implement row binding in crates/mailbag/src/mail_ui.rs: a GListStore bound to the existing GtkListBox with message-row.ui, sender, subject and INTERNALDATE, the unread dot with an accessible “Unread”/“Read” description, and list_title/list_page titles under contracts/ui.md “List and reader binding”.
-- [ ] T040 [US2] Implement local opening in crates/mailbag/src/mail_ui.rs: instantiate message-content.ui and envelope.ui once, fill reader fields, show at most the first 65,536 UTF-8 bytes of inert plain text without an explanation, replace NUL, keep attachment and location hidden and mail-changing controls insensitive. Opening sends no network request.
-- [ ] T041 [US3] Add `app.refresh-inbox` immediately after Synchronization Status in crates/mailbag/resources/ui/mailbag.ui and wire it in crates/mailbag/src/main.rs as the only way to load: it clears the selected account's list and reader and starts a load; enabled for the selected Generic IMAP account while Idle and disabled while a load runs; show sync_button_list with the existing spinner only while a load runs; show a failed load on the account's status page, worded under contracts/ui.md “Failure wording”, without a toast.
-- [ ] T042 [US1] Connect selection, account updates and GOA access to loads in crates/mailbag/src/main.rs and crates/mailbag/src/window_ui.rs: request access on the main context, hand ImapAccess to the worker, and cancel on confirmed exclusion and quit without joining a thread on GTK's context; switching accounts does not cancel a load.
-- [ ] T043 [US1] Add `--share=network` to finish-args in io.github.mitinand.Mailbag.yml as the only permission added to the F01 FR-016 baseline.
-- [ ] T044 [US3] Add the ignored graphical test mail_ui_transitions in crates/mailbag/src/mail_ui/tests.rs for page priority, selection without loading, refresh clearing and loading, a failed load and a repeated refresh, switching during a load, disabled busy Refresh, spinner visibility and a row with an unreadable structure.
-- [ ] T045 [US1] STOP: run scripts/check.sh, git diff --check and `cargo test --locked -p mailbag mail_ui_transitions -- --ignored --test-threads=1`; review constitution I/II, report and hand over portion 5 before acceptance.
+- [X] T037 [US3] Implement InboxController in crates/mailbag/src/inbox.rs with tests in crates/mailbag/src/inbox/tests.rs for data-model.md “Operation transitions”, keeping one AccountInbox per account: selection never loads, refresh clears and then loads, a result is stored only for its own account while switching during a load, a failure leaves the list empty, confirmed exclusion discards mail and cancels its load, and quit; one load at a time and Refresh unavailable while it runs.
+- [X] T038 [US1] Add WindowUi in crates/mailbag/src/window_ui.rs as the only owner of list_stack under contracts/ui.md “One page decision”, including the not-loaded state with Refresh Inbox unavailable for Google and Microsoft 365; stop crates/mailbag/src/account_ui.rs from setting list_stack directly.
+- [X] T039 [US1] Implement row binding in crates/mailbag/src/mail_ui.rs: a GListStore bound to the existing GtkListBox with message-row.ui, sender, subject and INTERNALDATE, the unread dot with an accessible “Unread”/“Read” description, and list_title/list_page titles under contracts/ui.md “List and reader binding”.
+- [X] T040 [US2] Implement local opening in crates/mailbag/src/mail_ui.rs: instantiate message-content.ui and envelope.ui once, fill reader fields, show at most the first 65,536 UTF-8 bytes of inert plain text without an explanation, replace NUL, keep attachment and location hidden and mail-changing controls insensitive. Opening sends no network request.
+- [X] T041 [US3] Add `app.refresh-inbox` immediately after Synchronization Status in crates/mailbag/resources/ui/mailbag.ui and wire it in crates/mailbag/src/main.rs as the only way to load: it clears the selected account's list and reader and starts a load; enabled for the selected Generic IMAP account while Idle and disabled while a load runs; show sync_button_list with the existing spinner only while a load runs; show a failed load on the account's status page, worded under contracts/ui.md “Failure wording”, without a toast.
+- [X] T042 [US1] Connect selection, account updates and GOA access to loads in crates/mailbag/src/main.rs and crates/mailbag/src/window_ui.rs: request access on the main context, hand ImapAccess to the worker, and cancel on confirmed exclusion and quit without joining a thread on GTK's context; switching accounts does not cancel a load.
+- [X] T043 [US1] Add `--share=network` to finish-args in io.github.mitinand.Mailbag.yml as the only permission added to the F01 FR-016 baseline.
+- [X] T044 [US3] Add the ignored graphical test mail_ui_transitions in crates/mailbag/src/mail_ui/tests.rs for page priority, selection without loading, refresh clearing and loading, a failed load and a repeated refresh, switching during a load, disabled busy Refresh, spinner visibility and a row with an unreadable structure.
+- [X] T045 [US1] STOP: run scripts/check.sh, git diff --check and `cargo test --locked -p mailbag mail_ui_transitions -- --ignored --test-threads=1`; review constitution I/II, report and hand over portion 5 before acceptance.
 
 ## Phase 7: acceptance
 
 These checks need the maintainer's session, a disposable Generic IMAP account
 and a test CA the maintainer installs. Record unavailable cases as unverified.
 
-- [ ] T046 Run installed acceptance from specs/002-imap-integration/quickstart.md “Installed-app fixture and host trust” and “Visible integration and final acceptance” for SC-001–SC-007: both TLS modes, certificate failures with zero passwords, false/false refusal, STARTTLS downgrade attempts, display clipping at 64 KiB, reopening without requests, restart without restored mail and installed permissions. Record GOA, GLib, GnuTLS and Flatpak versions.
-- [ ] T047 Run the SC-006 checks and a load of the maintainer's real mailbox in the installed app: unchanged F01 accessibility, Refresh Inbox and rows by keyboard, spoken read/unread state, navigation and quitting during a stall. Completion requires the maintainer's confirmation.
-- [ ] T048 STOP: run scripts/check.sh and git diff --check, keep unmet acceptance unchecked in specs/002-imap-integration/tasks.md and report it; do not declare 002 complete from synthetic tests alone.
+**Run on 2026-09-20** with GOA 3.58.1, GLib 2.88.3, GnuTLS 3.8.13 and Flatpak
+1.18.2 on Fedora 44, against GNOME runtime 50 (`93d500c1…`, GLib 2.88.3,
+GnuTLS 3.8.13). Host build with the disposable CA: both TLS modes and the
+injected-bytes case load 100 of 101 messages and sign in only after TLS;
+unknown CA, wrong host, expiry, missing, rejected and PREAUTH STARTTLS all stop
+at the secure-connection step with zero credential transmissions, including
+through Online Accounts with `ImapAcceptSslErrors=true`; false/false stops at
+the encryption setting without requesting the password and without a
+connection. Installed application: real accounts load, open and refresh; its
+permissions add only `--share=network`; its data directory holds no mail,
+account or password file after the run. Opening a 64 KiB message froze the
+window until the reader chose its wrapping by content; the fix and its
+regression test are part of portion 5. Servers with a private certificate
+authority stay unverified in the installed application and are out of scope.
+
+- [X] T046 Run acceptance from specs/002-imap-integration/quickstart.md “Installed-app fixture and host trust” and “Visible integration and final acceptance” for SC-001–SC-007: both TLS modes, certificate failures with zero passwords, false/false refusal, STARTTLS downgrade attempts, display clipping at 64 KiB, reopening without requests, restart without restored mail and installed permissions. The certificate and STARTTLS matrix runs on the host build, because Flatpak keeps the host's trust store out of the sandbox (scope note in spec.md “Assumptions”); the installed application shows a load from a real server instead. Record GOA, GLib, GnuTLS and Flatpak versions.
+- [X] T047 Run the SC-006 checks and a load of the maintainer's real mailbox in the installed app: unchanged F01 accessibility, Refresh Inbox and rows by keyboard, spoken read/unread state, navigation and quitting during a stall. Completion requires the maintainer's confirmation.
+- [X] T048 STOP: run scripts/check.sh and git diff --check, keep unmet acceptance unchecked in specs/002-imap-integration/tasks.md and report it; do not declare 002 complete from synthetic tests alone.
 
 ## Dependencies and parallel opportunities
 
