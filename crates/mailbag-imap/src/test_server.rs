@@ -190,6 +190,9 @@ pub struct FixtureSetup {
     pub uid_validity_after_reconnect: Option<u32>,
     /// Listed by the message-list FETCH, gone from later UID FETCH commands.
     pub vanishing_uid: Option<u32>,
+    /// Messages that disappear once their structure has been read: text
+    /// commands leave them out, as when another client moves them meanwhile.
+    pub vanishing_text_uids: Vec<u32>,
     /// Sends flag changes for all requested messages before their requested data.
     pub interleave_flag_changes: bool,
     /// Answers FETCH with messages and items in reverse order.
@@ -230,6 +233,7 @@ impl Default for FixtureSetup {
             close_during_examine: false,
             uid_validity_after_reconnect: None,
             vanishing_uid: None,
+            vanishing_text_uids: Vec::new(),
             interleave_flag_changes: false,
             reverse_order: false,
             split_fetch_responses: false,
@@ -596,6 +600,9 @@ impl Server {
             None
         };
         let mut messages = self.select_messages(message_set, by_uid);
+        if faulty_command == Some(FaultyCommand::Text) {
+            messages.retain(|(_, message)| !self.setup.vanishing_text_uids.contains(&message.uid));
+        }
         let requested_count = messages.len();
         messages.retain(|(_, message)| !self.setup.unfetchable_uids.contains(&message.uid));
         let completion =

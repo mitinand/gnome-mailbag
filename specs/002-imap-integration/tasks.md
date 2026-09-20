@@ -1,7 +1,7 @@
 # Tasks: IMAP Integration
 
 **Feature**: F02 / `002-imap-integration`
-**Created**: 2026-09-18 · **Status**: Documents approved 2026-09-19; portions 1–2 committed; portion 3 reworked after the maintainer's review of 2026-09-19 and awaiting review
+**Created**: 2026-09-18 · **Status**: Documents approved 2026-09-19; portions 1–3 committed; portion 4 reworked after the maintainer's review of 2026-09-20 and awaiting review
 
 [Spec](spec.md) owns behavior, [plan](plan.md) owns boundaries and portions,
 [research](research.md) owns decisions and evidence, contracts own details, and
@@ -89,13 +89,13 @@ explanation, and `mailbag` assembles complete batches on the worker.
 tests drive the scripted server through the `test-support` feature without GTK
 widgets.
 
-- [ ] T030 [P] [US2] Add synthetic MIME samples to tests/fixtures/mime/ covering UTF-8, Windows-1251, KOI8-R, an Asian encoding, base64 and quoted-printable, invalid bytes, unknown charset and transfer encoding, encoded Subject/From/To, several mixed plain parts, a later plain part without disposition, a name without inline, signed, encrypted, related-first-child, HTML-only and nested message/rfc822. Use no real mail.
-- [ ] T031 [US2] Add tests in crates/mailbag-content/src/tests.rs for selection and decoding under contracts/imap-reading.md “Selecting text sections” and “Decoding and publication”: returned part paths, replacement characters for invalid bytes, and explanations for unknown charset or encoding, encryption, S/MIME, HTML-only and unreadable structure.
-- [ ] T032 [US2] Implement crates/mailbag-content/src/lib.rs: the MIME part description, text-part selection returning part paths, entity decoding through mail-parser with replacement characters, header display-field decoding and message-specific content explanations. Never call `body_text()` or `body_html()`; use no GIO, glib or protocol types.
-- [ ] T033 [US1] Implement the received-data roles in crates/mailbag/src/inbox.rs under data-model.md “Data and ownership”: ReceivedBatch, ReceivedMessage, ReceivedContent and LoadFailure, with no raw MIME retained after decoding.
-- [ ] T034 [US1] Add load-sequence tests in crates/mailbag/src/inbox_load/tests.rs with a dev-dependency on mailbag-imap's `test-support` feature: complete batches for 0, 1, 100 and 101 messages, rows kept for unreadable structures, text fetched only for selected parts (SC-002 payload absence), no publication after a network interruption, and connection closure before a cancelled load completes.
-- [ ] T035 [US1] Implement crates/mailbag/src/inbox_load.rs: the selected-account worker thread with its own GLib MainContext, conversion from the mailbag-imap part tree to the mailbag-content description, the load sequence in plan.md “Ownership and function map” and completion through runtime-independent channels. No widget access (research.md §9).
-- [ ] T036 [US2] STOP: run `cargo test --locked -p mailbag-content`, `cargo test --locked -p mailbag inbox`, scripts/check.sh and git diff --check; review constitution I/II, report and wait before portion 5.
+- [X] T030 [P] [US2] Add synthetic MIME samples to tests/fixtures/mime/ covering UTF-8, Windows-1251, KOI8-R, an Asian encoding, base64 and quoted-printable, invalid bytes, unknown charset and transfer encoding, encoded Subject/From/To, several mixed plain parts, a later plain part without disposition, a name without inline, signed, encrypted, related-first-child, HTML-only and nested message/rfc822. Use no real mail.
+- [X] T031 [US2] Add tests in crates/mailbag-content/src/tests.rs for selection and decoding under contracts/imap-reading.md “Selecting text sections” and “Decoding and publication”: returned part paths, replacement characters for invalid bytes, and explanations for unknown charset or encoding, encryption, S/MIME, HTML-only and unreadable structure.
+- [X] T032 [US2] Implement crates/mailbag-content/src/lib.rs: the MIME part description, text-part selection returning part paths, entity decoding through mail-parser with replacement characters, header display-field decoding and message-specific content explanations. Never call `body_text()` or `body_html()`; use no GIO, glib or protocol types.
+- [X] T033 [US1] Implement the received-data roles in crates/mailbag/src/inbox.rs under data-model.md “Data and ownership”: ReceivedBatch, ReceivedMessage, ReceivedContent and LoadFailure, with no raw MIME retained after decoding.
+- [X] T034 [US1] Add load-sequence tests in crates/mailbag/src/inbox_load/tests.rs with a dev-dependency on mailbag-imap's `test-support` feature: complete batches for 0, 1, 100 and 101 messages, rows kept for unreadable structures and for text the server did not return, a window that empties during the load reported as an Inbox change, text fetched only for selected parts (SC-002 payload absence), no publication after a network interruption, connection closure before a cancelled load completes, and a stopped worker reported as a visible failure that a later refresh recovers from.
+- [X] T035 [US1] Implement crates/mailbag/src/inbox_load.rs: the selected-account worker thread with its own GLib MainContext, started with the first load and again after it stops, conversion from the mailbag-imap part tree to the mailbag-content description, the load sequence in plan.md “Ownership and function map” and completion through runtime-independent channels that always report an outcome, including a stopped worker. No widget access (research.md §9).
+- [X] T036 [US2] STOP: run `cargo test --locked -p mailbag-content`, `cargo test --locked -p mailbag inbox`, scripts/check.sh and git diff --check; review constitution I/II, report and wait before portion 5.
 
 ## Phase 6: visible integration (portion 5)
 

@@ -1,0 +1,10 @@
+From: =?utf-8?B?0KLQtdGB0YLQvtCy0YvQuSDQvtGC0L/RgNCw0LLQuNGC0LXQu9GM?= <sender@example.invalid>
+To: Recipient <recipient@example.invalid>
+Subject: =?ISO-2022-JP?B?GyRCRnxLXDhsJE43b0w+GyhC?=
+Date: Tue, 15 Sep 2026 10:00:00 +0300
+Message-ID: <sample-15@example.invalid>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=iso-2022-jp
+Content-Transfer-Encoding: 7bit
+
+こんにちは。日本語のテキストです。

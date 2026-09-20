@@ -1,0 +1,20 @@
+From: =?utf-8?B?0KLQtdGB0YLQvtCy0YvQuSDQvtGC0L/RgNCw0LLQuNGC0LXQu9GM?= <sender@example.invalid>
+To: Recipient <recipient@example.invalid>
+Subject: =?utf-8?B?0J/QvtC00L/QuNGB0LDQvdC90L7QtQ==?=
+Date: Tue, 15 Sep 2026 10:00:00 +0300
+Message-ID: <sample-7@example.invalid>
+MIME-Version: 1.0
+Content-Type: multipart/signed; protocol="application/pgp-signature"; micalg=pgp-sha256; boundary="sig"
+
+--sig
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+Подписанный текст.
+--sig
+Content-Type: application/pgp-signature; name="signature.asc"
+
+-----BEGIN PGP SIGNATURE-----
+not a real signature
+-----END PGP SIGNATURE-----
+--sig--

@@ -37,7 +37,7 @@ No cargo vendor step, root vendor input or release source bundle is required.
 Portion 3 adds a scripted IMAP server to `mailbag-imap`, available to its own
 tests and, through the `test-support` feature, to `mailbag`. It runs on GIO with a GLib context and loopback
 sockets; it is not a Python server or production backend. Port the relevant
-prototype scenarios and the 14 synthetic MIME samples (`tests/fixtures/mime/`), then add Mailbag-specific
+prototype scenarios and the 17 synthetic MIME samples (`tests/fixtures/mime/`), then add Mailbag-specific
 batch/grouping/publication cases.
 
 Generate disposable certificates with `tools/make-certs.sh` using OpenSSL.

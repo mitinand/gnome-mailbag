@@ -5,6 +5,11 @@ use adw::{gio, glib, gtk, prelude::*};
 
 mod account_ui;
 mod accounts;
+// The window wires these in portion 5; until then only their tests use them.
+#[cfg_attr(not(test), allow(dead_code))]
+mod inbox;
+#[cfg_attr(not(test), allow(dead_code))]
+mod inbox_load;
 mod settings;
 
 #[cfg(test)]

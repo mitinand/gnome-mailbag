@@ -5,3 +5,229 @@
 //!
 //! This crate works on MIME part descriptions and raw MIME entities through
 //! mail-parser. It knows nothing about IMAP, GIO or the user interface.
+
+#[cfg(test)]
+mod tests;
+
+use mail_parser::{MessageParser, MimeHeaders, PartType, decoders::charsets::map::charset_decoder};
+
+/// One part of a message's MIME structure, as the server described it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MimePart {
+    /// IMAP section numbers: `[]` for a multipart message, `[1]` for the body
+    /// of a single-part message and, for example, `[2, 1]` inside a multipart.
+    pub section: Vec<u32>,
+    /// Lowercase media type and subtype, such as `text` and `plain`.
+    pub media_type: String,
+    pub media_subtype: String,
+    /// Content-Type parameters with lowercase names, such as `charset`.
+    pub parameters: Vec<(String, String)>,
+    /// Lowercase Content-Disposition type, such as `attachment`, if any.
+    pub disposition: Option<String>,
+    /// Parts of a multipart. Nested messages are not expanded.
+    pub children: Vec<MimePart>,
+}
+
+impl MimePart {
+    fn parameter(&self, name: &str) -> Option<&str> {
+        self.parameters
+            .iter()
+            .find(|(parameter, _)| parameter == name)
+            .map(|(_, value)| value.as_str())
+    }
+
+    fn disposition_is(&self, disposition: &str) -> bool {
+        self.disposition.as_deref() == Some(disposition)
+    }
+}
+
+/// The text parts to read from a message, or why there are none.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TextSelection {
+    /// Section numbers of the plain-text parts, in reading order.
+    Parts(Vec<Vec<u32>>),
+    Explained(ContentExplanation),
+}
+
+/// Why a message shows no text, in terms the reader explains.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ContentExplanation {
+    /// No supported plain text. HTML-only mail is the usual case.
+    NoPlainText {
+        has_html: bool,
+    },
+    Encrypted,
+    /// S/MIME, which this feature neither decrypts nor verifies.
+    SecuredWithSMime,
+    /// A character set mail-parser does not know.
+    UnknownCharset(String),
+    /// A Content-Transfer-Encoding no client knows.
+    UnknownEncoding(String),
+    /// The MIME entity itself could not be read.
+    Undecodable,
+    /// The server's description of the message could not be read.
+    UnreadableStructure,
+    /// The server did not return this message's text.
+    TextNotReturned,
+}
+
+/// Chooses the plain-text parts to read, without reading any payload.
+pub fn select_text_parts(root: &MimePart) -> TextSelection {
+    let mut walk = Walk::default();
+    visit(root, &mut walk);
+    match (walk.parts.is_empty(), walk.explanation) {
+        (false, _) => TextSelection::Parts(walk.parts),
+        (true, Some(explanation)) => TextSelection::Explained(explanation),
+        (true, None) => TextSelection::Explained(ContentExplanation::NoPlainText {
+            has_html: walk.has_html,
+        }),
+    }
+}
+
+#[derive(Default)]
+struct Walk {
+    parts: Vec<Vec<u32>>,
+    has_html: bool,
+    explanation: Option<ContentExplanation>,
+}
+
+fn visit(part: &MimePart, walk: &mut Walk) {
+    // An attachment and everything inside it is a file, not the message text.
+    if part.disposition_is("attachment") {
+        return;
+    }
+    match (part.media_type.as_str(), part.media_subtype.as_str()) {
+        ("multipart", "alternative") => {
+            let mut chosen = None;
+            for child in &part.children {
+                let mut branch = Walk::default();
+                visit(child, &mut branch);
+                walk.has_html |= branch.has_html;
+                if branch.parts.is_empty() {
+                    walk.explanation = walk.explanation.take().or(branch.explanation);
+                } else {
+                    // The last branch with plain text is the richest one to show.
+                    chosen = Some(branch.parts);
+                }
+            }
+            walk.parts.extend(chosen.unwrap_or_default());
+        }
+        // Only the signed content matters; the signature is not verified.
+        ("multipart", "signed") => walk_first_child(part, walk),
+        ("multipart", "encrypted") => {
+            walk.explanation
+                .get_or_insert(ContentExplanation::Encrypted);
+        }
+        // The first child is the root of a related set; other parts are resources.
+        ("multipart", "related") => walk_first_child(part, walk),
+        ("multipart", _) => {
+            for child in &part.children {
+                visit(child, walk);
+            }
+        }
+        // A file name without an explicit inline disposition marks an attached file.
+        ("text", "plain") if part.parameter("name").is_none() || part.disposition_is("inline") => {
+            walk.parts.push(part.section.clone());
+        }
+        ("text", "html") => walk.has_html = true,
+        ("application", "pkcs7-mime" | "x-pkcs7-mime") => {
+            walk.explanation
+                .get_or_insert(ContentExplanation::SecuredWithSMime);
+        }
+        // Nested messages, images and other payloads are not the message text.
+        _ => {}
+    }
+}
+
+fn walk_first_child(part: &MimePart, walk: &mut Walk) {
+    if let Some(child) = part.children.first() {
+        visit(child, walk);
+    }
+}
+
+/// Decodes one text part from its MIME header and its still-encoded body.
+/// Invalid bytes become replacement characters; only an unknown character set
+/// or transfer encoding hides the text.
+pub fn decode_text_part(mime_header: &[u8], body: &[u8]) -> Result<String, ContentExplanation> {
+    let mut entity = Vec::with_capacity(mime_header.len() + body.len() + 2);
+    entity.extend_from_slice(mime_header);
+    // A header the server returned without its line ending needs one.
+    if !entity.ends_with(b"\n") {
+        entity.extend_from_slice(b"\r\n");
+    }
+    // The header and the body need one empty line between them.
+    if !entity.ends_with(b"\r\n\r\n") && !entity.ends_with(b"\n\n") {
+        entity.extend_from_slice(b"\r\n");
+    }
+    entity.extend_from_slice(body);
+    let message = MessageParser::default()
+        .parse(&entity)
+        .ok_or(ContentExplanation::Undecodable)?;
+    let part = message
+        .parts
+        .first()
+        .ok_or(ContentExplanation::Undecodable)?;
+    if let Some(encoding) = part.content_transfer_encoding()
+        && !is_known_encoding(encoding)
+    {
+        return Err(ContentExplanation::UnknownEncoding(encoding.to_owned()));
+    }
+    if let Some(charset) = part.content_type().and_then(|ty| ty.attribute("charset"))
+        && !is_known_charset(charset)
+    {
+        return Err(ContentExplanation::UnknownCharset(charset.to_owned()));
+    }
+    match &part.body {
+        // NUL cannot reach GTK text APIs.
+        PartType::Text(text) => Ok(text.replace('\0', "\u{FFFD}")),
+        _ => Err(ContentExplanation::Undecodable),
+    }
+}
+
+fn is_known_encoding(encoding: &str) -> bool {
+    matches!(
+        encoding.to_ascii_lowercase().as_str(),
+        "7bit" | "8bit" | "binary" | "base64" | "quoted-printable"
+    )
+}
+
+fn is_known_charset(charset: &str) -> bool {
+    matches!(
+        charset.to_ascii_lowercase().as_str(),
+        "utf-8" | "utf8" | "us-ascii" | "ascii"
+    ) || charset_decoder(charset.as_bytes()).is_some()
+}
+
+/// Joins the decoded parts of one message into its text.
+pub fn join_message_text(parts: &[String]) -> String {
+    parts.join("\n\n")
+}
+
+/// Subject, sender and recipients for the list and the reader.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DisplayFields {
+    pub subject: Option<String>,
+    pub from: Option<String>,
+    pub to: Option<String>,
+}
+
+/// Decodes the From, To and Subject header lines of a received message.
+/// Missing or unreadable fields are left out; the row stays usable.
+pub fn decode_display_fields(header_lines: &[u8]) -> DisplayFields {
+    let Some(message) = MessageParser::default().parse_headers(header_lines) else {
+        return DisplayFields::default();
+    };
+    let names = |addresses: Option<&mail_parser::Address<'_>>| {
+        let names: Vec<String> = addresses?
+            .iter()
+            .filter_map(|address| address.name().or(address.address()))
+            .map(str::to_owned)
+            .collect();
+        (!names.is_empty()).then(|| names.join(", "))
+    };
+    DisplayFields {
+        subject: message.subject().map(str::to_owned),
+        from: names(message.from()),
+        to: names(message.to()),
+    }
+}

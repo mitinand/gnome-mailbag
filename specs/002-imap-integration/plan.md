@@ -181,7 +181,7 @@ existing crates, roughly 1,500–2,500 production lines; around 16–22 small
 data/error/control types; one worker thread; two load lifecycle states;
 cancellation and bounded parser-error isolation.
 There is no application timer or size counter. Tests add one Rust/GIO server,
-the 14 synthetic MIME samples and roughly 25–35 focused scenarios, reusing the
+the 17 synthetic MIME samples and roughly 25–35 focused scenarios, reusing the
 prototype's relevant coverage rather than requiring its exact test count.
 
 Packaging adds two tooling scripts, a Meson option file, generated JSON and

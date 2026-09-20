@@ -85,6 +85,11 @@ impl InboxReader {
         }
     }
 
+    /// The Inbox version the read UIDs belong to.
+    pub fn uid_validity(&self) -> Option<u32> {
+        self.inbox.uid_validity
+    }
+
     /// Reads the newest messages, at most 100, in descending UID order. A
     /// message the server did not answer for is left out.
     pub async fn fetch_rows(&mut self) -> Result<Vec<MessageRow>, ImapError> {
