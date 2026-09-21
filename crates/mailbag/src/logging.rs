@@ -3,8 +3,8 @@
 
 //! The record Mailbag writes to the standard error stream when started with
 //! `--log-level`: its level, the time on each line, its first and last line,
-//! and the names it gives loads and accounts (specs/003-logging). Without the
-//! option nothing here is installed and nothing is numbered.
+//! and the names of provider types (specs/003-logging). Without the option
+//! nothing here is installed.
 
 #[cfg(test)]
 pub mod capture;
@@ -12,15 +12,8 @@ pub mod capture;
 mod tests;
 
 use adw::{glib, gtk};
-use goa_adapter::{AccountId, AccountProvider};
-use std::{
-    collections::BTreeMap,
-    fmt, io,
-    sync::{
-        Mutex, PoisonError,
-        atomic::{AtomicU64, Ordering},
-    },
-};
+use goa_adapter::AccountProvider;
+use std::{fmt, io};
 use tracing_subscriber::fmt::{MakeWriter, format::Writer, time::FormatTime};
 
 /// The level chosen with `--log-level`. Each level includes those before it.
@@ -158,43 +151,12 @@ impl FormatTime for LocalTime {
     }
 }
 
-static LAST_LOAD_NUMBER: AtomicU64 = AtomicU64::new(0);
-
-/// The identifier of a new Inbox load, unique within the record, such as `load-3`.
-#[cfg_attr(not(test), expect(dead_code, reason = "the load events use it"))]
-pub fn next_load_operation() -> String {
-    let number = LAST_LOAD_NUMBER.fetch_add(1, Ordering::Relaxed) + 1;
-    format!("load-{number}")
-}
-
-/// Account numbers in the order accounts first appeared in the record.
-static ACCOUNT_NUMBERS: Mutex<BTreeMap<AccountId, usize>> = Mutex::new(BTreeMap::new());
-
-/// Names an account in the record, such as `account-2 imap`. The number is
-/// given when the account first appears; the Online Accounts identifier,
-/// which can hold any text, is never part of the name.
-#[cfg_attr(not(test), expect(dead_code, reason = "the account events use it"))]
-pub fn account_label(account_id: &AccountId, provider: AccountProvider) -> String {
-    let mut account_numbers = ACCOUNT_NUMBERS
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    label_account(&mut account_numbers, account_id, provider)
-}
-
-fn label_account(
-    account_numbers: &mut BTreeMap<AccountId, usize>,
-    account_id: &AccountId,
-    provider: AccountProvider,
-) -> String {
-    let next_number = account_numbers.len() + 1;
-    let number = *account_numbers
-        .entry(account_id.clone())
-        .or_insert(next_number);
-    let provider_type = match provider {
+/// The provider type the record writes for an account.
+pub fn provider_type(provider: AccountProvider) -> &'static str {
+    match provider {
         AccountProvider::ImapSmtp => "imap",
         AccountProvider::Google => "google",
         AccountProvider::Microsoft365 => "microsoft365",
         AccountProvider::Other => "other",
-    };
-    format!("account-{number} {provider_type}")
+    }
 }

@@ -184,7 +184,21 @@ impl InboxController {
     /// Discards the mail of accounts Online Accounts no longer shows and
     /// cancels a load running for one of them.
     pub fn discard_excluded(&mut self, is_visible: impl Fn(&AccountId) -> bool) {
-        self.inboxes.retain(|account_id, _| is_visible(account_id));
+        self.inboxes.retain(|account_id, inbox| {
+            let visible = is_visible(account_id);
+            // Only a received batch holds mail; a failed or running load holds none.
+            if !visible
+                && let AccountInbox::Received(batch) = inbox
+                && !batch.messages.is_empty()
+            {
+                tracing::info!(
+                    account = account_id.as_str(),
+                    messages = batch.messages.len(),
+                    "mail of an account no longer shown was discarded"
+                );
+            }
+            visible
+        });
         if let Some(running) = self
             .running_load
             .as_mut()

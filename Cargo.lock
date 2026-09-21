@@ -451,6 +451,7 @@ dependencies = [
  "gio",
  "glib",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

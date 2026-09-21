@@ -1,17 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use super::capture::CapturedRecord;
+use super::capture::start_record;
 use super::*;
 use std::{
-    collections::BTreeSet,
     io,
-    sync::{Arc, atomic::AtomicUsize},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
-
-fn account(id: &str) -> AccountId {
-    AccountId::try_from(id).expect("synthetic account id")
-}
 
 /// Whether a line begins with local time with milliseconds and the UTC offset,
 /// such as `2026-09-21T14:03:15.102+03:00`.
@@ -65,7 +63,7 @@ fn an_unknown_level_is_refused_with_the_accepted_ones() {
 
 #[test]
 fn a_level_includes_the_levels_before_it() {
-    let record = CapturedRecord::start(LogLevel::Warning);
+    let record = start_record(LogLevel::Warning);
     tracing::error!("load failed");
     tracing::warn!("list incomplete");
     tracing::info!("signed in");
@@ -79,38 +77,32 @@ fn a_level_includes_the_levels_before_it() {
 
 #[test]
 fn values_from_mail_and_servers_stay_on_one_line() {
-    let record = CapturedRecord::start(LogLevel::Debug);
+    let record = start_record(LogLevel::Debug);
+    // Online Accounts accepts identifiers it did not generate, holding any text.
+    let account = "corporate\n2026-09-21T14:03:15.102+03:00 ERROR forged \"line\" \0end";
     let folder = "INBOX\n2026-09-21T14:03:15.102+03:00 ERROR forged \"line\" \0end";
     let server_text = "NO [ALERT] first\r\nsecond \"quoted\" \0";
-    tracing::debug_span!("message", folder).in_scope(|| {
-        tracing::debug!(server_text, "server replied");
+    tracing::error_span!("load", account).in_scope(|| {
+        tracing::debug!(folder, server_text, "server replied");
     });
-    tracing::debug!(folder, "folder opened");
     let text = record.text();
-    assert_eq!(text.lines().count(), 2, "one line per event: {text}");
+    assert_eq!(text.lines().count(), 1, "one line per event: {text}");
     assert!(!text.contains(['\0', '\r']), "{text:?}");
-    let escaped_folder =
-        r#"folder="INBOX\n2026-09-21T14:03:15.102+03:00 ERROR forged \"line\" \0end""#;
-    let escaped_server_text = r#"server_text="NO [ALERT] first\r\nsecond \"quoted\" \0""#;
-    let lines: Vec<&str> = text.lines().collect();
-    assert!(
-        lines[0].contains(escaped_folder),
-        "span field: {}",
-        lines[0]
-    );
-    assert!(lines[0].contains(escaped_server_text), "{}", lines[0]);
-    assert!(
-        lines[1].contains(escaped_folder),
-        "event field: {}",
-        lines[1]
-    );
+    let line = text.lines().next().expect("the event's line");
+    for escaped in [
+        r#"account="corporate\n2026-09-21T14:03:15.102+03:00 ERROR forged \"line\" \0end""#,
+        r#"folder="INBOX\n2026-09-21T14:03:15.102+03:00 ERROR forged \"line\" \0end""#,
+        r#"server_text="NO [ALERT] first\r\nsecond \"quoted\" \0""#,
+    ] {
+        assert!(line.contains(escaped), "{escaped} is missing from {line}");
+    }
 }
 
 #[test]
 fn a_line_names_its_time_load_message_and_place() {
-    let record = CapturedRecord::start(LogLevel::Debug);
-    tracing::error_span!("load", account = "account-1 imap", operation = "load-3").in_scope(|| {
-        tracing::debug_span!("message", folder = "INBOX", uid = 4711).in_scope(|| {
+    let record = start_record(LogLevel::Debug);
+    tracing::error_span!("load", account = "account_1726920000_0").in_scope(|| {
+        tracing::debug_span!("message", uid = 4711).in_scope(|| {
             tracing::debug!(section = "1", "part decoded");
         });
     });
@@ -120,9 +112,7 @@ fn a_line_names_its_time_load_message_and_place() {
     assert!(starts_with_local_time(line), "{line}");
     for expected in [
         " DEBUG ",
-        r#"account="account-1 imap""#,
-        r#"operation="load-3""#,
-        r#"folder="INBOX""#,
+        r#"account="account_1726920000_0""#,
         "uid=4711",
         "mailbag::logging::tests:",
         "part decoded",
@@ -146,7 +136,7 @@ fn lines_that_cannot_be_written_are_dropped_and_work_continues() {
         UnwritableStream(output_attempts.clone())
     });
     let load_result = tracing::subscriber::with_default(record, || {
-        tracing::error_span!("load", operation = "load-1").in_scope(|| {
+        tracing::error_span!("load", account = "account_1726920000_0").in_scope(|| {
             tracing::error!(cause = "TimedOut", "load failed");
             tracing::debug!("connection closed");
             "the load's result"
@@ -185,7 +175,7 @@ fn the_first_line_gives_versions_and_level_whatever_the_level() {
 
 #[test]
 fn quitting_is_recorded_at_info() {
-    let record = CapturedRecord::start(LogLevel::Info);
+    let record = start_record(LogLevel::Info);
     finish_logging();
     let text = record.text();
     let last_line = text.lines().last().expect("the quit line");
@@ -203,64 +193,4 @@ fn without_the_option_no_subscriber_exists() {
         assert!(current.is::<tracing::subscriber::NoSubscriber>());
     });
     assert!(!tracing::enabled!(tracing::Level::ERROR));
-}
-
-#[test]
-fn an_account_keeps_the_number_of_its_first_appearance() {
-    let mut account_numbers = BTreeMap::new();
-    let generated = account("account_1726920000_0");
-    let arbitrary = account("user@example.com\nPersonal");
-    let google = account("account_1726920000_1");
-    let labels = [
-        label_account(&mut account_numbers, &generated, AccountProvider::ImapSmtp),
-        label_account(&mut account_numbers, &arbitrary, AccountProvider::ImapSmtp),
-        label_account(&mut account_numbers, &google, AccountProvider::Google),
-        label_account(&mut account_numbers, &generated, AccountProvider::ImapSmtp),
-    ];
-    assert_eq!(
-        labels,
-        [
-            "account-1 imap",
-            "account-2 imap",
-            "account-3 google",
-            "account-1 imap"
-        ]
-    );
-    let repeated = account_label(&generated, AccountProvider::ImapSmtp);
-    assert!(repeated.starts_with("account-") && repeated.ends_with(" imap"));
-    assert_eq!(
-        account_label(&generated, AccountProvider::ImapSmtp),
-        repeated
-    );
-}
-
-#[test]
-fn the_same_accounts_get_the_same_numbers_in_every_run() {
-    let label_in_identifier_order = |discovery_order: [&str; 3]| {
-        let accounts: BTreeSet<AccountId> = discovery_order.into_iter().map(account).collect();
-        let mut account_numbers = BTreeMap::new();
-        accounts
-            .iter()
-            .map(|account_id| {
-                label_account(&mut account_numbers, account_id, AccountProvider::ImapSmtp)
-            })
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(
-        label_in_identifier_order(["account_3", "account_1", "account_2"]),
-        label_in_identifier_order(["account_2", "account_3", "account_1"])
-    );
-}
-
-#[test]
-fn every_load_gets_a_new_identifier() {
-    let load_number = |operation: &str| -> u64 {
-        operation
-            .strip_prefix("load-")
-            .and_then(|number| number.parse().ok())
-            .unwrap_or_else(|| panic!("not load-N: {operation}"))
-    };
-    let first = next_load_operation();
-    let second = next_load_operation();
-    assert!(load_number(&second) > load_number(&first));
 }

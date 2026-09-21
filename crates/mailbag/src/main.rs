@@ -17,6 +17,9 @@ mod window_ui;
 #[path = "accounts/notice_tests.rs"]
 mod account_notice_tests;
 #[cfg(test)]
+#[path = "accounts/record_tests.rs"]
+mod account_record_tests;
+#[cfg(test)]
 #[path = "accounts/tests.rs"]
 mod account_tests;
 
@@ -24,6 +27,10 @@ mod account_tests;
 #[allow(dead_code)]
 #[path = "../../../tests/support/bus.rs"]
 mod test_bus;
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../../tests/support/record.rs"]
+mod test_record;
 
 const APP_ID: &str = "io.github.mitinand.Mailbag";
 const LOG_LEVEL_OPTION: &str = "log-level";

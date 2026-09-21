@@ -6,13 +6,9 @@ reads. These are the few values it holds while a run with logging on lasts.
 | Value | Owner | Contents | Lifetime |
 |---|---|---|---|
 | Chosen level | `mailbag::logging` | One of error, warning, info, debug | Set once at start; never changes during the run |
-| Operation counter | `mailbag::logging` | The last number given to a load | The run; starts at 1 |
-| Account labels | `mailbag::logging` | Account identifier → `N` of `account-N`, in order of first appearance; the identifier itself is never written | The run |
-| Load span | `mailbag::inbox::RunningLoad` | Account label, operation identifier; clones used by the loader and its callbacks | From an accepted Refresh Inbox until the result is accepted or discarded; cancellation is recorded before dropping the handle |
-| Load start time | `mailbag::inbox::RunningLoad` | Elapsed-time starting point for the final line | The running load, only with logging on |
+| Load span | `mailbag::inbox::RunningLoad` | Account identifier; clones used by the loader and its callbacks | From an accepted Refresh Inbox until the result is accepted or discarded; cancellation is recorded before dropping the handle |
 
-With logging off none of these exist: no subscriber is installed, and
-operations and accounts take no numbers.
+With logging off none of these exist: no subscriber is installed.
 
 Cancellation and result applicability remain decisions of `InboxController`,
 using its existing cancellation handle and `show_result` check. Logging adds

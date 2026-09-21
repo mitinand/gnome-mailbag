@@ -8,7 +8,7 @@ The module defines ordinary Rust data. The adapter decodes GOA; Mailbag owns
 
 | Type / field | Meaning |
 |---|---|
-| AccountId | Nonempty opaque GOA ID; stable across renames, comparable, with ordinary derived Debug |
+| AccountId | Nonempty opaque GOA ID; stable across renames, comparable, with ordinary derived Debug; `as_str` gives its text for the record of [003](../../003-logging/contracts/record.md) |
 | AccountProvider | ImapSmtp, Google, Microsoft365 or Other; recognition, not application support |
 | AccountDetails.provider | Required AccountProvider |
 | mail_enabled | Required bool, the inverse of GOA MailDisabled |
@@ -49,8 +49,9 @@ a successful partial account list.
 
 Render source strings as plain text. AccountId's derived Debug includes its value;
 AccountDetails keeps its display fields hidden. Debug/log output excludes
-addresses, labels, credentials and remote error messages. Do not add account IDs
-to application logs. Map transport errors to the safe causes above; account rules
+addresses, labels, credentials and remote error messages. An account ID reaches
+the application's record only as the `account` field that
+[003](../../003-logging/contracts/record.md) defines. Map transport errors to the safe causes above; account rules
 do not interpret GIO codes. Expected cancellation is silent.
 
 ## Application representation

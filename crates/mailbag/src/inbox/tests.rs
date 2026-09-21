@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::*;
+use crate::logging::{LogLevel, capture::start_record};
 use mailbag_imap::ImapStep;
 use std::cell::Cell;
 
@@ -173,4 +174,34 @@ fn quitting_cancels_the_running_load() {
     controller.cancel_load();
     assert_eq!(cancellations.get(), 1);
     assert!(!controller.is_loading());
+}
+
+#[test]
+fn discarding_received_mail_of_an_account_no_longer_shown_is_recorded() {
+    let record = start_record(LogLevel::Info);
+    let shown = account("record_discard_shown");
+    let excluded = account("record_discard_excluded");
+    let failed = account("record_discard_failed");
+    let mut controller = InboxController::default();
+    for (account_id, result) in [
+        (&shown, LoadResult::Received(batch_of(&shown, &[10]))),
+        (
+            &excluded,
+            LoadResult::Received(batch_of(&excluded, &[10, 20])),
+        ),
+        (&failed, LoadResult::Failed(sign_in_failure())),
+    ] {
+        assert!(controller.begin_load(account_id));
+        controller.finish_load(account_id, result);
+    }
+    controller.discard_excluded(|account_id| *account_id == shown);
+    let text = record.text();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 1, "only a received batch holds mail: {text}");
+    let account = r#"account="record_discard_excluded""#;
+    assert!(
+        lines[0].contains(" INFO ") && lines[0].contains(account),
+        "{text}"
+    );
+    assert!(lines[0].contains("messages=2"), "{text}");
 }

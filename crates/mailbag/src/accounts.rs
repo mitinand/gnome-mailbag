@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use crate::logging;
 use goa_adapter::{
     AccountCheckResult, AccountDetails, AccountId, AccountProvider, AccountUpdate, ErrorCause,
 };
@@ -167,6 +168,10 @@ impl AccountList {
             let details = accounts.get(id);
             let disabled = details.is_some_and(|details| !details.mail_enabled);
             let removed = details.is_none();
+            if removed {
+                // A disabled account is logged with the accounts not shown.
+                log_account_not_shown(id, row.provider, "removed from Online Accounts");
+            }
             if disabled || removed {
                 hidden_notices.push(AccountHiddenNotice {
                     label: row.label.clone(),
@@ -185,14 +190,18 @@ impl AccountList {
                 self.visible_accounts.remove(id);
                 self.excluded_reasons
                     .insert(ExclusionReason::UnsupportedProvider);
+                log_account_not_shown(id, details.provider, "unsupported provider");
                 continue;
             }
             if !details.mail_enabled {
                 self.excluded_reasons.insert(ExclusionReason::MailDisabled);
+                log_account_not_shown(id, details.provider, "mail disabled");
                 continue;
             }
             if let Some(row) = self.visible_accounts.get_mut(id) {
+                let previous_problems = std::mem::take(&mut row.problems);
                 row.update_details(details);
+                log_problem_changes(id, &previous_problems, &row.problems);
             } else if details.mail_service_available {
                 let mut row = AccountRow {
                     label: String::new(),
@@ -204,10 +213,17 @@ impl AccountList {
                 };
                 self.next_label_number += 1;
                 row.update_details(details);
+                tracing::info!(
+                    account = id.as_str(),
+                    provider = logging::provider_type(details.provider),
+                    "account shown"
+                );
+                log_problem_changes(id, &[], &row.problems);
                 self.visible_accounts.insert(id.clone(), row);
             } else {
                 self.excluded_reasons
                     .insert(ExclusionReason::MailUnavailable);
+                log_account_not_shown(id, details.provider, "mail service unavailable");
             }
         }
     }
@@ -233,6 +249,46 @@ impl AccountList {
         }
     }
 }
+/// Written at every complete read that leaves the account without a row.
+fn log_account_not_shown(account_id: &AccountId, provider: AccountProvider, reason: &'static str) {
+    tracing::info!(
+        account = account_id.as_str(),
+        provider = logging::provider_type(provider),
+        reason,
+        "account not shown"
+    );
+}
+
+/// Warns when a row gains a problem and notes when one is gone. An unconfirmed
+/// check is left to the failed read's own line.
+fn log_problem_changes(
+    account_id: &AccountId,
+    previous_problems: &[AccountProblem],
+    problems: &[AccountProblem],
+) {
+    for (problem, name) in [
+        (AccountProblem::AttentionNeeded, "attention needed"),
+        (AccountProblem::MailUnavailable, "mail service unavailable"),
+    ] {
+        match (
+            previous_problems.contains(&problem),
+            problems.contains(&problem),
+        ) {
+            (false, true) => tracing::warn!(
+                account = account_id.as_str(),
+                problem = name,
+                "account has a problem"
+            ),
+            (true, false) => tracing::info!(
+                account = account_id.as_str(),
+                problem = name,
+                "account problem is gone"
+            ),
+            _ => {}
+        }
+    }
+}
+
 impl AccountRow {
     fn mark_check_unconfirmed(&mut self) {
         if !self.problems.contains(&AccountProblem::CheckUnconfirmed) {

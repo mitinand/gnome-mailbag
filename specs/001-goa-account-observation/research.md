@@ -109,7 +109,8 @@ maximum or a custom byte-accounting/recovery subsystem. In GLib 2.88, the defaul
 method timeout is 25 seconds and wire messages larger than 128 MiB are rejected.
 That wire bound is not a promise about total process memory. Source text remains
 plain UI data and is excluded from diagnostics; local GOA is not a reason to log
-account identifiers or addresses.
+addresses. Account identifiers name accounts in the record of
+[003](../../003-logging/research.md#5-naming-an-account).
 Sources: [timeout](https://gitlab.gnome.org/GNOME/glib/-/blob/2.88.3/gio/gdbusconnection.c#L2067),
 [message validation](https://gitlab.gnome.org/GNOME/glib/-/blob/2.88.3/gio/gdbusmessage.c#L2302).
 

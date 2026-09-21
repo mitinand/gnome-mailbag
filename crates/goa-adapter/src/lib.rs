@@ -18,3 +18,6 @@ mod test_bus;
 #[cfg(test)]
 #[path = "../../../tests/support/goa.rs"]
 mod test_goa;
+#[cfg(test)]
+#[path = "../../../tests/support/record.rs"]
+mod test_record;

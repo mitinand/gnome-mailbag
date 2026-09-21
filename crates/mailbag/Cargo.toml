@@ -16,9 +16,7 @@ goa-adapter = { path = "../goa-adapter" }
 mailbag-content = { path = "../mailbag-content" }
 mailbag-imap = { path = "../mailbag-imap" }
 tracing.workspace = true
-# The span registry, level filter and one-line formatter, without colors or the
-# bridge from the log crate (specs/003-logging/research.md §1).
-tracing-subscriber = { version = "0.3.23", default-features = false, features = ["std", "registry", "fmt"] }
+tracing-subscriber.workspace = true
 
 [dev-dependencies]
 # Load-sequence tests drive the scripted IMAP server.

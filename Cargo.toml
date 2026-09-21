@@ -9,6 +9,9 @@ glib = "=0.22.9"
 adw = { package = "libadwaita", version = "=0.9.2", features = ["v1_8"] }
 # Without attributes, so no proc macro is built (specs/003-logging/research.md §1).
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+# The span registry, level filter and one-line formatter, without colors or the
+# bridge from the log crate (specs/003-logging/research.md §1).
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["std", "registry", "fmt"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

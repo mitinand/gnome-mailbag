@@ -157,6 +157,11 @@ impl MailUi {
             .expect("message row item");
         let listed = listed.borrow::<ListedMessage>();
         let message = &listed.batch.messages[listed.position];
+        tracing::debug!(
+            account = listed.batch.account_id.as_str(),
+            uid = message.uid,
+            "message opened"
+        );
         show_inert_text(&self.reader_subject, &subject_text(&message.fields));
         self.reader_sender.set_text(&sender_text(&message.fields));
         self.sender_avatar

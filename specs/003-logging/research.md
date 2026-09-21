@@ -15,8 +15,8 @@ crate.
 
 **Why**: Three needs decide it.
 
-- *Context on every line.* FR-013 wants the account label and the operation
-  identifier on every line of a load. Today a load crosses three crates and
+- *Context on every line.* FR-013 wants the account on every line of a
+  load. Today a load crosses three crates and
   two threads, and `mailbag-content` consists of functions that know nothing
   about accounts or messages. A span attached to the load's future carries
   the fields to every event inside it, in any crate, without passing a
@@ -186,32 +186,42 @@ pretty name from GLib.
 refuses to read the local offset in a multi-threaded process; `chrono` is in
 the lock file only as someone else's dependency. GLib already does this.
 
-## 5. The account label
+## 5. Naming an account
 
 **Finding**: GNOME Online Accounts 3.58 generates identifiers as
 `account_<unix time>_<counter>` (`generate_new_id` in `goadaemon.c`). It also
 accepts identifiers it did not generate: from an administrator's template
 file, and from the `Id` entry of `AddAccount`'s details. Such an identifier is
 arbitrary text, and a generated one holds the account's creation time.
+`~/.config/goa-1.0/accounts.conf` has a section per identifier with the
+account's provider and name.
 
-**Decision**: The label is `account-N` followed by the provider type. `N` is
-given when the account first appears in the record and kept for the run.
-`mailbag` holds accounts in a map ordered by identifier and meets them in
-that order, so the same set of accounts gets the same numbers in every run.
-The identifier itself is never written; 001's rule stays as it is, and
-`goa-adapter` gains nothing for logging.
+**Decision**: A line names an account by its identifier, in the field
+`account`; lines that observe an account add its provider type in
+`provider`. The identifier stays the same across runs whatever other
+accounts are added or removed, and the person who owns the record can find
+the account it names. `goa-adapter`'s `AccountId::as_str` gives its text; the
+001 account contract is amended for it.
 
-**Alternative rejected**: The identifier as the label, with a number only for
-identifiers of another form. It needed a test of the identifier's form in
-`goa-adapter`, an addition to the shared 001 account contract and two
-amended 001 documents, and it put a creation time into lines meant to be
-published as they are. What it gave in return was finding an account by its
-label in the Online Accounts configuration.
+The costs are accepted: a generated identifier shows when the account was
+added, and an identifier from a template or an application's request is
+written as it is, escaped like every string field. Both appear at every
+level, and the README says so.
+
+**Alternatives rejected**
+
+- *A number given within the record*, with the provider type, such as
+  `account-7 imap`, used first. With ten IMAP accounts it did not say which
+  account a line meant, and the numbers shifted when an account was added or
+  removed, so two records could not be compared.
+- *The identifier in its generated form only*, and a number otherwise. It
+  adds code for identifiers that a desktop set up through Settings does not
+  have.
 
 ## 6. Server text and the sign-in name
 
 **Decision**: `mailbag-imap` knows the sign-in name and owns one function that
-returns server text for the log, with every occurrence of the non-empty
+returns server text for the log, with every occurrence of the
 sign-in name replaced by `<login>`, whatever its length. The comparison
 ignores ASCII case. A very short name can also match inside ordinary words of
 the server's sentence; a damaged sentence is the accepted price, a name left
@@ -233,12 +243,12 @@ applied in the same portion as the first line that uses it.
   `MessagePart`. The debug lines are written there. `MessagePart` and
   `MimePart` do not change.
 - **A file name** is never written, and neither is its shape: nothing in
-  Mailbag uses the name yet, and the choice of text parts looks only at
-  whether a parameter that carries a name is present. `mailbag-imap`'s line
-  for a part lists those parameters: `name`, `name*` and continuations of
-  Content-Type; `filename`, `filename*` and continuations of
-  Content-Disposition. The parser hands over both lists. The shape and the
-  extension of a name arrive with the feature that handles attachments.
+  Mailbag uses the name yet. Whether a text part is a file is decided in
+  `mailbag-content` (`MimePart::has_file_name` and the attachment
+  disposition), so it writes a debug line for each text part it leaves out
+  as a file; the part tree written by `mailbag-imap` says nothing about names,
+  which would copy that rule. The shape and the extension of a name arrive
+  with the feature that handles attachments.
 
   For that feature, checked on 2026-09-21 by parsing nine part descriptions
   with the pinned IMAP parser: a value arrives as the server sent it. An
@@ -257,12 +267,11 @@ applied in the same portion as the first line that uses it.
   reports a parse failure and the reader records `None`. The debug line says
   which of the two known outcomes happened: the server refused, or the reply
   could not be parsed.
-- **The shape of a header value** is one private function, `header_shape`,
-  in `mailbag-content`. It inspects raw list header bytes when a present
-  header yielded no value or a value with U+FFFD, and reports the declared
-  character sets and B/Q encodings of encoded words, the byte length and
-  whether raw 8-bit bytes are present. It is evaluated only when debug is
-  enabled, returns nothing of the value, decodes nothing and guesses no cause.
+- **A list header that did not decode**: when a present header yielded no
+  value or a value with U+FFFD, `mailbag-content` writes the header's name at
+  debug and guesses no cause. A description of the raw value's encoding was
+  considered and dropped: whoever turns such a report into a fixture has to
+  examine the message by hand anyway.
 - **Why a certificate failed** is not carried by `ImapFailure` today. GIO
   reports it as certificate flags at the point of failure; the debug line is
   written there, in `transport.rs`, with the flag names and no certificate
@@ -272,14 +281,10 @@ applied in the same portion as the first line that uses it.
 
 ## 8. Testing a record
 
-**Decision**: Whether nothing is written without the option is checked on a
-started Mailbag's real stdout and stderr during both a successful and a failed
-load, together with a check for files it created. The capture files belong to
-the test shell and stay outside the repository. A test also checks that no
-subscriber is installed without the option; an empty test buffer alone proves
-nothing about the streams. Quickstart separates these checks from SC-007's
-README trial by a person who did not participate in the design. Results and
-unverified items go in the handoff report outside the repository, not in
+**Decision**: A test checks that no subscriber is installed without the
+option, so no event can become a line on any code path; one start of Mailbag
+without the option shows empty streams. A stray print outside `tracing` is a
+matter for review. Results and unverified items go in the handoff report outside the repository, not in
 quickstart.md.
 
 The logging setup takes its output as a parameter. The
