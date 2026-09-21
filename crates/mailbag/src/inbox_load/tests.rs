@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::inbox::ReceivedBatch;
+use crate::logging::{LogLevel, capture::start_record};
 use goa_adapter::AccountId;
 use mailbag_imap::test_server::{
     FaultKind, FaultyCommand, FixtureMessage, FixtureSetup, ImapFixture, TEST_LOGIN, TEST_PASSWORD,
@@ -398,4 +399,82 @@ async fn load_with_online_accounts(
         finished.try_send(outcome).ok();
     });
     Ok(outcomes.recv().await.expect("the load reports its outcome"))
+}
+
+/// Runs a load inside a load span, as the window starts it, and returns the
+/// record of the test thread and the worker.
+fn load_inbox_with_account(access: ImapAccess, level: LogLevel) -> (LoadOutcome, String) {
+    let record = start_record(level);
+    let outcome = run_on_context(async {
+        let worker = MailWorker::new();
+        let (sender, outcomes) = async_channel::bounded(1);
+        let span = tracing::error_span!("load", account = "account_1726920000_7");
+        let _handle = span.in_scope(|| {
+            worker.load_inbox(access, move |outcome| {
+                sender.try_send(outcome).ok();
+            })
+        });
+        outcomes.recv().await.expect("the load reports its outcome")
+    });
+    (outcome, record.text())
+}
+
+#[test]
+fn the_worker_names_the_load_account_on_every_line() {
+    let fixture = ImapFixture::start(FixtureSetup {
+        messages: plain_messages(3),
+        ..FixtureSetup::default()
+    });
+    let (outcome, text) = load_inbox_with_account(account_access(&fixture), LogLevel::Debug);
+    published_batch(outcome);
+    let worker_lines: Vec<&str> = text
+        .lines()
+        .filter(|line| line.contains("mailbag_imap::"))
+        .collect();
+    assert!(worker_lines.len() > 5, "{text}");
+    for line in worker_lines {
+        assert!(
+            line.contains(r#"load{account="account_1726920000_7"}"#),
+            "{line}"
+        );
+    }
+    for private in [TEST_LOGIN, TEST_PASSWORD, "Message 10", "Text 1"] {
+        assert!(
+            !text.contains(private),
+            "{private} reached the record:\n{text}"
+        );
+    }
+}
+
+#[test]
+fn inboxes_of_one_and_a_hundred_messages_give_the_same_info_lines() {
+    let info_lines = |count| {
+        let fixture = ImapFixture::start(FixtureSetup {
+            messages: plain_messages(count),
+            ..FixtureSetup::default()
+        });
+        let (outcome, text) = load_inbox_with_account(account_access(&fixture), LogLevel::Info);
+        published_batch(outcome);
+        text.lines().count()
+    };
+    assert_eq!(info_lines(1), info_lines(100));
+}
+
+#[test]
+fn a_refused_sign_in_leaves_the_error_line_to_the_load() {
+    let fixture = ImapFixture::start(FixtureSetup::default());
+    let mut access = account_access(&fixture);
+    access.password = "wrong password".to_owned();
+    let (outcome, text) = load_inbox_with_account(access, LogLevel::Debug);
+    assert!(matches!(outcome, LoadOutcome::Failed(_)), "{outcome:?}");
+    assert!(!text.contains(" ERROR "), "{text}");
+    let reply = text
+        .lines()
+        .find(|line| line.contains("server_text"))
+        .unwrap_or_else(|| panic!("no reply line:\n{text}"));
+    assert!(
+        reply.contains(r#"load{account="account_1726920000_7"}"#),
+        "{reply}"
+    );
+    assert!(!text.contains("wrong password"), "{text}");
 }

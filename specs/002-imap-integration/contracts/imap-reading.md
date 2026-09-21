@@ -301,9 +301,13 @@ of the text. This is inert server text for the failure explanation only.
 
 Do not build a notification service, history, sync popover or extra error for
 dependent steps that never ran. Map errors to safe step/cause information.
-Compile log levels out in native and Flatpak builds; never log raw commands,
-mail headers/bodies, credentials or library Debug/Display errors. UI server text
-is inert and is not copied into diagnostics.
+Compile the `log` crate's levels, which the IMAP library uses, out in native and
+Flatpak builds. Server status text and ALERT text reach diagnostics only at
+debug and only through the replacement of the sign-in name that
+[003](../../003-logging/contracts/record.md) defines. Raw commands, mail
+headers and bodies, credentials and library Debug/Display errors are never
+logged, except GIO's text for a failed TLS handshake at debug, which holds
+fixed phrases of the TLS library and no server data.
 
 ## Evidence for selective acquisition
 

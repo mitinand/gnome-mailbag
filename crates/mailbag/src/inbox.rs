@@ -8,7 +8,7 @@ mod tests;
 
 use goa_adapter::{AccountId, ImapAccessError};
 use mailbag_content::{ContentExplanation, DisplayFields};
-use mailbag_imap::{ImapError, ImapFailure, ServerReply};
+use mailbag_imap::{ImapError, ImapFailure, ImapStep, ServerReply};
 use std::{collections::BTreeMap, fmt, rc::Rc};
 
 /// One account's Inbox as a single load received it.
@@ -115,6 +115,8 @@ struct RunningLoad {
     account_id: AccountId,
     /// None once the load has been cancelled and is closing its connection.
     cancellation: Option<Box<dyn CancelsLoadOnDrop>>,
+    /// Names the account on every line of the load, in any crate and thread.
+    span: tracing::Span,
 }
 
 impl InboxController {
@@ -136,11 +138,21 @@ impl InboxController {
         }
         self.inboxes
             .insert(account_id.clone(), AccountInbox::Loading);
+        let span = tracing::error_span!("load", account = account_id.as_str());
+        span.in_scope(|| tracing::info!("Inbox load started"));
         self.running_load = Some(RunningLoad {
             account_id: account_id.clone(),
             cancellation: None,
+            span,
         });
         true
+    }
+
+    /// The running load's span, which the loader and its callbacks enter.
+    pub fn load_span(&self) -> tracing::Span {
+        self.running_load
+            .as_ref()
+            .map_or_else(tracing::Span::none, |running| running.span.clone())
     }
 
     /// Keeps what cancels the load `begin_load` started. A load that already
@@ -162,23 +174,30 @@ impl InboxController {
     /// Stores how the load ended under the account it was started for, and
     /// leaves Loading so Refresh Inbox becomes available again.
     pub fn finish_load(&mut self, account_id: &AccountId, result: LoadResult) {
-        let finished = self
+        let Some(running) = self
             .running_load
-            .as_ref()
-            .is_some_and(|running| running.account_id == *account_id);
-        if !finished {
+            .take_if(|running| running.account_id == *account_id)
+        else {
             return;
-        }
-        self.running_load = None;
-        match result {
+        };
+        let _load = running.span.enter();
+        let inbox = match result {
+            // The cancellation was recorded where it was requested.
+            LoadResult::Cancelled => return,
+            _ if !self.awaits_result(account_id) => {
+                tracing::info!("Inbox load result discarded: the account is no longer shown");
+                return;
+            }
             LoadResult::Received(batch) => {
-                self.show_result(account_id, AccountInbox::Received(Rc::new(batch)));
+                log_received_batch(&batch);
+                AccountInbox::Received(Rc::new(batch))
             }
             LoadResult::Failed(failure) => {
-                self.show_result(account_id, AccountInbox::Failed(failure));
+                log_load_failure(&failure);
+                AccountInbox::Failed(failure)
             }
-            LoadResult::Cancelled => {}
-        }
+        };
+        self.inboxes.insert(account_id.clone(), inbox);
     }
 
     /// Discards the mail of accounts Online Accounts no longer shows and
@@ -206,26 +225,130 @@ impl InboxController {
         {
             // Dropping the step closes the connection; the load then reports
             // that it was cancelled.
-            running.cancellation = None;
+            if let Some(cancellation) = running.cancellation.take() {
+                running.span.in_scope(|| {
+                    tracing::info!(reason = "account excluded", "Inbox load cancelled");
+                });
+                drop(cancellation);
+            }
         }
     }
 
     /// Quit: cancels a running load. The worker closes its connection on its
     /// own thread, which GTK never waits for.
     pub fn cancel_load(&mut self) {
-        self.running_load = None;
+        if let Some(running) = self.running_load.take()
+            && running.cancellation.is_some()
+        {
+            running.span.in_scope(|| {
+                tracing::info!(reason = "quitting", "Inbox load cancelled");
+            });
+        }
     }
 
     /// A result reaches the account only while its mail is still loading, so
     /// mail discarded by a confirmed exclusion stays discarded.
-    fn show_result(&mut self, account_id: &AccountId, inbox: AccountInbox) {
-        if let Some(loading) = self
-            .inboxes
-            .get_mut(account_id)
-            .filter(|inbox| matches!(inbox, AccountInbox::Loading))
-        {
-            *loading = inbox;
+    fn awaits_result(&self, account_id: &AccountId) -> bool {
+        matches!(self.inboxes.get(account_id), Some(AccountInbox::Loading))
+    }
+}
+
+/// How an accepted load ended, with warnings for what the reader cannot show
+/// (log-events.md "Inbox load").
+fn log_received_batch(batch: &ReceivedBatch) {
+    let explanations = || {
+        batch
+            .messages
+            .iter()
+            .filter_map(|message| match &message.content {
+                ReceivedContent::Explained(explanation) => Some(explanation),
+                ReceivedContent::Text(_) => None,
+            })
+    };
+    tracing::info!(
+        messages = batch.messages.len(),
+        unsupported = explanations()
+            .filter(|explanation| is_unsupported(explanation))
+            .count(),
+        "Inbox load finished"
+    );
+    let unreadable = explanations()
+        .filter(|explanation| !is_unsupported(explanation))
+        .count();
+    if unreadable > 0 {
+        tracing::warn!(
+            messages = unreadable,
+            "some messages have content that could not be read"
+        );
+    }
+    if let Some(refusal) = &batch.list_refusal {
+        tracing::warn!(
+            code = refusal.code.as_deref(),
+            "the server refused to finish the message list"
+        );
+    }
+}
+
+/// Content this version does not show by design, as opposed to content that
+/// could not be read.
+fn is_unsupported(explanation: &ContentExplanation) -> bool {
+    matches!(
+        explanation,
+        ContentExplanation::NoPlainText { .. }
+            | ContentExplanation::Encrypted
+            | ContentExplanation::SecuredWithSMime
+    )
+}
+
+/// The load's single error line: the failure values the UI explains, the
+/// server's response code and the number of alerts, never the server's text.
+fn log_load_failure(failure: &LoadFailure) {
+    let (step, cause, server) = match failure {
+        LoadFailure::OnlineAccounts(error) => {
+            (Some("OnlineAccounts"), access_failure_name(*error), None)
         }
+        LoadFailure::Server(server) => {
+            let (step, cause) = match server.failure {
+                ImapFailure::Failed(step) => (Some(step_name(step)), "Failed"),
+                ImapFailure::TimedOut(step) => (Some(step_name(step)), "TimedOut"),
+                ImapFailure::NoSignInMethod => {
+                    (Some(step_name(ImapStep::SignIn)), "NoSignInMethod")
+                }
+                ImapFailure::InboxChanged => (None, "InboxChanged"),
+            };
+            (step, cause, Some(server))
+        }
+        LoadFailure::WorkerStopped => (None, "WorkerStopped", None),
+    };
+    tracing::error!(
+        step,
+        cause,
+        code = server.and_then(|server| server.server_reply.as_ref()?.code.as_deref()),
+        alerts = server
+            .map(|server| server.alerts.len())
+            .filter(|alerts| *alerts > 0),
+        "Inbox load failed"
+    );
+}
+
+fn step_name(step: ImapStep) -> &'static str {
+    match step {
+        ImapStep::Connect => "Connect",
+        ImapStep::SecureConnection => "SecureConnection",
+        ImapStep::SignIn => "SignIn",
+        ImapStep::OpenInbox => "OpenInbox",
+        ImapStep::FetchMessages => "FetchMessages",
+        ImapStep::FetchText => "FetchText",
+    }
+}
+
+fn access_failure_name(error: ImapAccessError) -> &'static str {
+    match error {
+        ImapAccessError::Settings => "Settings",
+        ImapAccessError::NoEncryption => "NoEncryption",
+        ImapAccessError::Password => "Password",
+        ImapAccessError::Timeout => "Timeout",
+        ImapAccessError::Cancelled => "Cancelled",
     }
 }
 

@@ -272,10 +272,18 @@ applied in the same portion as the first line that uses it.
   debug and guesses no cause. A description of the raw value's encoding was
   considered and dropped: whoever turns such a report into a fixture has to
   examine the message by hand anyway.
-- **Why a certificate failed** is not carried by `ImapFailure` today. GIO
-  reports it as certificate flags at the point of failure; the debug line is
-  written there, in `transport.rs`, with the flag names and no certificate
-  fields. The error line keeps the cause the UI shows.
+- **Why a TLS handshake failed** is not carried by `ImapFailure` today. GIO
+  reports it at the point of failure as an error and as certificate flags;
+  the debug line is written there, in `transport.rs`, with the error's text
+  and the flag names and no certificate fields. The error's code does not
+  help: glib-networking up to 2.90.0 reports a port that expects STARTTLS,
+  which GnuTLS 3.8 answers with an unexpected packet, as `Misc`, and only the
+  text, "An unexpected TLS packet was received", says what happened. The
+  text consists of fixed phrases of the TLS library with no server data, so
+  it is the one library error text a line may carry. The error line keeps
+  the cause the UI shows. The TLS version of a
+  successful handshake needs gio's `v2_70` feature; the GNOME 50 runtime has
+  a much newer GLib.
 - **Capabilities and the TLS version** are already at hand, the capabilities
   before sign-in and the version after the handshake; no command is added.
 

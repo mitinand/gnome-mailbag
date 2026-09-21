@@ -701,6 +701,7 @@ dependencies = [
  "glib",
  "log",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

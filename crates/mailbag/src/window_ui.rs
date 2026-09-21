@@ -130,14 +130,18 @@ impl WindowUi {
         self.render();
         let window = Rc::downgrade(self);
         let loaded_account = account_id.clone();
-        let cancellation = self.loader.start_load(
-            &account_id,
-            Box::new(move |result| {
-                if let Some(window) = window.upgrade() {
-                    window.finish_load(&loaded_account, result);
-                }
-            }),
-        );
+        // The loader takes the load's span with it into its callbacks.
+        let load_span = self.inboxes.borrow().load_span();
+        let cancellation = load_span.in_scope(|| {
+            self.loader.start_load(
+                &account_id,
+                Box::new(move |result| {
+                    if let Some(window) = window.upgrade() {
+                        window.finish_load(&loaded_account, result);
+                    }
+                }),
+            )
+        });
         self.inboxes
             .borrow_mut()
             .hold_cancellation(&account_id, cancellation);

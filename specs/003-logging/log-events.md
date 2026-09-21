@@ -80,8 +80,8 @@ Refresh Inbox. Ownership and cancellation ordering are defined in the
 | The load finished and its result was accepted | info | Messages received, of which with content this version does not support (HTML-only, encrypted, S/MIME). Messages that disappeared are the difference to the rows of "message list loaded" |
 | Messages disappeared during the load | debug, in `inbox_load` or `mailbag-imap` where observed | Their UIDs. Another client removing mail is normal; no count is carried for the log |
 | Some messages have content that could not be read | warning | Count of M. Covers the outcomes the code already tells apart: unknown character set, unknown transfer encoding, undecodable part, structure that could not be read, text the server did not return. Details are debug lines of `mailbag-imap` and `mailbag-content` |
-| The server refused to finish the message list | warning | Rows received, response code. The reply text is a debug line of `mailbag-imap` |
-| The load failed and the failure was accepted | error | `step` and `cause` as the names of the failure values the UI explains, the wait limit in seconds for a timeout, the server's response code if any. The reply text and alerts are debug lines of `mailbag-imap` |
+| The server refused to finish the message list | warning | Response code. The rows received are on the message list line of `mailbag-imap`, and the reply text is its debug line |
+| The load failed and the failure was accepted | error | `step` and `cause` as the names of the failure values the UI explains, the server's response code if any, the number of alerts if any. The reply text and alerts are debug lines of `mailbag-imap` |
 | Every message of the window disappeared, or the Inbox was replaced | error | Cause "Inbox changed"; only while the result remains applicable |
 | The load was cancelled by exclusion of its account or by closing the window | info, in `discard_excluded` or `cancel_load` | Reason, before dropping an active handle; no waiting for the worker |
 | The Quit action while a load runs | Not logged as a cancellation | Quit ends Mailbag without cancelling the load, so the record shows the load's start and then the quit line. The shutdown order is not changed for the record |
@@ -97,7 +97,7 @@ request completes in callbacks where the load's span is not active.
 
 | What happens | Decision | Fields and notes |
 |---|---|---|
-| Settings and password were received from Online Accounts | info | Encryption mode (TLS from the start, or STARTTLS). debug adds host and port |
+| Settings and password were received from Online Accounts | info | Encryption mode (TLS from the start, or STARTTLS). Host and port are on the connection's debug line in `mailbag-imap` |
 | Settings were not returned; neither encryption mode is set; the password was not returned; Online Accounts did not answer in time | Reported to the controller | The load's error line names the step and cause. "No encryption" also says that no password was requested |
 | The request was cancelled | Not logged again | The controller already recorded the cancellation and its reason at info |
 | Sign-in name, password | Not logged | FR-009 |
@@ -107,30 +107,31 @@ request completes in callbacks where the load's span is not active.
 Written in `mailbag-imap`, inside a load's span. Every failure below is
 reported to the load; this crate writes info and debug lines only. Server text
 is written here, where the sign-in name is known, after every occurrence of
-it, whatever its length, is replaced with `<login>` (FR-011).
+it, whatever its length, is replaced with `<login>` (FR-011). A line about one
+message names it by its UID; the folder is the load's Inbox, which the debug
+line "Inbox opened" names.
 
 | What happens | Decision | Fields and notes |
 |---|---|---|
 | Connected | info | debug adds host, port and the address reached. Written for every real connection, also when a load reconnects |
 | The load reconnects after a structure it could not read | info | Explains a long load and the extra connection lines; each reconnection has its own line |
 | The connection was secured | info | Mode, TLS version |
-| The certificate failed validation; STARTTLS is not offered or failed | Reported to the load | The cause the load already receives. Which certificate check failed is added only if the plan finds it available without new error plumbing; never the certificate's names |
+| The certificate failed validation; STARTTLS is not offered or failed | Reported to the load | The cause the load already receives. A failed TLS handshake adds a debug line with GIO's text for it, such as "An unexpected TLS packet was received" when the encryption chosen in Online Accounts does not match the port, and the certificate checks that failed; never the certificate's names |
 | The server's capabilities | info | The capability list as Mailbag already receives it before sign-in; no request is sent for the log. It describes the server software, not the mailbox |
 | Signed in | info | Method |
 | Sign-in refused; no supported sign-in method | Reported to the load | Response code at error; reply text at debug, sign-in name replaced |
-| The server sent alerts | info: their number; debug: their text, sign-in name replaced | Alerts are server-written sentences for the user |
+| The server sent an alert | info that it arrived; debug its text, sign-in name replaced | Written as each alert arrives, whether the load succeeds or fails. Alerts are server-written sentences for the user; the load's error line also gives the number attached to its failure |
 | The Inbox was opened read-only | info | Number of messages. debug adds folder name, UIDVALIDITY, UIDNEXT |
 | The message list was loaded | info | Rows. debug adds the UID range |
 | A row's list fields (raw From, To, Subject lines) | Not logged | Header values (FR-009) |
 | Part structures were loaded | info | Messages |
-| One message's part tree | debug | Folder, UID, then one line per part: section, content type, `charset`, `format`, `delsp`, disposition, transfer encoding, size. Written where the server's description is read. File names, other parameters, the part's description, content identifiers and an attached message's envelope are left out (FR-009) |
-| One message's structure could not be read | debug | Folder, UID, and whether the server refused or the description could not be parsed. The description itself is not written. Counted in the load's warning |
+| One message's part tree | debug | UID, then one line per part: section, content type, `charset`, `format`, `delsp`, disposition, transfer encoding, size. Written where the server's description is read. File names, other parameters, the part's description, content identifiers and an attached message's envelope are left out (FR-009) |
+| One message's structure could not be read | debug | UID, and whether the server refused or the description could not be parsed. The description itself is not written. Counted in the load's warning |
 | Text was loaded | info | Messages, commands sent |
 | One command's group of messages completed or failed | debug | Sections requested, UIDs, and that it failed when it did |
-| The server did not return one message's text; a message disappeared | debug | Folder, UID, which of the two |
+| The server did not return one message's text; a message disappeared | debug | UID, which of the two |
 | Received part headers and bodies | Not logged | Mail content (FR-009) |
-| A step timed out; the server closed the connection | Reported to the load | Step, wait limit; the closing reply's text at debug, sign-in name replaced |
-| The connection was closed after the load | debug | |
+| A step timed out; the server closed the connection | Reported to the load | Step; the closing reply's text at debug, sign-in name replaced |
 | The IMAP library's own protocol trace | Not logged | Contains credentials and mail; stays compiled out (FR-012) |
 
 ## Message content

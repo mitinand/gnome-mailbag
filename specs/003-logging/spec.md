@@ -307,7 +307,8 @@ describes their mailbox. The limits are:
   to info, but the host is written only at debug.
 - **FR-011 — Debug**: Debug MAY add: folder and label names, UIDs and other
   message identifiers, the server's host, port and address, the message
-  structure, and server text. The structure is, for each part: its section
+  structure, server text, and the TLS library's text for a failed TLS
+  handshake. The structure is, for each part: its section
   number, content type, the parameters `charset`, `format` and `delsp`,
   disposition, transfer encoding and size. A text part left out as a file is
   named by its section; never by its file name. Other parameters, the part's free-text description and

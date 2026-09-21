@@ -45,7 +45,7 @@ not repeat these fields.
 | Span | Fields | Opened by |
 |---|---|---|
 | `load` | `account` (Online Accounts identifier) | `mailbag::inbox::InboxController`, when `begin_load` accepts a load; kept in `RunningLoad`. `WindowUi` starts the loader and reports its result inside this span. `MailLoader` captures the span at entry, enters it in the Online Accounts completion callback and passes a clone with `LoadRequest`; the mail worker attaches it to the load's future. The controller enters the same span for cancellation and for deciding whether to accept or discard a result |
-| `message` | `uid` | `mailbag::inbox_load`, inside the load span, around each of its three calls into `mailbag-content` for one message: selecting its text parts, decoding its received text, and decoding its list headers. `mailbag-content`'s functions do not know which message they work on. Opened only when debug is enabled |
+| `message` | `uid` | `mailbag::inbox_load`, inside the load span, around each of its three calls into `mailbag-content` for one message: selecting its text parts, decoding its received text, and decoding its list headers. `mailbag-content`'s functions do not know which message they work on. `mailbag-imap` opens the same span around reading one message's structure. The folder is the load's Inbox. Opened only when debug is enabled |
 
 A span covers only code that runs inside it. `goa-adapter`'s request for
 settings and the password completes in GIO callbacks outside the span, so
@@ -103,10 +103,9 @@ working file [log events](../log-events.md) plans it for that event.
 
 | Field | Meaning | Lowest level |
 |---|---|---|
-| `messages`, `rows`, `parts`, `commands`, `accounts` | Counts | info |
+| `messages`, `rows`, `parts`, `commands`, `accounts`, `alerts`, `unsupported` | Counts | info |
 | `step`, `cause` | The failing step and cause, as the names of the failure values the UI explains | error |
 | `code` | Server response code, such as `AUTHENTICATIONFAILED` | error |
-| `wait_limit_s` | The wait limit that ran out | error |
 | `capabilities`, `method`, `encryption`, `tls` | Server capability list, sign-in method, encryption mode, TLS version | info |
 | `reason` | Why an account is not shown or a load was cancelled | info |
 | `problem` | An account's problem: attention needed, Mail service unavailable | warning |
@@ -119,7 +118,7 @@ working file [log events](../log-events.md) plans it for that event.
 | `header` | A list header that is absent or did not decode | debug |
 | `rule`, `start_matched` | Why text parts were selected; whether a related set's `start` named a part | debug |
 | `server_text`, `alert` | Server status text and alert text, sign-in name replaced | debug |
-| `certificate_errors` | Names of the certificate checks that failed | debug |
+| `certificate_errors`, `tls_error` | Names of the certificate checks that failed; GIO's text for a failed TLS handshake | debug |
 
 Fields that must never exist, at any level: a password or token, the sign-in
 name, an address, a display name, a subject, any other header value, a file
@@ -173,7 +172,8 @@ Applied together with the first code that writes server text.
   the replacement of the sign-in name that
   [003](../../003-logging/contracts/record.md) defines. Raw commands, mail
   headers and bodies, credentials and library Debug/Display errors are never
-  logged." The sentence "Compile log levels out in native and Flatpak builds"
+  logged, except GIO's text for a failed TLS handshake at debug, which holds
+  fixed phrases of the TLS library and no server data." The sentence "Compile log levels out in native and Flatpak builds"
   is narrowed to the `log` crate, which the IMAP library uses.
 - `002/data-model.md`, LoadFailure: replace "Server text is for plain-text UI
   presentation only, never diagnostics" with "Server text is for plain-text UI

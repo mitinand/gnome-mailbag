@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use async_imap::imap_proto::{BodyContentCommon, BodyStructure};
+use async_imap::imap_proto::{BodyContentCommon, BodyContentSinglePart, BodyStructure};
 
 /// One part of a message as the server's BODYSTRUCTURE describes it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,6 +35,7 @@ impl MessagePart {
 fn project(structure: &BodyStructure<'_>, section: Vec<u32>) -> MessagePart {
     match structure {
         BodyStructure::Multipart { common, bodies, .. } => {
+            log_part(common, &section, None);
             let children = (1..)
                 .zip(bodies)
                 .map(|(number, body)| project(body, [section.as_slice(), &[number]].concat()))
@@ -44,9 +45,47 @@ fn project(structure: &BodyStructure<'_>, section: Vec<u32>) -> MessagePart {
         BodyStructure::Basic { common, other, .. }
         | BodyStructure::Text { common, other, .. }
         | BodyStructure::Message { common, other, .. } => {
+            log_part(common, &section, Some(other));
             describe(common, section, Vec::new(), other.id.as_deref())
         }
     }
+}
+
+/// One part of the tree at debug, inside the message's span. File names,
+/// other parameters, the part's description, its content identifier and an
+/// attached message's envelope are never written (specs/003-logging FR-011).
+fn log_part(
+    common: &BodyContentCommon<'_>,
+    section: &[u32],
+    single_part: Option<&BodyContentSinglePart<'_>>,
+) {
+    let parameter = |name: &str| {
+        common
+            .ty
+            .params
+            .iter()
+            .flatten()
+            .find(|(parameter, _)| parameter.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_ref())
+    };
+    tracing::debug!(
+        section = section
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join("."),
+        content_type = format!("{}/{}", common.ty.ty, common.ty.subtype),
+        charset = parameter("charset"),
+        format = parameter("format"),
+        delsp = parameter("delsp"),
+        disposition = common
+            .disposition
+            .as_ref()
+            .map(|disposition| disposition.ty.as_ref()),
+        transfer_encoding = single_part.map(|part| tracing::field::debug(&part.transfer_encoding)),
+        size = single_part.map(|part| part.octets),
+        "message part"
+    );
 }
 
 /// A Content-ID is written `<name@host>` in the header and reported that way;

@@ -9,9 +9,27 @@ use async_imap::{
     Authenticator, Client, Session,
     error::{Error, StatusResponse},
     imap_proto::{Response, ResponseCode, Status},
-    types::UnsolicitedResponse,
+    types::{Capabilities, Capability, UnsolicitedResponse},
 };
 use std::io;
+
+/// Server text for a debug line: every occurrence of the sign-in name, in any
+/// ASCII letter case and whatever its length, is replaced with `<login>`
+/// (specs/003-logging/research.md §6). The rest of the text is kept as sent.
+pub(crate) fn server_text_for_log(sign_in_name: &str, text: &str) -> String {
+    let lowercase_text = text.to_ascii_lowercase();
+    let lowercase_name = sign_in_name.to_ascii_lowercase();
+    let mut logged_text = String::with_capacity(text.len());
+    let mut copied = 0;
+    // ASCII lowercasing keeps every byte position, so matches index `text`.
+    for (start, _) in lowercase_text.match_indices(&lowercase_name) {
+        logged_text.push_str(&text[copied..start]);
+        logged_text.push_str("<login>");
+        copied = start + lowercase_name.len();
+    }
+    logged_text.push_str(&text[copied..]);
+    logged_text
+}
 
 /// A signed-in session with the Inbox open read-only.
 pub(crate) struct InboxSession {
@@ -47,8 +65,9 @@ impl From<&StatusResponse> for ServerReply {
 }
 
 /// What the server said during an attempt that can explain its failure.
-#[derive(Default)]
 pub(crate) struct ServerNotices {
+    /// Replaced with `<login>` wherever server text reaches the record.
+    sign_in_name: String,
     /// ALERT texts, which RFC 3501 requires to reach the user.
     alerts: Vec<String>,
     /// The BYE with which the server closed the connection, for example
@@ -57,6 +76,14 @@ pub(crate) struct ServerNotices {
 }
 
 impl ServerNotices {
+    pub(crate) fn new(sign_in_name: &str) -> Self {
+        Self {
+            sign_in_name: sign_in_name.to_owned(),
+            alerts: Vec::new(),
+            bye: None,
+        }
+    }
+
     /// Keeps the ALERT and BYE texts among waiting unilateral responses.
     pub(crate) fn collect(
         &mut self,
@@ -83,6 +110,11 @@ impl ServerNotices {
         };
         let text = information.as_deref().unwrap_or_default();
         if matches!(code, Some(ResponseCode::Alert)) {
+            tracing::info!("the server sent an alert");
+            tracing::debug!(
+                alert = server_text_for_log(&self.sign_in_name, text),
+                "the server sent an alert"
+            );
             self.alerts.push(text.to_owned());
         }
         if status == Some(&Status::Bye) {
@@ -93,11 +125,20 @@ impl ServerNotices {
         }
     }
 
-    /// The error for a failed step, with what the server said about it.
+    /// The error for a failed step, with what the server said about it. Every
+    /// failed step passes here, so the server's text is logged here as well.
     pub(crate) fn error(&mut self, failure: StepFailure) -> ImapError {
+        let server_reply = failure.server_reply.or_else(|| self.bye.take());
+        if let Some(reply) = &server_reply {
+            tracing::debug!(
+                code = reply.code.as_deref(),
+                server_text = server_text_for_log(&self.sign_in_name, &reply.text),
+                "the server's reply to the failed step"
+            );
+        }
         ImapError {
             failure: failure.failure,
-            server_reply: failure.server_reply.or_else(|| self.bye.take()),
+            server_reply,
             alerts: std::mem::take(&mut self.alerts),
         }
     }
@@ -114,14 +155,14 @@ pub(crate) async fn open_inbox(
         transport::connect(&account.host, account.encryption, socket_timeout_seconds).await?;
     let client = match account.encryption {
         Encryption::ImplicitTls => {
-            let tls = transport::start_tls(&connection, &identity).await?;
+            let tls = transport::start_tls(&connection, &identity, account.encryption).await?;
             let mut client = Client::new(GioStream::new(tls));
             read_greeting(&mut client, notices).await?;
             client
         }
         Encryption::StartTls => {
             upgrade_plaintext(&connection).await?;
-            let tls = transport::start_tls(&connection, &identity).await?;
+            let tls = transport::start_tls(&connection, &identity, account.encryption).await?;
             // The server sends no second greeting after STARTTLS.
             Client::new(GioStream::new(tls))
         }
@@ -130,6 +171,13 @@ pub(crate) async fn open_inbox(
     let examined = session.examine("INBOX").await;
     notices.collect(|| session.unsolicited_responses.try_recv().ok());
     let mailbox = examined.map_err(|error| command_failure(ImapStep::OpenInbox, &error))?;
+    tracing::info!(messages = mailbox.exists, "Inbox opened");
+    tracing::debug!(
+        folder = "INBOX",
+        uid_validity = mailbox.uid_validity,
+        uid_next = mailbox.uid_next,
+        "Inbox opened"
+    );
     Ok(InboxSession {
         session,
         uid_validity: mailbox.uid_validity,
@@ -210,22 +258,30 @@ async fn sign_in(
     let capabilities = client.capabilities().await;
     notices.collect(|| client.unsolicited_responses().try_recv().ok());
     let capabilities = capabilities.map_err(|error| command_failure(ImapStep::SignIn, &error))?;
-    let signed_in = if capabilities.has_str("AUTH=PLAIN") {
+    tracing::info!(
+        capabilities = capability_names(&capabilities),
+        "server capabilities"
+    );
+    let (method, signed_in) = if capabilities.has_str("AUTH=PLAIN") {
         let credentials = PlainCredentials {
             login: &account.login,
             password: &account.password,
             sent: false,
         };
-        client.authenticate("PLAIN", credentials).await
+        ("PLAIN", client.authenticate("PLAIN", credentials).await)
     } else if !capabilities.has_str("LOGINDISABLED") {
         // The fork sends a non-ASCII login or password as a literal.
-        client.login(&account.login, &account.password).await
+        (
+            "LOGIN",
+            client.login(&account.login, &account.password).await,
+        )
     } else {
         return Err(ImapFailure::NoSignInMethod.into());
     };
     match signed_in {
         Ok(session) => {
             notices.collect(|| session.unsolicited_responses.try_recv().ok());
+            tracing::info!(method, "signed in");
             Ok(session)
         }
         Err((error, client)) => {
@@ -233,6 +289,19 @@ async fn sign_in(
             Err(command_failure(ImapStep::SignIn, &error))
         }
     }
+}
+
+/// The capability list as the server named it, for the record.
+fn capability_names(capabilities: &Capabilities) -> String {
+    capabilities
+        .iter()
+        .map(|capability| match capability {
+            Capability::Imap4rev1 => "IMAP4rev1".to_owned(),
+            Capability::Auth(mechanism) => format!("AUTH={mechanism}"),
+            Capability::Atom(name) => name.clone(),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The SASL PLAIN response. async-imap adds the base64 framing.

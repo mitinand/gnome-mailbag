@@ -138,7 +138,7 @@ fn lines_that_cannot_be_written_are_dropped_and_work_continues() {
     let load_result = tracing::subscriber::with_default(record, || {
         tracing::error_span!("load", account = "account_1726920000_0").in_scope(|| {
             tracing::error!(cause = "TimedOut", "load failed");
-            tracing::debug!("connection closed");
+            tracing::debug!("text loaded");
             "the load's result"
         })
     });

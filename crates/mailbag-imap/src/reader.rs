@@ -4,7 +4,9 @@
 use crate::{
     ImapAccount, ImapError, ImapFailure, ImapStep, MessageList, MessagePart, MessageRow,
     MessageText, ReceivedPart, ServerReply, TextParts, TextRequest,
-    session::{self, InboxSession, ServerNotices, StepFailure, command_failure},
+    session::{
+        self, InboxSession, ServerNotices, StepFailure, command_failure, server_text_for_log,
+    },
     transport,
 };
 use async_imap::{
@@ -72,7 +74,7 @@ impl InboxReader {
         account: ImapAccount,
         socket_timeout_seconds: u32,
     ) -> Result<Self, ImapError> {
-        let mut notices = ServerNotices::default();
+        let mut notices = ServerNotices::new(&account.login);
         match session::open_inbox(&account, socket_timeout_seconds, &mut notices).await {
             Ok(inbox) => Ok(Self {
                 account,
@@ -109,6 +111,14 @@ impl InboxReader {
             .fetch(MessageSet::Sequence(first, count), ROW_ITEMS)
             .await?;
         let rows = collect_rows(&responses.fetches, first, count);
+        if !rows.is_empty() {
+            tracing::info!(rows = rows.len(), "message list loaded");
+            tracing::debug!(
+                folder = "INBOX",
+                uids = format!("{}:{}", rows[rows.len() - 1].uid, rows[0].uid),
+                "message list loaded"
+            );
+        }
         match responses.end {
             FetchEnd::Failed(error) => {
                 Err(self.error(command_failure(ImapStep::FetchMessages, &error)))
@@ -158,6 +168,10 @@ impl InboxReader {
         if structures.is_empty() {
             return Err(self.error(ImapFailure::InboxChanged.into()));
         }
+        for uid in uids.iter().filter(|uid| !structures.contains_key(uid)) {
+            tracing::debug!(uid, "message disappeared");
+        }
+        tracing::info!(messages = structures.len(), "part structures loaded");
         Ok(structures)
     }
 
@@ -186,6 +200,10 @@ impl InboxReader {
                 FetchEnd::Completed => {}
                 FetchEnd::Rejected(_) => keep_rows_without_structure(&[uid], structures),
                 FetchEnd::Failed(error) if is_parse_failure(&error) => {
+                    tracing::debug!(
+                        uid,
+                        "structure could not be read: the description could not be parsed"
+                    );
                     structures.insert(uid, None);
                 }
                 FetchEnd::Failed(error) => {
@@ -198,6 +216,7 @@ impl InboxReader {
 
     /// Replaces the session with a fresh one on the same Inbox.
     async fn reconnect(&mut self) -> Result<(), ImapError> {
+        tracing::info!("reconnecting after a structure that could not be read");
         self.inbox.connection.close();
         let opened = session::open_inbox(
             &self.account,
@@ -225,6 +244,7 @@ impl InboxReader {
         requests: Vec<TextRequest>,
         mut on_message: impl FnMut(u32, MessageText),
     ) -> Result<(), ImapError> {
+        let messages = requests.len();
         let mut uids_by_parts = BTreeMap::<TextParts, Vec<u32>>::new();
         for request in requests {
             uids_by_parts
@@ -232,6 +252,7 @@ impl InboxReader {
                 .or_default()
                 .push(request.uid);
         }
+        let commands = uids_by_parts.len();
         for (parts, uids) in uids_by_parts {
             let paths = section_paths(&parts);
             let items = paths
@@ -242,17 +263,46 @@ impl InboxReader {
             let responses = self
                 .fetch(MessageSet::Uids(&uids), &format!("(UID {items})"))
                 .await?;
+            let sections = || {
+                paths
+                    .iter()
+                    .map(|(_, body)| body.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
             let rejected = match responses.end {
                 FetchEnd::Completed => false,
                 FetchEnd::Rejected(_) => true,
                 FetchEnd::Failed(error) => {
+                    tracing::debug!(
+                        sections = sections(),
+                        uids = uid_set(&uids),
+                        "text command failed"
+                    );
                     return Err(self.error(command_failure(ImapStep::FetchText, &error)));
                 }
             };
+            tracing::debug!(
+                sections = sections(),
+                uids = uid_set(&uids),
+                rejected,
+                "text command ended"
+            );
             for uid in uids {
-                on_message(uid, message_text(&responses.fetches, uid, &paths, rejected));
+                let text = message_text(&responses.fetches, uid, &paths, rejected);
+                match text {
+                    MessageText::NotReturned => {
+                        tracing::debug!(uid, "text not returned");
+                    }
+                    MessageText::Disappeared => {
+                        tracing::debug!(uid, "message disappeared");
+                    }
+                    MessageText::Received(_) => {}
+                }
+                on_message(uid, text);
             }
         }
+        tracing::info!(messages, commands, "text loaded");
         Ok(())
     }
 
@@ -279,6 +329,13 @@ impl InboxReader {
             },
         };
         self.collect_notices();
+        if let FetchEnd::Rejected(reply) = &responses.end {
+            tracing::debug!(
+                code = reply.code.as_deref(),
+                server_text = server_text_for_log(&self.account.login, &reply.text),
+                "the server refused the command"
+            );
+        }
         if matches!(&responses.end, FetchEnd::Failed(error) if is_parse_failure(error)) {
             self.inbox.connection.close();
             self.needs_reconnect = true;
@@ -371,6 +428,8 @@ fn keep_structures(
             continue;
         };
         if let Some(structure) = fetch.bodystructure() {
+            // The part tree's debug lines name the message through this span.
+            let _message = tracing::debug_span!("message", uid).entered();
             structures.insert(uid, Some(MessagePart::from_body_structure(structure)));
         }
     }
@@ -380,7 +439,10 @@ fn keep_structures(
 /// unreadable structure: the server failed to answer, it did not delete it.
 fn keep_rows_without_structure(uids: &[u32], structures: &mut BTreeMap<u32, Option<MessagePart>>) {
     for &uid in uids {
-        structures.entry(uid).or_insert(None);
+        structures.entry(uid).or_insert_with(|| {
+            tracing::debug!(uid, "structure could not be read: the server refused it");
+            None
+        });
     }
 }
 

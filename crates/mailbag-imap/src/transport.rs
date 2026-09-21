@@ -49,7 +49,21 @@ pub(crate) async fn connect(
         .connect_future(&address)
         .await
         .map_err(|error| step_failure(ImapStep::Connect, &error))?;
+    tracing::info!("connected");
+    tracing::debug!(
+        host = address.hostname().as_str(),
+        port = address.port(),
+        address = remote_address(&connection),
+        "connected"
+    );
     Ok((ServerConnection(connection), address))
+}
+
+/// The IP address the connection reached.
+fn remote_address(connection: &gio::SocketConnection) -> Option<String> {
+    let address = connection.remote_address().ok()?;
+    let address = address.downcast::<gio::InetSocketAddress>().ok()?;
+    Some(address.address().to_str().to_string())
 }
 
 /// Performs a TLS handshake verified against GIO's default certificate
@@ -57,13 +71,25 @@ pub(crate) async fn connect(
 pub(crate) async fn start_tls(
     connection: &ServerConnection,
     identity: &gio::NetworkAddress,
+    encryption: Encryption,
 ) -> Result<gio::IOStream, ImapFailure> {
     let secure_connection = |error: glib::Error| step_failure(ImapStep::SecureConnection, &error);
     let tls =
         gio::TlsClientConnection::new(&connection.0, Some(identity)).map_err(secure_connection)?;
-    tls.handshake_future(glib::Priority::DEFAULT)
-        .await
-        .map_err(secure_connection)?;
+    if let Err(error) = tls.handshake_future(glib::Priority::DEFAULT).await {
+        // The TLS library's fixed phrases, such as "An unexpected TLS packet
+        // was received" for a port that expects STARTTLS; its code alone is
+        // `Misc` there (specs/003-logging/research.md §7).
+        let certificate_errors = tls.peer_certificate_errors();
+        tracing::debug!(
+            tls_error = error.message(),
+            certificate_errors =
+                (!certificate_errors.is_empty()).then(|| tracing::field::debug(certificate_errors)),
+            "TLS handshake failed"
+        );
+        return Err(secure_connection(error));
+    }
+    tracing::info!(?encryption, tls = ?tls.protocol_version(), "connection secured");
     Ok(tls.upcast())
 }
 
