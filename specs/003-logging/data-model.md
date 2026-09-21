@@ -6,27 +6,32 @@ reads. These are the few values it holds while a run with logging on lasts.
 | Value | Owner | Contents | Lifetime |
 |---|---|---|---|
 | Chosen level | `mailbag::logging` | One of error, warning, info, debug | Set once at start; never changes during the run |
-| Line queue | `mailbag::logging` | A bounded number of formatted lines waiting for the writer (1,024 to start with; an internal value) | The run |
-| Lost-line count | `mailbag::logging` | Lines dropped since the writer last reported them | Reset each time it is reported |
 | Operation counter | `mailbag::logging` | The last number given to a load | The run; starts at 1 |
-| Account labels | `mailbag::logging` | For identifiers Online Accounts did not generate: identifier → `account-N` | The run. Generated identifiers need no entry |
-| Load span | `mailbag::inbox_load` | Account label, operation identifier | From Refresh Inbox to the load's result |
+| Account labels | `mailbag::logging` | Account identifier → `N` of `account-N`, in order of first appearance; the identifier itself is never written | The run |
+| Load span | `mailbag::inbox::RunningLoad` | Account label, operation identifier; clones used by the loader and its callbacks | From an accepted Refresh Inbox until the result is accepted or discarded; cancellation is recorded before dropping the handle |
+| Load start time | `mailbag::inbox::RunningLoad` | Elapsed-time starting point for the final line | The running load, only with logging on |
 
-With logging off none of these exist: no subscriber is installed, no thread is
-started, and operations take no numbers.
+With logging off none of these exist: no subscriber is installed, and
+operations and accounts take no numbers.
 
-## Lost lines
+Cancellation and result applicability remain decisions of `InboxController`,
+using its existing cancellation handle and `show_result` check. Logging adds
+no second load state machine. A cancelled load may still have a pending
+callback; that callback does not write a second final line
+([record contract](contracts/record.md#load-outcomes-and-cancellation)).
 
-A line that does not fit into the queue, or whose write fails, is counted and
-dropped. The writer keeps taking lines from the queue while writes fail, so
-the queue cannot stay full because of a reader that went away, and it tries
-to write again with every line. The first write that succeeds is preceded by
-the count. This is behavior of the writer, not a state anyone else reads.
+The completion summary uses only what the received batch already holds.
+Messages that disappeared during a load are the difference between the rows
+of the "message list loaded" line and the messages of the final line; no
+count is carried for the log, and their UIDs are debug lines where they are
+observed.
 
 ## What is deliberately not modelled
 
 - No record of past operations, errors or lines is kept in memory
   ([spec, Clarifications](spec.md#clarifications)).
 - No per-account or per-component level.
+- No queue of lines and no count of lost lines; lines go straight to the
+  standard error stream ([research §3](research.md#3-writing-to-the-standard-error-stream)).
 - No structured form of a line after it is formatted; the format is not a
   contract for programs.

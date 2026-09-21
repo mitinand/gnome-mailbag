@@ -43,8 +43,10 @@ Checked items describe specification quality, not implementation or approval.
   They are kept to [log events](../log-events.md) and the debug requirements.
 - Each edge case states a scenario that can occur today and its visible result
   (constitution I). Cases considered and left out: a bounded log file, passing
-  the option to a start without a terminal, a fifth level for header values.
-- Two points change earlier documents and are listed in the spec's
-  Assumptions: the Online Accounts identifier as the account label (001
-  research, already amended) and server status text at debug (002 IMAP reading
-  contract and data model, amended with the plan).
+  the option to a start without a terminal, a fifth level for header values,
+  a queue with a count of lost lines, the shape of attachment file names.
+- One point changes earlier documents and is listed in the spec's
+  Assumptions: server status text at debug (002 IMAP reading contract and
+  data model, amended in the portion that first writes server text). 001 is
+  not changed: accounts are labelled by a number, and the Online Accounts
+  identifier stays out of the record.

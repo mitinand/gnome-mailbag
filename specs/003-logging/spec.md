@@ -27,8 +27,8 @@ observation, the Inbox load and text decoding. They are listed in
 
 The lasting guarantees are: nothing is recorded unless the person asked for it
 (FR-001); the privacy limits of each level (FR-009–012); one meaning of the
-levels for every feature (FR-004–008); and that logging never slows the
-interface or fails an operation (FR-016).
+levels for every feature (FR-004–008); and that logging never fails an
+operation and costs nothing when it is off (FR-016).
 
 ## Clarifications
 
@@ -54,8 +54,14 @@ interface or fails an operation (FR-016).
   fifth level and no constitution amendment.
 - Q: Is the server host name written at info? → A: No, at debug. A personal
   domain identifies its owner, and info must be publishable as it is.
-- Q: Are durations recorded? → A: Yes. Whole steps at info, single messages and
-  decoding stages at debug.
+- Q: Are durations recorded? → A: Only the total of an operation, on its final
+  line. Every line already carries its time with milliseconds, taken when the
+  event happens, and the steps of one operation follow each other, so a
+  step's duration is the difference between two lines, for a failed step as
+  well. The total is a field because at level error the starting line is not
+  shown. Timing of decoding in fractions of a millisecond is a matter for a
+  benchmark, not for the record. A duration field can be added to any line
+  later; the format is not a contract.
 - Q: Should Mailbag keep anything about errors while logging is off, such as
   an error file or a short record in memory written out when an error happens?
   → A: No. A person learns about an error from the UI, at once and with
@@ -65,14 +71,13 @@ interface or fails an operation (FR-016).
   a background record is decided then, as an amendment to this spec. FR-001
   stays as it is.
 - Q: Does a line name its account by the GNOME Online Accounts identifier or
-  by a number given within the record? → A: By the Online Accounts identifier
-  with the provider type. It holds the account's creation time and a counter,
-  nothing personal; it is the same in every run, so two records can be
-  compared; and the person can find the account by it in their Online Accounts
-  configuration. 001's research note is amended: the identifier may be logged,
-  the address and display name may not. Planning found that Online Accounts
-  also accepts identifiers it did not generate; those get a number within the
-  record instead (FR-013).
+  by a number given within the record? → A: By a number, with the provider
+  type, such as `account-2 imap`. Online Accounts also accepts identifiers it
+  did not generate, which can hold any text, and a generated one holds the
+  account's creation time; a number holds nothing. Accounts are observed in
+  the order of their identifiers, so the same accounts get the same numbers in
+  every run and two records can still be compared. 001's rule that account
+  identifiers are not logged stays as it is.
 - Q: A server's status reply can repeat the sign-in name, which is never
   recorded. Is server text still written at debug? → A: Yes. It is often the
   whole diagnosis, and a user attaches the record, not the window. Before
@@ -84,11 +89,24 @@ interface or fails an operation (FR-016).
   is present but no value came out, or the value contains replacement
   characters. The shape is read from the raw header bytes. No second decoder
   is built, and no cause of the decoding failure is claimed.
-- Q: Are attachment file names written at debug? → A: No, their shape is. A
-  name such as a scanned passport's is personal, and what diagnosis needs is
-  the rest: which parameter carried the name, how it was encoded, its length
-  and its extension. Values of headers and of file names are thus never
-  recorded, without exception.
+- Q: Are attachment file names written at debug? → A: No. The record says
+  which parameters of a part carry a name, which is all that the choice of
+  text parts looks at. Nothing in Mailbag uses the name itself yet; its shape
+  and extension arrive with the feature that handles attachments. Values of
+  headers and of file names are thus never recorded, without exception.
+- Q: Is the record written through a queue and a thread of its own, so that a
+  stream nobody reads cannot block Mailbag? → A: No. Lines go straight to the
+  standard error stream, as GLib's own warnings do in every GNOME
+  application. A terminal and a redirection to a file do not block. A pipe
+  whose reader has stopped does, and then Mailbag waits until it is read
+  again; the person who set up that pipe sees it at once and can undo it.
+  The maintainer accepted this reading of constitution V for output that
+  exists only on request. A queue, a count of lost lines and a bounded wait
+  at quit are not worth their cost for that one case.
+- Q: Does the error line repeat the UI's wording of the step and cause? → A:
+  It names the same failure values, such as `step=SignIn cause=TimedOut`. The
+  UI's wording is rewritten by the error presentation feature; sharing it now
+  would mean reworking UI code for the record.
 
 ## User Scenarios & Testing
 
@@ -112,7 +130,7 @@ looking at the application window.
    stream and creates no file. GTK and GLib warnings appear as in any GNOME
    application.
 2. **Given** the level is info, **when** a load succeeds, **then** the record
-   shows the load's steps with their durations and message counts, and no
+   shows the load's steps with their times and message counts, and no
    line is about a single message: Inboxes of 1 and of 100 ordinary messages
    give the same number of info lines.
 3. **Given** the level is debug, **when** a message's content could not be
@@ -126,8 +144,8 @@ looking at the application window.
    line names its UID, so the person can tell which lines belong to the message
    they see on screen.
 5. **Given** a load fails, **then** the record has exactly one error line for
-   it, with the same step and cause the UI shows, and no error lines for steps
-   that could not run.
+   it, naming the same step and cause the UI explains, and no error lines for
+   steps that could not run.
 6. **Given** a load is cancelled because its account was excluded or Mailbag
    quits, **then** the record has an info line and no warning or error.
 
@@ -194,8 +212,8 @@ info and at debug.
 |---|---|---|
 | The level option is given while Mailbag is already running | The second start prints that logging was not turned on and that Mailbag must be quit first. The running instance is unchanged | Mailbag is a single-instance application: the second start only raises the existing window, so the person following the README would get an empty file |
 | The level option has a value that is not a level, such as `debg` | Mailbag does not start. It prints the accepted levels | A typing mistake would otherwise give a run without a record, found only after reproducing the problem |
-| Nothing reads the stream, for example `… 2>&1 \| less` left unscrolled | Mailbag stays usable and operations finish. Lines that could not be written are lost, and the record says how many when writing resumes | A full pipe blocks the writer; constitution V. A silent gap would make the record untruthful; constitution III |
-| The stream cannot be written at all, for example the redirect's disk is full | Mailbag keeps working. No operation fails because of logging | Constitution V |
+| Nothing reads the stream, for example `… 2>&1 \| less` left unscrolled | Mailbag waits at its next line until the stream is read again, then continues. Nothing is lost and no operation fails | The person set up the pipe, sees the effect at once and can undo it. A terminal and a file do not block. GLib's own warnings behave the same way |
+| The stream cannot be written at all, for example the redirect's disk is full | Mailbag keeps working. The lines are not written and no operation fails because of logging | A failed write is an error the writer can ignore, not a wait |
 | A server's status reply names the account, for example `NO [AUTHENTICATIONFAILED] user@example.com rejected` | At debug the reply is written with the sign-in name replaced by `<login>`: `NO [AUTHENTICATIONFAILED] <login> rejected`. At error, warning and info only the response code appears | Mailbag knows the sign-in name and can replace it. It cannot tell which other words of a server's sentence are personal, so the README says debug contains server replies |
 | A value taken from mail or from the server contains line breaks or control characters | One line per event; the characters are escaped | Senders and servers control these values |
 
@@ -232,8 +250,8 @@ info and at debug.
   failed, the account list could not be read. Each failed operation MUST
   produce exactly one error line, written by whoever gives the operation up
   (the load for an Inbox load, the account observer for a read of the account
-  list), with the same step and cause the UI shows. Steps that could not run
-  MUST NOT produce error lines.
+  list), naming the same step and cause the UI explains. Steps that could not
+  run MUST NOT produce error lines.
 - **FR-005 — Warning**: An operation completed, but its result is worse than
   normal or Mailbag took a workaround: the server refused to finish the message
   list, some messages have content that could not be read, an account needs
@@ -258,11 +276,14 @@ info and at debug.
   promise that a defect can be rebuilt from it, and a description that could
   not be read is not written out. Debug's volume grows with the number of
   messages.
-- **FR-008 — Durations**: The line that ends a step MUST give the step's
-  duration. Whole steps with their message counts are info: connecting and
-  signing in, loading the message list, loading text. Durations of a single
-  message, a group of messages read by one command and a decoding stage are
-  debug.
+- **FR-008 — Times and durations**: Every line carries the time of its event
+  with milliseconds (FR-014), so the duration of a step is the difference
+  between the line that ends it and the line before it in the same operation.
+  The final line of an operation MUST give the operation's total duration:
+  a load that finished, failed or was cancelled, a read of the account list,
+  an attempt to open Settings. For a cancelled load this is the time until
+  cancellation was requested, without waiting for the worker to stop. Single
+  steps, messages and decoding stages carry no duration of their own.
 
 A failure of one message inside an operation therefore produces two things: a
 warning on the operation with a count and no identifiers, and a debug line for
@@ -279,14 +300,12 @@ describes their mailbox. The limits are:
 - **FR-009 — Never recorded**: At no level: passwords, tokens and other
   credentials, sign-in names, message bodies, attachment content, and the
   values of message headers, including subjects and addresses, also those of an
-  attached message inside a part tree, and attachment file names. Where a
-  value matters for diagnosis, debug records its shape instead: the character
-  set its encoded words declare, their encoding (B or Q), the length, and
-  whether raw 8-bit bytes or replacement characters are present. For a list
-  header the shape is recorded when the header is present but no value came
-  out of decoding, or the value contains replacement characters; an absent
-  header is recorded as absent. For a file name the shape is recorded with
-  the part (FR-011).
+  attached message inside a part tree, and attachment file names. For a list
+  header, debug records the shape of its value instead: the character set its
+  encoded words declare, their encoding (B or Q), the length in bytes and
+  whether raw 8-bit bytes are present. The shape is recorded when the header
+  is present but no value came out of decoding, or the value contains
+  replacement characters; an absent header is recorded as absent.
 - **FR-010 — Publishable levels**: Lines at error, warning and info MUST NOT
   contain folder or label names, message identifiers, file names, server host
   names or addresses, or the text of server replies, so Mailbag's lines at
@@ -298,9 +317,10 @@ describes their mailbox. The limits are:
   message identifiers, the server's host, port and address, the message
   structure, and server text. The structure is, for each part: its section
   number, content type, the parameters `charset`, `format` and `delsp`,
-  disposition, transfer encoding and size, and for a file name: which
-  parameter carried it, its shape (FR-009) and its extension when the raw
-  value shows one. Other parameters, the part's free-text description and
+  disposition, transfer encoding and size, and which parameters carry a file
+  name, in Content-Type and in Content-Disposition, including the extended
+  and continued forms; never a name's value.
+  Other parameters, the part's free-text description and
   content identifiers are left out. Server text is the text of a
   status reply, meaning the completion of a command or the reply with which
   the server closes a connection, and of an alert. Before it is written, every
@@ -315,19 +335,18 @@ describes their mailbox. The limits are:
 **What a line carries**
 
 - **FR-013 — Account and operation**: Every line about an account MUST name it
-  by a label that is impersonal and stable: the identifier GNOME Online
-  Accounts generates for the account (`account_`, its creation time and a
-  counter), with the provider type; never the mail address or the account's
-  display name. An identifier of any other form, which an administrator's
-  template or another program can supply, MUST be replaced by a number given
-  within the record. Every line of an operation whose lines must be
+  by a label that is impersonal: a number given when the account first appears
+  in the record, with the provider type, such as `account-2 imap`; never the
+  mail address, the account's display name or its GNOME Online Accounts
+  identifier. The same set of accounts MUST get the same numbers in every
+  run. Every line of an operation whose lines must be
   read together, such as an Inbox load, MUST carry that operation's identifier,
   unique within the record, so that they can be told apart from work for
   another account beside it. An operation reported by a single line, such as a
   read of the account list, needs none. A line
-  about a message MUST say which message. Step and cause are named in
-  Mailbag's words ("sign in", "refused by the server"), not in one protocol's,
-  so an HTTP provider fits without new rules.
+  about a message MUST say which message. A failure names its step and cause
+  by the failure values Mailbag already has, the ones the UI explains, not by
+  one protocol's replies, so an HTTP provider fits without new rules.
 - **FR-014 — Line format**: One event is one line that gives: the time with
   milliseconds and the offset from UTC, the level, where in Mailbag the line
   was written, the account label and operation identifier when there are any,
@@ -338,8 +357,8 @@ describes their mailbox. The limits are:
   it. For illustration only:
 
   ```text
-  2026-09-21T14:03:15.102+03:00  INFO load{account="account_1726480000_0 imap" operation="load-3"}: mailbag_imap::session: signed in duration_ms=412
-  2026-09-21T14:03:16.020+03:00  WARN load{account="account_1726480000_0 imap" operation="load-3"}: mailbag::inbox_load: some messages have content that could not be read messages=2 of=100
+  2026-09-21T14:03:15.102+03:00  INFO load{account="account-1 imap" operation="load-3"}: mailbag_imap::session: signed in method="PLAIN"
+  2026-09-21T14:03:16.020+03:00  WARN load{account="account-1 imap" operation="load-3"}: mailbag::inbox: some messages have content that could not be read messages=2 of=100
   ```
 
 - **FR-015 — First line**: Whenever logging is on, at any level, Mailbag's
@@ -349,11 +368,12 @@ describes their mailbox. The limits are:
 
 **Other guarantees**
 
-- **FR-016 — Never in the way**: Writing the record MUST NOT block GTK's main
-  thread and MUST NOT make an operation fail or wait. When lines cannot be
-  written, Mailbag MUST drop them and keep working, and MUST state the number
-  of lost lines in the record when writing resumes. With logging off, the cost
-  MUST be negligible.
+- **FR-016 — Never in the way**: Logging MUST NOT make an operation fail: a
+  line that cannot be written is dropped and work continues. Lines are written
+  straight to the standard error stream, as GLib's own warnings are; when the
+  person has piped the stream to a reader that stopped, Mailbag waits until
+  it is read again (Clarifications). With logging off, the cost MUST be
+  negligible: nothing is installed and no line is built.
 - **FR-017 — Log events of every feature**: Every operation, failure and
   unusual result of the application MUST have a decision about logging: logged
   or not, the level and the fields. "Not logged" is a valid decision and is
@@ -372,11 +392,12 @@ describes their mailbox. The limits are:
 
 - **Record**: Everything Mailbag wrote during one run with logging on. Its
   first line is FR-015's, and it belongs to the person who started the run.
-- **Line**: One event: time, level, component, account label, operation
-  identifier, text and fields.
+- **Line**: One event: time, level, where in Mailbag it was written, account
+  label, operation identifier, text and fields.
 - **Level**: error, warning, info or debug, with the meaning FR-004–007 give it
   and the limits of FR-009–011.
-- **Account label**: The impersonal name of an account in a record.
+- **Account label**: The impersonal name of an account in a record: a number
+  and the provider type.
 - **Operation identifier**: A short name of one operation, such as one Inbox
   load, unique within the record.
 - **List of log events**: A feature's table of what it does and how each
@@ -391,12 +412,12 @@ describes their mailbox. The limits are:
   new files. It is checked on the real streams of a started Mailbag, not only
   on a test's buffer (FR-001).
 - **SC-002**: With known markers in the test fixtures, an automated check finds
-  at info none of: password, sign-in name, folder name, host name, subject,
-  address, file name, body text; and at debug none of: password, sign-in name,
-  subject, address, file name, body text, including those of an attached
-  message and a sign-in name of two characters that the test server repeats in
-  its refusal. The check reads
-  Mailbag's lines (US3; FR-009–012).
+  at info none of: password, sign-in name, Online Accounts identifier, folder
+  name, host name, subject, address, file name, body text; and at debug none
+  of: password, sign-in name, Online Accounts identifier, subject, address,
+  file name, body text, including those of an attached message and a sign-in
+  name of two characters that the test server repeats in its refusal. The
+  check reads Mailbag's lines (US3; FR-009–013).
 - **SC-003**: For each defective test message (unknown character set, unknown
   transfer encoding, undecodable part, structure the server cannot describe,
   text the server does not return, list header whose value does not come out),
@@ -405,13 +426,14 @@ describes their mailbox. The limits are:
   and for the header case the header's name and shape, with no cause claimed
   (US1; FR-007, FR-009).
 - **SC-004**: Every failed load that 002 can show produces exactly one error
-  line whose step and cause match the UI's explanation; every cancelled load
-  produces zero warning and error lines; an incomplete message list and
+  line whose step and cause are the failure the UI explains; every cancelled
+  load produces zero warning and error lines; an incomplete message list and
   unreadable content each produce one warning (FR-004–006).
 - **SC-005**: Inboxes of 1 and of 100 ordinary messages, loaded without a
-  reconnection, produce the same number of info lines, each ending step with a
-  duration. A load that reconnects adds only the lines of its connections
-  (FR-006, FR-008).
+  reconnection, produce the same number of info lines. A load that reconnects
+  adds only the lines of its connections. The final line of every load, read
+  of the account list and attempt to open Settings gives a total duration,
+  on failure and cancellation as well (FR-006, FR-008).
 - **SC-006**: Every line about an account carries its label, and every line of
   a load carries that load's identifier, also while account observation reports
   changes during the load (FR-013).
@@ -419,9 +441,9 @@ describes their mailbox. The limits are:
   on the installed Flatpak build and obtains a file with the first line and the
   run's lines, without adding a permission. Starting it a second time while
   Mailbag runs prints the explanation instead (US2; FR-002, FR-015, FR-018).
-- **SC-008**: With the stream's reader stalled during a load at debug, the
-  window stays usable and the load finishes; after the reader resumes, the
-  record states how many lines were lost (FR-016).
+- **SC-008**: With the stream unwritable during a load at debug, the load
+  finishes and the window stays usable; with the stream piped to a reader
+  that reads, a load at debug finishes without a visible delay (FR-016).
 - **SC-009**: Every failure and state that 001 and 002 can show in the UI has
   an entry in [log events](log-events.md), every entry matches what the code
   does today, and each entry marked as logged is covered by an automated test
@@ -441,11 +463,8 @@ describes their mailbox. The limits are:
   record; it serves diagnosis after the person already knows.
 - The person who turns logging on owns the record. Mailbag never reads it back,
   uploads it or sends anything about it over the network.
-- Using the Online Accounts identifier as the account label (FR-013,
-  Clarifications) amends a research note of
-  [001](../001-goa-account-observation/research.md), which said account
-  identifiers are not logged. 001 FR-013, no personal account details in
-  diagnostics, stays as it is: the address and display name are never logged.
+- 001 is not changed: account identifiers stay out of diagnostics, and the
+  account adapter's interface gains nothing for logging.
 - Writing the text of server status replies at debug changes a 002 design
   rule, which kept server text for the UI only
   ([IMAP reading](../002-imap-integration/contracts/imap-reading.md),
@@ -455,18 +474,17 @@ describes their mailbox. The limits are:
 - Transfer encodings and sizes of parts are not in the part description the
   crates share. They are recorded where the server's description is read, so
   the shared description does not change for logging.
-- GNOME Online Accounts also accepts identifiers it did not generate, from an
-  administrator's template or from the program that adds the account
-  ([research](research.md#5-the-account-label)). Only the generated form is
-  known to hold nothing personal, which is why FR-013 replaces any other.
 - Out of scope: logging by default; an option that names a file, a log
   directory owned by the application and keeping a file bounded (a later
   amendment, see Clarifications); any record kept while logging is off,
   including an error file and a record in memory written out when an error
   happens (see Clarifications); environment variables; a fifth level or
-  header values in the record; saving a message as a fixture; telemetry, upload
-  or any network use of the record; a log viewer, a preferences switch or a
-  synchronization activity panel, so the approved UI layout does not change;
+  header values in the record; the shape and extension of attachment file
+  names, which arrive with the feature that handles attachments; a queue, a
+  writer thread and a count of lost lines; saving a message as a fixture;
+  telemetry, upload or any network use of the record; a log viewer, a
+  preferences switch or a synchronization activity panel, so the approved UI
+  layout does not change;
   the way errors are shown to the user and a "technical details" view, which
   belong to error presentation (this feature only guarantees that a logged
   failure carries the step and cause the UI shows); log events for Gmail,
