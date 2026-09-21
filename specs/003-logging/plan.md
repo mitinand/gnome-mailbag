@@ -109,7 +109,7 @@ mailbag::logging
 mailbag::inbox
   begin_load                    info "load started" with the account
   discard_excluded / cancel_load info cancelled with the known reason, where the cancellation happens
-  finish_load / show_result     log the accepted outcome or the discarded late result
+  finish_load / awaits_result   log the accepted outcome or the discarded late result
   error line                    cause as the failure value the UI explains
 
 mailbag::inbox_load
@@ -119,32 +119,29 @@ mailbag-imap                    info per step; debug per message,
   server_text_for_log           part and command; writes server text itself,
                                 sign-in name of any length replaced
 
-mailbag-content                 debug per selection, decoded part and header
-                                that did not decode
+mailbag-content                 debug per selection and decoded part
 
 goa-adapter                     one line per read of the account list, where it ends
 mailbag::accounts               appearing and excluded accounts, problems
 ```
 
-Which line each step writes is in the code (spec FR-017); field names and the
-rules for writing events are in
-[the record contract](contracts/record.md).
+Which line each step writes is in the code (spec FR-017), which is also where a
+field name lives unless the [spec](spec.md#requirements) fixes it.
 
 ## Project Structure
 
 ```text
 specs/003-logging/
   spec.md, plan.md, research.md, quickstart.md
-  contracts/record.md           command line, field names, rules for writing events
   checklists/requirements.md
 
 crates/mailbag/src/
-  logging.rs                    new: option, timer, labels, first line
+  logging.rs                    new: option, timer, first line
   logging/tests.rs              new
   main.rs                       option, start/finish of logging
   inbox.rs                      start, cancellation and result lines
   inbox_load.rs                 settings step, dispatcher for the worker
-  accounts.rs, account_ui.rs, settings.rs, mail_ui.rs   their events
+  accounts.rs, account_ui.rs, mail_ui.rs   their events
 crates/mailbag-imap/src/        session.rs, transport.rs, reader.rs, part_tree.rs: events;
                                 server_text_for_log
 crates/mailbag-content/src/lib.rs   events
@@ -190,8 +187,11 @@ the controller's lines name the account; the load's error line reduced to one
 `cause` field; the lines about a list header that did not decode and about
 opening Settings removed; the tests reduced to the guarantees; `log-events.md`
 and `data-model.md` deleted, the spec's Clarifications moved into research and
-the record contract reduced to what several crates must agree on. The portions
-above are the record of what was implemented and are not rewritten.
+the record contract reduced to what several crates must agree on. The spec was
+then reduced to the principles every feature follows and the record contract
+removed, because a write site belongs to the code that writes it and a list of
+events or fields in a specification only repeats it. The portions above are the
+record of what was implemented and are not rewritten.
 
 After **each** portion, run its checks and `scripts/check.sh`, report what
 changed, the evidence, limitations, a suggested commit and the intended PR,
@@ -208,10 +208,10 @@ After design:
 | Principle | Assessment |
 |---|---|
 | I — Necessary complexity | One dependency pair chosen against four alternatives, for a need that exists today: the UID reaches the lines of crates that do not know which message they work on, and `mailbag-content` may not depend on GLib. The library's formatter is used instead of a layer of our own. No queue or writer thread for the one self-inflicted case of an unread pipe; no file output, rotation, per-component levels, machine-readable format or in-memory history; no shape of file names before anything uses them; no reworking of UI wording for the record; an account is named by the identifier Online Accounts already gives it |
-| II — Clear language | The plan states behavior, review points and portions; the line format, fields and 002 wording are in the contract; the comparison of mechanisms is in research. Names say what they do: `server_text_for_log`, `provider_type` |
+| II — Clear language | The plan states behavior, review points and portions; the rules are in the spec and the comparison of mechanisms in research. Names say what they do: `server_text_for_log`, `provider_type` |
 | III — Truthful failure | One error line per failed operation naming the failure the UI explains; nothing personal beyond the spec's debug limits, checked with markers |
 | IV — One owner | `mailbag::logging` owns level and output, the library owns layout and escaping; `mailbag-imap` alone turns server text into a field; each crate writes the lines of its own work under the spec's rules |
 | V — Responsive, bounded work | Formatting happens only when the level is on. Lines are written synchronously to the standard error stream, as GLib writes its warnings; a terminal and a file do not block, and the wait on an unread pipe was accepted by the maintainer on 2026-09-21 for output that exists only on request. Most lines of a load come from the mail worker's thread |
-| VI — Evidence | Automated checks per success criterion and manual runs are listed in [quickstart](quickstart.md). None has been run; the installed Flatpak is checked in portion 4 |
+| VI — Evidence | Automated checks per success criterion and manual runs are listed in [quickstart](quickstart.md). Each portion's checks were run; only the runs quickstart marks as manual, the installed Flatpak among them, stay with the maintainer |
 
 No constitutional exception is proposed.

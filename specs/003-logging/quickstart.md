@@ -11,7 +11,7 @@ an artifact outside the repository; do not append validation results here.
 
 | Criterion | Check |
 |---|---|
-| SC-001 | A test that no subscriber is installed without the option; one start without it below shows empty streams. The same absence is how "negligible cost when off" (FR-016) is checked; there is no benchmark |
+| SC-001 | A test that no subscriber is installed without the option; one start without it below shows empty streams. The same absence is how "negligible cost when off" (FR-001) is checked; there is no benchmark |
 | SC-002 | Loads against the scripted IMAP server with marker strings in its fixtures (password, sign-in name, folder, host, subject, address, file name, body text, an attached message's subject, a refusal that repeats a two-character sign-in name), at info and at debug; the file name may appear at neither level; the buffer is searched for each marker |
 | SC-004 | Each applicable failed load of the 002 scenarios: one ERROR whose `cause` is the failure value the UI explains. Exclusion and closing the window during access or transfer: one cancellation INFO with its reason, no WARN/ERROR or duplicate acknowledgement. Discarded late batches/failures do not produce completion/WARN/ERROR. Refused list and unreadable content: one WARN each |
 | SC-008 | A writer that fails every write: the load finishes and nothing panics. The unread pipe is a manual check below |

@@ -2,7 +2,7 @@
 
 **Purpose**: Validate requirements quality before implementation planning.
 **Created**: 2026-09-21
-**Revised**: 2026-09-22
+**Revised**: 2026-09-22 (spec reduced to its principles)
 **Feature**: [Logging](../spec.md)
 
 This checklist is maintained by `speckit-specify` / `speckit-clarify`.
@@ -39,12 +39,17 @@ Checked items describe specification quality, not implementation or approval.
   README are the feature's user interface, not implementation details. The spec
   names no logging library; that choice belongs to the plan.
 - The readers are a developer and a user filing an issue, so IMAP terms such as
-  UID and the description of parts appear where a record must contain them.
-  They are kept to the debug requirements.
-- Each edge case states a scenario that can occur today and its visible result
-  (constitution I). Cases considered and left out: a bounded log file, passing
-  the option to a start without a terminal, a fifth level for header values,
-  a queue with a count of lost lines, the shape of attachment file names.
+  UID appear where a record must contain them. They are kept to the debug
+  requirements.
+- The spec states principles only: no event of the application and no field name
+  beyond the four that cross crates. Where a line is written is part of the
+  feature that writes it, and review checks it in the code (FR-017,
+  [research §11](../research.md#11-levels-durations-and-lists)).
+- Each edge case states a scenario that can occur today and why it must be
+  refused (constitution I). Cases considered and left out: a bounded log file,
+  passing the option to a start without a terminal, a fifth level for header
+  values, a queue with a count of lost lines, the shape of attachment file
+  names.
 - Two points change earlier documents and are listed in the spec's
   Assumptions: server status text at debug (002 IMAP reading contract and data
   model, amended with this feature), and the name of an account in the record

@@ -76,12 +76,12 @@ Reproduce the problem, quit Mailbag and attach `mailbag.log` to the issue. The
 levels are `error`, `warning`, `info` and `debug`; `debug` tells the most.
 
 A debug record contains the Online Accounts identifiers of your accounts, also at
-the other levels; folder names and message numbers (UIDs); the mail server's
-host and port; how messages are built (content types, character sets,
-sizes); the replies and alerts the server sent, with your sign-in name replaced
-by `<login>`; and the reason a secure connection failed. It never contains
-passwords, sign-in names, mail addresses, subjects or other header values,
-attachment file names or the text of messages.
+the other levels; message numbers (UIDs); the mail server's host and port; how
+messages are built (content types, character sets, sizes); the replies and alerts
+the server sent, with your sign-in name replaced by `<login>`; and the reason a
+secure connection failed. It never contains passwords, sign-in names, mail
+addresses, subjects or other header values, attachment file names or the text of
+messages.
 
 GTK and GLib print their own warnings to the same file; Mailbag does not
 control them. Read the file before you attach it.

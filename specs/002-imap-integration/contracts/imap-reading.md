@@ -304,7 +304,7 @@ dependent steps that never ran. Map errors to safe step/cause information.
 Compile the `log` crate's levels, which the IMAP library uses, out in native and
 Flatpak builds. Server status text and ALERT text reach diagnostics only at
 debug and only through the replacement of the sign-in name that
-[003](../../003-logging/contracts/record.md) defines. Raw commands, mail
+[003](../../003-logging/spec.md) defines. Raw commands, mail
 headers and bodies, credentials and library Debug/Display errors are never
 logged, except GIO's text for a failed TLS handshake at debug, which holds
 fixed phrases of the TLS library and no server data.

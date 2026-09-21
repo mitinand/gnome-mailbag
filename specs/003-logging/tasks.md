@@ -1,11 +1,10 @@
 # Tasks: Logging
 
 **Feature**: F03 / `003-logging`
-**Created**: 2026-09-21 · **Branch**: `claude/logging` · **Status**: Documents approved 2026-09-21. Portions 1 and 2 committed. Portion 3 implemented and run by the maintainer; its commit is next.
+**Created**: 2026-09-21 · **Branch**: `claude/logging` · **Status**: Implemented and committed; simplified 2026-09-22, when the spec was reduced to its principles.
 
-[Spec](spec.md) owns behavior, [plan](plan.md) owns boundaries and portions,
-[research](research.md) owns decisions, [the record contract](contracts/record.md)
-owns field names and the rules for writing events, and
+[Spec](spec.md) owns the rules every line follows, [plan](plan.md) owns
+boundaries and portions, [research](research.md) owns decisions, and
 [quickstart](quickstart.md) owns commands and acceptance checks. Follow
 [AGENTS.md](../../AGENTS.md#commits-prs-and-review-pauses): implement one agreed
 portion, run its checks, report and stop. A checked handoff does not mean
@@ -63,7 +62,7 @@ account lines).
 mail server.
 
 - [X] T013 [US1] Before writing events, read crates/goa-adapter/src/client.rs, accounts.rs and account_model.rs and crates/mailbag/src/accounts.rs, account_ui.rs and settings.rs, and compare them with the "Application" and "Account observation" sections of specs/003-logging/log-events.md. Correct every row that disagrees with the code, especially the rows about an unavailable Mail service and recovery after a failed read (plan.md review point 6). The list follows the code; do not add behavior for a row.
-- [X] T014 [US1] Log reads of the account list in crates/goa-adapter/src/client.rs where a read completes (`finish_read`), as log-events.md gives them: info for a completed read with the number of accounts; one error line for a failed read with the read and `cause` as the name of the `ErrorCause` value (`Unavailable`, `AccessDenied`, `Timeout`, `InvalidReply`), the value the UI explains, not the UI's wording; debug where a change signal arrives, with the kind of signal. No span for a read (contracts/record.md). A result published again while a Retry is running is not a new failure: write nothing for it. In crates/mailbag/src/accounts.rs or its caller log info for Retry Check when the user asks for it.
+- [X] T014 [US1] Log reads of the account list in crates/goa-adapter/src/client.rs where a read completes (`finish_read`), as log-events.md gives them: info for a completed read with the number of accounts; one error line for a failed read with the read and `cause` as the name of the `ErrorCause` value (`Unavailable`, `AccessDenied`, `Timeout`, `InvalidReply`), the value the UI explains, not the UI's wording; debug where a change signal arrives, with the kind of signal. No span for a read. A result published again while a Retry is running is not a new failure: write nothing for it. In crates/mailbag/src/accounts.rs or its caller log info for Retry Check when the user asks for it.
 - [X] T015 [US1] Log account changes where crates/mailbag/src/accounts.rs applies an update: info for an account that appeared (label, provider type), info for an account that was removed, had Mail disabled or is unsupported (label, `reason`), warning for an account that needs attention or whose Mail service is unavailable (label, which), info when that problem is gone, info with label and `reason` for each account not shown, at every complete read (log-events.md, as corrected by T013). Never write the address, display name or icon.
 - [X] T016 [US1] Log discarded mail in crates/mailbag/src/inbox.rs `discard_excluded`: info with the account identifier and the number of messages, only when mail of an excluded account is really discarded.
 - [X] T017 [P] [US1] Log opening Online Accounts in crates/mailbag/src/settings.rs and its caller: info on success, one error line with `cause` as the name of the `LaunchError` value (`Unavailable`, `AccessDenied`, `Timeout`, `InvalidReply`), the value `LaunchError::message` explains; the message's wording is not logged or changed.
@@ -133,7 +132,14 @@ simplification changed:
   SC-003 and SC-005 stopped being criteria, and SC-006 is deferred;
 - `log-events.md` and `data-model.md` were deleted, spec.md's Clarifications
   moved their reasons into `research.md`, and `contracts/record.md` was reduced
-  to what several crates must agree on.
+  to what several crates must agree on;
+- on the same day the spec was reduced to the principles every feature follows,
+  its User Story 3 becoming requirements FR-009–012, and `contracts/record.md`
+  was removed: its command line, its field names and its rules for writing
+  events are now in the spec, and the full field table is only in the code.
+
+The story and criterion labels in the phase goals below, such as US1.4 or
+SC-003, name the spec as it stood when the tasks were written (2026-09-21).
 
 ## Dependencies
 
@@ -142,8 +148,8 @@ simplification changed:
   and the capture buffer.
 - Portion 3 follows the reviewed portion 2, reusing its account naming and
   extending the same `inbox.rs` controller that T016 instruments.
-- Portion 4 needs portion 3's load span and adds the message spans in T033;
-  it completes the marker check that portions 2 and 3 begin.
+- Portion 4 adds the message spans in T033 and completes the marker check that
+  portions 2 and 3 begin.
 - Inside a portion, tasks marked [P] touch files no other open task of that
   portion touches.
 
@@ -151,8 +157,7 @@ simplification changed:
 
 - Portion 1: T004 beside T005–T011.
 - Portion 2: T017 and T018 beside T014–T016.
-- Portion 3: T025–T028 (`mailbag-imap`) beside T021–T024 (`mailbag`), once
-  T021's span exists for their tests.
+- Portion 3: T025–T028 (`mailbag-imap`) beside T021–T024 (`mailbag`).
 - Review pauses (T012, T020, T032, T042) are never parallel with anything.
 
 ## Implementation strategy

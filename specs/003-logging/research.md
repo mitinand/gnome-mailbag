@@ -27,7 +27,7 @@ crate.
   ([002 research §9](../002-imap-integration/research.md#9-crate-layout));
   `scripts/check.sh` enforces it. `tracing` has no such dependency.
 - *Cost when off.* Without a subscriber a `tracing` call site is one cached
-  check, and its field expressions are not evaluated (FR-016).
+  check, and its field expressions are not evaluated (FR-001).
 
 **Alternatives rejected**
 
@@ -236,19 +236,18 @@ This changed a 002 design rule; the amended wording is in
 [002 IMAP reading](../002-imap-integration/contracts/imap-reading.md) and
 [002 data model](../002-imap-integration/data-model.md).
 
-## 7. Parts, headers and what is available today
+## 7. What a message's parts and headers may contribute
 
-- **Transfer encoding and size** are in the server's description of a part and
-  are read in `mailbag-imap` when the description is projected into
-  `MessagePart`. The debug lines are written there. `MessagePart` and
-  `MimePart` do not change.
-- **A file name** is never written, and neither is its shape: nothing in
-  Mailbag uses the name yet. Whether a text part is a file is decided in
-  `mailbag-content` (`MimePart::has_file_name` and the attachment
-  disposition), so it writes a debug line for each text part it leaves out
-  as a file; the part tree written by `mailbag-imap` says nothing about names,
-  which would copy that rule. The shape and the extension of a name arrive
-  with the feature that handles attachments.
+Which values of a mail message are available, and which of them the record may
+carry. Where each line is written is a matter for the code that writes it.
+
+- **A part's transfer encoding and size** come from the server's description of
+  the part, which Mailbag already reads, so describing a part costs no request
+  and no change to the part models.
+- **A file name** is never recorded, and neither is its shape: nothing in
+  Mailbag uses the name yet. That a text part was left out because it is a file
+  may be recorded by the part's section number instead. The shape and the
+  extension of a name arrive with the feature that handles attachments.
 
   For that feature, checked on 2026-09-21 by parsing nine part descriptions
   with the pinned IMAP parser: a value arrives as the server sent it. An
@@ -257,35 +256,36 @@ This changed a 002 design rule; the amended wording is in
   intact. Bytes that are not UTF-8 are already replaced by U+FFFD, one per
   byte in the probe, and the original bytes are gone. Backslash escapes
   inside a quoted value are left in place. Parameter names keep the server's
-  letter case; `MessagePart` lowers it.
-- **The choice of a related set's root** depends on its `start` parameter and
-  the parts' content identifiers, which may hold a domain. The selection line
-  says whether `start` named a part; the identifiers are not written.
-- **An attached message's envelope** is a field of the same description.
-  It is never read for logging, so nothing has to be removed.
-- **A description that cannot be parsed** leaves no data behind: the fork
-  reports a parse failure and the reader records `None`. The debug line says
-  which of the two known outcomes happened: the server refused, or the reply
-  could not be parsed.
+  letter case; the part model lowers it.
+- **A content identifier** may hold a domain, so it is never recorded. The
+  choice of a related set's root depends on the set's `start` parameter and on
+  those identifiers; whether `start` named a part can be recorded, the
+  identifiers cannot.
+- **An attached message's envelope** is a field of the same description and is
+  never read for the record, so nothing has to be removed from it.
+- **A description that cannot be parsed** leaves no data behind: the parser
+  reports a failure and no structure reaches Mailbag. The two outcomes a reader
+  can tell apart are that the server refused the request and that the reply
+  could not be parsed; the description itself is not recorded.
 - **A list header that did not decode** is not recorded at all, not even by
   its name. The row stays usable without it, the decoder reports no cause, and
   whoever turns such a report into a fixture has to examine the message by hand
   anyway. A description of the raw value's encoding was rejected for the same
   reason.
-- **Why a TLS handshake failed** is not carried by `ImapFailure` today. GIO
-  reports it at the point of failure as an error and as certificate flags;
-  the debug line is written there, in `transport.rs`, with the error's text
-  and the flag names and no certificate fields. The error's code does not
-  help: glib-networking up to 2.90.0 reports a port that expects STARTTLS,
-  which GnuTLS 3.8 answers with an unexpected packet, as `Misc`, and only the
-  text, "An unexpected TLS packet was received", says what happened. The
-  text consists of fixed phrases of the TLS library with no server data, so
-  it is the one library error text a line may carry. The error line keeps
-  the cause the UI shows. The TLS version of a
-  successful handshake needs gio's `v2_70` feature; the GNOME 50 runtime has
-  a much newer GLib.
+- **Why a TLS handshake failed** is not carried by the failure value the UI
+  explains. GIO reports it at the point of failure as an error and as
+  certificate flags, and only there: the error's code does not help, because
+  glib-networking up to 2.90.0 reports a port that expects STARTTLS, which
+  GnuTLS 3.8 answers with an unexpected packet, as `Misc`, and only the text,
+  "An unexpected TLS packet was received", says what happened. That text
+  consists of fixed phrases of the TLS library with no server data, so it is
+  the one library error text the record may carry, together with the names of
+  the certificate checks that failed and never a certificate's own fields. The
+  TLS version of a successful handshake needs gio's `v2_70` feature; the GNOME
+  50 runtime has a much newer GLib.
 - **Capabilities and the TLS version** are already at hand, the capabilities
-  before sign-in and the version after the handshake; no command is added.
+  before sign-in and the version after the handshake; no command is added for
+  the record.
 
 ## 8. Testing a record
 
@@ -348,3 +348,33 @@ Four decisions of 2026-09-21 that no other section holds.
   presentation feature rewrites that wording, and sharing it now would mean
   reworking UI code for the record. The record names the failure value the UI
   explains, such as `cause=TimedOut(SignIn)`.
+
+## 11. Levels, durations and lists
+
+Three more decisions of the specification, with what was rejected.
+
+- **Levels are separated by outcome and granularity, not by privacy.** How an
+  operation ended separates error, warning and info; how closely a line looks
+  separates info, which speaks about an account and an operation, from debug,
+  which speaks about a message, a part and a server. The privacy limits are laid
+  over these two axes and mostly follow from them. *Rejected*: a level of its
+  own for what is sensitive — a fifth level, or a privacy tier per field. It
+  would have to be explained to every later feature, and a person choosing a
+  level would have to reason about two scales at once; the values that must
+  never be recorded (§6, §7) are excluded at every level instead, which needs no
+  scale.
+- **No line carries a duration.** Every line has its time with milliseconds, and
+  the lines of one operation follow each other, so a duration is the difference
+  between two lines, for a failed step as well. *Rejected*: a duration field,
+  and a total on the operation's final line. The total helped only a record at
+  level error, which has no first line to measure from, and a person reporting a
+  problem is asked for debug; timing a decoding step in fractions of a
+  millisecond is a matter for a benchmark. A duration field can be added to any
+  line later, because the layout is not a contract.
+- **No specification keeps a list of events or of fields.** The code that writes
+  a line is the source of what is written, and review checks it there.
+  *Rejected*: a list of every line, or of every field name, kept in this
+  feature. Both were tried during the implementation and deleted: a list here
+  forces a later feature either to come back and amend 003 or to keep a list of
+  its own, and either way the list repeats the code and goes out of step with
+  it. Only the few field names that cross crates are fixed, in the spec.
