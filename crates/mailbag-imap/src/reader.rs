@@ -74,7 +74,7 @@ impl InboxReader {
         account: ImapAccount,
         socket_timeout_seconds: u32,
     ) -> Result<Self, ImapError> {
-        let mut notices = ServerNotices::new(&account.login);
+        let mut notices = ServerNotices::default();
         match session::open_inbox(&account, socket_timeout_seconds, &mut notices).await {
             Ok(inbox) => Ok(Self {
                 account,
@@ -83,7 +83,7 @@ impl InboxReader {
                 notices,
                 needs_reconnect: false,
             }),
-            Err(failure) => Err(notices.error(failure)),
+            Err(failure) => Err(notices.error(&account.login, failure)),
         }
     }
 
@@ -334,12 +334,13 @@ impl InboxReader {
 
     fn collect_notices(&mut self) {
         let responses = &self.inbox.session.unsolicited_responses;
-        self.notices.collect(|| responses.try_recv().ok());
+        self.notices
+            .collect(&self.account.login, || responses.try_recv().ok());
     }
 
     fn error(&mut self, failure: StepFailure) -> ImapError {
         self.collect_notices();
-        self.notices.error(failure)
+        self.notices.error(&self.account.login, failure)
     }
 }
 

@@ -64,10 +64,11 @@ impl From<&StatusResponse> for ServerReply {
     }
 }
 
-/// What the server said during an attempt that can explain its failure.
+/// What the server said during an attempt that can explain its failure. The
+/// sign-in name is passed to the two functions that write a line with server
+/// text; no field keeps it for the record's sake (specs/003-logging FR-017).
+#[derive(Default)]
 pub(crate) struct ServerNotices {
-    /// Replaced with `<login>` wherever server text reaches the record.
-    sign_in_name: String,
     /// ALERT texts, which RFC 3501 requires to reach the user.
     alerts: Vec<String>,
     /// The BYE with which the server closed the connection, for example
@@ -76,27 +77,20 @@ pub(crate) struct ServerNotices {
 }
 
 impl ServerNotices {
-    pub(crate) fn new(sign_in_name: &str) -> Self {
-        Self {
-            sign_in_name: sign_in_name.to_owned(),
-            alerts: Vec::new(),
-            bye: None,
-        }
-    }
-
     /// Keeps the ALERT and BYE texts among waiting unilateral responses.
     pub(crate) fn collect(
         &mut self,
+        sign_in_name: &str,
         mut next_response: impl FnMut() -> Option<UnsolicitedResponse>,
     ) {
         while let Some(response) = next_response() {
             if let UnsolicitedResponse::Other(data) = response {
-                self.keep(data.parsed());
+                self.keep(sign_in_name, data.parsed());
             }
         }
     }
 
-    fn keep(&mut self, response: &Response<'_>) {
+    fn keep(&mut self, sign_in_name: &str, response: &Response<'_>) {
         let (status, code, information) = match response {
             Response::Data {
                 status,
@@ -110,11 +104,16 @@ impl ServerNotices {
         };
         let text = information.as_deref().unwrap_or_default();
         if matches!(code, Some(ResponseCode::Alert)) {
-            tracing::info!("the server sent an alert");
-            tracing::debug!(
-                alert = server_text_for_log(&self.sign_in_name, text),
-                "the server sent an alert"
-            );
+            // The only line whose level is chosen at run time: that an alert
+            // arrived belongs to info, its text to debug (FR-010, FR-011).
+            if tracing::enabled!(tracing::Level::DEBUG) {
+                tracing::debug!(
+                    alert = server_text_for_log(sign_in_name, text),
+                    "the server sent an alert"
+                );
+            } else {
+                tracing::info!("the server sent an alert");
+            }
             self.alerts.push(text.to_owned());
         }
         if status == Some(&Status::Bye) {
@@ -127,12 +126,12 @@ impl ServerNotices {
 
     /// The error for a failed step, with what the server said about it. Every
     /// failed step passes here, so the server's text is logged here as well.
-    pub(crate) fn error(&mut self, failure: StepFailure) -> ImapError {
+    pub(crate) fn error(&mut self, sign_in_name: &str, failure: StepFailure) -> ImapError {
         let server_reply = failure.server_reply.or_else(|| self.bye.take());
         if let Some(reply) = &server_reply {
             tracing::debug!(
                 code = reply.code.as_deref(),
-                server_text = server_text_for_log(&self.sign_in_name, &reply.text),
+                server_text = server_text_for_log(sign_in_name, &reply.text),
                 "the server's reply to the failed step"
             );
         }
@@ -157,7 +156,7 @@ pub(crate) async fn open_inbox(
         Encryption::ImplicitTls => {
             let tls = transport::start_tls(&connection, &identity, account.encryption).await?;
             let mut client = Client::new(GioStream::new(tls));
-            read_greeting(&mut client, notices).await?;
+            read_greeting(&mut client, &account.login, notices).await?;
             client
         }
         Encryption::StartTls => {
@@ -169,7 +168,9 @@ pub(crate) async fn open_inbox(
     };
     let mut session = sign_in(client, account, notices).await?;
     let examined = session.examine("INBOX").await;
-    notices.collect(|| session.unsolicited_responses.try_recv().ok());
+    notices.collect(&account.login, || {
+        session.unsolicited_responses.try_recv().ok()
+    });
     let mailbox = examined.map_err(|error| command_failure(ImapStep::OpenInbox, &error))?;
     tracing::info!(messages = mailbox.exists, "Inbox opened");
     tracing::debug!(uid_validity = mailbox.uid_validity, "Inbox state");
@@ -183,6 +184,7 @@ pub(crate) async fn open_inbox(
 
 async fn read_greeting(
     client: &mut Client<GioStream>,
+    sign_in_name: &str,
     notices: &mut ServerNotices,
 ) -> Result<(), StepFailure> {
     let greeting = client
@@ -190,7 +192,7 @@ async fn read_greeting(
         .await
         .map_err(|error| io_failure(ImapStep::Connect, &error))?
         .ok_or(ImapFailure::Failed(ImapStep::Connect))?;
-    notices.keep(greeting.parsed());
+    notices.keep(sign_in_name, greeting.parsed());
     match greeting.parsed() {
         Response::Data {
             status: Status::Ok, ..
@@ -251,7 +253,9 @@ async fn sign_in(
     notices: &mut ServerNotices,
 ) -> Result<Session<GioStream>, StepFailure> {
     let capabilities = client.capabilities().await;
-    notices.collect(|| client.unsolicited_responses().try_recv().ok());
+    notices.collect(&account.login, || {
+        client.unsolicited_responses().try_recv().ok()
+    });
     let capabilities = capabilities.map_err(|error| command_failure(ImapStep::SignIn, &error))?;
     tracing::info!(
         capabilities = capability_names(&capabilities),
@@ -275,12 +279,16 @@ async fn sign_in(
     };
     match signed_in {
         Ok(session) => {
-            notices.collect(|| session.unsolicited_responses.try_recv().ok());
+            notices.collect(&account.login, || {
+                session.unsolicited_responses.try_recv().ok()
+            });
             tracing::info!(method, "signed in");
             Ok(session)
         }
         Err((error, client)) => {
-            notices.collect(|| client.unsolicited_responses().try_recv().ok());
+            notices.collect(&account.login, || {
+                client.unsolicited_responses().try_recv().ok()
+            });
             Err(command_failure(ImapStep::SignIn, &error))
         }
     }
