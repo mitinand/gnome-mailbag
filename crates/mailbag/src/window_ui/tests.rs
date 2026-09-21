@@ -1,0 +1,165 @@
+// SPDX-FileCopyrightText: 2026 Andrey Mitin
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+use super::*;
+use mailbag_imap::ServerReply;
+
+fn rejected_sign_in(code: Option<&str>, text: &str) -> LoadFailure {
+    LoadFailure::Server(ServerFailure {
+        failure: ImapFailure::Failed(ImapStep::SignIn),
+        server_reply: Some(ServerReply {
+            code: code.map(str::to_owned),
+            text: text.to_owned(),
+        }),
+        alerts: Vec::new(),
+    })
+}
+
+#[test]
+fn every_failed_step_names_itself() {
+    let cases = [
+        (
+            LoadFailure::OnlineAccounts(ImapAccessError::Settings),
+            "Mail settings unavailable",
+            "IMAP settings",
+        ),
+        (
+            LoadFailure::OnlineAccounts(ImapAccessError::NoEncryption),
+            "No encryption configured",
+            "No password was requested",
+        ),
+        (
+            LoadFailure::OnlineAccounts(ImapAccessError::Password),
+            "Password unavailable",
+            "No server sign-in was attempted",
+        ),
+        (
+            LoadFailure::OnlineAccounts(ImapAccessError::Timeout),
+            "Online Accounts did not respond",
+            "in time",
+        ),
+        (
+            LoadFailure::Server(ImapFailure::Failed(ImapStep::Connect).into()),
+            "Unable to reach the mail server",
+            "could not reach",
+        ),
+        (
+            LoadFailure::Server(ImapFailure::Failed(ImapStep::SecureConnection).into()),
+            "Secure connection failed",
+            "sent no password",
+        ),
+        (
+            LoadFailure::Server(ImapFailure::Failed(ImapStep::OpenInbox).into()),
+            "Unable to open the Inbox",
+            "did not open the Inbox",
+        ),
+        (
+            LoadFailure::Server(ImapFailure::Failed(ImapStep::FetchMessages).into()),
+            "Unable to get the message list",
+            "did not return this Inbox's messages",
+        ),
+        (
+            LoadFailure::Server(ImapFailure::Failed(ImapStep::FetchText).into()),
+            "Unable to get the message text",
+            "did not return the text",
+        ),
+        (
+            LoadFailure::Server(ImapFailure::TimedOut(ImapStep::OpenInbox).into()),
+            "The mail server stopped responding",
+            "while opening the Inbox",
+        ),
+        (
+            LoadFailure::Server(ImapFailure::NoSignInMethod.into()),
+            "No supported sign-in method",
+            "no sign-in method Mailbag supports",
+        ),
+        (
+            LoadFailure::Server(ImapFailure::InboxChanged.into()),
+            "The Inbox changed while loading",
+            "Try Refresh Inbox again",
+        ),
+        (
+            LoadFailure::WorkerStopped,
+            "Mail could not be loaded",
+            "Try Refresh Inbox again",
+        ),
+    ];
+    for (failure, title, explanation) in cases {
+        let status = failure_status(&failure);
+        assert_eq!(status.title, title, "{failure:?}");
+        assert!(
+            status.explanation.contains(explanation),
+            "{failure:?}: {}",
+            status.explanation
+        );
+    }
+}
+
+#[test]
+fn a_rejected_sign_in_points_to_the_password_only_when_the_server_blames_it() {
+    for code in [None, Some("authenticationfailed")] {
+        let status = failure_status(&rejected_sign_in(code, "Invalid credentials"));
+        assert!(
+            status
+                .explanation
+                .contains("change this account's password"),
+            "{code:?}: {}",
+            status.explanation
+        );
+        assert!(status.explanation.contains("Invalid credentials"));
+    }
+    // A temporary server problem says nothing about the password.
+    let status = failure_status(&rejected_sign_in(
+        Some("UNAVAILABLE"),
+        "Service temporarily unavailable",
+    ));
+    assert!(
+        !status.explanation.contains("password"),
+        "{}",
+        status.explanation
+    );
+    assert!(
+        status
+            .explanation
+            .contains("Service temporarily unavailable"),
+        "{}",
+        status.explanation
+    );
+}
+
+#[test]
+fn server_and_alert_text_reach_the_page_as_bounded_plain_text() {
+    let failure = LoadFailure::Server(ServerFailure {
+        failure: ImapFailure::Failed(ImapStep::OpenInbox),
+        server_reply: Some(ServerReply {
+            code: None,
+            text: format!("<b>{}</b>\0", "долгая причина".repeat(10_000)),
+        }),
+        alerts: vec!["Alert <i>text</i>".to_owned()],
+    });
+    let explanation = failure_status(&failure).explanation;
+    assert!(
+        explanation.contains("<b>долгая причина"),
+        "{explanation:.80}"
+    );
+    assert!(explanation.contains("Alert <i>text</i>"));
+    assert!(!explanation.contains('\0'));
+    // Only the server's own text is bounded; the step sentences stay whole.
+    assert!(explanation.len() < 66_000, "{}", explanation.len());
+}
+
+#[test]
+fn an_account_without_mail_never_claims_an_empty_inbox() {
+    let generic = nothing_loaded_status(Some(AccountProvider::ImapSmtp));
+    assert_eq!(generic.title, "No mail loaded");
+    assert!(generic.explanation.contains("Refresh Inbox"));
+    for provider in [AccountProvider::Google, AccountProvider::Microsoft365] {
+        let status = nothing_loaded_status(Some(provider));
+        assert_eq!(status.title, "No mail loaded");
+        assert!(
+            !status.explanation.contains("Refresh Inbox"),
+            "{provider:?}: {}",
+            status.explanation
+        );
+    }
+}

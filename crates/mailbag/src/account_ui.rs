@@ -4,7 +4,7 @@
 use crate::accounts::{AccountList, AccountPage, AccountProblem, AccountRow, ExclusionReason};
 use crate::settings::LaunchError;
 use adw::{gio, glib, gtk, prelude::*};
-use goa_adapter::{AccountId, AccountUpdate, ErrorCause};
+use goa_adapter::{AccountId, AccountProvider, AccountUpdate, ErrorCause};
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 #[cfg(test)]
@@ -29,20 +29,22 @@ pub struct AccountUi {
     selection: gtk::SingleSelection,
     tree: gtk::ListView,
     status: adw::StatusPage,
-    list_stack: gtk::Stack,
+    /// Where the status page keeps its buttons and the window's mail
+    /// explanation.
+    status_actions: gtk::Box,
     retry: gtk::Button,
     online_accounts: gtk::Button,
     mail_split: adw::NavigationSplitView,
     folders_split: adw::OverlaySplitView,
     retry_check: gio::SimpleAction,
     toasts: adw::ToastOverlay,
+    on_selection_changed: RefCell<Option<Box<dyn Fn()>>>,
 }
 
 impl AccountUi {
     pub fn new(builder: &gtk::Builder) -> Rc<RefCell<Self>> {
         let tree: gtk::ListView = builder.object("folder_tree").expect("folder_tree");
         let status: adw::StatusPage = builder.object("account_status").expect("account_status");
-        let list_stack = builder.object("list_stack").expect("list_stack");
         let mail_split = builder.object("mail_split").expect("mail_split");
         let folders_split = builder.object("folders_split").expect("folders_split");
         let toasts = builder.object("toasts").expect("toasts");
@@ -60,17 +62,21 @@ impl AccountUi {
             selection,
             tree: tree.clone(),
             status,
-            list_stack,
+            status_actions: status_buttons.actions,
             retry: status_buttons.retry,
             online_accounts: status_buttons.online_accounts,
             mail_split,
             folders_split,
             retry_check: status_buttons.retry_check,
             toasts,
+            on_selection_changed: RefCell::new(None),
         }));
         let weak = Rc::downgrade(&ui);
         tree.connect_activate(move |_, position| {
-            if let Some(ui) = weak.upgrade() {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            {
                 let mut ui = ui.borrow_mut();
                 let item = ui
                     .store
@@ -87,6 +93,9 @@ impl AccountUi {
                     ui.folders_split.set_show_sidebar(false);
                 }
             }
+            // The window shows the newly selected account's mail; it must not
+            // find this account list borrowed while it reads the selection.
+            ui.borrow().notify_selection_changed();
         });
         ui.borrow().mail_split.set_show_content(false);
         ui.borrow().show_status();
@@ -95,6 +104,49 @@ impl AccountUi {
 
     pub fn connect_retry_check(&self, retry_check: impl Fn() + 'static) {
         self.retry_check.connect_activate(move |_, _| retry_check());
+    }
+
+    /// Called after the user selected an account, so the window can show that
+    /// account's mail. Selecting never loads.
+    pub fn connect_selection_changed(&self, on_selected: impl Fn() + 'static) {
+        *self.on_selection_changed.borrow_mut() = Some(Box::new(on_selected));
+    }
+
+    /// Which account explanation the status page shows. Every page other than
+    /// SelectedAccount covers the mail list and the reader.
+    pub fn page(&self) -> AccountPage {
+        self.accounts.page()
+    }
+
+    pub fn selected_id(&self) -> Option<&AccountId> {
+        self.accounts.selected_id()
+    }
+
+    /// The provider of the selected account, which decides whether Mailbag
+    /// can load its mail.
+    pub fn selected_provider(&self) -> Option<AccountProvider> {
+        let id = self.accounts.selected_id()?;
+        Some(self.accounts.visible_accounts()[id].provider)
+    }
+
+    /// The disambiguated row label, for the mail list title.
+    pub fn label_of(&self, id: &AccountId) -> Option<String> {
+        Some(self.accounts.visible_accounts().get(id)?.label.clone())
+    }
+
+    pub fn shows_account(&self, id: &AccountId) -> bool {
+        self.accounts.visible_accounts().contains_key(id)
+    }
+
+    /// The status page area where the window adds its mail explanation.
+    pub fn status_actions(&self) -> &gtk::Box {
+        &self.status_actions
+    }
+
+    fn notify_selection_changed(&self) {
+        if let Some(on_selected) = self.on_selection_changed.borrow().as_ref() {
+            on_selected();
+        }
     }
 
     pub fn apply_update(&mut self, update: &AccountUpdate) {
@@ -148,7 +200,8 @@ impl AccountUi {
         self.show_toast(error.message());
     }
 
-    fn show_toast(&self, title: &str) {
+    /// Shows a short notice in the window's existing toast area.
+    pub fn show_toast(&self, title: &str) {
         self.toasts
             .add_toast(adw::Toast::builder().title(title).use_markup(false).build());
     }
@@ -192,11 +245,6 @@ impl AccountUi {
             page,
             AccountPage::NoAccounts | AccountPage::NoEligibleAccounts
         ));
-        self.list_stack.set_visible_child_name(if title.is_empty() {
-            "messages"
-        } else {
-            "empty"
-        });
     }
 }
 
@@ -230,6 +278,7 @@ fn create_row_factory() -> gtk::SignalListItemFactory {
 
 /// Buttons of the account status page and the action their Retry activates.
 struct StatusButtons {
+    actions: gtk::Box,
     retry: gtk::Button,
     online_accounts: gtk::Button,
     retry_check: gio::SimpleAction,
@@ -248,6 +297,7 @@ fn create_status_buttons(status: &adw::StatusPage) -> StatusButtons {
     let retry_callback = retry_check.clone();
     retry.connect_clicked(move |_| retry_callback.activate(None));
     StatusButtons {
+        actions,
         retry,
         online_accounts,
         retry_check,

@@ -62,6 +62,10 @@ Keep the root `README.md` as the public introduction and getting-started guide.
 Specifications under `specs/` are the source of truth for accepted requirements
 and design decisions. Keep them self-contained; do not refer to local documents
 excluded from version control.
+One spec per feature. Specify a feature that owns a lasting domain for the
+target application, even when the current UI is temporary. When a later stage
+needs more from a closed feature, amend that feature's spec, plan and tasks;
+do not create a new spec that adds requirements to an existing feature's domain.
 Keep internal developer notes, implementation diaries, validation reports, and
 inspection artifacts outside the repository; do not add duplicate design guides.
 Agent instructions, required legal notices, and operational tooling files remain

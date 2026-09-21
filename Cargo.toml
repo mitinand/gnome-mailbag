@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/mailbag", "crates/goa-adapter"]
+members = ["crates/mailbag", "crates/goa-adapter", "crates/mailbag-imap", "crates/mailbag-content"]
 default-members = ["crates/mailbag"]
 resolver = "3"
 
@@ -10,3 +10,8 @@ adw = { package = "libadwaita", version = "=0.9.2", features = ["v1_8"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+
+# Maintained forks at full revisions; see specs/002-imap-integration/research.md §3.
+[patch.crates-io]
+async-imap = { git = "https://github.com/mitinand/async-imap", rev = "3c4cdde1cd5f4cbf264fe7fa18426c57dce8974d" }
+imap-proto = { git = "https://github.com/mitinand/imap-proto", rev = "caa2c81038d7674c46fb038f90ccf74034380c18" }

@@ -1,0 +1,20 @@
+From: =?utf-8?B?0KLQtdGB0YLQvtCy0YvQuSDQvtGC0L/RgNCw0LLQuNGC0LXQu9GM?= <sender@example.invalid>
+To: Recipient <recipient@example.invalid>
+Subject: =?utf-8?B?0KHQv9C40YHQvtC6INGA0LDRgdGB0YvQu9C60Lg=?=
+Date: Tue, 15 Sep 2026 10:00:00 +0300
+Message-ID: <sample-11@example.invalid>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="list"
+
+--list
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+Сообщение списка.
+--list
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+-- 
+Подвал списка рассылки.
+--list--

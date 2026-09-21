@@ -1,0 +1,8 @@
+From: sender@example.invalid
+To: reader@example.invalid
+Subject: Flowed with delsp
+Content-Type: text/plain; charset=utf-8; format=flowed; delsp=yes
+Content-Transfer-Encoding: 8bit
+
+inter 
+operability без лишнего пробела.

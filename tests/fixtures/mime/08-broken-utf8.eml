@@ -1,0 +1,10 @@
+From: =?utf-8?B?0KLQtdGB0YLQvtCy0YvQuSDQvtGC0L/RgNCw0LLQuNGC0LXQu9GM?= <sender@example.invalid>
+To: Recipient <recipient@example.invalid>
+Subject: =?utf-8?B?0JHQuNGC0YvQuSDQsdCw0LnRgg==?=
+Date: Tue, 15 Sep 2026 10:00:00 +0300
+Message-ID: <sample-8@example.invalid>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+Битый байт: � конец.

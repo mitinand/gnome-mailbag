@@ -1,0 +1,19 @@
+From: =?utf-8?B?0KLQtdGB0YLQvtCy0YvQuSDQvtGC0L/RgNCw0LLQuNGC0LXQu9GM?= <sender@example.invalid>
+To: Recipient <recipient@example.invalid>
+Subject: =?utf-8?B?0JTQstC1INCy0LXRgNGB0LjQuA==?=
+Date: Tue, 15 Sep 2026 10:00:00 +0300
+Message-ID: <sample-4@example.invalid>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="alt"
+
+--alt
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+Текстовая версия.
+--alt
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<p>HTML версия</p>
+--alt--

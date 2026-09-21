@@ -9,7 +9,7 @@ Linux is required; Fedora is the primary development environment.
 Install [rustup](https://rustup.rs/) and the system prerequisites:
 
 ```bash
-sudo dnf install git gcc pkgconf-pkg-config gtk4-devel libadwaita-devel python3 python3-pip desktop-file-utils appstream dbus-daemon meson ninja-build flatpak flatpak-builder
+sudo dnf install git curl openssl gcc pkgconf-pkg-config gtk4-devel libadwaita-devel python3 python3-pip desktop-file-utils appstream dbus-daemon meson ninja-build flatpak flatpak-builder
 ```
 
 Then run from the repository root:
@@ -29,8 +29,12 @@ GNOME Online Accounts and GNOME Settings in the desktop session.
 
 ```bash
 cargo run --locked       # Run in a GNOME desktop session
-./scripts/check.sh       # Formatting, Clippy, tests, build, licenses and metadata
+./scripts/check.sh       # Formatting, Clippy, tests, build, dependency policy, licenses and metadata
 ```
+
+After changing `Cargo.lock`, run `./scripts/generate-cargo-sources.sh` and review
+the regenerated `cargo-sources.json` with it; the Flatpak build reads its crates
+from that file.
 
 ## Build and install Flatpak
 
@@ -41,6 +45,13 @@ flatpak run io.github.mitinand.Mailbag
 
 Use `--install` to update the locally installed application; without it, the script
 only builds and exports the package. The build uses GNOME SDK/runtime 50.
+
+The installed application verifies mail servers with the certificate authorities
+of the GNOME runtime. A mail server whose certificate comes from a private
+certificate authority, such as an internal one, is therefore not supported yet,
+even when that authority is installed on the host: Flatpak does not share the
+host's trust store with the sandbox. Servers with a publicly trusted certificate
+work normally.
 
 ## Repository layout
 
@@ -54,3 +65,6 @@ only builds and exports the package. The build uses GNOME SDK/runtime 50.
 
 The root Cargo workspace owns shared dependencies, lints and `Cargo.lock`.
 `crates/goa-adapter/` provides the account data contract and GNOME account integration.
+`crates/mailbag-imap/` reads mail over IMAP and `crates/mailbag-content/` decodes
+message text. `third-party-notices/` holds license texts for dependencies that
+publish none.

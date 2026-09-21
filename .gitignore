@@ -3,13 +3,13 @@
 /.flatpak-builder/
 /build-dir/
 /repo/
-/vendor/
 *.flatpak
 .env
 .env.*
 !.env.example
 /.codex/
 /.agents/
+/.claude/
 /.specify/*
 !/.specify/memory/
 /.specify/memory/*

@@ -9,7 +9,16 @@ publish = false
 
 [dependencies]
 adw = { workspace = true, features = ["gtk_v4_10"] }
+# Runtime-independent channels between GTK's context and the mail worker.
+async-channel = "2"
+futures-util = "0.3"
 goa-adapter = { path = "../goa-adapter" }
+mailbag-content = { path = "../mailbag-content" }
+mailbag-imap = { path = "../mailbag-imap" }
+
+[dev-dependencies]
+# Load-sequence tests drive the scripted IMAP server.
+mailbag-imap = { path = "../mailbag-imap", features = ["test-support"] }
 
 [lints]
 workspace = true

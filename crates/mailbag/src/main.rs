@@ -5,7 +5,11 @@ use adw::{gio, glib, gtk, prelude::*};
 
 mod account_ui;
 mod accounts;
+mod inbox;
+mod inbox_load;
+mod mail_ui;
 mod settings;
+mod window_ui;
 
 #[cfg(test)]
 #[path = "accounts/notice_tests.rs"]
@@ -117,18 +121,27 @@ fn register_action(
 }
 
 fn connect_account_updates(builder: &gtk::Builder, window: &adw::Window) {
-    let account_ui = account_ui::AccountUi::new(builder);
-    let weak_ui = std::rc::Rc::downgrade(&account_ui);
+    // The observer reports to the window, which the adapter it uses belongs
+    // to, so the window is connected once both exist.
+    let updated_window: std::rc::Rc<std::cell::RefCell<std::rc::Weak<window_ui::WindowUi>>> =
+        std::rc::Rc::default();
+    let update_target = updated_window.clone();
     let adapter = goa_adapter::GoaAdapter::start(move |update| {
-        if let Some(ui) = weak_ui.upgrade() {
-            ui.borrow_mut().apply_update(update);
+        if let Some(ui) = update_target.borrow().upgrade() {
+            ui.apply_account_update(update);
         }
     });
+    let window_ui = window_ui::WindowUi::new(
+        builder,
+        Box::new(inbox_load::MailLoader::new(adapter.clone())),
+    );
+    *updated_window.borrow_mut() = std::rc::Rc::downgrade(&window_ui);
     let refresh_adapter = adapter.clone();
-    account_ui
+    window_ui
+        .accounts()
         .borrow()
         .connect_retry_check(move || refresh_adapter.refresh_accounts());
-    let settings_ui = std::rc::Rc::downgrade(&account_ui);
+    let settings_ui = std::rc::Rc::downgrade(window_ui.accounts());
     let launcher = settings::SettingsLauncher::new(move |error| {
         if let Some(ui) = settings_ui.upgrade() {
             ui.borrow().show_settings_error(error);
@@ -137,10 +150,15 @@ fn connect_account_updates(builder: &gtk::Builder, window: &adw::Window) {
     let action_launcher = launcher.clone();
     let app = window.application().expect("application window");
     register_action(&app, "accounts", None, move || action_launcher.open());
-    let window_ui = std::cell::RefCell::new(Some(account_ui));
+    app.add_action(window_ui.refresh_action());
+    let held_window = std::cell::RefCell::new(Some(window_ui));
     window.connect_destroy(move |_| {
         app.remove_action("accounts");
-        window_ui.borrow_mut().take();
+        app.remove_action("refresh-inbox");
+        if let Some(ui) = held_window.borrow_mut().take() {
+            // The worker closes its connection on its own thread.
+            ui.cancel_loads();
+        }
         adapter.stop();
     });
 }

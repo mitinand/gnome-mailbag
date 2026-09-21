@@ -10,11 +10,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub(super) fn run_in_context(test: impl FnOnce()) {
+pub(crate) fn run_in_context(test: impl FnOnce()) {
     glib::MainContext::new().with_thread_default(test).unwrap();
 }
 
-pub(super) fn wait_until(mut condition: impl FnMut() -> bool) {
+pub(crate) fn wait_until(mut condition: impl FnMut() -> bool) {
     glib::MainContext::ref_thread_default().block_on(async {
         let deadline = Instant::now() + Duration::from_secs(3);
         while !condition() {
@@ -24,11 +24,11 @@ pub(super) fn wait_until(mut condition: impl FnMut() -> bool) {
     });
 }
 
-pub(super) fn dispatch_for(duration: Duration) {
+pub(crate) fn dispatch_for(duration: Duration) {
     glib::MainContext::ref_thread_default().block_on(glib::timeout_future(duration));
 }
 
-pub(super) struct RecordedUpdates(Rc<RefCell<VecDeque<AccountUpdate>>>);
+pub(crate) struct RecordedUpdates(Rc<RefCell<VecDeque<AccountUpdate>>>);
 impl RecordedUpdates {
     pub fn next(&self) -> AccountUpdate {
         wait_until(|| !self.0.borrow().is_empty());
@@ -47,7 +47,7 @@ impl RecordedUpdates {
     }
 }
 
-pub(super) fn start_test_client(bus: &TestBus) -> (GoaAdapter, RecordedUpdates) {
+pub(crate) fn start_test_client(bus: &TestBus) -> (GoaAdapter, RecordedUpdates) {
     let updates = Rc::new(RefCell::new(VecDeque::new()));
     let recorded = updates.clone();
     let context = glib::MainContext::ref_thread_default();

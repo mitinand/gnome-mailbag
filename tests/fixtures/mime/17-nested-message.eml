@@ -1,0 +1,25 @@
+From: =?utf-8?B?0KLQtdGB0YLQvtCy0YvQuSDQvtGC0L/RgNCw0LLQuNGC0LXQu9GM?= <sender@example.invalid>
+To: =?utf-8?B?0J/QvtC70YPRh9Cw0YLQtdC70Yw=?= <recipient@example.invalid>
+Subject: =?utf-8?B?0J/QtdGA0LXRgdGL0LvQutCw?=
+Date: Tue, 15 Sep 2026 10:00:00 +0300
+Message-ID: <sample-17@example.invalid>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="fwd"
+
+--fwd
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+Пересылаю письмо.
+--fwd
+Content-Type: message/rfc822
+
+From: Inner <inner@example.invalid>
+Subject: Inner message
+Date: Mon, 14 Sep 2026 09:00:00 +0300
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+Текст вложенного письма.
+--fwd--

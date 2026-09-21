@@ -1,0 +1,19 @@
+From: =?utf-8?B?0KLQtdGB0YLQvtCy0YvQuSDQvtGC0L/RgNCw0LLQuNGC0LXQu9GM?= <sender@example.invalid>
+To: Recipient <recipient@example.invalid>
+Subject: =?utf-8?B?0JfQsNGI0LjRhNGA0L7QstCw0L3QvdC+0LU=?=
+Date: Tue, 15 Sep 2026 10:00:00 +0300
+Message-ID: <sample-12@example.invalid>
+MIME-Version: 1.0
+Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"; boundary="enc"
+
+--enc
+Content-Type: application/pgp-encrypted
+
+Version: 1
+--enc
+Content-Type: application/octet-stream; name="encrypted.asc"
+
+-----BEGIN PGP MESSAGE-----
+not real
+-----END PGP MESSAGE-----
+--enc--

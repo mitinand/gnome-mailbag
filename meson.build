@@ -39,19 +39,50 @@ install_data(
     install_dir: license_dir,
 )
 
-# Preserve upstream notices, including their paths and package versions.
-# Vendoring is required before configuring an installable build.
-crates = run_command('find', 'vendor', '-mindepth', '1', '-maxdepth', '1', '-type', 'd', check: true).stdout().strip().split('\n')
+# Install each vendored crate's notices and Cargo.toml under <name>-<version>/,
+# keeping their paths inside the crate. Installable builds need vendored sources.
+cargo_vendor_dir = get_option('cargo_vendor_dir')
+if not cargo_vendor_dir.startswith('/') or not fs.is_dir(cargo_vendor_dir)
+    error('Set cargo_vendor_dir to the absolute path of the vendored Cargo sources.')
+endif
+# stop-token publishes no license texts; ORIGIN.md explains the texts used instead.
+notice_exceptions = {'stop-token': 'third-party-notices/stop-token'}
+python = find_program('python3')
+# One line per crate: vendor subdirectory, package name and version.
+crates = run_command(
+    python, '-c', '''
+import pathlib, sys, tomllib
+for crate in sorted(pathlib.Path(sys.argv[1]).iterdir()):
+    if crate.is_dir():
+        package = tomllib.loads((crate / "Cargo.toml").read_text(encoding="utf-8"))["package"]
+        print(crate.name, package["name"], package["version"], sep="\t")
+''',
+    cargo_vendor_dir,
+    check: true,
+).stdout().strip().split('\n')
 foreach crate : crates
+    crate_fields = crate.split('\t')
+    crate_dir = cargo_vendor_dir / crate_fields[0]
+    crate_name = crate_fields[1]
+    crate_license_dir = license_dir / (crate_name + '-' + crate_fields[2])
+    # Named notice files anywhere in the crate, and the REUSE LICENSES directory.
     notices = run_command(
-        'find', crate, '-type', 'f', '(', '-iname', '*license*', '-o', '-iname', '*licence*',
-        '-o', '-iname', 'copying*', '-o', '-iname', 'copyright*', '-o', '-iname', 'notice*', ')',
+        'find', crate_dir, '-type', 'f', '(', '-iname', '*license*', '-o', '-iname', '*licence*',
+        '-o', '-iname', 'copying*', '-o', '-iname', 'copyright*', '-o', '-iname', 'notice*',
+        '-o', '-path', crate_dir / 'LICENSES' / '*', ')', '-printf', '%P\n',
         check: true,
     ).stdout().strip()
-    if notices == ''
-        error('Missing upstream license files in ' + crate)
+    if crate_name in notice_exceptions
+        install_subdir(notice_exceptions[crate_name], install_dir: crate_license_dir, strip_directory: true)
+    elif notices == ''
+        error('Missing upstream license files in ' + crate_dir)
     endif
-    foreach notice : notices.split('\n') + [crate / 'Cargo.toml']
-        install_data(notice, install_dir: license_dir / fs.parent(notice))
+    foreach notice : notices == '' ? [] : notices.split('\n')
+        notice_dir = fs.parent(notice)
+        install_data(
+            crate_dir / notice,
+            install_dir: notice_dir == '.' ? crate_license_dir : crate_license_dir / notice_dir,
+        )
     endforeach
+    install_data(crate_dir / 'Cargo.toml', install_dir: crate_license_dir)
 endforeach

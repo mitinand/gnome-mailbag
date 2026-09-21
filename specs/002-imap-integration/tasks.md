@@ -1,0 +1,198 @@
+# Tasks: IMAP Integration
+
+**Feature**: F02 / `002-imap-integration`
+**Created**: 2026-09-18 · **Status**: Documents approved 2026-09-19; portions 1–5 and acceptance committed 2026-09-20; review follow-ups completed 2026-09-21. All tasks done; the last change awaits the maintainer's commit.
+
+[Spec](spec.md) owns behavior, [plan](plan.md) owns boundaries and portions,
+[research](research.md) owns decisions and evidence, contracts own details, and
+[quickstart](quickstart.md) owns commands and acceptance scenarios. Follow
+[AGENTS.md](../../AGENTS.md#commits-prs-and-review-pauses): implement one agreed
+portion, run its checks, report and stop. A checked handoff does not mean
+approval. The maintainer creates commits and PRs. Do not start code before
+document approval.
+
+Phases follow the approved portions rather than one phase per story: the
+protocol, content and UI layers each serve several stories and ship as separate
+reviewable commits. Story labels trace tasks to US1 (load recent mail), US2 (read
+received text) and US3 (refresh and explain a failed load). Tests are part of
+every portion under AGENTS.md and live beside their modules.
+
+| Portion | Tasks | Suggested commit subject | Intended PR |
+|---|---|---|---|
+| Documents | T001 | docs(imap): plan IMAP integration | IMAP integration |
+| 1. Packaging and dependency policy | T002–T012 | build: prepare Flatpak sources and IMAP dependencies | IMAP integration |
+| 2. GOA access | T013–T018 | feat(goa): provide IMAP access for the selected account | IMAP integration |
+| 3. Secure connection and acquisition | T019–T029 | feat(imap): receive Inbox data over GIO | IMAP integration |
+| 4. Content and load sequence | T030–T036 | feat(content): select and decode received plain text | IMAP integration |
+| 5. Visible integration | T037–T045 | feat: show and refresh received Inbox mail | IMAP integration |
+| Acceptance | T046–T048 | docs(imap): record IMAP integration acceptance | IMAP integration |
+| 6. Review follow-ups | T049–T055 | one commit per finding, see each task | IMAP integration |
+
+## Phase 1: documents and review
+
+- [X] T001 STOP: present the 2026-09-19 revision of specs/002-imap-integration/ (spec.md, plan.md, research.md §9–§10, contracts/, data-model.md, quickstart.md, checklists/requirements.md and this tasks.md) and wait for explicit maintainer approval before any code change.
+
+## Phase 2: setup — packaging and dependency policy (portion 1)
+
+**Purpose:** the forks, generated sources and legal notices build offline in
+Flatpak before mail code exists. Details: [packaging contract](contracts/packaging.md).
+
+- [X] T002 Verify the baseline in specs/002-imap-integration/research.md §2 before editing: async-imap =0.11.3 with runtime-futures, both fork revisions, mail-parser 0.11.9 with full_encoding, glib/gio 0.22.9 and log with both levels off. Record any proposed departure in research.md and stop for a decision instead of changing it silently.
+- [X] T003 Create skeleton crates crates/mailbag-imap/ and crates/mailbag-content/ (Cargo.toml and src/lib.rs with a crate doc comment and SPDX header, `publish = false`, workspace lints). Declare async-imap (default features off, runtime-futures), log (max_level_off, release_max_level_off), glib and gio in mailbag-imap, and mail-parser (full_encoding) in mailbag-content, following research.md §2 and §9.
+- [X] T004 Update the root Cargo.toml with both workspace members and the two `[patch.crates-io]` fork entries at their full revisions; make crates/mailbag/Cargo.toml depend on both skeletons by path so `cargo build --package mailbag` compiles the forks. Update Cargo.lock and confirm with `cargo tree` that runtime-tokio, runtime-async-std and alternate TLS stacks are absent.
+- [X] T005 [P] Add scripts/setup-cargo-generator.sh that installs flatpak-cargo-generator from flatpak-builder-tools at the full commit for `de2225a` with aiohttp and tomlkit; record that revision in scripts/tool-versions.env and call the script from scripts/setup.sh.
+- [X] T006 Add scripts/generate-cargo-sources.sh with normal generation and `--check` under contracts/packaging.md “Generation and drift checks”: normalize `cargo/config` to `cargo/config.toml`, write deterministic output, and in `--check` mode compare a temporary result with the tracked file and fail without rewriting it. Generate cargo-sources.json.
+- [X] T007 Update io.github.mitinand.Mailbag.yml to use cargo-sources.json instead of the vendor directory and .flatpak-builder/cargo-config.toml, set `CARGO_HOME=/run/build/mailbag/cargo`, keep `CARGO_NET_OFFLINE`, add meson.options and third-party-notices/ to the sources and pass `-Dcargo_vendor_dir=/run/build/mailbag/cargo/vendor`. Remove cargo vendor and the temporary config from scripts/build-flatpak.sh, the `/vendor/` entry from .gitignore and the generated vendor/ directory.
+- [X] T008 Add meson.options with a `cargo_vendor_dir` string option and make meson.build read crate notices from it instead of `vendor/`, never setting CARGO_HOME. Treat files in a crate's `LICENSES/` directory as notices in addition to the existing name patterns. Install notices and Cargo.toml under `share/licenses/io.github.mitinand.Mailbag/<crate-version>/` using relative paths only, and keep failing on a crate without notices outside the map in T009.
+- [X] T009 Add third-party-notices/stop-token/ (standard MIT and Apache-2.0 texts, authors from the resolved Cargo.toml) with ORIGIN.md stating the crate version, license expression and text sources. Install it through an exception map in meson.build keyed only by this package name. hashify needs no exception: its package supplies the texts in `LICENSES/` (research.md §8, revised 2026-09-19).
+- [X] T010 Update deny.toml to allow BSD-3-Clause and set `[sources].allow-git` to exactly the two fork URLs. Update scripts/check.sh to run `scripts/generate-cargo-sources.sh --check`, the license and source-policy gates, and a `cargo tree` check of normal dependencies against the crate rules in research.md §9.
+- [X] T011 Update .github/workflows/check.yml to run scripts/setup-cargo-generator.sh before the canonical checks, taking versions only from scripts/tool-versions.env; keep the Flatpak job building from cargo-sources.json.
+- [X] T012 STOP: run ./scripts/check.sh, including a stale cargo-sources.json and a temporary forbidden edge (gio in crates/mailbag-content/Cargo.toml) that must both fail and are reverted; run ./scripts/build-flatpak.sh with Cargo offline in the build sandbox; inspect the installed license tree under contracts/packaging.md “Portion 1 acceptance”; run git diff --check. Review constitution I/II, report and wait before portion 2.
+
+## Phase 3: GOA access (portion 2)
+
+**Goal:** the selected account's IMAP settings and password reach the mail
+worker; settings without encryption are refused before any password request.
+**Independent check:** the private GOA fixture drives `request_imap_access`
+without IMAP code or UI. Details: [GOA access contract](contracts/goa-access.md).
+
+- [X] T013 [US1] STOP before code: obtain explicit maintainer approval of the shared interface in specs/002-imap-integration/contracts/goa-access.md. Approved 2026-09-19; revised the same day after the maintainer's portion 2 review (flat five-variant ImapAccessError, no step callback, no fallback connection or stop tracking).
+- [X] T014 [US1] Extend tests/support/goa.rs with the Mail interface properties (ImapHost, ImapUserName, ImapUseSsl, ImapUseTls, ImapAcceptSslErrors) and PasswordBased.GetPassword for `imap-password`, using synthetic credentials only.
+- [X] T015 [US1] Add tests in crates/goa-adapter/src/imap_access/tests.rs for success with the returned object path and a host with an explicit port, SSL chosen over STARTTLS, an absent account and a missing Mail interface as Settings, a service error at each step as Settings or Password, a hang at each step as Timeout, cancelling and dropping the request as one Cancelled, no observer refresh or exclusion side effects, and AttentionNeeded with a failed observation read over the existing connection.
+- [X] T016 [US3] Add tests in crates/goa-adapter/src/imap_access/tests.rs showing that false/false settings return NoEncryption, GetPassword is never called and ImapAcceptSslErrors changes nothing (spec US3-6).
+- [X] T017 [US1] Implement `GoaAdapter::request_imap_access` in crates/goa-adapter/src/imap_access.rs and expose it through crates/goa-adapter/src/lib.rs: ImapAccess, ImapEncryption, the five-variant ImapAccessError and ImapAccessRequest under contracts/goa-access.md, asynchronous D-Bus calls over the observer's connection, no Debug, Display or Clone of secrets.
+- [X] T018 [US1] STOP: run scripts/check.sh, git diff --check and the F01 regression tests; review constitution I/II, report and wait before portion 3.
+
+## Phase 4: secure connection and acquisition (portion 3)
+
+**Goal:** `mailbag-imap` receives rows, part structures and requested sections
+over a verified TLS session without changing server state. **Independent check:**
+the scripted Rust/GIO server exercises the crate directly, without GOA or UI.
+Details: [acquisition contract](contracts/imap-reading.md).
+
+- [X] T019 [P] [US3] Add tools/make-certs.sh that generates disposable CA, localhost, unknown-CA, wrong-host and expired certificates under target/test-certs with OpenSSL and never installs trust; add openssl to the prerequisites in README.md and .github/workflows/check.yml.
+- [X] T020 [US1] Add the scripted Rust/GIO IMAP server in crates/mailbag-imap/src/test_server.rs, compiled only for tests and the `test-support` feature, with the prototype behaviors needed by 002: implicit TLS, STARTTLS, PREAUTH, ALERT, UTF-8 greeting, BYE greeting, sign-in rejection with RFC 5530 codes, LOGIN literals, FETCH completed with NO after partial data, NIL and missing sections, stall, huge literal, deep structure and section requests. Bind dynamic loopback ports, generate missing certificates through tools/make-certs.sh, record only command names, UIDs, section identifiers and credential-transmission counts, and add the ignored `serve_fixture` entry point from quickstart.md.
+- [X] T021 [P] [US3] Add secure-session tests in crates/mailbag-imap/src/tests/: both TLS modes, missing or rejected STARTTLS, injected pre-TLS bytes, PREAUTH before TLS, unknown CA, wrong host and expiry with zero password transmissions, PLAIN with non-ASCII credentials, LOGIN fallback with non-ASCII credentials as literals, LOGINDISABLED, no second method after rejection, UTF-8 response text and ALERT text retained for a failing attempt, including a rejected sign-in; a BYE greeting's text; a rejected sign-in's text and code with AUTHENTICATIONFAILED and with UNAVAILABLE.
+- [X] T022 [P] [US1] Add acquisition tests in crates/mailbag-imap/src/tests/: EXAMINE only; rows for 0, 1, 100 and 101 messages in descending UID order; structures requested by the returned UIDs; a disappearing UID; rows and structures kept after a FETCH completed with NO, and a NO without rows as a metadata failure with the server's text; no mutation commands or flag changes.
+- [X] T023 [P] [US3] Add structure-isolation and error-origin tests in crates/mailbag-imap/src/tests/: one, several and all unreadable structures keep their rows with an unreadable-structure result; a fresh session follows each parse failure; UIDVALIDITY change on reconnect stops the attempt; transport errors, timeout, incomplete literal and the library's typed ResponseTooLarge error never enter isolation; a deep BODYSTRUCTURE leaves the process running.
+- [X] T024 [P] [US2] Add section-retrieval tests in crates/mailbag-imap/src/tests/: one command per complete request shape, root HEADER and leaf .MIME at section 1 never share a request, correlation by UID and section in any order, a missing section or NIL gives that message a text-not-received result while the others are read, a NO completion keeps the text received before it, BODY.PEEK only.
+- [X] T025 [P] [US3] Add timeout and cancellation tests in crates/mailbag-imap/src/tests/: stalled versus slowly progressing input with an injected short socket timeout, cancellation during a pending read closes the connection, and no session is reused.
+- [X] T026 [US3] Implement crates/mailbag-imap/src/transport.rs under contracts/imap-reading.md “Execution, waiting and cancellation” and “Secure session”: SocketClient with a 30-second timeout, address parsing with default ports, TlsClientConnection with the default database and no accept-certificate handler, STARTTLS with discarded plaintext buffers, the ThreadGuard futures-io bridge and a private wrapper marking bridge-originated errors. Add only the futures I/O dependency the bridge needs and regenerate cargo-sources.json.
+- [X] T027 [P] [US2] Implement crates/mailbag-imap/src/part_tree.rs: project the parsed BODYSTRUCTURE into a typed tree with section paths, types, parameters and dispositions, keeping the single-part root numbering. Transfer encodings are left out: mail-parser reads them from each part's MIME header.
+- [X] T028 [US1] Implement sessions and acquisition in crates/mailbag-imap/src/lib.rs, reader.rs and session.rs: sign-in selection, EXAMINE, the row command, `UID FETCH <uids> (UID BODYSTRUCTURE)`, structure isolation with fresh sessions, grouped section retrieval for caller-supplied request shapes, per-message results after a NO completion, ALERT retention, the server's reason (NO/BAD/BYE text and RFC 5530 code) and safe step/cause errors that never format library errors. Use the async-imap fork revision with research §3 items 8–11 (status response, FETCH completion status, LOGIN literals, typed buffer limit), tested on its three runtimes and pushed only to the fork. The crate has no notion of a provider (research.md §9).
+- [X] T029 [US1] STOP: run `cargo test --locked -p mailbag-imap`, scripts/check.sh and git diff --check; confirm the dependency rules pass and cargo-sources.json is current. Review constitution I/II, report and wait before portion 4.
+
+## Phase 5: content and load sequence (portion 4)
+
+**Goal:** every row gets decoded display fields and complete text or an
+explanation, and `mailbag` assembles complete batches on the worker.
+**Independent check:** MIME samples test `mailbag-content` alone; load-sequence
+tests drive the scripted server through the `test-support` feature without GTK
+widgets.
+
+- [X] T030 [P] [US2] Add synthetic MIME samples to tests/fixtures/mime/ covering UTF-8, Windows-1251, KOI8-R, an Asian encoding, base64 and quoted-printable, invalid bytes, unknown charset and transfer encoding, encoded Subject/From/To, several mixed plain parts, a later plain part without disposition, a name without inline, signed, encrypted, related-first-child, HTML-only and nested message/rfc822. Use no real mail.
+- [X] T031 [US2] Add tests in crates/mailbag-content/src/tests.rs for selection and decoding under contracts/imap-reading.md “Selecting text sections” and “Decoding and publication”: returned part paths, replacement characters for invalid bytes, and explanations for unknown charset or encoding, encryption, S/MIME, HTML-only and unreadable structure.
+- [X] T032 [US2] Implement crates/mailbag-content/src/lib.rs: the MIME part description, text-part selection returning part paths, entity decoding through mail-parser with replacement characters, header display-field decoding and message-specific content explanations. Never call `body_text()` or `body_html()`; use no GIO, glib or protocol types.
+- [X] T033 [US1] Implement the received-data roles in crates/mailbag/src/inbox.rs under data-model.md “Data and ownership”: ReceivedBatch, ReceivedMessage, ReceivedContent and LoadFailure, with no raw MIME retained after decoding.
+- [X] T034 [US1] Add load-sequence tests in crates/mailbag/src/inbox_load/tests.rs with a dev-dependency on mailbag-imap's `test-support` feature: complete batches for 0, 1, 100 and 101 messages, rows kept for unreadable structures and for text the server did not return, a window that empties during the load reported as an Inbox change, text fetched only for selected parts (SC-002 payload absence), no publication after a network interruption, connection closure before a cancelled load completes, and a stopped worker reported as a visible failure that a later refresh recovers from.
+- [X] T035 [US1] Implement crates/mailbag/src/inbox_load.rs: the selected-account worker thread with its own GLib MainContext, started with the first load and again after it stops, conversion from the mailbag-imap part tree to the mailbag-content description, the load sequence in plan.md “Ownership and function map” and completion through runtime-independent channels that always report an outcome, including a stopped worker. No widget access (research.md §9).
+- [X] T036 [US2] STOP: run `cargo test --locked -p mailbag-content`, `cargo test --locked -p mailbag inbox`, scripts/check.sh and git diff --check; review constitution I/II, report and wait before portion 5.
+
+## Phase 6: visible integration (portion 5)
+
+**Goal:** the approved UI shows, opens and refreshes the received batch with
+truthful loading and failure states. **Independent check:** unit tests for the
+controller plus the graphical `mail_ui_transitions` test. Details:
+[UI contract](contracts/ui.md).
+
+- [X] T037 [US3] Implement InboxController in crates/mailbag/src/inbox.rs with tests in crates/mailbag/src/inbox/tests.rs for data-model.md “Operation transitions”, keeping one AccountInbox per account: selection never loads, refresh clears and then loads, a result is stored only for its own account while switching during a load, a failure leaves the list empty, confirmed exclusion discards mail and cancels its load, and quit; one load at a time and Refresh unavailable while it runs.
+- [X] T038 [US1] Add WindowUi in crates/mailbag/src/window_ui.rs as the only owner of list_stack under contracts/ui.md “One page decision”, including the not-loaded state with Refresh Inbox unavailable for Google and Microsoft 365; stop crates/mailbag/src/account_ui.rs from setting list_stack directly.
+- [X] T039 [US1] Implement row binding in crates/mailbag/src/mail_ui.rs: a GListStore bound to the existing GtkListBox with message-row.ui, sender, subject and INTERNALDATE, the unread dot with an accessible “Unread”/“Read” description, and list_title/list_page titles under contracts/ui.md “List and reader binding”.
+- [X] T040 [US2] Implement local opening in crates/mailbag/src/mail_ui.rs: instantiate message-content.ui and envelope.ui once, fill reader fields, show at most the first 65,536 UTF-8 bytes of inert plain text without an explanation, replace NUL, keep attachment and location hidden and mail-changing controls insensitive. Opening sends no network request.
+- [X] T041 [US3] Add `app.refresh-inbox` immediately after Synchronization Status in crates/mailbag/resources/ui/mailbag.ui and wire it in crates/mailbag/src/main.rs as the only way to load: it clears the selected account's list and reader and starts a load; enabled for the selected Generic IMAP account while Idle and disabled while a load runs; show sync_button_list with the existing spinner only while a load runs; show a failed load on the account's status page, worded under contracts/ui.md “Failure wording”, without a toast.
+- [X] T042 [US1] Connect selection, account updates and GOA access to loads in crates/mailbag/src/main.rs and crates/mailbag/src/window_ui.rs: request access on the main context, hand ImapAccess to the worker, and cancel on confirmed exclusion and quit without joining a thread on GTK's context; switching accounts does not cancel a load.
+- [X] T043 [US1] Add `--share=network` to finish-args in io.github.mitinand.Mailbag.yml as the only permission added to the F01 FR-016 baseline.
+- [X] T044 [US3] Add the ignored graphical test mail_ui_transitions in crates/mailbag/src/mail_ui/tests.rs for page priority, selection without loading, refresh clearing and loading, a failed load and a repeated refresh, switching during a load, disabled busy Refresh, spinner visibility and a row with an unreadable structure.
+- [X] T045 [US1] STOP: run scripts/check.sh, git diff --check and `cargo test --locked -p mailbag mail_ui_transitions -- --ignored --test-threads=1`; review constitution I/II, report and hand over portion 5 before acceptance.
+
+## Phase 7: acceptance
+
+These checks need the maintainer's session, a disposable Generic IMAP account
+and a test CA the maintainer installs. Record unavailable cases as unverified.
+
+**Run on 2026-09-20** with GOA 3.58.1, GLib 2.88.3, GnuTLS 3.8.13 and Flatpak
+1.18.2 on Fedora 44, against GNOME runtime 50 (`93d500c1…`, GLib 2.88.3,
+GnuTLS 3.8.13). Host build with the disposable CA: both TLS modes and the
+injected-bytes case load 100 of 101 messages and sign in only after TLS;
+unknown CA, wrong host, expiry, missing, rejected and PREAUTH STARTTLS all stop
+at the secure-connection step with zero credential transmissions, including
+through Online Accounts with `ImapAcceptSslErrors=true`; false/false stops at
+the encryption setting without requesting the password and without a
+connection. Installed application: real accounts load, open and refresh; its
+permissions add only `--share=network`; its data directory holds no mail,
+account or password file after the run. Opening a 64 KiB message froze the
+window until the reader chose its wrapping by content; the fix and its
+regression test are part of portion 5. Servers with a private certificate
+authority stay unverified in the installed application and are out of scope.
+The fork revision and the content decoding changed after this run; what that
+means for these results is in phase 8.
+
+- [X] T046 Run acceptance from specs/002-imap-integration/quickstart.md “Installed-app fixture and host trust” and “Visible integration and final acceptance” for SC-001–SC-007: both TLS modes, certificate failures with zero passwords, false/false refusal, STARTTLS downgrade attempts, display clipping at 64 KiB, reopening without requests, restart without restored mail and installed permissions. The certificate and STARTTLS matrix runs on the host build, because Flatpak keeps the host's trust store out of the sandbox (scope note in spec.md “Assumptions”); the installed application shows a load from a real server instead. Record GOA, GLib, GnuTLS and Flatpak versions.
+- [X] T047 Run the SC-006 checks and a load of the maintainer's real mailbox in the installed app: unchanged F01 accessibility, Refresh Inbox and rows by keyboard, spoken read/unread state, navigation and quitting during a stall. Completion requires the maintainer's confirmation.
+- [X] T048 STOP: run scripts/check.sh and git diff --check, keep unmet acceptance unchecked in specs/002-imap-integration/tasks.md and report it; do not declare 002 complete from synthetic tests alone.
+
+## Phase 8: review follow-ups
+
+An external review on 2026-09-20 reproduced five defects and three limitations
+in the committed feature. Each one is a small change of its own, with the same
+review pause as a portion. Two of them changed accepted documents, which the
+maintainer approved before the work started.
+
+**Re-run on 2026-09-21** against the code of T049–T053, without the
+maintainer's session: the eight refusal cases on the host build — an
+uninstalled disposable CA, unknown CA, wrong host, expiry, and STARTTLS
+missing, rejected, PREAUTH or with injected bytes — all stop at the
+secure-connection step with zero credential transmissions and no plaintext
+sign-in; false/false through a disposable Online Accounts account with
+`ImapAcceptSslErrors=true` stops at the encryption setting without requesting
+the password, and the server saw no connection at all; the workspace suite and
+the graphical test pass. The disposable account and the test certificates were
+removed afterwards. The trusted-CA success cases and the installed application
+need the maintainer's session and are T055.
+
+- [X] T049 Recognize a file name in every form RFC 2231 allows (`name*`, `name*0*`) in crates/mailbag-content/src/lib.rs, so an attached text file is not read as the message body; update contracts/imap-reading.md and research.md §5. Committed as “Fix attachement name recognition”.
+- [X] T050 Explain content the transfer encoding did not deliver instead of showing it: honour mail-parser's encoding-problem mark and reject a base64 body that ends inside a group of four, both as the undecodable explanation; update research.md §5 and data-model.md. Committed as “Catch bad coded string”.
+- [X] T051 Fix the pinned async-imap fork on branches over `mailbag` and repin Mailbag: capability and system flag names compared without regard to case, untagged responses passed over during AUTHENTICATE, an untagged NO or BAD during EXAMINE treated as a warning, and an untagged BYE reported as `Error::Bye` with its reason. Tag `mailbag-2026-09-20`, revision `3c4cdde`; regenerate cargo-sources.json and update research.md §3. Committed as “Apply fixes in the dependencies forks”.
+- [X] T052 [US3] Keep the rows of a message list the server refused and carry its reason to the window, which says once in a toast that the list is incomplete; update spec.md FR-003 and SC-003, contracts/ui.md, contracts/imap-reading.md and data-model.md. Committed as “Fix server FETCH deny”.
+- [X] T053 [US2] Read the root of a `multipart/related` set by the Content-ID its `start` parameter names, and unflow `format=flowed` text under RFC 3676, with three new MIME samples (18–20); update contracts/imap-reading.md, research.md §5, quickstart.md and plan.md.
+- [X] T054 Re-run the acceptance that does not need the maintainer's session against the code of T049–T053: the certificate and STARTTLS refusals with zero credential transmissions, the false/false refusal through a disposable Online Accounts account, and the whole workspace test suite. Record the second run in this file.
+- [X] T055 STOP: re-run the trusted-CA success cases and one load of a real mailbox in the installed Flatpak after T049–T053, which changed the pinned fork and the content decoding following the 2026-09-20 acceptance run. Closed on the maintainer's confirmation of 2026-09-21; the evidence recorded in this file for that part is the maintainer's own, while the refusal, false/false and suite results of the same day are the re-run above.
+
+## Dependencies and parallel opportunities
+
+Documents → approval → portion 1 → review → shared-interface approval →
+portion 2 → review → portion 3 → review → portion 4 → review → portion 5 →
+review → acceptance. Each portion builds on the previous one: packaging makes
+the forks available, GOA access supplies credentials, `mailbag-imap` and
+`mailbag-content` feed the load sequence, and the UI consumes complete batches.
+
+Stories cut across the portions. US1 is testable end to end without UI after
+portion 4 (0/1/100/101-message fixture Inboxes produce 0/1/100/100 rows) and
+visibly after portion 5. US2 content is testable after portion 4 and local
+opening after portion 5. US3 security and failure behavior is testable in
+portions 2 and 3; refresh and retry in the UI after portion 5.
+
+Within portion 3, the test tasks T021–T025 touch separate files and can be
+written in parallel once the server in T020 exists; T027 is independent of
+T026. Within portion 4, samples (T030) and content tests can be prepared while
+`mailbag-content` is implemented. Shared-file edits stay sequential, and these
+opportunities never override review pauses or authorize additional agents.
+
+## Implementation strategy
+
+The first user-visible increment is portion 5; portions 1–4 are verified by
+their own tests and deliver no UI change. Stop after every portion for review.
+If a portion grows beyond one reviewable change or the plan's estimate by about
+1.5 times, split it and bring the change back before continuing. No IDLE,
+polling, storage, attachment fetching, HTML reading or other provider is part
+of any portion.
