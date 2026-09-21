@@ -19,7 +19,7 @@ an artifact outside the repository; do not append validation results here.
 | SC-005 / FR-008 | Equal INFO counts for 1 and 100 ordinary messages; reconnection adds its connection sequence. The final line of a finished, failed and cancelled load, of a successful and a failed account read and of a successful and a failed Settings launch has a numeric nonnegative `duration_ms`; no other line has one |
 | SC-006 | Every line of a load has the load's label and identifier, including the lines written in main-thread callbacks (settings received, result), while an account update arrives during the load |
 | SC-008 | A writer that fails every write: the load finishes and nothing panics. The unread pipe is a manual check below |
-| Escaping | A folder name and a server sentence with line breaks, quotes and a NUL, passed as string fields; one line per event. `scripts/check.sh` rejects `%` inside event macros |
+| Escaping | A folder name and a server sentence with line breaks, quotes and a NUL, passed as string fields; one line per event. Clippy, run by `scripts/check.sh`, rejects `%` inside event macros |
 | Option | Unknown level: message and status 1. Parsing of the four levels |
 | Account label | `account_label` numbers accounts by first appearance, repeats the number for a known account, gives the same numbers for the same set of accounts, and never contains the identifier's text, generated or arbitrary |
 

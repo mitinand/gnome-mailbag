@@ -1,0 +1,7 @@
+# An event field written with the % sigil calls tracing::field::display, and
+# the formatter writes that value unescaped, so mail or a server could break a
+# line of the record. Pass external strings as plain fields
+# (specs/003-logging/research.md §9).
+disallowed-methods = [
+    { path = "tracing::field::display", reason = "the record writes Display values unescaped; pass a plain string field" },
+]

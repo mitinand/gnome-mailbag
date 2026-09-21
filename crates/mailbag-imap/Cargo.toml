@@ -19,6 +19,7 @@ gio.workspace = true
 glib.workspace = true
 # async-imap traces every command, including sign-in, at trace level.
 log = { version = "0.4", features = ["max_level_off", "release_max_level_off"] }
+tracing.workspace = true
 
 [dev-dependencies]
 # Tests trust the test CA through GIO's default certificate database.

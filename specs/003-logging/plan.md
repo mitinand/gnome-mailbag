@@ -57,8 +57,8 @@ compiled out ([research](research.md)).
    account contract do not change.
 4. **Escaping rests on a rule.** The library escapes string fields, not the
    message text and not values passed with `%`. So messages are fixed text and
-   external strings are plain fields; `scripts/check.sh` rejects `%` in event
-   macros and a test feeds line breaks through
+   external strings are plain fields; Clippy, run by `scripts/check.sh`,
+   rejects `%` in event macros and a test feeds line breaks through
    ([research §9](research.md#9-values-that-reach-a-line)).
 5. **One accommodation for tests in production code**: the mail worker uses
    the dispatcher of the thread that started it
@@ -157,7 +157,8 @@ crates/mailbag-imap/src/        session.rs, transport.rs, reader.rs, part_tree.r
 crates/mailbag-content/src/lib.rs   events; header_shape
 crates/goa-adapter/src/         client.rs: one line per read of the account list
 Cargo.toml files, Cargo.lock, cargo-sources.json
-scripts/check.sh                no tracing-log; log stays at max_level_off; no % in events
+scripts/check.sh                no tracing-log; log stays at max_level_off
+clippy.toml                     no % in events
 README.md                       "Reporting a problem" section
 AGENTS.md                       one line: every feature records its log events
 specs/002-imap-integration/     contracts/imap-reading.md, data-model.md: server text

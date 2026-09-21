@@ -65,8 +65,10 @@ to `Cargo.lock`: `tracing`, `tracing-core`, `tracing-subscriber`,
 `pin-project-lite` are there already. `tracing-log`, the `log` crate and ANSI
 color crates are not pulled in. All seven are MIT or MIT OR Apache-2.0, which
 `deny.toml` allows, and each ships its license files, so no notice exception
-is needed. `cargo-sources.json` is regenerated. The first portion pins the
-versions current at that time and repeats the check.
+is needed. `cargo-sources.json` is regenerated. Portion 1 repeated the check
+in the workspace on 2026-09-21: 0.1.44 and 0.3.23 were still the current
+releases, and `Cargo.lock` pins them with `tracing-core` 0.1.36. The results
+above and below held.
 
 **What the formatter does**, from the same probe:
 
@@ -78,6 +80,10 @@ versions current at that time and repeats the check.
 - Each event reaches the writer as one `write` call holding one whole line,
   so lines of different threads do not mix on the stream.
 - A timer and a writer of our own are accepted; colors can be turned off.
+- By default a write that fails is reported with `eprintln!`, which panics
+  when the standard error stream itself cannot be written.
+  `log_internal_errors(false)` turns the report off, so the line is dropped
+  (FR-016).
 - The line gives the time, the level, the enclosing spans with their fields,
   the module, the message and the event's fields, as the
   [record contract](contracts/record.md#line) shows.
@@ -299,6 +305,10 @@ with the `%` sigil. Two rules close the gap, and both are checked:
   comes from mail, a server or the system is a field;
 - external strings are passed as plain string fields, never with `%`.
 
-`scripts/check.sh` rejects a `%` sigil inside an event macro in the four
-crates, and a test writes a folder name and a server sentence that contain
-line breaks, quotes and a NUL and expects one line per event.
+The sigil expands to a call of `tracing::field::display`, so `clippy.toml`
+lists that function under Clippy's `disallowed-methods`, and the Clippy run of
+`scripts/check.sh` rejects every such field in the four crates. Clippy sees the
+expanded code, so a `%` operator, a comment or a string is never mistaken for
+the sigil; it reports the first line of the event macro. A test writes a
+folder name and a server sentence that contain line breaks, quotes and a NUL
+and expects one line per event.
