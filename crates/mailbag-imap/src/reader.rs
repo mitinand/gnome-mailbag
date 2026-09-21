@@ -169,9 +169,9 @@ impl InboxReader {
         uids: &[u32],
         structures: &mut BTreeMap<u32, Option<MessagePart>>,
     ) -> Result<(), ImapError> {
-        // A flag-only reply before the parse failure did not supply a structure.
-        // Let the individual request determine its result, including disappearance.
-        structures.retain(|_, structure| structure.is_some());
+        // Only answered structures are known at this point, so every other
+        // requested message gets its own request, which also tells a message
+        // that disappeared from one the parser cannot read.
         let unread: Vec<u32> = uids
             .iter()
             .copied()
@@ -358,8 +358,9 @@ async fn collect_fetches(
 }
 
 /// Adds the structures among the responses. A flag change made meanwhile by
-/// another client arrives as a response without a structure; it must not
-/// hide the real one.
+/// another client arrives as a response without a structure: it neither hides
+/// the real one nor stands in for it, so a message that never gets a structure
+/// stays unanswered and the command's completion decides what that means.
 fn keep_structures(
     fetches: &[Fetch],
     uids: &[u32],
@@ -369,13 +370,8 @@ fn keep_structures(
         let Some(uid) = fetch.uid.filter(|uid| uids.contains(uid)) else {
             continue;
         };
-        match fetch.bodystructure() {
-            Some(structure) => {
-                structures.insert(uid, Some(MessagePart::from_body_structure(structure)));
-            }
-            None => {
-                structures.entry(uid).or_insert(None);
-            }
+        if let Some(structure) = fetch.bodystructure() {
+            structures.insert(uid, Some(MessagePart::from_body_structure(structure)));
         }
     }
 }

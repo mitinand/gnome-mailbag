@@ -248,6 +248,10 @@ pub struct FixtureSetup {
     pub vanishing_text_uids: Vec<u32>,
     /// Sends flag changes for all requested messages before their requested data.
     pub interleave_flag_changes: bool,
+    /// UIDs the server reports a flag change for before the requested data, as
+    /// another client's change arrives. It may name a message that is already
+    /// gone from the mailbox.
+    pub flag_change_uids: Vec<u32>,
     /// Answers FETCH with messages and items in reverse order.
     pub reverse_order: bool,
     /// Return each requested field in its own FETCH response. UID FETCH repeats
@@ -290,6 +294,7 @@ impl Default for FixtureSetup {
             vanishing_uid: None,
             vanishing_text_uids: Vec::new(),
             interleave_flag_changes: false,
+            flag_change_uids: Vec::new(),
             reverse_order: false,
             split_fetch_responses: false,
             expunge_during_text: false,
@@ -702,6 +707,10 @@ impl Server {
         } else {
             vec![items]
         };
+        for uid in &self.setup.flag_change_uids {
+            io.send(format!("* 1 FETCH (UID {uid} FLAGS (\\Seen))\r\n"))
+                .await?;
+        }
         if self.setup.interleave_flag_changes {
             for (sequence_number, message) in &messages {
                 io.send(format!(

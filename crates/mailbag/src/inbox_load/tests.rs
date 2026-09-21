@@ -291,6 +291,23 @@ fn a_related_message_reads_the_part_its_start_names() {
     );
 }
 
+/// A message that disappeared while its flag change was reported keeps no row,
+/// unlike a message whose structure the server could not read.
+#[test]
+fn a_message_that_vanished_after_a_flag_change_keeps_no_row() {
+    let fixture = ImapFixture::start(FixtureSetup {
+        messages: plain_messages(2),
+        vanishing_uid: Some(10),
+        flag_change_uids: vec![10],
+        ..FixtureSetup::default()
+    });
+    let batch = published_batch(load_inbox(&fixture));
+    assert_eq!(
+        batch.messages.iter().map(|m| m.uid).collect::<Vec<_>>(),
+        [20]
+    );
+}
+
 #[test]
 fn a_batch_short_of_a_refused_message_says_why() {
     let fixture = ImapFixture::start(FixtureSetup {

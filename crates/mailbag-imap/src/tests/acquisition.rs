@@ -417,3 +417,38 @@ fn a_structure_carries_the_content_id_of_its_parts() {
         [Some("image@fixture.invalid"), Some("text@fixture.invalid")]
     );
 }
+
+/// Another client's flag change can name a message that is already gone. The
+/// message disappeared; it did not become one with an unreadable structure.
+#[test]
+fn a_flag_change_for_a_vanished_message_leaves_it_unanswered() {
+    let fixture = ImapFixture::start(FixtureSetup {
+        messages: plain_messages(2),
+        vanishing_uid: Some(10),
+        flag_change_uids: vec![10],
+        ..FixtureSetup::default()
+    });
+    let mut reader = open_reader(&fixture);
+    let uids: Vec<u32> = expect_success(run(reader.fetch_rows()))
+        .rows
+        .iter()
+        .map(|row| row.uid)
+        .collect();
+    assert_eq!(uids, [20, 10]);
+    let structures = expect_success(run(reader.fetch_structures(&uids)));
+    assert_eq!(structures.keys().copied().collect::<Vec<_>>(), [20]);
+}
+
+/// The same flag change must not hide the structure of a message that is
+/// still there, whichever order the responses arrive in.
+#[test]
+fn a_flag_change_does_not_hide_a_structure() {
+    let fixture = ImapFixture::start(FixtureSetup {
+        messages: plain_messages(1),
+        flag_change_uids: vec![10],
+        ..FixtureSetup::default()
+    });
+    let mut reader = open_reader(&fixture);
+    let structures = expect_success(run(reader.fetch_structures(&[10])));
+    assert!(structures[&10].is_some());
+}
