@@ -6,8 +6,8 @@ use crate::inbox::ReceivedBatch;
 use crate::logging::{LogLevel, capture::start_record};
 use goa_adapter::AccountId;
 use mailbag_imap::test_server::{
-    FaultKind, FaultyCommand, FixtureMessage, FixtureSetup, ImapFixture, TEST_LOGIN, TEST_PASSWORD,
-    test_certificates_trusted,
+    FaultKind, FaultyCommand, FixtureMessage, FixtureSetup, ImapFixture, PRIVATE_MARKERS,
+    TEST_LOGIN, TEST_PASSWORD, test_certificates_trusted,
 };
 use std::time::{Duration, Instant};
 
@@ -477,4 +477,134 @@ fn a_refused_sign_in_leaves_the_error_line_to_the_load() {
         "{reply}"
     );
     assert!(!text.contains("wrong password"), "{text}");
+}
+
+#[test]
+fn no_private_value_reaches_the_record_at_any_level() {
+    for level in [LogLevel::Info, LogLevel::Debug] {
+        let fixture = ImapFixture::start(FixtureSetup {
+            messages: vec![FixtureMessage::with_private_markers(10)],
+            ..FixtureSetup::default()
+        });
+        let (outcome, text) = load_inbox_with_account(account_access(&fixture), level);
+        // The markers were read, so the record had the chance to leak them.
+        let batch = published_batch(outcome);
+        assert_eq!(text_of(&batch.messages[0].content), "marker-body-text");
+        assert_eq!(
+            batch.messages[0].fields.subject.as_deref(),
+            Some("marker-subject")
+        );
+        for marker in PRIVATE_MARKERS {
+            assert!(
+                !text.contains(marker),
+                "{level:?}: {marker} reached the record:\n{text}"
+            );
+        }
+        let details = ["INBOX", "localhost", "uid="];
+        match level {
+            LogLevel::Info => {
+                for detail in details {
+                    assert!(!text.contains(detail), "{detail} at info:\n{text}");
+                }
+            }
+            _ => {
+                for detail in details {
+                    assert!(text.contains(detail), "{detail} missing at debug:\n{text}");
+                }
+                assert!(text.contains("text part left out as a file"), "{text}");
+            }
+        }
+    }
+}
+
+/// A single-part message whose header and body the test chooses.
+fn single_part(
+    uid: u32,
+    header: &[u8],
+    charset: &str,
+    encoding: &str,
+    body: &str,
+) -> FixtureMessage {
+    FixtureMessage {
+        uid,
+        seen: false,
+        header: [
+            b"From: Sender <sender@example.invalid>\r\nTo: reader@example.invalid\r\n".as_slice(),
+            header,
+            b"\r\n",
+        ]
+        .concat(),
+        structure: format!(
+            "(\"TEXT\" \"PLAIN\" (\"CHARSET\" \"{charset}\") NIL NIL \"{encoding}\" {} 1 NIL NIL NIL NIL)",
+            body.len()
+        ),
+        sections: std::collections::BTreeMap::from([("1".to_owned(), body.as_bytes().to_vec())]),
+    }
+}
+
+#[test]
+fn the_debug_record_explains_each_defective_message() {
+    let fixture = ImapFixture::start(FixtureSetup {
+        messages: vec![
+            single_part(
+                10,
+                b"Subject: Unknown charset\r\nContent-Type: text/plain; charset=x-marker-unknown\r\n",
+                "X-MARKER-UNKNOWN",
+                "8BIT",
+                "text",
+            ),
+            single_part(
+                20,
+                b"Subject: Unknown encoding\r\nContent-Type: text/plain; charset=utf-8\r\n\
+                  Content-Transfer-Encoding: x-marker-encoding\r\n",
+                "UTF-8",
+                "X-MARKER-ENCODING",
+                "text",
+            ),
+            single_part(
+                30,
+                b"Subject: Undecodable\r\nContent-Type: text/plain; charset=utf-8\r\n\
+                  Content-Transfer-Encoding: base64\r\n",
+                "UTF-8",
+                "BASE64",
+                "QUJDRA=",
+            ),
+            FixtureMessage::deeply_nested(40, 40),
+            FixtureMessage::plain_text(50, "not returned"),
+            single_part(
+                60,
+                b"Subject: \xff\xfe\r\nContent-Type: text/plain; charset=utf-8\r\n",
+                "UTF-8",
+                "8BIT",
+                "text",
+            ),
+        ],
+        nil_body_uid: Some(50),
+        ..FixtureSetup::default()
+    });
+    let (outcome, text) = load_inbox_with_account(account_access(&fixture), LogLevel::Debug);
+    published_batch(outcome);
+    let line_with = |parts: &[&str]| {
+        text.lines()
+            .find(|line| parts.iter().all(|part| line.contains(part)))
+            .unwrap_or_else(|| panic!("no line with {parts:?}:\n{text}"))
+            .to_owned()
+    };
+    line_with(&["Inbox opened", r#"folder="INBOX""#]);
+    for (uid, cause) in [
+        (10, r#"cause=UnknownCharset("x-marker-unknown")"#),
+        (20, r#"cause=UnknownEncoding("x-marker-encoding")"#),
+        (30, "cause=Undecodable"),
+    ] {
+        let message = format!("message{{uid={uid}}}");
+        line_with(&[&message, "message part"]);
+        line_with(&[&message, "text part could not be decoded", cause]);
+    }
+    line_with(&["uid=40", "the description could not be parsed"]);
+    line_with(&["uid=50", "text not returned"]);
+    line_with(&[
+        "message{uid=60}",
+        r#"header="Subject""#,
+        "list header has replacement characters",
+    ]);
 }

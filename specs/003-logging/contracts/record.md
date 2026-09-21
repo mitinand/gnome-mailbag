@@ -115,8 +115,9 @@ working file [log events](../log-events.md) plans it for that event.
 | `folder`, `uid`, `uids`, `uid_validity`, `uid_next` | Message identity | debug |
 | `host`, `port`, `address` | Where the connection went | debug |
 | `section`, `content_type`, `charset`, `format`, `delsp`, `disposition`, `transfer_encoding`, `size` | One part of a part tree | debug |
-| `header` | A list header that is absent or did not decode | debug |
-| `rule`, `start_matched` | Why text parts were selected; whether a related set's `start` named a part | debug |
+| `header` | A present list header that did not decode | debug |
+| `sections`, `alternative`, `start_matched`, `explanation` | Text parts selected; which alternative was chosen; whether a related set's `start` named a part; why no text part was selected | debug |
+| `flowed`, `characters_out` | How one part was decoded | debug |
 | `server_text`, `alert` | Server status text and alert text, sign-in name replaced | debug |
 | `certificate_errors`, `tls_error` | Names of the certificate checks that failed; GIO's text for a failed TLS handshake | debug |
 

@@ -53,6 +53,39 @@ even when that authority is installed on the host: Flatpak does not share the
 host's trust store with the sandbox. Servers with a publicly trusted certificate
 work normally.
 
+## Reporting a problem
+
+If mail does not load or a message shows wrongly, a record of what Mailbag did
+helps to find the cause. Mailbag writes one only when you ask for it. Quit
+Mailbag first: if it is already running, a new start only says that logging was
+not turned on. Then start it from a terminal with the record going to a file:
+
+```bash
+flatpak run io.github.mitinand.Mailbag --log-level=debug 2> mailbag.log
+```
+
+For a build from this repository, build first so that Cargo's own output stays
+out of the file:
+
+```bash
+cargo build --locked
+./target/debug/mailbag --log-level=debug 2> mailbag.log
+```
+
+Reproduce the problem, quit Mailbag and attach `mailbag.log` to the issue. The
+levels are `error`, `warning`, `info` and `debug`; `debug` tells the most.
+
+A debug record contains the Online Accounts identifiers of your accounts, also at
+the other levels; folder names and message numbers (UIDs); the mail server's
+host, port and address; how messages are built (content types, character sets,
+sizes); the replies and alerts the server sent, with your sign-in name replaced
+by `<login>`; and the reason a secure connection failed. It never contains
+passwords, sign-in names, mail addresses, subjects or other header values,
+attachment file names or the text of messages.
+
+GTK and GLib print their own warnings to the same file; Mailbag does not
+control them. Read the file before you attach it.
+
 ## Repository layout
 
 | Path | Contents |

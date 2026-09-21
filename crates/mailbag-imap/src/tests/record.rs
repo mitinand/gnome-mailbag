@@ -271,3 +271,42 @@ fn an_alert_is_logged_when_it_arrives_even_if_the_load_succeeds() {
     );
     assert!(!record.text().contains(TEST_LOGIN), "{}", record.text());
 }
+
+#[test]
+fn messages_that_disappear_or_are_refused_are_named_by_uid() {
+    let fixture = ImapFixture::start(FixtureSetup {
+        messages: plain_messages(4),
+        vanishing_uid: Some(20),
+        vanishing_text_uids: vec![30],
+        unfetchable_uids: vec![40],
+        ..FixtureSetup::default()
+    });
+    let record = CapturedRecord::start(tracing::Level::DEBUG);
+    let mut reader = open_reader(&fixture);
+    // A command that completes shows UID 20 gone; one naming UID 40, which
+    // the server refuses to return, ends with NO.
+    expect_success(run(reader.fetch_structures(&[10, 20, 30])));
+    expect_success(run(reader.fetch_structures(&[10, 40])));
+    let requests = [10, 30]
+        .into_iter()
+        .map(|uid| TextRequest {
+            uid,
+            parts: TextParts::SinglePartBody,
+        })
+        .collect();
+    expect_success(run(reader.fetch_text(requests, |_, _| {})));
+    let debug = record.lines_at("DEBUG");
+    for (uid, event) in [
+        (20, "message disappeared"),
+        (40, "structure could not be read: the server refused it"),
+        (30, "message disappeared"),
+    ] {
+        assert!(
+            debug
+                .iter()
+                .any(|line| line.contains(event) && line.contains(&format!("uid={uid}"))),
+            "no {event} for {uid}:\n{}",
+            record.text()
+        );
+    }
+}

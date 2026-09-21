@@ -296,8 +296,7 @@ describes their mailbox. The limits are:
   values of message headers, including subjects and addresses, also those of an
   attached message inside a part tree, and attachment file names. For a list
   header that is present but whose value did not come out of decoding, or
-  came out with replacement characters, debug records which header it was;
-  an absent header is recorded as absent.
+  came out with replacement characters, debug records which header it was.
 - **FR-010 — Publishable levels**: Lines at error, warning and info MUST NOT
   contain folder or label names, message identifiers, file names, server host
   names or addresses, or the text of server replies, so Mailbag's lines at

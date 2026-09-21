@@ -11,5 +11,9 @@ publish = false
 mail-parser = { version = "0.11.9", features = ["full_encoding"] }
 tracing.workspace = true
 
+[dev-dependencies]
+# Tests read the lines the content rules log (tests/support/record.rs).
+tracing-subscriber.workspace = true
+
 [lints]
 workspace = true

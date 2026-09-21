@@ -23,6 +23,25 @@ use std::{
 
 pub const TEST_LOGIN: &str = "synthetic-user";
 pub const TEST_PASSWORD: &str = "synthetic-password";
+/// Values of `FixtureMessage::with_private_markers` and the fixture's
+/// credentials that no line of the record may contain, at any level.
+pub const PRIVATE_MARKERS: [&str; 15] = [
+    TEST_PASSWORD,
+    TEST_LOGIN,
+    "Marker Sender",
+    "marker-sender",
+    "marker-recipient",
+    "marker-subject",
+    "marker-body-text",
+    "marker-type-file-name",
+    "marker-disposition-file-name",
+    "marker-text-file-name",
+    "marker-attached-subject",
+    "marker-attached-sender",
+    "Marker Attached",
+    "marker-part-description",
+    "marker-content-id",
+];
 
 type ServeResult = Result<(), Box<dyn Error>>;
 
@@ -137,6 +156,54 @@ impl FixtureMessage {
             ),
             structure: format!(
                 "({resource}{body} \"RELATED\" (\"BOUNDARY\" \"fixture\" \"START\" \"{text_id}\") NIL NIL NIL)"
+            ),
+            sections,
+        }
+    }
+
+    /// A message holding a synthetic value of every kind the record must never
+    /// contain; each is one of `PRIVATE_MARKERS` (specs/003-logging SC-002).
+    /// Part 1 is its text; the others are an attachment, an attached message
+    /// with its envelope and a text part with a file name.
+    pub fn with_private_markers(uid: u32) -> Self {
+        let text = "marker-body-text";
+        let sections = BTreeMap::from([
+            (
+                "1.MIME".to_owned(),
+                b"Content-Type: text/plain; charset=utf-8\r\n\
+                  Content-Description: marker-part-description\r\n\
+                  Content-ID: <marker-content-id@fixture.invalid>\r\n\r\n"
+                    .to_vec(),
+            ),
+            ("1".to_owned(), text.as_bytes().to_vec()),
+        ]);
+        let body = format!(
+            "(\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") \"<marker-content-id@fixture.invalid>\" \
+             \"marker-part-description\" \"8BIT\" {} 1 NIL NIL NIL NIL)",
+            text.len()
+        );
+        let attachment = "(\"APPLICATION\" \"PDF\" (\"NAME\" \"marker-type-file-name.pdf\") NIL NIL \
+             \"BASE64\" 4 NIL (\"ATTACHMENT\" (\"FILENAME\" \"marker-disposition-file-name.pdf\")) \
+             NIL NIL)";
+        let attached_message = "(\"MESSAGE\" \"RFC822\" NIL NIL NIL \"7BIT\" 120 \
+             (\"Mon, 14 Sep 2026 09:00:00 +0300\" \"marker-attached-subject\" \
+             ((\"Marker Attached\" NIL \"marker-attached-sender\" \"fixture.invalid\")) \
+             NIL NIL NIL NIL NIL NIL NIL) \
+             (\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"8BIT\" 4 1 NIL NIL NIL NIL) \
+             1 NIL NIL NIL NIL)";
+        let named_text = "(\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\" \"NAME\" \"marker-text-file-name.txt\") \
+             NIL NIL \"8BIT\" 4 1 NIL NIL NIL NIL)";
+        Self {
+            uid,
+            seen: false,
+            header: b"From: Marker Sender <marker-sender@fixture.invalid>\r\n\
+                      To: marker-recipient@fixture.invalid\r\n\
+                      Subject: marker-subject\r\n\
+                      Content-Type: multipart/mixed; boundary=fixture\r\n\r\n"
+                .to_vec(),
+            structure: format!(
+                "({body}{attachment}{attached_message}{named_text} \"MIXED\" \
+                 (\"BOUNDARY\" \"fixture\") NIL NIL NIL)"
             ),
             sections,
         }

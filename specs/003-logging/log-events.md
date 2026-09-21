@@ -136,16 +136,18 @@ line "Inbox opened" names.
 
 ## Message content
 
-Written in `mailbag-content`, inside a load's span and a message's span.
-It writes debug lines only; the load turns the outcomes into its counts.
+Written in `mailbag-content`, inside a load's span and a message's span. It
+writes debug lines only; the load turns the outcomes into its counts. The UID
+comes from the message's span; the folder is the load's Inbox. Decoding lines
+carry no section: parts are decoded in the order of the selected sections,
+and the part tree gives each part's character set and transfer encoding.
 
 | What happens | Decision | Fields and notes |
 |---|---|---|
-| Text parts were selected for a message | debug | Selected sections and the rule that chose them: single part; the last alternative that has plain text; the root of a related set, with whether its `start` named a part. The UID comes from the message's span; the folder is the load's Inbox |
+| Text parts were selected for a message | debug | Selected sections. Each decision on the way has its own line where it is made: which alternative, the last with plain text, was chosen; which root of a related set, and whether its `start` named a part |
 | A text part is left out as a file: it has a file name and no inline disposition | debug | UID, section; never the name. An attachment disposition is already on the part tree |
-| No text was selected: no plain text, encrypted, S/MIME | debug | UID, which. Counted at info as unsupported by this version |
-| A part was decoded | debug | UID, section, character set, transfer encoding, whether `format=flowed` was applied, bytes in, characters out |
-| A part could not be decoded: unknown character set, unknown transfer encoding, undecodable entity | debug | UID, section, the declared name, the failing stage. Counted in the load's warning |
-| A list header is absent from the message | debug | UID, header name. Normal |
-| A list header is present, but no value came out or the value has replacement characters | debug | UID, header name. No cause is claimed: the decoder does not report one. Not counted in the load's warning; the row stays usable |
+| No text was selected: no plain text, encrypted, S/MIME | debug | UID, `explanation`. Counted at info as unsupported by this version |
+| A part was decoded | debug | UID, character set, transfer encoding, whether `format=flowed` was applied, characters out |
+| A part could not be decoded: unknown character set, unknown transfer encoding, undecodable entity | debug | UID, `cause`: the explanation the reader shows, with the declared name of an unknown character set or encoding. Counted in the load's warning |
+| A list header is present, but no value came out or the value has replacement characters | debug | UID, header name. No cause is claimed: the decoder does not report one. An absent header is normal and writes nothing. Not counted in the load's warning; the row stays usable |
 | Decoded text and decoded list fields | Not logged | Mail content (FR-009) |

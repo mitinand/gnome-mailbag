@@ -275,7 +275,8 @@ async fn load_inbox_batch(access: ImapAccess) -> Result<ReceivedBatch, ServerFai
         let Some(part) = structure else {
             continue;
         };
-        let selection = select_text_parts(&describe_part(part));
+        let selection = tracing::debug_span!("message", uid)
+            .in_scope(|| select_text_parts(&describe_part(part)));
         if let TextSelection::Parts(sections) = &selection {
             requests.push(TextRequest {
                 uid: *uid,
@@ -290,6 +291,7 @@ async fn load_inbox_batch(access: ImapAccess) -> Result<ReceivedBatch, ServerFai
     let mut texts = BTreeMap::new();
     reader
         .fetch_text(requests, |uid, text| {
+            let _message = tracing::debug_span!("message", uid).entered();
             // A message absent here disappeared from the Inbox during the load.
             if let Some(content) = decode_message_text(&text) {
                 texts.insert(uid, content);
@@ -313,7 +315,8 @@ async fn load_inbox_batch(access: ImapAccess) -> Result<ReceivedBatch, ServerFai
             };
             Some(ReceivedMessage {
                 uid: row.uid,
-                fields: decode_display_fields(&row.list_headers),
+                fields: tracing::debug_span!("message", uid = row.uid)
+                    .in_scope(|| decode_display_fields(&row.list_headers)),
                 internal_date: row.internal_date,
                 seen: row.seen,
                 content,
