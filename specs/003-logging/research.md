@@ -1,0 +1,313 @@
+# Research: Logging
+
+Decisions for the [plan](plan.md). Each section gives the decision, the reason
+and the alternatives that were rejected.
+
+## 1. One owner of the logging domain
+
+**Decision**: The `tracing` crate is what every Mailbag crate writes events
+with. `tracing-subscriber` supplies the span registry, the level filter and
+its one-line formatter; Mailbag supplies the time (§4) and the writer that
+sends lines to the standard error stream (§3). `tracing-subscriber` is used
+with `default-features = false, features = ["std", "registry", "fmt"]`, which
+leaves out ANSI colors, the environment filter and the bridge from the `log`
+crate.
+
+**Why**: Three needs decide it.
+
+- *Context on every line.* FR-013 wants the account label and the operation
+  identifier on every line of a load. Today a load crosses three crates and
+  two threads, and `mailbag-content` consists of functions that know nothing
+  about accounts or messages. A span attached to the load's future carries
+  the fields to every event inside it, in any crate, without passing a
+  parameter through each function. Only one load runs at a time today; when
+  several accounts load interleaved on one thread, the same spans keep
+  working where a thread-local "current operation" would not.
+- *Crate rules.* `mailbag-content` must not depend on GLib
+  ([002 research §9](../002-imap-integration/research.md#9-crate-layout));
+  `scripts/check.sh` enforces it. `tracing` has no such dependency.
+- *Cost when off.* Without a subscriber a `tracing` call site is one cached
+  check, and its field expressions are not evaluated (FR-016).
+
+**Alternatives rejected**
+
+- *The `log` crate.* `mailbag-imap` compiles it with `max_level_off` in both
+  profiles, because async-imap writes whole input buffers through it. That
+  switch is global to the binary: turning `log` on for Mailbag turns the
+  library's trace on as well, and the privacy guarantee would then rest on a
+  runtime filter by target instead of on code that is not compiled. It also has
+  no context propagation. FR-012 stays satisfied only if `log` stays off.
+- *GLib structured logging.* It cannot be used from `mailbag-content`. Its
+  error level aborts the process, so Mailbag's "error" would have to be GLib's
+  "critical". Its writer is synchronous, so a stalled stream would block the
+  calling thread, the GTK main thread included. Replacing the process-wide
+  writer function to fix that would also take over GTK's and GLib's own
+  messages, which FR-001 forbids touching. By default it writes info and debug
+  to the standard output stream, against FR-003.
+- *A hand-written facade.* Levels, a macro and a writer are small, but span
+  storage and propagation through futures are what `tracing` exists for;
+  rewriting them is the more expensive choice under constitution I.
+- *A formatting layer of Mailbag's own.* It would fix the columns and escape
+  every value whatever way it was passed. The library's formatter already
+  prints the time, level, module, span fields and event fields on one line and
+  writes string fields escaped; the layout is for people and the spec does not
+  prescribe it. What the library does not protect is the message text and
+  values passed for display, which §9 closes with a rule and a check. Storing
+  span fields and walking nested spans again is not worth a chosen bracket.
+- *`tracing-appender`.* Its non-blocking writer drops lines but never says so
+  in the record, which FR-016 requires, and it brings the `time` crate for file
+  rotation that this feature does not have.
+
+**Cost**: checked on 2026-09-21 in a scratch project with `tracing` 0.1.44
+(`default-features = false, features = ["std"]`, so no proc macro is built)
+and `tracing-subscriber` 0.3.23 with the features above. Seven crates are new
+to `Cargo.lock`: `tracing`, `tracing-core`, `tracing-subscriber`,
+`sharded-slab`, `thread_local`, `lazy_static` and `once_cell`; `cfg-if` and
+`pin-project-lite` are there already. `tracing-log`, the `log` crate and ANSI
+color crates are not pulled in. All seven are MIT or MIT OR Apache-2.0, which
+`deny.toml` allows, and each ships its license files, so no notice exception
+is needed. `cargo-sources.json` is regenerated. The first portion pins the
+versions current at that time and repeats the check.
+
+**What the formatter does**, from the same probe:
+
+- A string field, borrowed or owned, is written escaped: a value holding a
+  line break, quotes and a NUL came out as `"INBOX\nFAKE line \"q\" \0end"`
+  on one line, in an event field and in a span field alike.
+- A value passed with the `%` sigil is written raw: the same value broke the
+  event into two lines. This is the gap §9 closes.
+- Each event reaches the writer as one `write` call holding one whole line,
+  so the queue of §3 can hold lines without reassembling them.
+- A timer and a writer of our own are accepted; colors can be turned off.
+- The line gives the time, the level, the enclosing spans with their fields,
+  the module, the message and the event's fields, as the
+  [record contract](contracts/record.md#line) shows.
+
+**Coexistence with the compiled-out library trace**: nothing changes in
+`mailbag-imap`'s `log` dependency. `tracing`'s optional `log` feature and
+`tracing-subscriber`'s `tracing-log` feature stay off, so no event crosses
+between the two systems. `scripts/check.sh` gains a check that `tracing-log`
+is absent from the dependency tree.
+
+## 2. Turning logging on
+
+**Decision**: `--log-level=<level>` is a GApplication main option, handled in
+`handle-local-options`, which runs in the started process before it contacts a
+running instance.
+
+1. Without the option: return "continue"; nothing is installed.
+2. Parse the value. Not one of `error`, `warning`, `info`, `debug`: print
+   the accepted levels on the standard error stream and exit with status 1.
+3. Register the application. If it is remote, a Mailbag is already running:
+   print that logging was not turned on and that Mailbag must be quit first,
+   exit with status 1. The running instance receives nothing.
+4. Otherwise install the subscriber and write the first line.
+
+**Why**: The primary instance never sees the second start's options unless
+they are forwarded, and forwarding would mean changing a running process's
+logging, which the spec excludes. Registering explicitly is how GApplication
+lets a start learn that it is remote.
+
+**Checked** on 2026-09-21 with a GApplication of GIO 0.22.9 on the session
+bus, using this sequence:
+
+- A first start with the option: not registered before `register()`, not
+  remote after it; it became the primary instance and ran.
+- A second start with the option while the first ran: remote after
+  `register()`; it printed the message and ended with status 1, and the
+  primary instance received no activation.
+- A second start with an unknown level: the message, status 1, nothing
+  registered, the primary instance undisturbed. The same without a running
+  instance.
+- A second start without the option: status 0 and the primary instance was
+  activated, as today.
+- `--help` lists `--log-level=LEVEL` with its description.
+
+One consequence: `register()` emits the application's `startup` signal before
+it returns, so `startup` handlers run before logging is on. Mailbag's only
+`startup` handler registers its resources and has nothing to log, and the
+window is built in `activate`, so no Mailbag event is lost; a later `startup`
+handler that must be logged would have to move the start of logging. Not
+checked here: the same sequence for the installed Flatpak, which the last
+portion's acceptance covers.
+
+**Alternative rejected**: An environment variable (excluded by the spec).
+
+## 3. Writing without being in the way
+
+**Decision**: The formatter builds a line on the thread where the event
+happens and writes it to the writer Mailbag gives it. That writer puts the
+line into a bounded queue with `try_send`. A writer thread takes lines from
+the queue and writes them to the standard error stream.
+
+- Queue full: the line is dropped and a counter of lost lines grows.
+- Before writing a line, the writer takes the counter; if it was not zero it
+  first writes `N log lines were lost`. It names no reason, because a full
+  disk and an unread pipe look the same from here.
+- A write error, such as a closed pipe, makes the writer count the line as
+  lost and go on. Rust ignores `SIGPIPE`, so the process is not killed.
+- On quit Mailbag writes its last line, closes the queue and waits at most one
+  second for the writer to finish. A stalled stream cannot hold the exit
+  longer.
+
+The queue length (1,024 lines) and the wait at quit (one second) are internal
+values, not guarantees; nothing has been measured yet. What matters is that
+both are finite: memory stays bounded by the queue length times the length of
+a line, and a stalled stream cannot hold the exit. A part tree is written one
+line per part, so no line grows with a message's size.
+
+Lines of one thread enter the queue in the order of their events. Nothing
+orders events that happen at the same moment on different threads.
+
+**Why**: A pipe whose reader has stopped blocks `write`. Only a separate
+thread keeps that away from GTK's main thread and from the mail worker
+(FR-016, constitution V). Formatting on the event's thread keeps the borrowed
+fields valid and the queue's items plain strings.
+
+**Alternative rejected**: Writing directly with `O_NONBLOCK` on descriptor 2.
+The flag belongs to the open file description, which GTK's own writes and the
+shell's other processes share; changing it would alter their behavior.
+
+## 4. Time, versions and build kind
+
+**Decision**: The line's time comes from `glib::DateTime::now_local()`,
+formatted with milliseconds and the UTC offset, and is given to the library's
+formatter as its timer. It lives in the `mailbag` crate, which already
+depends on GLib.
+
+The first line reads the version from the package, GTK and libadwaita versions
+from their runtime functions, and the build kind from `/.flatpak-info`: when
+the file exists, the build is Flatpak and the file's `runtime` key names the
+runtime and its version; otherwise the line gives the operating system's
+pretty name from GLib.
+
+**Alternative rejected**: The `time` or `chrono` crates for local time. `time`
+refuses to read the local offset in a multi-threaded process; `chrono` is in
+the lock file only as someone else's dependency. GLib already does this.
+
+## 5. The account label
+
+**Finding**: GNOME Online Accounts 3.58 generates identifiers as
+`account_<unix time>_<counter>` (`generate_new_id` in `goadaemon.c`). It also
+accepts identifiers it did not generate: from an administrator's template
+file, and from the `Id` entry of `AddAccount`'s details. Such an identifier is
+arbitrary text.
+
+**Decision**: The label is the identifier when it matches
+`account_<digits>_<digits>`. Any other identifier is replaced by `account-N`,
+numbered in order of appearance within the record. `goa-adapter` knows the
+form of Online Accounts' identifiers, so it owns the test: `AccountId` gains
+`generated_id()`, which returns the text for a generated identifier and
+nothing otherwise. The text of an arbitrary identifier thus never leaves the
+adapter, and `mailbag` only numbers the accounts for which it got nothing.
+This addition to the shared account contract was approved on 2026-09-21.
+`AccountId`'s derived `Debug` prints any identifier, so it is never used as a
+field of an event. The provider type follows
+in both cases. This applies the fallback the spec's Assumptions foresee
+without giving up comparable records in the ordinary case.
+
+## 6. Server text and the sign-in name
+
+**Decision**: `mailbag-imap` knows the sign-in name and owns one function that
+returns server text for the log, with every occurrence of the non-empty
+sign-in name replaced by `<login>`, whatever its length. The comparison
+ignores ASCII case. A very short name can also match inside ordinary words of
+the server's sentence; a damaged sentence is the accepted price, a name left
+in the record is not.
+
+The debug line with server text is written in `mailbag-imap`, where the name
+and the reply are both at hand. The reply travels to the load and the UI
+unchanged, as today; no sanitized copy crosses the crate boundary. The load
+still writes the one error line, with the response code and without the text.
+
+This changes a 002 design rule. The amended wording is in
+[the record contract](contracts/record.md#changes-to-002-documents) and is
+applied in the same portion as the first line that uses it.
+
+## 7. Parts, headers and what is available today
+
+- **Transfer encoding and size** are in the server's description of a part and
+  are read in `mailbag-imap` when the description is projected into
+  `MessagePart`. The debug lines are written there. `MessagePart` and
+  `MimePart` do not change.
+- **A file name** is never written. `mailbag-imap`'s line for a part says
+  which parameters carry a name: `name`, `name*`, `name*0*` of Content-Type
+  and `filename`, `filename*`, `filename*0*` of Content-Disposition; the
+  parser hands over both lists. The shape and the extension are written by
+  `mailbag-content`, which already receives the Content-Type parameters of
+  every part and looks at the name's presence and form when it selects parts.
+  The extension is the text after the last dot of the value, at most eight
+  ASCII letters or digits. Content-Disposition's parameters are not handed to
+  `mailbag-content` today; for a name carried only there the record has the
+  parameter's presence and no shape, and nothing is added to the shared part
+  description for the log.
+
+  Checked on 2026-09-21 by parsing nine part descriptions with the pinned
+  IMAP parser. A value arrives as the server sent it: an encoded word
+  (`=?UTF-8?B?…?=`) and the RFC 2231 forms (`UTF-8''%D0…`, continuations as
+  separate parameters) are not decoded, so their shape can be read. Raw UTF-8
+  arrives intact. Bytes that are not UTF-8, quoted or in a literal, are
+  already replaced by U+FFFD, one per byte in the probe, and the original
+  bytes are gone; for a file name the shape therefore reports replacement
+  characters, not which 8-bit bytes were sent, and its length is that of the
+  value as received. Backslash escapes inside a quoted value are left in
+  place. Parameter names keep the server's letter case; `MessagePart` lowers
+  it. An extension survives in every form except a name that is encoded
+  whole. List headers differ: they reach `mailbag-content` as raw bytes, so
+  8-bit bytes are seen as sent.
+- **The choice of a related set's root** depends on its `start` parameter and
+  the parts' content identifiers, which may hold a domain. The selection line
+  says whether `start` named a part; the identifiers are not written.
+- **An attached message's envelope** is a field of the same description.
+  It is never read for logging, so nothing has to be removed.
+- **A description that cannot be parsed** leaves no data behind: the fork
+  reports a parse failure and the reader records `None`. The debug line says
+  which of the two known outcomes happened: the server refused, or the reply
+  could not be parsed.
+- **The shape of a value** is one function, `value_shape`, in
+  `mailbag-content`, used for list headers and for file names. For a header
+  it is computed from the raw list header bytes, when the header line is
+  present and decoding returned no value or a value with U+FFFD. It scans
+  for encoded words (`=?charset?B|Q?…?=`), the RFC 2231 form and 8-bit bytes.
+  It is evaluated only when debug is enabled.
+- **Why a certificate failed** is not carried by `ImapFailure` today. GIO
+  reports it as certificate flags at the point of failure; the debug line is
+  written there, in `transport.rs`, with the flag names and no certificate
+  fields. The error line keeps the cause the UI shows.
+- **Capabilities and the TLS version** are already at hand, the capabilities
+  before sign-in and the version after the handshake; no command is added.
+
+## 8. Testing a record
+
+**Decision**: Whether nothing is written without the option is checked on a
+started Mailbag's real streams in the manual runs, and by a test that no
+subscriber is installed without the option; an empty test buffer alone proves
+nothing about the streams.
+
+The logging setup takes its output as a parameter. The
+application passes the standard error stream; tests pass a buffer. A test
+installs its subscriber for its own thread; the mail worker captures the
+dispatcher of the thread that starts it and uses it on the worker thread, so
+events of a load reach the test's buffer. In the application this captures the
+global subscriber and changes nothing.
+
+Privacy is checked by running loads against the scripted server of
+`mailbag-imap`, whose fixtures contain marker strings, once at info and once
+at debug, and searching the buffer (SC-002). The stalled-reader case uses a
+writer that blocks until released (SC-008).
+
+## 9. Values that reach a line
+
+**Decision**: The library's formatter escapes string fields: a line break or
+a control character in a value is written in escaped form, so one event stays
+one line. It does not escape the message text or a value passed for display
+with the `%` sigil. Two rules close the gap, and both are checked:
+
+- the message of an event is fixed text written in the source; anything that
+  comes from mail, a server or the system is a field;
+- external strings are passed as plain string fields, never with `%`.
+
+`scripts/check.sh` rejects a `%` sigil inside an event macro in the four
+crates, and a test writes a folder name and a server sentence that contain
+line breaks, quotes and a NUL and expects one line per event.
+
