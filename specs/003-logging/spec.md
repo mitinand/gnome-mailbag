@@ -21,100 +21,14 @@ background synchronization, local storage and durable user actions; running
 without a window. Later features add their events under these rules and do not
 redesign them.
 
-Only the lines of what exists today are implemented now: account
-observation, the Inbox load and text decoding. They are planned in
-[log events](log-events.md), a working file of this feature's
-implementation.
+Only the lines of what exists today are written now: account observation, the
+Inbox load and text decoding. Which line each step writes is in the code, under
+the rules below (FR-017).
 
 The lasting guarantees are: nothing is recorded unless the person asked for it
 (FR-001); the privacy limits of each level (FR-009–012); one meaning of the
 levels for every feature (FR-004–008); and that logging never fails an
 operation and costs nothing when it is off (FR-016).
-
-## Clarifications
-
-### Session 2026-09-21
-
-- Q: Environment variables, command-line options or both? → A: Command-line
-  options only. They appear in `--help`, pass through `flatpak run` unchanged,
-  and a second start can say that logging was not turned on (Edge Cases).
-- Q: Is there an option that writes the record to a file? → A: No. The record
-  goes to the standard error stream and the person redirects it. The host shell
-  owns the file, so the Flatpak sandbox needs no permission. A record left on
-  for days needs a file that stays bounded; no such run exists before
-  synchronization and storage, so that option arrives later as an amendment to
-  this spec.
-- Q: What separates the levels? → A: Two questions, not privacy. How the
-  operation ended separates error, warning and info. How closely the line looks
-  separates info (an account and an operation) from debug (a message, a part,
-  a decision). The privacy limits are laid over this and mostly follow from it.
-- Q: May values of message headers (subject, addresses) appear at debug for a
-  failing message? → A: No, at no level. Debug records which header it was.
-  Folder and UID identify a message, and a line at debug names the message the
-  user opens, so the person can match the screen to the record. There is no
-  fifth level and no constitution amendment.
-- Q: Is the server host name written at info? → A: No, at debug. A personal
-  domain identifies its owner, and info must be publishable as it is.
-- Q: Are durations recorded? → A: No. Every line already carries its time
-  with milliseconds, taken when the event happens, and the lines of one
-  operation follow each other, so the duration of a step or of a whole
-  operation is the difference between two lines, for a failed step as well.
-  Revised during implementation: a total on the final line only helped a
-  record at level error, which has no first line; the person reporting a
-  problem is asked for debug. Timing of decoding in fractions of a millisecond is a matter for a
-  benchmark, not for the record. A duration field can be added to any line
-  later; the format is not a contract.
-- Q: Should Mailbag keep anything about errors while logging is off, such as
-  an error file or a short record in memory written out when an error happens?
-  → A: No. A person learns about an error from the UI, at once and with
-  technical details; that is the error presentation feature, and it does not
-  need the log. The log is not a notification. Errors that happen with nobody
-  present and cannot be reproduced arrive with background synchronization, and
-  a background record is decided then, as an amendment to this spec. FR-001
-  stays as it is.
-- Q: Does a line name its account by the GNOME Online Accounts identifier or
-  by a number given within the record? → A: By the identifier, such as
-  `account_1726920000_0`; lines that observe an account add its provider
-  type. Revised during implementation: a number such as `account-7 imap` did
-  not tell which of ten IMAP accounts a line meant, and the numbers shifted
-  when an account was added or removed. The identifier stays the same, and
-  the person who owns the record finds it in the Online Accounts
-  configuration next to the account's provider and name. A generated
-  identifier holds the account's creation time; one from an administrator's
-  template or an application's request is written as it is, escaped. 001 is
-  amended to allow it.
-- Q: A server's status reply can repeat the sign-in name, which is never
-  recorded. Is server text still written at debug? → A: Yes. It is often the
-  whole diagnosis, and a user attaches the record, not the window. Before
-  writing server text, Mailbag replaces every occurrence of the account's
-  sign-in name with `<login>`. The rest of the sentence is written as sent,
-  and the README says so.
-- Q: When does debug record a header whose value did not decode, given that
-  the decoder does not report a partial failure? → A: On what can be
-  observed: the header line is present but no value came out, or the value
-  contains replacement characters. The line names the header and claims no
-  cause. Revised during implementation: a description of the raw value's
-  encoding was dropped, because the message has to be examined by hand
-  anyway.
-- Q: Are attachment file names written at debug? → A: No. A debug line names
-  each text part the choice of text parts left out as a file, by its section,
-  which is all that the choice looks at. Nothing in Mailbag uses the name itself yet;
-  its shape and extension arrive with the feature that handles attachments.
-  Values of headers and of file names are thus never recorded, without
-  exception.
-- Q: Is the record written through a queue and a thread of its own, so that a
-  stream nobody reads cannot block Mailbag? → A: No. Lines go straight to the
-  standard error stream, as GLib's own warnings do in every GNOME
-  application. A terminal and a redirection to a file do not block. A pipe
-  whose reader has stopped does, and then Mailbag waits until it is read
-  again; the person who set up that pipe sees it at once and can undo it.
-  The maintainer accepted this reading of constitution V for output that
-  exists only on request. A queue, a count of lost lines and a bounded wait
-  at quit are not worth their cost for that one case.
-- Q: Does the error line repeat the UI's wording of the step and cause? → A:
-  It names the same failure values, such as `step=SignIn cause=TimedOut`. The
-  UI's wording is rewritten by the error presentation feature; sharing it now
-  would mean reworking UI code for the record.
 
 ## User Scenarios & Testing
 
@@ -143,8 +57,8 @@ looking at the application window.
    give the same number of info lines.
 3. **Given** the level is debug, **when** a message's content could not be
    read, **then** the record has a warning on the load with the number of such
-   messages, and a debug line for the message with its folder, UID, failing
-   step and cause, and its part tree when the server's description of it could
+   messages, and a debug line for the message with its UID, the failing step
+   and its cause, and its part tree when the server's description of it could
    be read. These observations guide a synthetic test fixture; the record
    holds no content and does not promise that every defect can be rebuilt from
    it.
@@ -152,7 +66,7 @@ looking at the application window.
    line names its UID, so the person can tell which lines belong to the message
    they see on screen.
 5. **Given** a load fails, **then** the record has exactly one error line for
-   it, naming the same step and cause the UI explains, and no error lines for
+   it, naming the same failure the UI explains, and no error lines for
    steps that could not run.
 6. **Given** a load is cancelled because its account was excluded or its
    window was closed, **then** the record has an info line and no warning or
@@ -179,16 +93,11 @@ build without adding any permission.
    first line.
 2. **Given** the instruction, **then** it tells the person what a debug record
    contains (FR-011), so they can read the file before attaching it.
-3. **Given** Mailbag is already running, **when** the user runs the command,
-   **then** the terminal says that Mailbag is already running and logging was
-   not turned on, and tells them to quit Mailbag first. An empty file is never
-   the only answer.
 
 ### User Story 3 — Trust what a record contains (Priority: P1)
 
 Anyone who turns logging on knows the limits of what the record can hold at the
-level they chose, and Mailbag's lines at error, warning and info can be
-published as they are. The limits cover Mailbag's own lines. A redirected
+level they chose. The limits cover Mailbag's own lines. A redirected
 stream also holds whatever GTK and GLib printed, which Mailbag does not
 control, so the README advises reading any file before sharing it.
 
@@ -198,15 +107,6 @@ its lines inside them.
 known markers: a password, a folder name, a host name, a subject, an address,
 an attachment file name and body text. Search the record for the markers at
 info and at debug.
-
-**Acceptance Scenarios**:
-
-1. **Given** the level is info, **then** Mailbag's lines contain none of the
-   markers.
-2. **Given** the level is debug, **then** Mailbag's lines contain no password,
-   subject, address or body text, and no sign-in name even when the server's
-   reply repeats it, however short that name is, and no attachment file name.
-   They may contain the folder name and the host name.
 
 ### Edge Cases
 
@@ -248,10 +148,10 @@ info and at debug.
   failed, the account list could not be read. Each failed operation MUST
   produce exactly one error line, written by whoever gives the operation up
   (the load for an Inbox load, the account observer for a read of the account
-  list), naming the same step and cause the UI explains. Steps that could not
-  run MUST NOT produce error lines. The step and cause are the failure values
-  Mailbag already has, not one protocol's replies, so an HTTP provider fits
-  without new rules.
+  list), naming in one field, `cause`, the same failure value the UI explains,
+  such as `cause=TimedOut(SignIn)`. Steps that could not run MUST NOT produce
+  error lines. The cause is the failure value Mailbag already has, not one
+  protocol's replies, so an HTTP provider fits without new rules.
 - **FR-005 — Warning**: An operation completed, but its result is worse than
   normal or Mailbag took a workaround: the server refused to finish the message
   list, some messages have content that could not be read, an account needs
@@ -267,7 +167,8 @@ info and at debug.
   Mailbag did.
 - **FR-007 — Debug**: What happens inside an operation: a message, a part, a
   decision. For a message that fails or is handled unusually, debug MUST record
-  its folder and UID, the failing step and its cause, and, when the server's
+  its UID — the folder is the Inbox the load named when it opened it — the
+  failing step and its cause, and, when the server's
   description of its parts could be read, the part tree with the fields FR-011
   lists, and the decision that chose the text parts. These observations guide
   a synthetic test fixture. The record holds no content, so it does not
@@ -294,18 +195,19 @@ describes their mailbox. The limits are:
 - **FR-009 — Never recorded**: At no level: passwords, tokens and other
   credentials, sign-in names, message bodies, attachment content, and the
   values of message headers, including subjects and addresses, also those of an
-  attached message inside a part tree, and attachment file names. For a list
-  header that is present but whose value did not come out of decoding, or
-  came out with replacement characters, debug records which header it was.
-- **FR-010 — Publishable levels**: Lines at error, warning and info MUST NOT
+  attached message inside a part tree, and attachment file names. A header
+  whose value did not come out of decoding is not recorded either, not even by
+  name: the row stays usable and the message has to be examined by hand
+  anyway.
+- **FR-010 — Levels above debug**: Lines at error, warning and info MUST NOT
   contain folder or label names, message identifiers, file names, server host
-  names or addresses, or the text of server replies, so Mailbag's lines at
-  these levels can be published as they are. The server's response code, such as
-  `AUTHENTICATIONFAILED`, and its capability list are allowed. The host name is
-  the one place where privacy overrides FR-006: a line about connecting belongs
-  to info, but the host is written only at debug.
+  names or ports, or the text of server replies. These belong to debug, because
+  info speaks about an account and an operation while debug speaks about a
+  message, a part and a server. The server's response code, such as
+  `AUTHENTICATIONFAILED`, and its capability list are allowed at info: they
+  describe the server software, not the mailbox.
 - **FR-011 — Debug**: Debug MAY add: folder and label names, UIDs and other
-  message identifiers, the server's host, port and address, the message
+  message identifiers, the server's host and port, the message
   structure, server text, and the TLS library's text for a failed TLS
   handshake. The structure is, for each part: its section
   number, content type, the parameters `charset`, `format` and `delsp`,
@@ -327,23 +229,29 @@ describes their mailbox. The limits are:
 - **FR-013 — Account and operation**: Every line about an account MUST name it
   by its GNOME Online Accounts identifier, which stays the same across runs;
   never by the mail address or the account's display name. Lines that observe
-  an account also give its provider type. Every line of an Inbox load MUST
-  carry its account. Mailbag runs one load at a time, so the load's first line
-  and its account tell its lines apart; an identifier of an operation arrives
-  with background synchronization, when loads of several accounts run
-  together. A line about a message MUST say which message.
+  an account also give its provider type. The lines an Inbox load's owner
+  writes — its start, its outcome, its warnings, its single error, its
+  cancellation and a result it discarded — MUST name the account. The lines
+  written inside a load do not repeat it: Mailbag runs one load at a time, and
+  the load's start line stands before them. A line about a message MUST say
+  which message.
+
+  **Deferred** until background synchronization, when loads of several
+  accounts run at the same time: naming the account, or an identifier of the
+  operation, on every line of a load.
 - **FR-014 — Line format**: One event is one line that gives: the time with
   milliseconds and the offset from UTC, the level, where in Mailbag the line
-  was written, the account identifier when there is one,
-  then the text and its fields. Values that come from mail or from a server
+  was written, the message it is about when there is one, then the text and its
+  fields. Values that come from mail or from a server
   MUST be escaped so that they cannot break a line. The format is for people
   to read; this spec prescribes what a line contains, not its columns or
   punctuation. It is not a contract for programs, so later features may extend
   it. For illustration only:
 
   ```text
-  2026-09-21T14:03:15.102+03:00  INFO load{account="account_1726920000_0"}: mailbag_imap::session: signed in method="PLAIN"
-  2026-09-21T14:03:16.020+03:00  WARN load{account="account_1726920000_0"}: mailbag::inbox: some messages have content that could not be read messages=2 of=100
+  2026-09-21T14:03:15.102+03:00  INFO mailbag_imap::session: signed in method="PLAIN"
+  2026-09-21T14:03:16.020+03:00  WARN mailbag::inbox: some messages have content that could not be read account="account_1726920000_0" messages=2
+  2026-09-21T14:03:16.031+03:00 DEBUG message{uid=4711}: mailbag_content: text part decoded charset="utf-8" flowed=false characters_out=812
   ```
 
 - **FR-015 — First line**: Whenever logging is on, at any level, Mailbag's
@@ -357,7 +265,8 @@ describes their mailbox. The limits are:
   line that cannot be written is dropped and work continues. Lines are written
   straight to the standard error stream, as GLib's own warnings are; when the
   person has piped the stream to a reader that stopped, Mailbag waits until
-  it is read again (Clarifications). With logging off, the cost MUST be
+  it is read again ([research §3](research.md#3-writing-to-the-standard-error-stream)).
+  With logging off, the cost MUST be
   negligible: nothing is installed and no line is built.
 - **FR-017 — Lines of every feature**: Every feature writes its lines under
   these rules, and review checks them in the code; no feature keeps a list of
@@ -368,17 +277,6 @@ describes their mailbox. The limits are:
   User Story 2, with the exact command for the Flatpak build and for a native
   build, what a debug record contains, and the advice to read the file before
   attaching it.
-
-### Key Entities
-
-- **Record**: Everything Mailbag wrote during one run with logging on. Its
-  first line is FR-015's, and it belongs to the person who started the run.
-- **Line**: One event: time, level, where in Mailbag it was written, account
-  identifier, text and fields.
-- **Level**: error, warning, info or debug, with the meaning FR-004–007 give it
-  and the limits of FR-009–011.
-- **Account identifier**: The GNOME Online Accounts identifier by which a
-  record names an account.
 
 ## Success Criteria
 
@@ -393,22 +291,13 @@ describes their mailbox. The limits are:
   name, subject, address, file name, body text, including those of an
   attached message and a sign-in name of two characters that the test server
   repeats in its refusal. The check reads Mailbag's lines (US3; FR-009–013).
-- **SC-003**: For each defective test message (unknown character set, unknown
-  transfer encoding, undecodable part, structure the server cannot describe,
-  text the server does not return, list header whose value does not come out),
-  the debug record alone gives folder and UID; the failing step and cause
-  where the code knows one; the part tree where the description could be read;
-  and for the header case the header's name, with no cause claimed (US1;
-  FR-007, FR-009).
 - **SC-004**: Every failed load that 002 can show produces exactly one error
-  line whose step and cause are the failure the UI explains; every cancelled
+  line whose cause is the failure value the UI explains; every cancelled
   load produces zero warning and error lines; an incomplete message list and
   unreadable content each produce one warning (FR-004–006).
-- **SC-005**: Inboxes of 1 and of 100 ordinary messages produce the same
-  number of info lines (FR-006).
-- **SC-006**: Every line about an account carries its identifier, every line
-  of a load included, also while account observation reports changes during
-  the load (FR-013).
+- **SC-006** (deferred with FR-013's lines inside a load, until background
+  synchronization): every line of a load carries the account it belongs to,
+  also while account observation reports changes during the load.
 - **SC-007**: Following the README on the installed Flatpak build gives a
   file with the first line and the run's lines, without adding a permission. Starting it a second time while
   Mailbag runs prints the explanation instead (US2; FR-002, FR-015, FR-018).
@@ -418,9 +307,10 @@ describes their mailbox. The limits are:
 
 ## Assumptions
 
-- The maintainer agreed the decisions in Clarifications on 2026-09-21. The
-  choice of a logging mechanism, its coexistence with the compiled-out library
-  trace, and how lines leave the working threads belong to the plan.
+- The maintainer agreed this feature's decisions on 2026-09-21; the reasons
+  are in [research](research.md). The choice of a logging mechanism, its
+  coexistence with the compiled-out library trace, and how lines leave the
+  working threads belong to the plan.
 - Started by the desktop session instead of a terminal, a run's error stream
   normally lands in the system journal. Mailbag does nothing for this, and
   there is no way yet to pass the option to such a start; it arrives with
@@ -439,8 +329,8 @@ describes their mailbox. The limits are:
   [data model](../002-imap-integration/data-model.md)). Those documents are
   amended with this feature. 002 FR-009, "no credentials or personal mail in
   diagnostics", stays as it is and is met by FR-009 here.
-- Out of scope, besides what Clarifications exclude: saving a message as a
-  fixture; a log viewer or a synchronization activity panel, so the approved
-  UI layout does not change.
+- Out of scope, besides what [research §10](research.md#10-what-the-record-deliberately-does-not-do)
+  excludes: saving a message as a fixture; a log viewer or a synchronization
+  activity panel, so the approved UI layout does not change.
 - The [constitution](../../.specify/memory/constitution.md) governs this
   feature. Implementation portions and review pauses will be in the plan.

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 use crate::accounts::*;
+use crate::logging::{LogLevel, capture::start_record};
 use goa_adapter::{
     AccountCheckError, AccountCheckResult, AccountDetails, AccountId, AccountProvider,
     AccountUpdate, ErrorCause,
@@ -232,4 +233,42 @@ fn page_states_follow_loading_failure_empty_and_selection() {
     assert_eq!(accounts.page(), AccountPage::SelectAccount);
     accounts.select_account(make_account_id("one"));
     assert_eq!(accounts.page(), AccountPage::SelectedAccount);
+}
+
+/// The record names an account by its Online Accounts identifier only
+/// (specs/003-logging FR-009, FR-013). `AccountDetails` carries no sign-in name
+/// and no host, so an account row cannot leak those; the sign-in name of a load
+/// is checked by the marker test over a whole load in `inbox_load::tests`.
+#[test]
+fn no_account_detail_beyond_the_identifier_reaches_the_record() {
+    let marked = |provider| AccountDetails {
+        display_name: Some("Marker Display Name".into()),
+        email_address: Some("marker@example.invalid".into()),
+        ..make_account_details(provider)
+    };
+    let mut with_problem = marked(AccountProvider::Google);
+    with_problem.needs_attention = true;
+    let mut disabled = marked(AccountProvider::Microsoft365);
+    disabled.mail_enabled = false;
+    let record = start_record(LogLevel::Debug);
+    let mut accounts = AccountList::default();
+    // An account that appears, one with a problem and one that is not shown.
+    accounts.apply_update(&make_checked_list(&[
+        ("account_1726920000_0", marked(AccountProvider::ImapSmtp)),
+        ("account_1726920000_1", with_problem),
+        ("account_1726920000_2", disabled),
+    ]));
+    // The first account loses its row, which is the excluded case.
+    accounts.apply_update(&make_checked_list(&[(
+        "account_1726920000_1",
+        marked(AccountProvider::Google),
+    )]));
+    let text = record.text();
+    assert!(!text.is_empty(), "the account lines were not recorded");
+    for marker in ["Marker Display Name", "marker@example.invalid"] {
+        assert!(
+            !text.contains(marker),
+            "{marker} reached the record:\n{text}"
+        );
+    }
 }

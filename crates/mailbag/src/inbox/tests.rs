@@ -217,17 +217,8 @@ fn message_with(uid: u32, content: ReceivedContent) -> ReceivedMessage {
     }
 }
 
-/// The lines of a record that carry the load's account.
-fn load_lines(text: &str, account_name: &str) -> Vec<String> {
-    let context = format!(r#"load{{account="{account_name}"}}"#);
-    text.lines()
-        .filter(|line| line.contains(&context))
-        .map(str::to_owned)
-        .collect()
-}
-
 #[test]
-fn an_accepted_load_is_logged_with_its_account_counts_and_warnings() {
+fn unreadable_content_and_a_refused_list_each_warn_without_server_text() {
     let record = start_record(LogLevel::Debug);
     let loaded = account("account_1726920000_0");
     let mut controller = InboxController::default();
@@ -241,6 +232,7 @@ fn an_accepted_load_is_logged_with_its_account_counts_and_warnings() {
         }),
         messages: vec![
             message_with(30, ReceivedContent::Text("Text".to_owned())),
+            // Not supported by design, so counted at info and not warned about.
             message_with(
                 20,
                 ReceivedContent::Explained(ContentExplanation::NoPlainText { has_html: true }),
@@ -253,36 +245,18 @@ fn an_accepted_load_is_logged_with_its_account_counts_and_warnings() {
     };
     controller.finish_load(&loaded, LoadResult::Received(batch));
     let text = record.text();
-    let lines = load_lines(&text, "account_1726920000_0");
-    assert_eq!(
-        lines.len(),
-        text.lines().count(),
-        "every line names the account:\n{text}"
-    );
-    let expected = [
-        (" INFO ", "Inbox load started"),
-        (" INFO ", "Inbox load finished messages=3 unsupported=1"),
-        (
-            " WARN ",
-            "some messages have content that could not be read messages=1",
-        ),
-        (
-            " WARN ",
-            r#"the server refused to finish the message list code="LIMIT""#,
-        ),
-    ];
-    assert_eq!(lines.len(), expected.len(), "{text}");
-    for (line, (level, event)) in lines.iter().zip(expected) {
-        assert!(
-            line.contains(level) && line.contains(event),
-            "{event}: {line}"
-        );
-    }
-    assert!(!text.contains("private refusal text") && !text.contains("duration_ms"));
+    let warnings: Vec<&str> = text
+        .lines()
+        .filter(|line| line.contains(" WARN "))
+        .collect();
+    assert_eq!(warnings.len(), 2, "{text}");
+    assert!(warnings[0].contains("messages=1"), "{}", warnings[0]);
+    assert!(warnings[1].contains(r#"code="LIMIT""#), "{}", warnings[1]);
+    assert!(!text.contains("private refusal text"), "{text}");
 }
 
 #[test]
-fn each_failed_load_is_one_error_line_naming_its_step_and_cause() {
+fn each_failed_load_is_one_error_line_naming_its_cause() {
     let refused_sign_in = ServerFailure {
         failure: ImapFailure::Failed(ImapStep::SignIn),
         server_reply: Some(ServerReply {
@@ -294,19 +268,19 @@ fn each_failed_load_is_one_error_line_naming_its_step_and_cause() {
     let failures = [
         (
             LoadFailure::Server(refused_sign_in),
-            r#"step="SignIn" cause="Failed" code="AUTHENTICATIONFAILED" alerts=1"#,
+            r#"cause=Failed(SignIn) code="AUTHENTICATIONFAILED" alerts=1"#,
         ),
         (
             LoadFailure::Server(ImapFailure::TimedOut(ImapStep::FetchText).into()),
-            r#"step="FetchText" cause="TimedOut""#,
+            "cause=TimedOut(FetchText)",
         ),
         (
             LoadFailure::Server(ImapFailure::InboxChanged.into()),
-            r#"cause="InboxChanged""#,
+            "cause=InboxChanged",
         ),
         (
             LoadFailure::OnlineAccounts(ImapAccessError::Timeout),
-            r#"step="OnlineAccounts" cause="Timeout""#,
+            "cause=Timeout",
         ),
         (LoadFailure::WorkerStopped, r#"cause="WorkerStopped""#),
     ];
@@ -325,11 +299,6 @@ fn each_failed_load_is_one_error_line_naming_its_step_and_cause() {
         assert!(
             errors[0].contains("Inbox load failed") && errors[0].contains(fields),
             "{fields}: {}",
-            errors[0]
-        );
-        assert!(
-            errors[0].contains(r#"load{account="account_1726920000_1"}"#),
-            "{}",
             errors[0]
         );
         assert!(
@@ -378,7 +347,7 @@ fn a_cancelled_load_is_one_info_line_whatever_follows() {
 }
 
 #[test]
-fn a_late_result_for_an_excluded_account_is_discarded_without_an_outcome() {
+fn a_late_result_for_an_excluded_account_writes_no_outcome() {
     for late_result in [
         LoadResult::Received(batch_of(&account("account_1726920000_4"), &[10])),
         LoadResult::Failed(sign_in_failure()),
@@ -390,7 +359,6 @@ fn a_late_result_for_an_excluded_account_is_discarded_without_an_outcome() {
         controller.discard_excluded(|_| false);
         controller.finish_load(&excluded, late_result);
         let text = record.text();
-        assert!(text.contains("Inbox load result discarded"), "{text}");
         for outcome in ["finished", " WARN ", " ERROR "] {
             assert!(
                 !text.contains(outcome),
@@ -398,21 +366,4 @@ fn a_late_result_for_an_excluded_account_is_discarded_without_an_outcome() {
             );
         }
     }
-}
-
-#[test]
-fn a_line_written_beside_a_load_does_not_take_its_account() {
-    let record = start_record(LogLevel::Debug);
-    let loaded = account("account_1726920000_5");
-    let mut controller = InboxController::default();
-    start_load(&mut controller, &loaded);
-    tracing::info!("an account update arrives");
-    controller.finish_load(&loaded, LoadResult::Received(batch_of(&loaded, &[10])));
-    let text = record.text();
-    let update = text
-        .lines()
-        .find(|line| line.contains("an account update arrives"))
-        .expect("the update's line");
-    assert!(!update.contains("load{"), "{update}");
-    assert_eq!(load_lines(&text, "account_1726920000_5").len(), 2, "{text}");
 }

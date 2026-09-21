@@ -77,7 +77,7 @@ levels are `error`, `warning`, `info` and `debug`; `debug` tells the most.
 
 A debug record contains the Online Accounts identifiers of your accounts, also at
 the other levels; folder names and message numbers (UIDs); the mail server's
-host, port and address; how messages are built (content types, character sets,
+host and port; how messages are built (content types, character sets,
 sizes); the replies and alerts the server sent, with your sign-in name replaced
 by `<login>`; and the reason a secure connection failed. It never contains
 passwords, sign-in names, mail addresses, subjects or other header values,

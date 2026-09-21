@@ -7,16 +7,9 @@
 //! mail-parser. It knows nothing about IMAP, GIO or the user interface.
 
 #[cfg(test)]
-#[allow(dead_code)]
-#[path = "../../../tests/support/record.rs"]
-mod test_record;
-#[cfg(test)]
 mod tests;
 
-use mail_parser::{
-    HeaderName, Message, MessageParser, MimeHeaders, PartType,
-    decoders::charsets::map::charset_decoder,
-};
+use mail_parser::{MessageParser, MimeHeaders, PartType, decoders::charsets::map::charset_decoder};
 
 /// One part of a message's MIME structure, as the server described it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -408,33 +401,9 @@ pub fn decode_display_fields(header_lines: &[u8]) -> DisplayFields {
             .collect();
         (!names.is_empty()).then(|| names.join(", "))
     };
-    let fields = DisplayFields {
+    DisplayFields {
         subject: message.subject().map(str::to_owned),
         from: names(message.from()),
         to: names(message.to()),
-    };
-    log_undecoded_list_headers(&message, &fields);
-    fields
-}
-
-/// Names a present list header that did not decode, never its value
-/// (specs/003-logging FR-009). The decoder reports no cause, so none is named.
-/// An absent header is normal and writes nothing.
-fn log_undecoded_list_headers(message: &Message<'_>, fields: &DisplayFields) {
-    for (header, name, value) in [
-        (HeaderName::Subject, "Subject", &fields.subject),
-        (HeaderName::From, "From", &fields.from),
-        (HeaderName::To, "To", &fields.to),
-    ] {
-        if message.header(header).is_none() {
-            continue;
-        }
-        match value {
-            None => tracing::debug!(header = name, "list header gave no value"),
-            Some(value) if value.contains('\u{FFFD}') => {
-                tracing::debug!(header = name, "list header has replacement characters");
-            }
-            Some(_) => {}
-        }
     }
 }

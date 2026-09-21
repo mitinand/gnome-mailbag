@@ -12,9 +12,5 @@ gio.workspace = true
 glib.workspace = true
 tracing.workspace = true
 
-[dev-dependencies]
-# Tests read the lines the adapter logs (tests/support/record.rs).
-tracing-subscriber.workspace = true
-
 [lints]
 workspace = true

@@ -451,7 +451,6 @@ dependencies = [
  "gio",
  "glib",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -689,7 +688,6 @@ version = "0.1.0-dev"
 dependencies = [
  "mail-parser",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

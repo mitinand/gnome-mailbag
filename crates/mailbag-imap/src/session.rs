@@ -172,12 +172,7 @@ pub(crate) async fn open_inbox(
     notices.collect(|| session.unsolicited_responses.try_recv().ok());
     let mailbox = examined.map_err(|error| command_failure(ImapStep::OpenInbox, &error))?;
     tracing::info!(messages = mailbox.exists, "Inbox opened");
-    tracing::debug!(
-        folder = "INBOX",
-        uid_validity = mailbox.uid_validity,
-        uid_next = mailbox.uid_next,
-        "Inbox opened"
-    );
+    tracing::debug!(uid_validity = mailbox.uid_validity, "Inbox state");
     Ok(InboxSession {
         session,
         uid_validity: mailbox.uid_validity,

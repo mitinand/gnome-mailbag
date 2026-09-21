@@ -306,6 +306,4 @@ impl Drop for AccountObserver {
 #[cfg(test)]
 mod event_tests;
 #[cfg(test)]
-mod record_tests;
-#[cfg(test)]
 pub(crate) mod tests;

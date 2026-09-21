@@ -3,10 +3,9 @@
 **Feature**: F03 / `003-logging`
 **Created**: 2026-09-21 · **Branch**: `claude/logging` · **Status**: Documents approved 2026-09-21. Portions 1 and 2 committed. Portion 3 implemented and run by the maintainer; its commit is next.
 
-[Spec](spec.md) owns behavior, the working file [log events](log-events.md)
-plans which line each step writes, [plan](plan.md) owns boundaries and portions,
+[Spec](spec.md) owns behavior, [plan](plan.md) owns boundaries and portions,
 [research](research.md) owns decisions, [the record contract](contracts/record.md)
-owns the line format, field names and rules for writing events, and
+owns field names and the rules for writing events, and
 [quickstart](quickstart.md) owns commands and acceptance checks. Follow
 [AGENTS.md](../../AGENTS.md#commits-prs-and-review-pauses): implement one agreed
 portion, run its checks, report and stop. A checked handoff does not mean
@@ -111,6 +110,30 @@ and the installed application.
 - [X] T040 [US3] Check every line the code writes against the spec's rules (FR-004–013): each is covered by a test or seen in the acceptance run. log-events.md is a working file and is not brought in step with the code.
 - [X] T041 [US2] Run the implementer's checks in specs/003-logging/quickstart.md: SC-001 on the started application's two streams, all native scenarios, and installed Flatpak output following the README, second start and unchanged permissions (SC-007). If no installed environment is available, leave the corresponding criterion and this task incomplete and report the limitation at T042. Record results and remaining gaps in the handoff message or an artifact outside the repository; quickstart.md remains the reusable procedure, not a validation report.
 - [X] T042 STOP: run ./scripts/check.sh and git diff --check. Review constitution I/II over the whole feature, report what changed, the evidence per success criterion and the remaining limitations, suggest the commit and the PR description, and wait for the maintainer.
+
+## Simplification after implementation, 2026-09-22
+
+The maintainer had the finished feature simplified before its commit. The tasks
+below are the record of what was implemented and are not rewritten; what the
+simplification changed:
+
+- one line per event: the info and debug pairs of `mailbag-imap` became single
+  lines, and the connection's host and port moved to a debug line written
+  before the attempt (T026, T027);
+- the `load` span was removed: one load runs at a time, so the controller's own
+  lines name the account and the lines inside a load do not (T021, T022);
+- the load's error line names the failure value in one `cause` field, so the
+  `step` and cause name tables of `inbox.rs` are gone (T022);
+- the line about a list header that did not decode was dropped, and with it
+  the `header` field (T035, T038); the lines about opening Settings were
+  dropped as well (T017);
+- the tests keep the guarantees and no longer pin the text of lines: the record
+  tests of `goa-adapter` and of account observation were deleted, and those of
+  `mailbag-imap`, the controller and the loader reduced (T031, T037, T038);
+  SC-003 and SC-005 stopped being criteria, and SC-006 is deferred;
+- `log-events.md` and `data-model.md` were deleted, spec.md's Clarifications
+  moved their reasons into `research.md`, and `contracts/record.md` was reduced
+  to what several crates must agree on.
 
 ## Dependencies
 

@@ -113,11 +113,6 @@ impl InboxReader {
         let rows = collect_rows(&responses.fetches, first, count);
         if !rows.is_empty() {
             tracing::info!(rows = rows.len(), "message list loaded");
-            tracing::debug!(
-                folder = "INBOX",
-                uids = format!("{}:{}", rows[rows.len() - 1].uid, rows[0].uid),
-                "message list loaded"
-            );
         }
         match responses.end {
             FetchEnd::Failed(error) => {
@@ -282,12 +277,6 @@ impl InboxReader {
                     return Err(self.error(command_failure(ImapStep::FetchText, &error)));
                 }
             };
-            tracing::debug!(
-                sections = sections(),
-                uids = uid_set(&uids),
-                rejected,
-                "text command ended"
-            );
             for uid in uids {
                 let text = message_text(&responses.fetches, uid, &paths, rejected);
                 match text {

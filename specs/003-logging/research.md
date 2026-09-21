@@ -15,14 +15,14 @@ crate.
 
 **Why**: Three needs decide it.
 
-- *Context on every line.* FR-013 wants the account on every line of a
-  load. Today a load crosses three crates and
-  two threads, and `mailbag-content` consists of functions that know nothing
-  about accounts or messages. A span attached to the load's future carries
-  the fields to every event inside it, in any crate, without passing a
-  parameter through each function. Only one load runs at a time today; when
-  several accounts load interleaved on one thread, the same spans keep
-  working where a thread-local "current operation" would not.
+- *Which message a line is about.* `mailbag-content` consists of functions
+  that know nothing about messages, and `mailbag-imap` reads a structure
+  without being told which message it belongs to. A span around one message
+  carries its UID to every event inside it, in any crate, without passing a
+  parameter through each function. When several accounts load interleaved on
+  one thread, spans keep working where a thread-local "current message" would
+  not. The account is not carried this way: one load runs at a time and the
+  controller's own lines name it (spec FR-013).
 - *Crate rules.* `mailbag-content` must not depend on GLib
   ([002 research §9](../002-imap-integration/research.md#9-crate-layout));
   `scripts/check.sh` enforces it. `tracing` has no such dependency.
@@ -85,8 +85,8 @@ above and below held.
   `log_internal_errors(false)` turns the report off, so the line is dropped
   (FR-016).
 - The line gives the time, the level, the enclosing spans with their fields,
-  the module, the message and the event's fields, as the
-  [record contract](contracts/record.md#line) shows.
+  the module, the message and the event's fields, in that order; the layout is
+  the library's and is for people to read (spec FR-014).
 
 **Coexistence with the compiled-out library trace**: nothing changes in
 `mailbag-imap`'s `log` dependency. `tracing`'s optional `log` feature and
@@ -232,9 +232,9 @@ and the reply are both at hand. The reply travels to the load and the UI
 unchanged, as today; no sanitized copy crosses the crate boundary. The load
 still writes the one error line, with the response code and without the text.
 
-This changes a 002 design rule. The amended wording is in
-[the record contract](contracts/record.md#changes-to-002-documents) and is
-applied in the same portion as the first line that uses it.
+This changed a 002 design rule; the amended wording is in
+[002 IMAP reading](../002-imap-integration/contracts/imap-reading.md) and
+[002 data model](../002-imap-integration/data-model.md).
 
 ## 7. Parts, headers and what is available today
 
@@ -267,11 +267,11 @@ applied in the same portion as the first line that uses it.
   reports a parse failure and the reader records `None`. The debug line says
   which of the two known outcomes happened: the server refused, or the reply
   could not be parsed.
-- **A list header that did not decode**: when a present header yielded no
-  value or a value with U+FFFD, `mailbag-content` writes the header's name at
-  debug and guesses no cause. A description of the raw value's encoding was
-  considered and dropped: whoever turns such a report into a fixture has to
-  examine the message by hand anyway.
+- **A list header that did not decode** is not recorded at all, not even by
+  its name. The row stays usable without it, the decoder reports no cause, and
+  whoever turns such a report into a fixture has to examine the message by hand
+  anyway. A description of the raw value's encoding was rejected for the same
+  reason.
 - **Why a TLS handshake failed** is not carried by `ImapFailure` today. GIO
   reports it at the point of failure as an error and as certificate flags;
   the debug line is written there, in `transport.rs`, with the error's text
@@ -325,3 +325,26 @@ expanded code, so a `%` operator, a comment or a string is never mistaken for
 the sigil; it reports the first line of the event macro. A test writes a
 folder name and a server sentence that contain line breaks, quotes and a NUL
 and expects one line per event.
+
+## 10. What the record deliberately does not do
+
+Four decisions of 2026-09-21 that no other section holds.
+
+- **The command line only.** `--log-level` is the one way to turn logging on.
+  It appears in `--help`, passes through `flatpak run` unchanged, and a second
+  start can say that logging was not turned on. An environment variable would
+  do none of this and would be easy to leave set.
+- **No option that writes to a file.** The record goes to the standard error
+  stream and the person redirects it, so the host shell owns the file and the
+  Flatpak sandbox needs no permission. A record left on for days needs a file
+  that stays bounded; no such run exists before background synchronization,
+  so that option arrives with it as an amendment to the spec.
+- **Nothing is kept while logging is off**: no error file and no short record
+  in memory written out when an error happens. A person learns about an error
+  from the UI, at once and with technical details; the log is not a
+  notification. Errors that happen with nobody present arrive with background
+  synchronization, and a record for them is decided then.
+- **The error line names failure values, not the UI's wording.** The error
+  presentation feature rewrites that wording, and sharing it now would mean
+  reworking UI code for the record. The record names the failure value the UI
+  explains, such as `cause=TimedOut(SignIn)`.

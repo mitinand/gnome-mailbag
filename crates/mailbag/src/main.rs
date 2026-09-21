@@ -17,9 +17,6 @@ mod window_ui;
 #[path = "accounts/notice_tests.rs"]
 mod account_notice_tests;
 #[cfg(test)]
-#[path = "accounts/record_tests.rs"]
-mod account_record_tests;
-#[cfg(test)]
 #[path = "accounts/tests.rs"]
 mod account_tests;
 

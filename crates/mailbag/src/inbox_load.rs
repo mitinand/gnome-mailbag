@@ -25,7 +25,6 @@ use mailbag_imap::{
     TextRequest,
 };
 use std::{cell::RefCell, collections::BTreeMap, pin::pin, rc::Rc, thread};
-use tracing::Instrument;
 
 /// How one load ended.
 #[derive(Debug)]
@@ -49,8 +48,6 @@ pub struct MailWorker {
 
 struct LoadRequest {
     access: ImapAccess,
-    /// The load's span, which names its account on the worker's lines.
-    span: tracing::Span,
     /// Closed when the caller cancels or drops the load.
     cancelled: async_channel::Receiver<()>,
     outcome: async_channel::Sender<LoadOutcome>,
@@ -99,28 +96,23 @@ impl LoadsInbox for MailLoader {
         let step = Rc::new(RefCell::new(LoadStep::RequestingAccess(None)));
         let transfer_step = step.clone();
         let worker = self.worker.clone();
-        // Online Accounts answers in a GIO callback, outside the caller's span.
-        let load_span = tracing::Span::current();
         let request = self
             .accounts
-            .request_imap_access(account_id, move |access| {
-                let _load = load_span.enter();
-                match access {
-                    Ok(access) => {
-                        tracing::info!(
-                            encryption = ?access.encryption,
-                            "Online Accounts gave the settings and password"
-                        );
-                        let transfer =
-                            worker.load_inbox(access, move |outcome| report(load_result(outcome)));
-                        *transfer_step.borrow_mut() = LoadStep::Transferring {
-                            _transfer: transfer,
-                        };
-                    }
-                    // The request was cancelled by an exclusion or by quitting.
-                    Err(ImapAccessError::Cancelled) => report(LoadResult::Cancelled),
-                    Err(error) => report(LoadResult::Failed(LoadFailure::OnlineAccounts(error))),
+            .request_imap_access(account_id, move |access| match access {
+                Ok(access) => {
+                    tracing::info!(
+                        encryption = ?access.encryption,
+                        "Online Accounts gave the settings and password"
+                    );
+                    let transfer =
+                        worker.load_inbox(access, move |outcome| report(load_result(outcome)));
+                    *transfer_step.borrow_mut() = LoadStep::Transferring {
+                        _transfer: transfer,
+                    };
                 }
+                // The request was cancelled by an exclusion or by quitting.
+                Err(ImapAccessError::Cancelled) => report(LoadResult::Cancelled),
+                Err(error) => report(LoadResult::Failed(LoadFailure::OnlineAccounts(error))),
             });
         // Online Accounts answers later, except for the settings failure it
         // reports at once, which has already used the step above.
@@ -183,7 +175,6 @@ impl MailWorker {
         let (sender, outcome) = async_channel::bounded(1);
         let request = LoadRequest {
             access,
-            span: tracing::Span::current(),
             cancelled,
             outcome: sender,
         };
@@ -235,9 +226,7 @@ fn run_worker(requests: &async_channel::Receiver<LoadRequest>) {
         .with_thread_default(|| {
             context.block_on(async {
                 while let Ok(request) = requests.recv().await {
-                    let outcome = run_load(request.access, &request.cancelled)
-                        .instrument(request.span)
-                        .await;
+                    let outcome = run_load(request.access, &request.cancelled).await;
                     request.outcome.try_send(outcome).ok();
                 }
             });

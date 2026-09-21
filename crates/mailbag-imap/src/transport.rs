@@ -45,25 +45,19 @@ pub(crate) async fn connect(
         .map_err(|_| ImapFailure::Failed(ImapStep::Connect))?;
     let client = gio::SocketClient::new();
     client.set_timeout(socket_timeout_seconds);
+    // Written before the attempt, so a connection that fails still names where
+    // it went.
+    tracing::debug!(
+        host = address.hostname().as_str(),
+        port = address.port(),
+        "connecting"
+    );
     let connection = client
         .connect_future(&address)
         .await
         .map_err(|error| step_failure(ImapStep::Connect, &error))?;
     tracing::info!("connected");
-    tracing::debug!(
-        host = address.hostname().as_str(),
-        port = address.port(),
-        address = remote_address(&connection),
-        "connected"
-    );
     Ok((ServerConnection(connection), address))
-}
-
-/// The IP address the connection reached.
-fn remote_address(connection: &gio::SocketConnection) -> Option<String> {
-    let address = connection.remote_address().ok()?;
-    let address = address.downcast::<gio::InetSocketAddress>().ok()?;
-    Some(address.address().to_str().to_string())
 }
 
 /// Performs a TLS handshake verified against GIO's default certificate

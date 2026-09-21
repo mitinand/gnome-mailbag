@@ -81,13 +81,6 @@ impl SettingsLauncher {
             }
             .await
             .map_err(|error| LaunchError::from_error(&error));
-            match result {
-                Ok(()) => tracing::info!("Online Accounts opened in Settings"),
-                Err(error) => tracing::error!(
-                    cause = ?error,
-                    "Online Accounts could not be opened in Settings"
-                ),
-            }
             if let Some(launcher) = weak.upgrade() {
                 launcher.launch_pending.set(false);
                 if let Err(error) = result {

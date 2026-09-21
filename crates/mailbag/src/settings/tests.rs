@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::*;
-use crate::logging::{LogLevel, capture::start_record};
 use crate::test_bus::TestBus;
 use std::{
     cell::RefCell,
@@ -222,24 +221,4 @@ fn assert_online_accounts_parameters(body: &glib::Variant) {
     assert_eq!(panel.child_value(0).str(), Some("online-accounts"));
     assert_eq!(panel.child_value(1).n_children(), 0);
     assert_eq!(body.child_value(2).n_children(), 0);
-}
-
-#[test]
-fn each_launch_records_its_outcome() {
-    run_in_context(async {
-        let record = start_record(LogLevel::Info);
-        let bus = TestBus::new();
-        let service = FakeSettings::new(&bus.address);
-        let (launcher, _errors) = test_launcher();
-        launcher.open_with_connection(connect_to_bus(&bus.address));
-        wait_for_completion(&launcher).await;
-        service.reply.set(SettingsReply::AccessDenied);
-        launcher.open_with_connection(connect_to_bus(&bus.address));
-        wait_for_completion(&launcher).await;
-        let text = record.text();
-        let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines.len(), 2, "{text}");
-        assert!(lines[0].contains(" INFO ") && lines[0].contains("Online Accounts opened"));
-        assert!(lines[1].contains(" ERROR ") && lines[1].contains("cause=AccessDenied"));
-    });
 }

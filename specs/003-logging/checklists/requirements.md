@@ -2,7 +2,7 @@
 
 **Purpose**: Validate requirements quality before implementation planning.
 **Created**: 2026-09-21
-**Revised**: 2026-09-21
+**Revised**: 2026-09-22
 **Feature**: [Logging](../spec.md)
 
 This checklist is maintained by `speckit-specify` / `speckit-clarify`.
@@ -40,13 +40,12 @@ Checked items describe specification quality, not implementation or approval.
   names no logging library; that choice belongs to the plan.
 - The readers are a developer and a user filing an issue, so IMAP terms such as
   UID and the description of parts appear where a record must contain them.
-  They are kept to [log events](../log-events.md) and the debug requirements.
+  They are kept to the debug requirements.
 - Each edge case states a scenario that can occur today and its visible result
   (constitution I). Cases considered and left out: a bounded log file, passing
   the option to a start without a terminal, a fifth level for header values,
   a queue with a count of lost lines, the shape of attachment file names.
-- One point changes earlier documents and is listed in the spec's
-  Assumptions: server status text at debug (002 IMAP reading contract and
-  data model, amended in the portion that first writes server text). 001 is
-  not changed: accounts are labelled by a number, and the Online Accounts
-  identifier stays out of the record.
+- Two points change earlier documents and are listed in the spec's
+  Assumptions: server status text at debug (002 IMAP reading contract and data
+  model, amended with this feature), and the name of an account in the record
+  (001, amended so that a line may carry the Online Accounts identifier).
