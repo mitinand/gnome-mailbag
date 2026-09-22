@@ -143,13 +143,36 @@ Recorded so that storage, folders and conversations start from facts:
 
 ## 6. Client identification and the record
 
-Google asks clients to send `ID`. Probe: the reply is `name GImap, vendor
-Google, Inc., version gmail.imap-server_…, support-url …, remote-host
-<client's public IP>, connection-token <opaque>`. `Session::id()` exists in
-the fork and works after EXAMINE (RFC 2971 allows ID in any state).
+Google's [extensions page](https://developers.google.com/workspace/gmail/imap/imap-extensions)
+strongly recommends that clients announce themselves with `ID` (RFC 2971) and
+include a contact address, so that Google can reach the client's author if it
+changes these extensions; its example sends `name`, `version`, `vendor` and
+`contact`. RFC 2971 also defines `support-url`, which outlives a mail address. RFC 2971 defines `name` as the name of the program and forbids
+false information there, and forbids servers to change behaviour or refuse
+service over what `ID` says. So the program named is the one speaking IMAP —
+Mailbag — not GNOME Online Accounts, which issues the token and opens no
+connection; which OAuth client authorized is what the token itself tells
+Google. Checked: evolution-data-server takes its Google token from the same
+GOA and still sends `ID ("name" "evolution-data-server" "version" …)` right
+after sign-in (`camel-imapx-server.c`).
 
-**Decisions**: `identify_client` sends `name` and `version` after EXAMINE and
-logs only the reply's `name`, `vendor` and `version` at debug, never
+Probe: the reply is `name GImap, vendor Google, Inc., version
+gmail.imap-server_…, support-url …, remote-host <client's public IP>,
+connection-token <opaque>`. RFC 2971 allows `ID` in any state, and it is sent
+before EXAMINE because `ENABLE` must precede any mailbox and the two belong
+together.
+
+Checked in the fork: `Session::id()` reads the reply with
+`take_while(filter)`, which drops the tagged completion without checking its
+status, so a `NO` or `BAD` would be indistinguishable from a reply that
+carried no fields. It is therefore not used.
+
+**Decisions**: `identify_client` sends `name`, `version`, `vendor`, `contact`
+and `support-url` after sign-in and before EXAMINE with
+`run_command_and_check_ok`, so that a refusal is a real error and is logged as
+one; the server's own untagged reply reaches `ServerNotices` like the
+announced list, which
+logs only its `name`, `vendor` and `version` at debug, never
 `remote-host` or `connection-token` (003 FR-009: no personal data). New debug
 lines in this feature: the capability list after sign-in, the ENABLE result,
 the ID reply fields, and per row the message identifier and labels. The token

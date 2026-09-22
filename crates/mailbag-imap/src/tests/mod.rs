@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 mod acquisition;
+mod gmail;
 mod record;
 mod sections;
 mod secure_session;
@@ -11,7 +12,8 @@ mod test_record;
 mod timeouts;
 
 use crate::{
-    Encryption, ImapAccount, ImapError, ImapFailure, ImapStep, InboxReader,
+    Credential, Encryption, ImapAccount, ImapError, ImapFailure, ImapStep, InboxReader,
+    OpenOptions, RowItems,
     test_server::{FixtureMessage, FixtureSetup, ImapFixture, StartTlsBehavior},
 };
 use std::{
@@ -46,7 +48,10 @@ fn plain_messages(count: u32) -> Vec<FixtureMessage> {
 }
 
 fn open_reader(fixture: &ImapFixture) -> InboxReader {
-    expect_success(run(InboxReader::open(fixture.account())))
+    expect_success(run(InboxReader::open(
+        fixture.account(),
+        OpenOptions::default(),
+    )))
 }
 
 /// Waits for the server thread to observe something.
@@ -204,14 +209,14 @@ fn host_trust_decides_the_connection() {
     let account = ImapAccount {
         host: host.clone(),
         login: "acceptance".to_owned(),
-        password: "acceptance".to_owned(),
+        credential: Credential::Password("acceptance".to_owned()),
         encryption,
     };
-    let opened = run(InboxReader::open(account));
+    let opened = run(InboxReader::open(account, OpenOptions::default()));
     match std::env::var("MAILBAG_IMAP_EXPECT").as_deref() {
         Ok("success") | Err(_) => {
             let mut reader = expect_success(opened);
-            let listed = expect_success(run(reader.fetch_rows()));
+            let listed = expect_success(run(reader.fetch_rows(RowItems::Standard)));
             println!(
                 "{host} accepted by the host's trust store: {} rows",
                 listed.rows.len()

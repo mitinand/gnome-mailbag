@@ -21,8 +21,8 @@ use mailbag_content::{
     join_message_text, select_text_parts,
 };
 use mailbag_imap::{
-    Encryption, ImapAccount, ImapFailure, InboxReader, MessagePart, MessageText, TextParts,
-    TextRequest,
+    Credential, Encryption, ImapAccount, ImapFailure, InboxReader, MessagePart, MessageText,
+    OpenOptions, RowItems, TextParts, TextRequest,
 };
 use std::{cell::RefCell, collections::BTreeMap, pin::pin, rc::Rc, thread};
 
@@ -251,8 +251,8 @@ async fn run_load(access: ImapAccess, cancelled: &async_channel::Receiver<()>) -
 /// Reads the newest Inbox messages and decodes the text every row needs.
 async fn load_inbox_batch(access: ImapAccess) -> Result<ReceivedBatch, ServerFailure> {
     let account_id = access.account_id.clone();
-    let mut reader = InboxReader::open(server_account(access)).await?;
-    let listed = reader.fetch_rows().await?;
+    let mut reader = InboxReader::open(server_account(access), OpenOptions::default()).await?;
+    let listed = reader.fetch_rows(RowItems::Standard).await?;
     let rows = listed.rows;
     let window = rows.len();
     let uids: Vec<u32> = rows.iter().map(|row| row.uid).collect();
@@ -330,7 +330,7 @@ fn server_account(access: ImapAccess) -> ImapAccount {
     ImapAccount {
         host: access.host,
         login: access.login,
-        password: access.password,
+        credential: Credential::Password(access.password),
         encryption: match access.encryption {
             ImapEncryption::ImplicitTls => Encryption::ImplicitTls,
             ImapEncryption::StartTls => Encryption::StartTls,

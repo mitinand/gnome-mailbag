@@ -6,7 +6,7 @@
 //! records command names, UIDs, section names and how often credentials
 //! arrived, never the credentials or message text.
 
-use crate::{Encryption, ImapAccount};
+use crate::{Credential, Encryption, ImapAccount};
 use futures_util::io::{AsyncReadExt, AsyncWriteExt};
 use gio::prelude::*;
 use std::{
@@ -23,6 +23,11 @@ use std::{
 
 pub const TEST_LOGIN: &str = "synthetic-user";
 pub const TEST_PASSWORD: &str = "synthetic-password";
+pub const TEST_ACCESS_TOKEN: &str = "synthetic-access-token";
+/// Fields of the scripted ID reply that no line of the record may contain:
+/// the client's own address and an opaque session token.
+pub const ID_REMOTE_HOST: &str = "203.0.113.7";
+pub const ID_CONNECTION_TOKEN: &str = "secret-token";
 /// Values of `FixtureMessage::with_private_markers` and the fixture's
 /// credentials that no line of the record may contain, at any level.
 pub const PRIVATE_MARKERS: [&str; 15] = [
@@ -91,6 +96,11 @@ pub struct FixtureMessage {
     pub structure: String,
     /// Body sections by name, such as `1`, `2` and `2.MIME`.
     pub sections: BTreeMap<String, Vec<u8>>,
+    /// X-GM-MSGID. A message without it is answered without either Gmail
+    /// attribute, as a server that does not have the extension.
+    pub gmail_message_id: Option<u64>,
+    /// X-GM-LABELS, which Gmail may send empty for a message in the open folder.
+    pub gmail_labels: Vec<String>,
 }
 
 impl FixtureMessage {
@@ -101,6 +111,17 @@ impl FixtureMessage {
             header: message_header(uid, "text/plain; charset=utf-8"),
             structure: text_structure("PLAIN", text),
             sections: BTreeMap::from([("1".to_owned(), text.as_bytes().to_vec())]),
+            gmail_message_id: None,
+            gmail_labels: Vec::new(),
+        }
+    }
+
+    /// The same message with Gmail's attributes, answered for the X-GM items.
+    pub fn with_gmail_attributes(self, message_id: u64, labels: &[&str]) -> Self {
+        Self {
+            gmail_message_id: Some(message_id),
+            gmail_labels: labels.iter().map(|label| (*label).to_owned()).collect(),
+            ..self
         }
     }
 
@@ -121,6 +142,8 @@ impl FixtureMessage {
             header: message_header(uid, "multipart/mixed; boundary=fixture"),
             structure,
             sections,
+            gmail_message_id: None,
+            gmail_labels: Vec::new(),
         }
     }
 
@@ -158,6 +181,8 @@ impl FixtureMessage {
                 "({resource}{body} \"RELATED\" (\"BOUNDARY\" \"fixture\" \"START\" \"{text_id}\") NIL NIL NIL)"
             ),
             sections,
+            gmail_message_id: None,
+            gmail_labels: Vec::new(),
         }
     }
 
@@ -206,6 +231,8 @@ impl FixtureMessage {
                  (\"BOUNDARY\" \"fixture\") NIL NIL NIL)"
             ),
             sections,
+            gmail_message_id: None,
+            gmail_labels: Vec::new(),
         }
     }
 
@@ -290,6 +317,9 @@ pub struct FixtureSetup {
     pub capability_reply: Option<String>,
     pub offers_plain: bool,
     pub login_disabled: bool,
+    /// Advertises `AUTH=XOAUTH2` and accepts this access token with the login
+    /// of `credentials`; `None` offers no token mechanism.
+    pub access_token: Option<String>,
     /// Credentials the server accepts; `None` accepts any.
     pub credentials: Option<(String, String)>,
     /// An untagged response sent before the sign-in continuation request, such
@@ -300,6 +330,10 @@ pub struct FixtureSetup {
     pub lowercase_protocol_names: bool,
     /// Reply to a rejected sign-in; `{tag}` is replaced with the command tag.
     pub rejection: String,
+    /// Answers ENABLE with BAD, as Gmail does once a mailbox is open.
+    pub enable_refused: bool,
+    /// Answers ID with NO instead of its identification.
+    pub id_refused: bool,
     pub messages: Vec<FixtureMessage>,
     pub uid_validity: u32,
     /// EXAMINE completion, optionally preceded by notices; accepts `{tag}`.
@@ -349,10 +383,13 @@ impl Default for FixtureSetup {
             capability_reply: None,
             offers_plain: true,
             login_disabled: false,
+            access_token: None,
             credentials: Some((TEST_LOGIN.to_owned(), TEST_PASSWORD.to_owned())),
             notice_before_sign_in: None,
             lowercase_protocol_names: false,
             rejection: "{tag} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n".to_owned(),
+            enable_refused: false,
+            id_refused: false,
             messages: Vec::new(),
             uid_validity: 1,
             examine_completion: "{tag} OK [READ-ONLY] done\r\n".to_owned(),
@@ -382,8 +419,15 @@ pub struct FixtureLog {
     /// Command names in order, prefixed with `plaintext` before STARTTLS.
     pub commands: Vec<String>,
     pub fetches: Vec<RecordedFetch>,
+    /// The mechanism of every AUTHENTICATE command, in order.
+    pub sign_in_mechanisms: Vec<String>,
+    /// The field list of the ID command, as the client wrote it.
+    pub client_identification: Option<String>,
     /// Sign-in commands that carried credentials, with or without TLS.
     pub credentials_received: usize,
+    /// Empty lines the client sent in answer to a challenge, as Google's
+    /// XOAUTH2 error exchange requires after a refused token.
+    pub empty_challenge_replies: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -476,10 +520,19 @@ impl ImapFixture {
     }
 
     pub fn account_with_password(&self, password: &str) -> ImapAccount {
+        self.account_with_credential(Credential::Password(password.to_owned()))
+    }
+
+    /// An account for this server with the test access token.
+    pub fn account_with_token(&self) -> ImapAccount {
+        self.account_with_credential(Credential::AccessToken(TEST_ACCESS_TOKEN.to_owned()))
+    }
+
+    pub fn account_with_credential(&self, credential: Credential) -> ImapAccount {
         ImapAccount {
             host: format!("localhost:{}", self.port),
             login: TEST_LOGIN.to_owned(),
-            password: password.to_owned(),
+            credential,
             encryption: self.encryption,
         }
     }
@@ -614,6 +667,11 @@ impl Server {
                     } else {
                         ""
                     };
+                    let xoauth2 = if self.setup.access_token.is_some() {
+                        " AUTH=XOAUTH2"
+                    } else {
+                        ""
+                    };
                     let disabled = match (
                         self.setup.login_disabled,
                         self.setup.lowercase_protocol_names,
@@ -623,11 +681,13 @@ impl Server {
                         (true, false) => " LOGINDISABLED",
                     };
                     io.send(format!(
-                        "* CAPABILITY IMAP4rev1{plain}{disabled}\r\n{tag} OK done\r\n"
+                        "* CAPABILITY IMAP4rev1{plain}{xoauth2}{disabled}\r\n{tag} OK done\r\n"
                     ))
                     .await?;
                 }
                 "AUTHENTICATE" => {
+                    let mechanism = arguments.to_ascii_uppercase();
+                    self.record(|log| log.sign_in_mechanisms.push(mechanism));
                     if let Some(notice) = &self.setup.notice_before_sign_in {
                         io.send(format!("{notice}\r\n")).await?;
                     }
@@ -636,12 +696,40 @@ impl Server {
                         return Ok(());
                     };
                     let response = glib::base64_decode(&String::from_utf8_lossy(&line));
+                    if arguments.eq_ignore_ascii_case("XOAUTH2") {
+                        self.reply_to_access_token(io, &tag, &response).await?;
+                        continue;
+                    }
                     let fields: Vec<&[u8]> = response.split(|byte| *byte == 0).collect();
                     let accepted = match fields.as_slice() {
                         [_, login, password] => self.check_credentials(login, password),
                         _ => false,
                     };
                     self.reply_to_sign_in(io, &tag, accepted).await?;
+                }
+                "ENABLE" => {
+                    if self.setup.enable_refused {
+                        io.send(format!("{tag} BAD ENABLE not allowed now.\r\n"))
+                            .await?;
+                    } else {
+                        io.send(format!("* ENABLED {arguments}\r\n{tag} OK Enabled\r\n"))
+                            .await?;
+                    }
+                }
+                "ID" => {
+                    let identification = arguments.clone();
+                    self.record(|log| log.client_identification = Some(identification));
+                    if self.setup.id_refused {
+                        io.send(format!("{tag} NO Cannot identify now\r\n")).await?;
+                    } else {
+                        io.send(format!(
+                            "* ID (\"name\" \"Scripted\" \"vendor\" \"Mailbag tests\" \
+                             \"version\" \"1\" \"remote-host\" \"{ID_REMOTE_HOST}\" \
+                             \"connection-token\" \"{ID_CONNECTION_TOKEN}\")\r\n\
+                             {tag} OK done\r\n"
+                        ))
+                        .await?;
+                    }
                 }
                 "LOGIN" => {
                     let accepted = match login_arguments(&arguments).as_slice() {
@@ -699,6 +787,34 @@ impl Server {
             .is_none_or(|(expected_login, expected_password)| {
                 login == expected_login.as_bytes() && password == expected_password.as_bytes()
             })
+    }
+
+    /// Google's XOAUTH2 exchange: a wrong token gets a challenge carrying the
+    /// error as JSON, and the refusal follows the client's empty answer.
+    async fn reply_to_access_token(&self, io: &mut Io, tag: &str, response: &[u8]) -> ServeResult {
+        self.record(|log| log.credentials_received += 1);
+        let expected = match (&self.setup.credentials, &self.setup.access_token) {
+            (Some((login, _)), Some(token)) => {
+                Some(format!("user={login}\u{1}auth=Bearer {token}\u{1}\u{1}"))
+            }
+            _ => None,
+        };
+        if expected.is_none_or(|expected| response == expected.as_bytes()) {
+            io.send(format!("{tag} OK Signed in\r\n")).await?;
+            return Ok(());
+        }
+        let error = r#"{"status":"400","schemes":"Bearer","scope":"https://mail.google.com/"}"#;
+        io.send(format!("+ {}\r\n", glib::base64_encode(error.as_bytes())))
+            .await?;
+        match io.read_line().await? {
+            Some(line) if line.is_empty() => {
+                self.record(|log| log.empty_challenge_replies += 1);
+            }
+            Some(_) => {}
+            None => return Ok(()),
+        }
+        io.send(self.setup.rejection.replace("{tag}", tag)).await?;
+        Ok(())
     }
 
     async fn reply_to_sign_in(&self, io: &mut Io, tag: &str, accepted: bool) -> ServeResult {
@@ -867,6 +983,19 @@ impl Server {
                 "BODYSTRUCTURE" => {
                     fields.push(format!("BODYSTRUCTURE {}", message.structure).into_bytes());
                 }
+                "X-GM-MSGID" => {
+                    if let Some(message_id) = message.gmail_message_id {
+                        fields.push(format!("X-GM-MSGID {message_id}").into_bytes());
+                    }
+                }
+                "X-GM-LABELS" => {
+                    if message.gmail_message_id.is_some() {
+                        fields.push(
+                            format!("X-GM-LABELS ({})", label_list(&message.gmail_labels))
+                                .into_bytes(),
+                        );
+                    }
+                }
                 _ => {
                     let Some(section) = body_section(item) else {
                         continue;
@@ -946,6 +1075,19 @@ async fn misbehave(
     // Stay silent until the client gives up.
     while io.read_line().await?.is_some() {}
     Ok(false)
+}
+
+/// Labels as X-GM-LABELS carries them: a system label is a flag, written
+/// bare with its backslash; any other name is quoted.
+fn label_list(labels: &[String]) -> String {
+    labels
+        .iter()
+        .map(|label| match label.starts_with('\\') {
+            true => label.clone(),
+            false => format!("\"{label}\""),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The section name inside `BODY[...]` or `BODY.PEEK[...]`.

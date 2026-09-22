@@ -3,7 +3,7 @@
 
 use super::{expect_failure, expect_success, open_reader, run, wait_until};
 use crate::{
-    ImapFailure, ImapStep, InboxReader, MessageText, TextParts, TextRequest,
+    ImapFailure, ImapStep, InboxReader, MessageText, OpenOptions, RowItems, TextParts, TextRequest,
     test_server::{FaultKind, FaultyCommand, FixtureMessage, FixtureSetup, ImapFixture},
 };
 
@@ -19,7 +19,7 @@ fn text_is_received_after_the_last_isolated_structure_fails() {
             ..FixtureSetup::default()
         });
         let mut reader = open_reader(&fixture);
-        let rows = expect_success(run(reader.fetch_rows())).rows;
+        let rows = expect_success(run(reader.fetch_rows(RowItems::Standard))).rows;
         let uids: Vec<_> = rows.iter().map(|row| row.uid).collect();
         let structures = expect_success(run(reader.fetch_structures(&uids)));
         assert_eq!(structures[&20], None);
@@ -83,7 +83,7 @@ fn unreadable_structures_keep_their_rows_and_the_others_are_read() {
         });
         let mut reader = open_reader(&fixture);
         let (rows, structures) = run(async {
-            let rows = expect_success(reader.fetch_rows().await).rows;
+            let rows = expect_success(reader.fetch_rows(RowItems::Standard).await).rows;
             let uids: Vec<u32> = rows.iter().map(|row| row.uid).collect();
             (rows, expect_success(reader.fetch_structures(&uids).await))
         });
@@ -147,7 +147,12 @@ fn network_failures_timeouts_and_the_response_limit_are_not_isolated() {
         });
         let error = expect_failure(run(async {
             let mut reader = expect_success(
-                InboxReader::open_with_short_socket_timeout(fixture.account(), 1).await,
+                InboxReader::open_with_short_socket_timeout(
+                    fixture.account(),
+                    OpenOptions::default(),
+                    1,
+                )
+                .await,
             );
             reader.fetch_structures(&[20, 10]).await
         }));

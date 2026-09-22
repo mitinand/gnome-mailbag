@@ -14,10 +14,10 @@ exceeding about 1.5 times an estimate.
 
 | Item | Budget (2026-09-22) | This plan |
 |---|---|---|
-| New modules and production lines | goa-adapter ~120; mailbag-imap ~120; new crate ~150 new + ~400 moved; UI ~40. New 450–550 | goa-adapter ~60; mailbag-imap ~150 plus ~110 in the scripted test server and ~45 in the fake GOA; `mailbag-providers` ~160 new + ~640 moved (tests are the larger part); UI ~25. New ~400 |
+| New modules and production lines | goa-adapter ~120; mailbag-imap ~120; new crate ~150 new + ~400 moved; UI ~40. New 450–550 | goa-adapter ~60; mailbag-imap ~185 plus ~145 in the scripted test server and ~45 in the fake GOA; `mailbag-providers` ~160 new + ~640 moved (tests are the larger part); UI ~25. New ~435 |
 | Call sites or existing files touched | ~12 | 14: goa-adapter (`imap_access.rs`, `accounts.rs`, `lib.rs`), mailbag-imap (`lib.rs`, `session.rs`, `reader.rs`, `test_server.rs`), mailbag (`main.rs`, `window_ui.rs`, `accounts.rs`, `inbox.rs`, `mail_ui/tests.rs`; `inbox_load.rs` leaves), `Cargo.toml`, `scripts/check.sh` |
 | New threads, timers, queues | 0 | 0; the existing mail worker serves both providers |
-| New state, types, error types | 4–6 | 4 types and one variant: `ImapCredential` (goa-adapter), `Credential`, `OpenOptions`, `GmailRow` (mailbag-imap), `ImapAccessError::AccessToken` |
+| New state, types, error types | 4–6 | 7 types and one variant: `ImapCredential` (goa-adapter); `Credential`, `OpenOptions`, `ClientIdentity`, `RowItems`, `GmailRow` (mailbag-imap); `MailProvider` (mailbag-providers); `ImapAccessError::AccessToken`. Over the budget by one: `ClientIdentity` and `RowItems` are plain argument types of `open` and `fetch_rows`, holding no state |
 | New fields in existing data | row attributes, provider identity on the message, Google eligibility | `MessageRow.gmail` and `ReceivedMessage.gmail`, both `Option<GmailRow>`; eligibility is a function, not a field |
 | Changes to other features' contracts or documents | goa-access contract; 002 FR-012; 002 research §9 | The same three, plus `LoadsInbox::start_load` gains the provider argument (internal to the workspace) |
 | New dependencies | 0, maybe a UTF-7 decoder | 0. No fork change |
@@ -25,6 +25,15 @@ exceeding about 1.5 times an estimate.
 
 The move of the load sequence is mechanical and is its own portion, so a
 reviewer can separate it from behaviour changes.
+
+Revised 2026-09-23 after portion 1, with the maintainer's agreement. The
+`mailbag-imap` figure rose from ~150 to ~185 for two decisions taken while
+building it: the client identification carries `vendor`, `contact` and
+`support-url` as Google's example asks, and `ID` is sent with
+`run_command_and_check_ok` instead of `Session::id` so that a refusal is a
+real error rather than a reply without fields ([research §6](research.md)).
+The scripted server rose with it, to record what the client sent. The
+feature's total stays inside the agreed 450–550.
 
 ## Summary
 
@@ -53,7 +62,7 @@ Everything below is built. Each line names its cost.
 |---|---|---|
 | Credential from GOA | `request_imap_access` reads the Mail settings as today, then asks the credential interface the account object exports: PasswordBased → `GetPassword`, OAuth2Based → `GetAccessToken`. `ImapAccess.password` becomes `credential: ImapCredential { Password, AccessToken }` | ~60 lines, one error variant `AccessToken`, 5 tests with the fake GOA |
 | Sign-in with a token | `mailbag-imap` `Credential::AccessToken` signs in with `AUTHENTICATE XOAUTH2`; the response is the documented string; a second challenge (Gmail's error JSON) gets the empty reply the fork already sends. No `AUTH=XOAUTH2` in the capabilities → `NoSignInMethod` | ~50 lines, 3 transcripts in the scripted server |
-| Readable names and identification | `InboxReader::open(account, OpenOptions)` with two fields: `readable_names: bool` sends `ENABLE UTF8=ACCEPT` after sign-in and before EXAMINE; `client_identity: Option<ClientIdentity { name, version }>` sends `ID` right after it (`ID` is allowed in any state). Each tagged result is logged at debug and never fails the load; the ID reply's `name`, `vendor` and `version` are logged, nothing else. The Gmail load sets both, the Generic IMAP load neither | ~65 lines, 4 tests |
+| Readable names and identification | `InboxReader::open(account, OpenOptions)` with two fields: `readable_names: bool` sends `ENABLE UTF8=ACCEPT` after sign-in and before EXAMINE; `client_identity: Option<ClientIdentity { name, version, vendor, contact, support_url }>` sends `ID` right after it (`ID` is allowed in any state). The fields are the ones Google's example asks for, plus `support-url` ([research §6](research.md)). Both commands go through `run_command_and_check_ok`, so a refusal is logged at debug and never fails the load; the server's untagged reply reaches `ServerNotices`, which logs the ID reply's `name`, `vendor` and `version`, nothing else. The Gmail load sets both, the Generic IMAP load neither | ~85 lines, 4 tests |
 | Gmail row attributes | `fetch_rows(RowItems)`: `Standard` or `WithGmailAttributes`, which adds `X-GM-MSGID X-GM-LABELS`; `MessageRow.gmail: Option<GmailRow { message_id, labels }>` from the fork's accessors | ~40 lines, 1 test |
 | Capabilities after sign-in | `ServerNotices::keep` logs an untagged capability list at debug. Gmail sends its full list only after sign-in, and imap-proto parses the `ENABLED` reply into the same response type, so the line says "the server announced" a list, not "capabilities" | ~8 lines, covered by the sign-in and ENABLE tests |
 | Provider crate | `mailbag-providers`: worker, `MailLoader`, `LoadsInbox`, batch types and the load sequence move as they are; `gmail.rs` adds the Gmail load; `start_load` takes the provider; `ReceivedMessage.gmail: Option<GmailRow>` | ~640 moved, ~160 new, 2 tests; workspace member, two `check.sh` rules; fake GOA gains an OAuth2Based object (~45 test lines) |
@@ -90,7 +99,7 @@ None is planned. Each would need the situation named beside it to occur.
 | Area | Design |
 |---|---|
 | Language/platform | Rust 2024, toolchain 1.95, GLib/GIO 0.22.9, libadwaita 0.9.2; unchanged |
-| IMAP | async-imap fork 3c4cdde, imap-proto fork caa2c81; unchanged. `Client::authenticate` handles the XOAUTH2 error exchange; `Session::id` exists; `Fetch::gmail_msg_id`/`gmail_labels` exist; ENABLE is sent with `run_command_and_check_ok` |
+| IMAP | async-imap fork 3c4cdde, imap-proto fork caa2c81; unchanged. `Client::authenticate` handles the XOAUTH2 error exchange; `Fetch::gmail_msg_id`/`gmail_labels` exist; ENABLE and ID are sent with `run_command_and_check_ok`, because `Session::id` does not check its command's completion ([research §6](research.md)) |
 | GOA | `org.gnome.OnlineAccounts.OAuth2Based.GetAccessToken` → `(s i)`; Google accounts export Mail with `ImapUseSsl` true and no PasswordBased ([research §1](research.md)) |
 | Content | mail-parser through `mailbag-content`; unchanged |
 | Logging | 003 rules; new lines at debug only ([research §6](research.md)) |
@@ -173,7 +182,7 @@ to the lists the other library crates must not depend on.
 
 **mailbag-providers, `load_gmail_inbox(access)`**:
 1. `InboxReader::open(account, OpenOptions { readable_names: true,
-   client_identity: Some(Mailbag, version) })` — connect, sign in with the
+   client_identity: Some(Mailbag, version, vendor, contact, support-url) })` — connect, sign in with the
    token, offer UTF-8 names, identify, EXAMINE INBOX.
 2. `reader.fetch_rows(RowItems::WithGmailAttributes)` — rows with
    `GmailRow`; one debug line per row: uid, `gmail_message_id`, `labels`.

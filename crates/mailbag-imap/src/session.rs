@@ -2,16 +2,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::{
-    Encryption, ImapAccount, ImapError, ImapFailure, ImapStep, ServerReply,
+    ClientIdentity, Credential, Encryption, ImapAccount, ImapError, ImapFailure, ImapStep,
+    OpenOptions, ServerReply,
     transport::{self, GioStream, ServerConnection},
 };
 use async_imap::{
     Authenticator, Client, Session,
     error::{Error, StatusResponse},
-    imap_proto::{Response, ResponseCode, Status},
+    imap_proto::{self, Response, ResponseCode, Status},
     types::{Capabilities, Capability, UnsolicitedResponse},
 };
-use std::io;
+use std::{borrow::Cow, collections::HashMap, io};
 
 /// Server text for a debug line: every occurrence of the sign-in name, in any
 /// ASCII letter case and whatever its length, is replaced with `<login>`
@@ -92,6 +93,20 @@ impl ServerNotices {
 
     fn keep(&mut self, sign_in_name: &str, response: &Response<'_>) {
         let (status, code, information) = match response {
+            // imap-proto parses the ENABLED reply into the same response as a
+            // CAPABILITY list, so the line names what the server announced
+            // rather than which of the two it was. Gmail sends its full list
+            // only after sign-in (research.md §2, §4).
+            Response::Capabilities(announced) => {
+                tracing::debug!(
+                    names = announced_names(announced),
+                    "the server announced a list of names"
+                );
+                return;
+            }
+            // The reply to our own ID command arrives here, like any other
+            // untagged list; its tagged result is checked where it was sent.
+            Response::Id(fields) => return log_server_identification(fields.as_ref()),
             Response::Data {
                 status,
                 code,
@@ -143,10 +158,11 @@ impl ServerNotices {
     }
 }
 
-/// Connects securely, signs in and runs EXAMINE INBOX. ALERT and BYE texts
-/// received over TLS are added to `notices`.
+/// Connects securely, signs in, runs what `options` asks for and then
+/// EXAMINE INBOX. ALERT and BYE texts received over TLS are added to `notices`.
 pub(crate) async fn open_inbox(
     account: &ImapAccount,
+    options: &OpenOptions,
     socket_timeout_seconds: u32,
     notices: &mut ServerNotices,
 ) -> Result<InboxSession, StepFailure> {
@@ -167,6 +183,17 @@ pub(crate) async fn open_inbox(
         }
     };
     let mut session = sign_in(client, account, notices).await?;
+    if options.readable_names {
+        // RFC 5161 allows ENABLE only before a mailbox is selected.
+        offer_readable_names(&mut session, &account.login).await?;
+    }
+    if let Some(identity) = &options.client_identity {
+        identify_client(&mut session, identity, &account.login).await?;
+    }
+    // Both commands answer with an untagged list, which belongs to the record
+    // before the Inbox is opened.
+    let waiting = &session.unsolicited_responses;
+    notices.collect(&account.login, || waiting.try_recv().ok());
     let examined = session.examine("INBOX").await;
     notices.collect(&account.login, || {
         session.unsolicited_responses.try_recv().ok()
@@ -245,8 +272,9 @@ fn starttls_failure(error: &Error) -> ImapFailure {
     }
 }
 
-/// Signs in with AUTHENTICATE PLAIN when offered, otherwise LOGIN unless the
-/// server disables it. A rejected sign-in is not retried with another method.
+/// Signs in with the method the credential needs: XOAUTH2 for an access token,
+/// otherwise AUTHENTICATE PLAIN when offered and LOGIN unless the server
+/// disables it. A rejected sign-in is not retried with another method.
 async fn sign_in(
     mut client: Client<GioStream>,
     account: &ImapAccount,
@@ -261,21 +289,30 @@ async fn sign_in(
         capabilities = capability_names(&capabilities),
         "server capabilities"
     );
-    let (method, signed_in) = if capabilities.has_str("AUTH=PLAIN") {
-        let credentials = PlainCredentials {
-            login: &account.login,
-            password: &account.password,
-            sent: false,
-        };
-        ("PLAIN", client.authenticate("PLAIN", credentials).await)
-    } else if !capabilities.has_str("LOGINDISABLED") {
-        // The fork sends a non-ASCII login or password as a literal.
-        (
-            "LOGIN",
-            client.login(&account.login, &account.password).await,
-        )
-    } else {
-        return Err(ImapFailure::NoSignInMethod.into());
+    let (method, signed_in) = match &account.credential {
+        Credential::AccessToken(token) if capabilities.has_str("AUTH=XOAUTH2") => {
+            let credentials = XOAuth2Credentials {
+                login: &account.login,
+                token,
+                sent: false,
+            };
+            ("XOAUTH2", client.authenticate("XOAUTH2", credentials).await)
+        }
+        // Google documents XOAUTH2 for IMAP; no other mechanism carries a token.
+        Credential::AccessToken(_) => return Err(ImapFailure::NoSignInMethod.into()),
+        Credential::Password(password) if capabilities.has_str("AUTH=PLAIN") => {
+            let credentials = PlainCredentials {
+                login: &account.login,
+                password,
+                sent: false,
+            };
+            ("PLAIN", client.authenticate("PLAIN", credentials).await)
+        }
+        Credential::Password(password) if !capabilities.has_str("LOGINDISABLED") => {
+            // The fork sends a non-ASCII login or password as a literal.
+            ("LOGIN", client.login(&account.login, password).await)
+        }
+        Credential::Password(_) => return Err(ImapFailure::NoSignInMethod.into()),
     };
     match signed_in {
         Ok(session) => {
@@ -307,6 +344,95 @@ fn capability_names(capabilities: &Capabilities) -> String {
         .join(" ")
 }
 
+/// The names of an untagged list the server sent on its own.
+fn announced_names(announced: &[imap_proto::Capability<'_>]) -> String {
+    announced
+        .iter()
+        .map(|name| match name {
+            imap_proto::Capability::Imap4rev1 => "IMAP4rev1".to_owned(),
+            imap_proto::Capability::Auth(mechanism) => format!("AUTH={mechanism}"),
+            imap_proto::Capability::Atom(name) => name.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Offers UTF-8 mailbox and label names. A server that refuses keeps sending
+/// modified UTF-7, which the names then carry into the batch as they are.
+async fn offer_readable_names(
+    session: &mut Session<GioStream>,
+    sign_in_name: &str,
+) -> Result<(), StepFailure> {
+    match session.run_command_and_check_ok("ENABLE UTF8=ACCEPT").await {
+        Ok(()) => tracing::debug!("the server accepted UTF-8 names"),
+        Err(Error::No(status) | Error::Bad(status)) => tracing::debug!(
+            code = status.code.as_deref(),
+            server_text = server_text_for_log(sign_in_name, &status.text),
+            "the server refused UTF-8 names"
+        ),
+        // A broken connection, not a refusal: the Inbox cannot follow.
+        Err(error) => return Err(command_failure(ImapStep::OpenInbox, &error)),
+    }
+    Ok(())
+}
+
+/// Names this client to the server, as Gmail asks clients to do. The server's
+/// own reply is an untagged list that the notices log; a refusal is logged
+/// here and leaves the load going.
+///
+/// `Session::id` is not used: the fork reads its reply without checking the
+/// command's completion, so a NO or BAD would pass for a reply without fields.
+async fn identify_client(
+    session: &mut Session<GioStream>,
+    identity: &ClientIdentity,
+    sign_in_name: &str,
+) -> Result<(), StepFailure> {
+    let identification = [
+        ("name", &identity.name),
+        ("version", &identity.version),
+        ("vendor", &identity.vendor),
+        ("contact", &identity.contact),
+        ("support-url", &identity.support_url),
+    ]
+    .map(|(field, value)| format!("{} {}", quoted(field), quoted(value)))
+    .join(" ");
+    match session
+        .run_command_and_check_ok(format!("ID ({identification})"))
+        .await
+    {
+        Ok(()) => {}
+        Err(Error::No(status) | Error::Bad(status)) => tracing::debug!(
+            code = status.code.as_deref(),
+            server_text = server_text_for_log(sign_in_name, &status.text),
+            "the server refused the identification"
+        ),
+        Err(error) => return Err(command_failure(ImapStep::OpenInbox, &error)),
+    }
+    Ok(())
+}
+
+/// An IMAP quoted string: a backslash and a quote inside it are escaped.
+fn quoted(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', r"\\").replace('"', "\\\""))
+}
+
+/// The three fields of a server's identification that may reach the record.
+/// The rest carries this computer's public address and an opaque session
+/// token (specs/003-logging FR-009).
+fn log_server_identification(fields: Option<&HashMap<Cow<'_, str>, Cow<'_, str>>>) {
+    let field = |name| {
+        fields
+            .and_then(|fields| fields.get(name))
+            .map(|value| &**value)
+    };
+    tracing::debug!(
+        name = field("name"),
+        vendor = field("vendor"),
+        version = field("version"),
+        "the server identified itself"
+    );
+}
+
 /// The SASL PLAIN response. async-imap adds the base64 framing.
 struct PlainCredentials<'a> {
     login: &'a str,
@@ -329,6 +455,27 @@ impl Authenticator for PlainCredentials<'_> {
             self.password.as_bytes(),
         ]
         .concat()
+    }
+}
+
+/// The XOAUTH2 initial response Google documents. A wrong token is answered
+/// with a challenge carrying the server's error as JSON, which the protocol
+/// requires the client to acknowledge with an empty line before the refusal
+/// arrives (specs/004-gmail-integration/research.md §2).
+struct XOAuth2Credentials<'a> {
+    login: &'a str,
+    token: &'a str,
+    sent: bool,
+}
+
+impl Authenticator for XOAuth2Credentials<'_> {
+    type Response = Vec<u8>;
+
+    fn process(&mut self, _challenge: &[u8]) -> Vec<u8> {
+        if std::mem::replace(&mut self.sent, true) {
+            return Vec::new();
+        }
+        format!("user={}\x01auth=Bearer {}\x01\x01", self.login, self.token).into_bytes()
     }
 }
 

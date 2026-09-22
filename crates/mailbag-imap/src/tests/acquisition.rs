@@ -3,7 +3,8 @@
 
 use super::{expect_failure, expect_success, open_reader, plain_messages, run};
 use crate::{
-    ImapFailure, ImapStep, InboxReader, MessagePart, ServerReply, TextParts, TextRequest,
+    ImapFailure, ImapStep, InboxReader, MessagePart, OpenOptions, RowItems, ServerReply, TextParts,
+    TextRequest,
     test_server::{
         FaultKind, FaultyCommand, FixtureMessage, FixtureSetup, ImapFixture, RecordedFetch,
     },
@@ -11,7 +12,7 @@ use crate::{
 
 fn row_uids(fixture: &ImapFixture) -> Vec<u32> {
     let mut reader = open_reader(fixture);
-    let rows = expect_success(run(reader.fetch_rows())).rows;
+    let rows = expect_success(run(reader.fetch_rows(RowItems::Standard))).rows;
     rows.iter().map(|row| row.uid).collect()
 }
 
@@ -69,7 +70,7 @@ fn rows_keep_their_flags_date_and_headers_despite_flag_changes() {
             ..FixtureSetup::default()
         });
         let mut reader = open_reader(&fixture);
-        let rows = expect_success(run(reader.fetch_rows())).rows;
+        let rows = expect_success(run(reader.fetch_rows(RowItems::Standard))).rows;
         assert_eq!(rows.len(), 2);
         for (row, message) in rows.iter().zip(messages.iter().rev()) {
             assert_eq!(row.uid, message.uid);
@@ -90,7 +91,12 @@ fn an_alert_from_a_successful_fetch_explains_a_later_failure() {
         ..FixtureSetup::default()
     });
     let mut reader = open_reader(&fixture);
-    assert_eq!(expect_success(run(reader.fetch_rows())).rows.len(), 1);
+    assert_eq!(
+        expect_success(run(reader.fetch_rows(RowItems::Standard)))
+            .rows
+            .len(),
+        1
+    );
     let error = expect_failure(run(reader.fetch_text(
         vec![TextRequest {
             uid: 10,
@@ -113,7 +119,12 @@ fn examine_alerts_explain_a_later_text_failure() {
         ..FixtureSetup::default()
     });
     let mut reader = open_reader(&fixture);
-    assert_eq!(expect_success(run(reader.fetch_rows())).rows.len(), 1);
+    assert_eq!(
+        expect_success(run(reader.fetch_rows(RowItems::Standard)))
+            .rows
+            .len(),
+        1
+    );
     let error = expect_failure(run(reader.fetch_text(
         vec![TextRequest {
             uid: 10,
@@ -131,7 +142,7 @@ fn an_inbox_emptied_after_examine_is_not_reported_as_empty() {
     let mut reader = open_reader(&fixture);
     // EXAMINE counted three messages that another client deleted before FETCH.
     reader.inbox.message_count = 3;
-    let error = expect_failure(run(reader.fetch_rows()));
+    let error = expect_failure(run(reader.fetch_rows(RowItems::Standard)));
     assert_eq!(error.failure, ImapFailure::InboxChanged);
 }
 
@@ -144,7 +155,7 @@ fn rows_received_before_a_no_completion_are_kept_with_the_refusal() {
         ..FixtureSetup::default()
     });
     let mut reader = open_reader(&fixture);
-    let listed = expect_success(run(reader.fetch_rows()));
+    let listed = expect_success(run(reader.fetch_rows(RowItems::Standard)));
     assert_eq!(
         listed.rows.iter().map(|row| row.uid).collect::<Vec<_>>(),
         [30, 10]
@@ -166,7 +177,10 @@ fn a_complete_list_carries_no_refusal() {
         ..FixtureSetup::default()
     });
     let mut reader = open_reader(&fixture);
-    assert_eq!(expect_success(run(reader.fetch_rows())).refusal, None);
+    assert_eq!(
+        expect_success(run(reader.fetch_rows(RowItems::Standard))).refusal,
+        None
+    );
 }
 
 #[test]
@@ -177,7 +191,7 @@ fn a_no_completion_without_rows_fails_with_the_server_text() {
         ..FixtureSetup::default()
     });
     let mut reader = open_reader(&fixture);
-    let error = expect_failure(run(reader.fetch_rows()));
+    let error = expect_failure(run(reader.fetch_rows(RowItems::Standard)));
     assert_eq!(error.failure, ImapFailure::Failed(ImapStep::FetchMessages));
     assert_eq!(
         error.server_reply,
@@ -302,7 +316,7 @@ fn loading_sends_only_read_only_commands() {
     });
     let mut reader = open_reader(&fixture);
     run(async {
-        let rows = expect_success(reader.fetch_rows().await).rows;
+        let rows = expect_success(reader.fetch_rows(RowItems::Standard).await).rows;
         let uids: Vec<u32> = rows.iter().map(|row| row.uid).collect();
         expect_success(reader.fetch_structures(&uids).await);
         let requests = uids
@@ -343,7 +357,12 @@ fn a_warning_before_the_inbox_completion_does_not_fail_it() {
         ..FixtureSetup::default()
     });
     let mut reader = open_reader(&fixture);
-    assert_eq!(expect_success(run(reader.fetch_rows())).rows.len(), 1);
+    assert_eq!(
+        expect_success(run(reader.fetch_rows(RowItems::Standard)))
+            .rows
+            .len(),
+        1
+    );
 }
 
 /// A server that closes the connection while opening the Inbox says why.
@@ -354,7 +373,10 @@ fn a_bye_while_opening_the_inbox_keeps_its_reason() {
         messages: plain_messages(1),
         ..FixtureSetup::default()
     });
-    let error = expect_failure(run(InboxReader::open(fixture.account())));
+    let error = expect_failure(run(InboxReader::open(
+        fixture.account(),
+        OpenOptions::default(),
+    )));
     assert_eq!(error.failure, ImapFailure::Failed(ImapStep::OpenInbox));
     assert_eq!(
         error.server_reply,
@@ -377,7 +399,7 @@ fn the_read_flag_is_recognized_in_any_case() {
         ..FixtureSetup::default()
     });
     let mut reader = open_reader(&fixture);
-    let rows = expect_success(run(reader.fetch_rows())).rows;
+    let rows = expect_success(run(reader.fetch_rows(RowItems::Standard))).rows;
     assert!(rows[0].seen);
 }
 
@@ -429,7 +451,7 @@ fn a_flag_change_for_a_vanished_message_leaves_it_unanswered() {
         ..FixtureSetup::default()
     });
     let mut reader = open_reader(&fixture);
-    let uids: Vec<u32> = expect_success(run(reader.fetch_rows()))
+    let uids: Vec<u32> = expect_success(run(reader.fetch_rows(RowItems::Standard)))
         .rows
         .iter()
         .map(|row| row.uid)
