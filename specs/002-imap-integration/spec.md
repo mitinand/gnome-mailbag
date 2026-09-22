@@ -272,6 +272,9 @@ has no network failure or server-identity reconciliation of its own.
   running and when no eligible Generic IMAP account is selected, including Google
   and Microsoft 365 accounts; for those, nothing claims an empty Inbox.
   This menu addition was approved for this feature.
+  *Amended 2026-09-22 by [Gmail integration](../004-gmail-integration/spec.md):
+  Google accounts are eligible under that feature's rules; Microsoft 365
+  accounts remain ineligible.*
 - **FR-013 — Installed permissions**: Network access MUST be the only added
   permission beyond the baseline in [F01 FR-016](../001-goa-account-observation/spec.md#requirements).
   The installed application MUST support this feature without added filesystem
