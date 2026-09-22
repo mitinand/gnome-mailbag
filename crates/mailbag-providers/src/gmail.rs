@@ -10,19 +10,14 @@ use crate::{
     load::{load_batch_from_rows, server_account},
 };
 use goa_adapter::ImapAccess;
-use mailbag_imap::{ClientIdentity, GmailRow, InboxReader, OpenOptions, RowItems};
-use std::collections::BTreeMap;
+use mailbag_imap::{ClientIdentity, InboxReader, MessageRow, OpenOptions, RowItems};
 
 pub(crate) async fn load_gmail_inbox(access: ImapAccess) -> Result<ReceivedBatch, ServerFailure> {
     let account_id = access.account_id.clone();
     let mut reader = InboxReader::open(server_account(access), gmail_options()).await?;
-    let mut listed = reader.fetch_rows(RowItems::WithGmailAttributes).await?;
-    let gmail_rows = take_gmail_rows(&mut listed.rows);
-    let mut batch = load_batch_from_rows(&mut reader, listed, account_id).await?;
-    for message in &mut batch.messages {
-        message.gmail = gmail_rows.get(&message.uid).cloned();
-    }
-    Ok(batch)
+    let listed = reader.fetch_rows(RowItems::WithGmailAttributes).await?;
+    log_gmail_rows(&listed.rows);
+    load_batch_from_rows(&mut reader, listed, account_id).await
 }
 
 /// What Gmail is asked for beyond a Generic IMAP sign-in. Google asks clients
@@ -41,13 +36,12 @@ fn gmail_options() -> OpenOptions {
     }
 }
 
-/// Takes Gmail's fields off the rows and writes each one to the record, so
-/// that the batch travels with them and the record shows what arrived. Label
-/// names are folder-like names and stay at debug (specs/003-logging FR-010).
-fn take_gmail_rows(rows: &mut [mailbag_imap::MessageRow]) -> BTreeMap<u32, GmailRow> {
-    let mut gmail_rows = BTreeMap::new();
+/// Writes Gmail's fields of each row to the record; the rows carry them on
+/// into the batch. Label names are folder-like names and stay at debug
+/// (specs/003-logging FR-010).
+fn log_gmail_rows(rows: &[MessageRow]) {
     for row in rows {
-        let Some(gmail) = row.gmail.take() else {
+        let Some(gmail) = &row.gmail else {
             continue;
         };
         tracing::debug_span!("message", uid = row.uid).in_scope(|| {
@@ -57,7 +51,5 @@ fn take_gmail_rows(rows: &mut [mailbag_imap::MessageRow]) -> BTreeMap<u32, Gmail
                 "Gmail's own fields of this message"
             );
         });
-        gmail_rows.insert(row.uid, gmail);
     }
-    gmail_rows
 }

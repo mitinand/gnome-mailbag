@@ -95,7 +95,7 @@ pub(crate) async fn load_batch_from_rows(
                 internal_date: row.internal_date,
                 seen: row.seen,
                 content,
-                gmail: None,
+                gmail: row.gmail,
             })
         })
         .collect();

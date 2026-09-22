@@ -94,13 +94,13 @@ impl ServerNotices {
     fn keep(&mut self, sign_in_name: &str, response: &Response<'_>) {
         let (status, code, information) = match response {
             // imap-proto parses the ENABLED reply into the same response as a
-            // CAPABILITY list, so the line names what the server announced
-            // rather than which of the two it was. Gmail sends its full list
-            // only after sign-in (research.md §2, §4).
+            // CAPABILITY list, so the line names both, rather than claiming to
+            // know which arrived. Gmail sends its full list only after sign-in
+            // (research.md §2, §4).
             Response::Capabilities(announced) => {
                 tracing::debug!(
                     names = announced_names(announced),
-                    "the server announced a list of names"
+                    "the server announced capabilities or enabled extensions"
                 );
                 return;
             }

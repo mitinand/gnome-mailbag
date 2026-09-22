@@ -31,22 +31,22 @@ fn plain_messages(count: u32) -> Vec<FixtureMessage> {
         .collect()
 }
 
-/// Runs a load to its end on a fresh GLib context, as the window would.
+/// Runs a Generic IMAP load to its end, as the window would.
 fn load_inbox(fixture: &ImapFixture) -> LoadOutcome {
+    load_with_provider(account_access(fixture), MailProvider::GenericImap)
+}
+
+/// Runs one provider's load to its end, as the window would.
+fn load_with_provider(access: ImapAccess, provider: MailProvider) -> LoadOutcome {
     run_on_context(async {
         let worker = MailWorker::new();
         let (sender, outcomes) = async_channel::bounded(1);
-        let _handle = worker.load_inbox(
-            account_access(fixture),
-            MailProvider::GenericImap,
-            move |outcome| {
-                sender.try_send(outcome).ok();
-            },
-        );
+        let _handle = worker.load_inbox(access, provider, move |outcome| {
+            sender.try_send(outcome).ok();
+        });
         outcomes.recv().await.expect("the load reports its outcome")
     })
 }
-
 fn run_on_context<T>(future: impl Future<Output = T>) -> T {
     let context = glib::MainContext::new();
     context
@@ -418,20 +418,13 @@ async fn load_with_online_accounts(
 }
 
 /// Runs a load as the window starts it and returns the record of the test
-/// thread and the worker.
+/// thread and the worker, which inherits the dispatcher started here.
 fn load_inbox_with_account(
     access: ImapAccess,
     level: tracing::Level,
 ) -> (LoadOutcome, CapturedRecord) {
     let record = CapturedRecord::start(level);
-    let outcome = run_on_context(async {
-        let worker = MailWorker::new();
-        let (sender, outcomes) = async_channel::bounded(1);
-        let _handle = worker.load_inbox(access, MailProvider::GenericImap, move |outcome| {
-            sender.try_send(outcome).ok();
-        });
-        outcomes.recv().await.expect("the load reports its outcome")
-    });
+    let outcome = load_with_provider(access, MailProvider::GenericImap);
     (outcome, record)
 }
 
@@ -507,18 +500,6 @@ fn gmail_access(fixture: &ImapFixture) -> ImapAccess {
         credential: ImapCredential::AccessToken(TEST_ACCESS_TOKEN.to_owned()),
         ..account_access(fixture)
     }
-}
-
-/// Runs one provider's load to its end, as the window would.
-fn load_with_provider(access: ImapAccess, provider: MailProvider) -> LoadOutcome {
-    run_on_context(async {
-        let worker = MailWorker::new();
-        let (sender, outcomes) = async_channel::bounded(1);
-        let _handle = worker.load_inbox(access, provider, move |outcome| {
-            sender.try_send(outcome).ok();
-        });
-        outcomes.recv().await.expect("the load reports its outcome")
-    })
 }
 
 #[test]

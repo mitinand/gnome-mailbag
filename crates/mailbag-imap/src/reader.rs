@@ -121,7 +121,7 @@ impl InboxReader {
         let responses = self
             .fetch(MessageSet::Sequence(first, count), &items)
             .await?;
-        let rows = collect_rows(&responses.fetches, first, count, row_items);
+        let rows = collect_rows(&responses.fetches, first, count);
         if !rows.is_empty() {
             tracing::info!(rows = rows.len(), "message list loaded");
         }
@@ -359,7 +359,7 @@ impl InboxReader {
 /// A sequence-number FETCH can return each field separately. Sequence numbers
 /// stay stable during this command; unsolicited updates outside its window do
 /// not establish rows. UID FETCH uses UIDs instead because EXPUNGE is allowed.
-fn collect_rows(fetches: &[Fetch], first: u32, last: u32, row_items: RowItems) -> Vec<MessageRow> {
+fn collect_rows(fetches: &[Fetch], first: u32, last: u32) -> Vec<MessageRow> {
     let mut by_sequence = BTreeMap::<u32, Vec<&Fetch>>::new();
     for fetch in fetches {
         if (first..=last).contains(&fetch.message) {
@@ -385,10 +385,7 @@ fn collect_rows(fetches: &[Fetch], first: u32, last: u32, row_items: RowItems) -
                 seen,
                 internal_date: internal_date.map(|date| date.timestamp()),
                 list_headers: list_headers.to_vec(),
-                gmail: match row_items {
-                    RowItems::Standard => None,
-                    RowItems::WithGmailAttributes => gmail_attributes(&responses),
-                },
+                gmail: gmail_attributes(&responses),
             })
         })
         .collect();
