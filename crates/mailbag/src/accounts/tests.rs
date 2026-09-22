@@ -238,7 +238,7 @@ fn page_states_follow_loading_failure_empty_and_selection() {
 /// The record names an account by its Online Accounts identifier only
 /// (specs/003-logging FR-009, FR-013). `AccountDetails` carries no sign-in name
 /// and no host, so an account row cannot leak those; the sign-in name of a load
-/// is checked by the marker test over a whole load in `inbox_load::tests`.
+/// is checked by the marker test over a whole load in `mailbag-providers`.
 #[test]
 fn no_account_detail_beyond_the_identifier_reaches_the_record() {
     let marked = |provider| AccountDetails {

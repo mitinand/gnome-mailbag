@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::*;
-use crate::inbox::ReceivedBatch;
-use crate::logging::{LogLevel, capture::start_record};
-use goa_adapter::AccountId;
+use crate::test_record::CapturedRecord;
+use crate::worker::{MailWorker, report_outcome};
+use goa_adapter::{AccountId, ImapAccess, ImapCredential, ImapEncryption};
+use mailbag_content::ContentExplanation;
 use mailbag_imap::test_server::{
     FaultKind, FaultyCommand, FixtureMessage, FixtureSetup, ImapFixture, PRIVATE_MARKERS,
     TEST_LOGIN, TEST_PASSWORD, test_certificates_trusted,
@@ -403,8 +404,11 @@ async fn load_with_online_accounts(
 
 /// Runs a load as the window starts it and returns the record of the test
 /// thread and the worker.
-fn load_inbox_with_account(access: ImapAccess, level: LogLevel) -> (LoadOutcome, String) {
-    let record = start_record(level);
+fn load_inbox_with_account(
+    access: ImapAccess,
+    level: tracing::Level,
+) -> (LoadOutcome, CapturedRecord) {
+    let record = CapturedRecord::start(level);
     let outcome = run_on_context(async {
         let worker = MailWorker::new();
         let (sender, outcomes) = async_channel::bounded(1);
@@ -413,7 +417,7 @@ fn load_inbox_with_account(access: ImapAccess, level: LogLevel) -> (LoadOutcome,
         });
         outcomes.recv().await.expect("the load reports its outcome")
     });
-    (outcome, record.text())
+    (outcome, record)
 }
 
 #[test]
@@ -421,20 +425,22 @@ fn a_refused_sign_in_leaves_the_error_line_to_the_load() {
     let fixture = ImapFixture::start(FixtureSetup::default());
     let mut access = account_access(&fixture);
     access.credential = ImapCredential::Password("wrong password".to_owned());
-    let (outcome, text) = load_inbox_with_account(access, LogLevel::Debug);
+    let (outcome, record) = load_inbox_with_account(access, tracing::Level::DEBUG);
+    let text = record.text();
     assert!(matches!(outcome, LoadOutcome::Failed(_)), "{outcome:?}");
-    assert!(!text.contains(" ERROR "), "{text}");
+    assert!(record.lines_at("ERROR").is_empty(), "{text}");
     assert!(!text.contains("wrong password"), "{text}");
 }
 
 #[test]
 fn no_private_value_reaches_the_record_at_any_level() {
-    for level in [LogLevel::Info, LogLevel::Debug] {
+    for level in [tracing::Level::INFO, tracing::Level::DEBUG] {
         let fixture = ImapFixture::start(FixtureSetup {
             messages: vec![FixtureMessage::with_private_markers(10)],
             ..FixtureSetup::default()
         });
-        let (outcome, text) = load_inbox_with_account(account_access(&fixture), level);
+        let (outcome, record) = load_inbox_with_account(account_access(&fixture), level);
+        let text = record.text();
         // The markers were read, so the record had the chance to leak them.
         let batch = published_batch(outcome);
         assert_eq!(text_of(&batch.messages[0].content), "marker-body-text");
@@ -448,7 +454,7 @@ fn no_private_value_reaches_the_record_at_any_level() {
                 "{level:?}: {marker} reached the record:\n{text}"
             );
         }
-        if level == LogLevel::Info {
+        if level == tracing::Level::INFO {
             // A folder name, a host and a message identifier never reach info.
             for detail in ["INBOX", "localhost", "uid="] {
                 assert!(!text.contains(detail), "{detail} at info:\n{text}");

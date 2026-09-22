@@ -9,12 +9,12 @@ mod tests;
 
 use crate::account_ui::AccountUi;
 use crate::accounts::AccountPage;
-use crate::inbox::{AccountInbox, InboxController, LoadFailure, LoadResult, ServerFailure};
-use crate::inbox_load::LoadsInbox;
+use crate::inbox::{AccountInbox, InboxController};
 use crate::mail_ui::{MailUi, inert_text, show_inert_text};
 use adw::{gio, gtk, prelude::*};
 use goa_adapter::{AccountId, AccountProvider, AccountUpdate, ImapAccessError};
 use mailbag_imap::{ImapFailure, ImapStep, ServerReply};
+use mailbag_providers::{LoadFailure, LoadResult, LoadsInbox, ServerFailure};
 use std::{cell::RefCell, rc::Rc};
 
 pub struct WindowUi {

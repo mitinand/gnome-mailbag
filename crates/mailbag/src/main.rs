@@ -7,7 +7,6 @@ use std::{io::Write, ops::ControlFlow};
 mod account_ui;
 mod accounts;
 mod inbox;
-mod inbox_load;
 mod logging;
 mod mail_ui;
 mod settings;
@@ -187,7 +186,7 @@ fn connect_account_updates(builder: &gtk::Builder, window: &adw::Window) {
     });
     let window_ui = window_ui::WindowUi::new(
         builder,
-        Box::new(inbox_load::MailLoader::new(adapter.clone())),
+        Box::new(mailbag_providers::MailLoader::new(adapter.clone())),
     );
     *updated_window.borrow_mut() = std::rc::Rc::downgrade(&window_ui);
     let refresh_adapter = adapter.clone();

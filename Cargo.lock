@@ -678,6 +678,7 @@ dependencies = [
  "libadwaita",
  "mailbag-content",
  "mailbag-imap",
+ "mailbag-providers",
  "tracing",
  "tracing-subscriber",
 ]
@@ -699,6 +700,20 @@ dependencies = [
  "gio",
  "glib",
  "log",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "mailbag-providers"
+version = "0.1.0-dev"
+dependencies = [
+ "async-channel 2.5.0",
+ "futures-util",
+ "glib",
+ "goa-adapter",
+ "mailbag-content",
+ "mailbag-imap",
  "tracing",
  "tracing-subscriber",
 ]

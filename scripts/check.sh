@@ -38,9 +38,11 @@ cargo test --locked --workspace
 cargo build --locked --workspace
 gtk_packages='gtk4(-sys|-macros)?|libadwaita(-sys)?'
 glib_packages='(glib|gio|gobject)(-sys|-macros)?'
-reject_crate_dependencies goa-adapter "$gtk_packages|mailbag"
-reject_crate_dependencies mailbag-imap "$gtk_packages|mail-parser|mailbag|mailbag-content"
-reject_crate_dependencies mailbag-content "$gtk_packages|$glib_packages|mailbag|mailbag-imap"
+reject_crate_dependencies goa-adapter "$gtk_packages|mailbag|mailbag-providers"
+reject_crate_dependencies mailbag-imap "$gtk_packages|mail-parser|mailbag|mailbag-content|mailbag-providers"
+reject_crate_dependencies mailbag-content "$gtk_packages|$glib_packages|mailbag|mailbag-imap|mailbag-providers"
+# The provider layer joins the library crates; the widgets stay above it.
+reject_crate_dependencies mailbag-providers "$gtk_packages|mailbag"
 # No bridge between the log crate and tracing (specs/003-logging/research.md §1).
 reject_crate_dependencies mailbag 'tracing-log'
 require_log_levels_compiled_out

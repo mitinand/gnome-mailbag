@@ -344,9 +344,9 @@ until the second provider; feature 004 moves them into `mailbag-providers`.
 
 No crate depends on `mailbag`. The rules are the dependency lists themselves, so
 a forbidden call does not compile; `scripts/check.sh` inspects `cargo tree` so a
-new dependency cannot add a forbidden edge quietly. The load sequence in
-`mailbag` is the one place the compiler cannot guard: review keeps widgets out
-of it.
+new dependency cannot add a forbidden edge quietly. Since 004 moved the load
+sequence into `mailbag-providers`, the compiler guards it too: nothing outside
+`mailbag` can reach a widget.
 
 **Why crates rather than modules:** A crate is the only privacy boundary the
 compiler enforces. Inside one crate, every module can reach `pub(crate)` items

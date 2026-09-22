@@ -3,7 +3,10 @@
 
 use super::*;
 use crate::logging::{LogLevel, capture::start_record};
-use mailbag_imap::ImapStep;
+use goa_adapter::ImapAccessError;
+use mailbag_content::DisplayFields;
+use mailbag_imap::{ImapFailure, ImapStep, ServerReply};
+use mailbag_providers::{ReceivedMessage, ServerFailure};
 use std::cell::Cell;
 
 fn account(name: &str) -> AccountId {

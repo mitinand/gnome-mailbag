@@ -2,14 +2,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::*;
-use crate::inbox::{CancelsLoadOnDrop, LoadFailure, LoadResult, ServerFailure};
-use crate::inbox_load::LoadsInbox;
 use crate::window_ui::WindowUi;
 use goa_adapter::{
     AccountCheckError, AccountCheckResult, AccountDetails, AccountId, AccountProvider,
     AccountUpdate, ErrorCause, ImapAccessError,
 };
 use mailbag_imap::{ImapFailure, ImapStep, ServerReply};
+use mailbag_providers::{CancelsLoadOnDrop, LoadFailure, LoadResult, LoadsInbox, ServerFailure};
 use std::{
     cell::Cell,
     time::{Duration, Instant},
@@ -60,13 +59,17 @@ impl LoadsInbox for ScriptedLoader {
     }
 }
 
-impl LoadsInbox for Rc<ScriptedLoader> {
+/// The window owns its loader, while the test keeps a handle to the same one.
+/// `LoadsInbox` now lives in another crate, so `Rc` itself cannot carry it.
+struct SharedLoader(Rc<ScriptedLoader>);
+
+impl LoadsInbox for SharedLoader {
     fn start_load(
         &self,
         account_id: &AccountId,
         report: Box<dyn FnOnce(LoadResult)>,
     ) -> Box<dyn CancelsLoadOnDrop> {
-        LoadsInbox::start_load(&**self, account_id, report)
+        self.0.start_load(account_id, report)
     }
 }
 
@@ -384,7 +387,7 @@ fn mail_ui_transitions() {
     let builder = gtk::Builder::from_string(include_str!("../../resources/ui/mailbag.ui"));
     let window: adw::Window = builder.object("window").expect("window");
     let loader = Rc::new(ScriptedLoader::default());
-    let ui = WindowUi::new(&builder, Box::new(loader.clone()));
+    let ui = WindowUi::new(&builder, Box::new(SharedLoader(loader.clone())));
     let widgets = WindowWidgets {
         builder: builder.clone(),
     };
