@@ -5,8 +5,8 @@ use crate::{
     AccountId, ErrorCause, GoaAdapter,
     accounts::{
         ACCOUNT_INTERFACE, GOA_BUS_NAME, GOA_ROOT_PATH, MAIL_INTERFACE, ManagedObjects,
-        OBJECT_MANAGER_INTERFACE, PASSWORD_BASED_INTERFACE, Properties, classify_glib_error,
-        read_property,
+        OAUTH2_BASED_INTERFACE, OBJECT_MANAGER_INTERFACE, PASSWORD_BASED_INTERFACE, Properties,
+        classify_glib_error, read_property,
     },
 };
 use gio::prelude::*;
@@ -15,8 +15,8 @@ use glib::variant::{FromVariant, ObjectPath};
 /// GOA's PasswordBased key for the IMAP password of a Generic IMAP account.
 const IMAP_PASSWORD_KEY: &str = "imap-password";
 
-/// Settings and password for one IMAP sign-in, owned by the load that asked
-/// for them. There is no Debug, Display or Clone, so the password is not
+/// Settings and credential for one IMAP sign-in, owned by the load that asked
+/// for them. There is no Debug, Display or Clone, so the credential is not
 /// printed or copied by accident.
 pub struct ImapAccess {
     pub account_id: AccountId,
@@ -24,7 +24,14 @@ pub struct ImapAccess {
     pub host: String,
     pub login: String,
     pub encryption: ImapEncryption,
-    pub password: String,
+    pub credential: ImapCredential,
+}
+
+/// What the account signs in with, as Online Accounts keeps it. No Debug,
+/// Display or Clone: a token is as sensitive as a password.
+pub enum ImapCredential {
+    Password(String),
+    AccessToken(String),
 }
 
 /// How the IMAP connection is secured. There is no unencrypted option.
@@ -44,6 +51,8 @@ pub enum ImapAccessError {
     NoEncryption,
     /// Online Accounts did not return the password.
     Password,
+    /// Online Accounts did not return the access token of an OAuth account.
+    AccessToken,
     /// Online Accounts did not answer in time, for example while GetPassword
     /// waits for the keyring to be unlocked.
     Timeout,
@@ -99,13 +108,23 @@ struct AccessAttempt {
     on_complete: Box<dyn FnOnce(Result<ImapAccess, ImapAccessError>)>,
 }
 
-/// Settings read before the password is requested.
+/// Settings read before the credential is requested.
 struct ImapSettings {
     /// The path GOA returned for the account; never built from its ID.
     object_path: ObjectPath,
     host: String,
     login: String,
     encryption: ImapEncryption,
+    credential_interface: CredentialInterface,
+}
+
+/// Which interface of the account's object holds its credential. GOA's own
+/// data model decides this, not the provider type: a Google account exports
+/// OAuth2Based and no PasswordBased (004 research §1).
+#[derive(Clone, Copy)]
+enum CredentialInterface {
+    OAuth2Based,
+    PasswordBased,
 }
 
 impl AccessAttempt {
@@ -126,39 +145,70 @@ impl AccessAttempt {
                     .map_err(|error| access_error(&error, ImapAccessError::Settings))
                     .and_then(|reply| find_imap_settings(&reply, &self.account_id));
                 match settings {
-                    Ok(settings) => self.read_password(connection, settings),
+                    Ok(settings) => self.read_credential(connection, settings),
                     Err(error) => (self.on_complete)(Err(error)),
                 }
             },
         );
     }
 
-    fn read_password(self, connection: gio::DBusConnection, settings: ImapSettings) {
+    /// Asks the interface the account's object exports for its credential.
+    fn read_credential(self, connection: gio::DBusConnection, settings: ImapSettings) {
         let cancellable = self.cancellable.clone();
+        let credential_interface = settings.credential_interface;
+        let (interface, method, arguments, reply_type, step_failure) = match credential_interface {
+            CredentialInterface::OAuth2Based => (
+                OAUTH2_BASED_INTERFACE,
+                "GetAccessToken",
+                None,
+                "(si)",
+                ImapAccessError::AccessToken,
+            ),
+            CredentialInterface::PasswordBased => (
+                PASSWORD_BASED_INTERFACE,
+                "GetPassword",
+                Some((IMAP_PASSWORD_KEY,).to_variant()),
+                "(s)",
+                ImapAccessError::Password,
+            ),
+        };
         connection.call(
             Some(GOA_BUS_NAME),
             settings.object_path.as_str(),
-            PASSWORD_BASED_INTERFACE,
-            "GetPassword",
-            Some(&(IMAP_PASSWORD_KEY,).to_variant()),
-            Some(glib::VariantTy::new("(s)").unwrap()),
+            interface,
+            method,
+            arguments.as_ref(),
+            Some(glib::VariantTy::new(reply_type).unwrap()),
             gio::DBusCallFlags::NONE,
             self.timeout_msec,
             Some(&cancellable),
             move |reply| {
                 let access = reply
-                    .map_err(|error| access_error(&error, ImapAccessError::Password))
+                    .map_err(|error| access_error(&error, step_failure))
                     .map(|reply| ImapAccess {
                         account_id: self.account_id,
                         host: settings.host,
                         login: settings.login,
                         encryption: settings.encryption,
-                        // GIO checked the reply against the (s) signature.
-                        password: reply.get::<(String,)>().unwrap().0,
+                        credential: credential_from(&reply, credential_interface),
                     });
                 (self.on_complete)(access);
             },
         );
+    }
+}
+
+/// GIO checked the reply against the signature its call asked for. A token's
+/// `expires_in` is discarded: GOA renews a token close to expiry before it
+/// returns one, and a load lasts seconds (004 research §1).
+fn credential_from(reply: &glib::Variant, interface: CredentialInterface) -> ImapCredential {
+    match interface {
+        CredentialInterface::OAuth2Based => {
+            ImapCredential::AccessToken(reply.get::<(String, i32)>().unwrap().0)
+        }
+        CredentialInterface::PasswordBased => {
+            ImapCredential::Password(reply.get::<(String,)>().unwrap().0)
+        }
     }
 }
 
@@ -200,11 +250,20 @@ fn find_imap_settings(
         (false, true) => ImapEncryption::StartTls,
         (false, false) => return Err(ImapAccessError::NoEncryption),
     };
+    // GOA lists an object's interfaces whether or not they carry properties.
+    let credential_interface = if interfaces.contains_key(OAUTH2_BASED_INTERFACE) {
+        CredentialInterface::OAuth2Based
+    } else if interfaces.contains_key(PASSWORD_BASED_INTERFACE) {
+        CredentialInterface::PasswordBased
+    } else {
+        return Err(ImapAccessError::Settings);
+    };
     Ok(ImapSettings {
         object_path,
         host: read_setting(mail, "ImapHost")?,
         login: read_setting(mail, "ImapUserName")?,
         encryption,
+        credential_interface,
     })
 }
 

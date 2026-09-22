@@ -14,7 +14,8 @@ use crate::inbox::{
 use adw::glib;
 use futures_util::future::{self, Either};
 use goa_adapter::{
-    AccountId, GoaAdapter, ImapAccess, ImapAccessError, ImapAccessRequest, ImapEncryption,
+    AccountId, GoaAdapter, ImapAccess, ImapAccessError, ImapAccessRequest, ImapCredential,
+    ImapEncryption,
 };
 use mailbag_content::{
     ContentExplanation, MimePart, TextSelection, decode_display_fields, decode_text_part,
@@ -330,7 +331,10 @@ fn server_account(access: ImapAccess) -> ImapAccount {
     ImapAccount {
         host: access.host,
         login: access.login,
-        credential: Credential::Password(access.password),
+        credential: match access.credential {
+            ImapCredential::Password(password) => Credential::Password(password),
+            ImapCredential::AccessToken(token) => Credential::AccessToken(token),
+        },
         encryption: match access.encryption {
             ImapEncryption::ImplicitTls => Encryption::ImplicitTls,
             ImapEncryption::StartTls => Encryption::StartTls,

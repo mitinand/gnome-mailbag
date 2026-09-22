@@ -286,6 +286,11 @@ fn online_accounts_status(error: ImapAccessError) -> MailStatus {
             "Unable to get this account's password from Online Accounts. No server sign-in was \
              attempted.",
         ),
+        ImapAccessError::AccessToken => MailStatus::explained(
+            "Authorization unavailable",
+            "Unable to get this account's authorization from Online Accounts. No server sign-in \
+             was attempted.",
+        ),
         ImapAccessError::Timeout => MailStatus::explained(
             "Online Accounts did not respond",
             "Online Accounts did not respond in time. Try Refresh Inbox again.",

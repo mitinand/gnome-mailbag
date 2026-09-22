@@ -34,6 +34,11 @@ fn every_failed_step_names_itself() {
             "No server sign-in was attempted",
         ),
         (
+            LoadFailure::OnlineAccounts(ImapAccessError::AccessToken),
+            "Authorization unavailable",
+            "this account's authorization from Online Accounts",
+        ),
+        (
             LoadFailure::OnlineAccounts(ImapAccessError::Timeout),
             "Online Accounts did not respond",
             "in time",

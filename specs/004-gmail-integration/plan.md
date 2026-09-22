@@ -131,7 +131,7 @@ specs/004-gmail-integration/
 ├── research.md      # Gmail and GOA facts, probe results, decisions
 ├── quickstart.md    # acceptance on the live account
 └── tasks.md         # portions and review pauses
-specs/002-imap-integration/contracts/goa-access.md   # amended (approval pending)
+specs/002-imap-integration/contracts/goa-access.md   # amended (approved 2026-09-23)
 specs/002-imap-integration/research.md               # §9 crate table amended
 ```
 
@@ -205,10 +205,10 @@ PLAIN or LOGIN as today; `Credential::AccessToken` → `AUTH=XOAUTH2`
 advertised → `authenticate("XOAUTH2", XOAuth2Credentials)`, else
 `NoSignInMethod`. Then, from `OpenOptions`: ENABLE, then ID, then EXAMINE.
 
-## Contract amendment (needs approval)
+## Contract amendment (approved 2026-09-23)
 
 The shared goa-adapter access contract changes in one place: the credential
-step. The proposed text is in
+step. The text is in
 [goa-access.md](../002-imap-integration/contracts/goa-access.md) under
 "Amendment proposed by 004". In short: `ImapAccess.password` becomes
 `credential`; the object's exported interface chooses GetPassword or

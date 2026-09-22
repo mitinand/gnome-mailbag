@@ -16,7 +16,7 @@ fn account_access(fixture: &ImapFixture) -> ImapAccess {
         account_id: AccountId::try_from("synthetic-account").unwrap(),
         host: format!("localhost:{}", fixture.port()),
         login: TEST_LOGIN.to_owned(),
-        password: TEST_PASSWORD.to_owned(),
+        credential: ImapCredential::Password(TEST_PASSWORD.to_owned()),
         encryption: ImapEncryption::ImplicitTls,
     }
 }
@@ -420,7 +420,7 @@ fn load_inbox_with_account(access: ImapAccess, level: LogLevel) -> (LoadOutcome,
 fn a_refused_sign_in_leaves_the_error_line_to_the_load() {
     let fixture = ImapFixture::start(FixtureSetup::default());
     let mut access = account_access(&fixture);
-    access.password = "wrong password".to_owned();
+    access.credential = ImapCredential::Password("wrong password".to_owned());
     let (outcome, text) = load_inbox_with_account(access, LogLevel::Debug);
     assert!(matches!(outcome, LoadOutcome::Failed(_)), "{outcome:?}");
     assert!(!text.contains(" ERROR "), "{text}");

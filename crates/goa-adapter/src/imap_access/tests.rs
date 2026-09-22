@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
-use super::{ImapAccess, ImapAccessError, ImapAccessRequest, ImapEncryption};
+use super::{ImapAccess, ImapAccessError, ImapAccessRequest, ImapCredential, ImapEncryption};
 use crate::client::tests::{
     RecordedUpdates, dispatch_for, run_in_context, start_test_client, wait_until,
 };
@@ -52,6 +52,15 @@ fn failed_access(results: &AccessResults) -> ImapAccessError {
     }
 }
 
+/// The credential as a pair, so that a test compares its kind and its value
+/// in one assertion. `ImapCredential` itself has no Debug or PartialEq.
+fn credential(access: &ImapAccess) -> (&'static str, &str) {
+    match &access.credential {
+        ImapCredential::Password(password) => ("password", password),
+        ImapCredential::AccessToken(token) => ("access token", token),
+    }
+}
+
 fn account_with_mail_settings(id: &str, settings: &[(&str, Variant)]) -> Interfaces {
     let mut account = make_account(id);
     let mail = account.get_mut(MAIL_INTERFACE).unwrap();
@@ -93,7 +102,7 @@ fn access_uses_the_returned_object_path_and_keeps_the_host_port() {
         assert_eq!(access.host, "imap.example.invalid:1993");
         assert_eq!(access.login, "synthetic-user");
         assert_eq!(access.encryption, ImapEncryption::ImplicitTls);
-        assert_eq!(access.password, SYNTHETIC_PASSWORD);
+        assert_eq!(credential(&access), ("password", SYNTHETIC_PASSWORD));
         assert_eq!(
             goa.password_requests(),
             [PasswordRequest {
@@ -273,6 +282,84 @@ fn attention_needed_and_a_failed_observation_read_do_not_block_access() {
             .insert("AttentionNeeded".into(), true.to_variant());
         goa.set_reply(ReplyBehavior::Value(make_account_reply(vec![account])));
         let (_request, results) = request_access(&client, "one");
-        assert_eq!(successful_access(&results).password, SYNTHETIC_PASSWORD);
+        let access = successful_access(&results);
+        assert_eq!(credential(&access), ("password", SYNTHETIC_PASSWORD));
+    });
+}
+
+#[test]
+fn the_exported_interface_chooses_the_credential() {
+    run_in_context(|| {
+        let bus = TestBus::new();
+        let accounts = vec![
+            make_account("password-account"),
+            make_google_account("google-account"),
+        ];
+        let goa = FakeGoaService::new(
+            &bus.address,
+            ReplyBehavior::Value(make_account_reply(accounts)),
+        );
+        let (client, _updates) = start_observing(&bus);
+
+        let (_request, results) = request_access(&client, "google-account");
+        let access = successful_access(&results);
+        assert_eq!(
+            credential(&access),
+            ("access token", SYNTHETIC_ACCESS_TOKEN)
+        );
+        assert_eq!(access.host, "imap.gmail.com");
+        assert_eq!(
+            goa.access_token_requests(),
+            [AccessTokenRequest {
+                object_path: account_object_path(1),
+            }]
+        );
+        // A Google account holds no password, so none is asked for.
+        assert!(goa.password_requests().is_empty());
+
+        let (_request, results) = request_access(&client, "password-account");
+        let access = successful_access(&results);
+        assert_eq!(credential(&access), ("password", SYNTHETIC_PASSWORD));
+        assert_eq!(goa.password_requests().len(), 1);
+        assert_eq!(goa.access_token_requests().len(), 1);
+    });
+}
+
+#[test]
+fn a_refused_or_held_access_token_is_reported_like_a_password() {
+    for (token_reply, expected) in [
+        (ReplyBehavior::AccessDenied, ImapAccessError::AccessToken),
+        (ReplyBehavior::Hang, ImapAccessError::Timeout),
+    ] {
+        run_in_context(|| {
+            let bus = TestBus::new();
+            let goa = FakeGoaService::new(
+                &bus.address,
+                ReplyBehavior::Value(make_account_reply(vec![make_google_account("one")])),
+            );
+            let (client, _updates) = start_observing(&bus);
+            goa.set_access_token_reply(token_reply);
+            let (_request, results) = request_access(&client, "one");
+            assert_eq!(failed_access(&results), expected);
+            assert_eq!(goa.access_token_requests().len(), 1);
+        });
+    }
+}
+
+#[test]
+fn an_object_with_neither_credential_interface_fails_before_asking_for_one() {
+    run_in_context(|| {
+        let bus = TestBus::new();
+        let mut account = make_account("one");
+        account.remove(PASSWORD_BASED_INTERFACE);
+        let goa = FakeGoaService::new(
+            &bus.address,
+            ReplyBehavior::Value(make_account_reply(vec![account])),
+        );
+        let (client, _updates) = start_observing(&bus);
+        let (_request, results) = request_access(&client, "one");
+        assert_eq!(failed_access(&results), ImapAccessError::Settings);
+        assert!(goa.password_requests().is_empty());
+        assert!(goa.access_token_requests().is_empty());
     });
 }
