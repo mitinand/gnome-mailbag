@@ -225,6 +225,7 @@ impl AccountObserver {
         for signal in ACCOUNT_CHANGE_SIGNALS {
             let weak = Rc::downgrade(self);
             let accepted_path_prefix = signal.accepted_path_prefix;
+            let member = signal.member;
             self.subscriptions
                 .borrow_mut()
                 .push(connection.subscribe_to_signal(
@@ -239,6 +240,7 @@ impl AccountObserver {
                             .is_none_or(|prefix| received.object_path.starts_with(prefix))
                             && let Some(observer) = weak.upgrade()
                         {
+                            tracing::debug!(signal = member, "Online Accounts signalled a change");
                             observer.request_read();
                         }
                     },
@@ -256,10 +258,18 @@ impl AccountObserver {
             let update = Rc::make_mut(&mut update);
             match result {
                 Ok(accounts) => {
+                    tracing::info!(accounts = accounts.len(), "account list read");
                     update.accounts = accounts;
                     update.last_check = AccountCheckResult::Complete;
                 }
-                Err(error) => update.last_check = AccountCheckResult::Failed(error),
+                Err(error) => {
+                    tracing::error!(
+                        step = error.operation,
+                        cause = ?error.cause,
+                        "account list could not be read"
+                    );
+                    update.last_check = AccountCheckResult::Failed(error);
+                }
             }
             if !self.refetch_needed.get() {
                 update.retry_pending = false;

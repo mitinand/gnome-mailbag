@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 mod acquisition;
+mod record;
 mod sections;
 mod secure_session;
 mod structure_isolation;
+#[path = "../../../../tests/support/record.rs"]
+mod test_record;
 mod timeouts;
 
 use crate::{

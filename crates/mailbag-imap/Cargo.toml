@@ -15,14 +15,18 @@ test-support = ["gio/v2_60"]
 async-imap = { version = "=0.11.3", default-features = false, features = ["runtime-futures"] }
 # futures-io traits for the GIO stream bridge and FETCH response streams.
 futures-util = { version = "0.3", features = ["io"] }
-gio.workspace = true
+# v2_70: the negotiated TLS version for the record (specs/003-logging/research.md §7).
+gio = { workspace = true, features = ["v2_70"] }
 glib.workspace = true
 # async-imap traces every command, including sign-in, at trace level.
 log = { version = "0.4", features = ["max_level_off", "release_max_level_off"] }
+tracing.workspace = true
 
 [dev-dependencies]
 # Tests trust the test CA through GIO's default certificate database.
 gio = { workspace = true, features = ["v2_60"] }
+# Tests read the lines the reader logs (tests/support/record.rs).
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

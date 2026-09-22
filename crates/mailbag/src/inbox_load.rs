@@ -100,6 +100,10 @@ impl LoadsInbox for MailLoader {
             .accounts
             .request_imap_access(account_id, move |access| match access {
                 Ok(access) => {
+                    tracing::info!(
+                        encryption = ?access.encryption,
+                        "Online Accounts gave the settings and password"
+                    );
                     let transfer =
                         worker.load_inbox(access, move |outcome| report(load_result(outcome)));
                     *transfer_step.borrow_mut() = LoadStep::Transferring {
@@ -189,9 +193,12 @@ impl MailWorker {
             return running.clone();
         }
         let (sender, requests) = async_channel::unbounded();
+        // The application's subscriber is global; a test's belongs to the
+        // thread that starts the worker (specs/003-logging/research.md §8).
+        let record = tracing::dispatcher::get_default(Clone::clone);
         thread::Builder::new()
             .name("mailbag-mail".to_owned())
-            .spawn(move || run_worker(&requests))
+            .spawn(move || tracing::dispatcher::with_default(&record, || run_worker(&requests)))
             .expect("start the mail worker thread");
         *loads = Some(sender.clone());
         sender
@@ -257,7 +264,8 @@ async fn load_inbox_batch(access: ImapAccess) -> Result<ReceivedBatch, ServerFai
         let Some(part) = structure else {
             continue;
         };
-        let selection = select_text_parts(&describe_part(part));
+        let selection = tracing::debug_span!("message", uid)
+            .in_scope(|| select_text_parts(&describe_part(part)));
         if let TextSelection::Parts(sections) = &selection {
             requests.push(TextRequest {
                 uid: *uid,
@@ -272,6 +280,7 @@ async fn load_inbox_batch(access: ImapAccess) -> Result<ReceivedBatch, ServerFai
     let mut texts = BTreeMap::new();
     reader
         .fetch_text(requests, |uid, text| {
+            let _message = tracing::debug_span!("message", uid).entered();
             // A message absent here disappeared from the Inbox during the load.
             if let Some(content) = decode_message_text(&text) {
                 texts.insert(uid, content);
@@ -295,7 +304,8 @@ async fn load_inbox_batch(access: ImapAccess) -> Result<ReceivedBatch, ServerFai
             };
             Some(ReceivedMessage {
                 uid: row.uid,
-                fields: decode_display_fields(&row.list_headers),
+                fields: tracing::debug_span!("message", uid = row.uid)
+                    .in_scope(|| decode_display_fields(&row.list_headers)),
                 internal_date: row.internal_date,
                 seen: row.seen,
                 content,

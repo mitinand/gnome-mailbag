@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use adw::{gio, glib, gtk, prelude::*};
+use std::{io::Write, ops::ControlFlow};
 
 mod account_ui;
 mod accounts;
 mod inbox;
 mod inbox_load;
+mod logging;
 mod mail_ui;
 mod settings;
 mod window_ui;
@@ -22,14 +24,66 @@ mod account_tests;
 #[allow(dead_code)]
 #[path = "../../../tests/support/bus.rs"]
 mod test_bus;
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../../tests/support/record.rs"]
+mod test_record;
 
 const APP_ID: &str = "io.github.mitinand.Mailbag";
+const LOG_LEVEL_OPTION: &str = "log-level";
 
 fn main() -> glib::ExitCode {
     let app = adw::Application::builder().application_id(APP_ID).build();
+    app.add_main_option(
+        LOG_LEVEL_OPTION,
+        glib::Char::from(0),
+        glib::OptionFlags::NONE,
+        glib::OptionArg::String,
+        "Write what Mailbag does to the standard error stream: error, warning, info or debug",
+        Some("LEVEL"),
+    );
+    app.connect_handle_local_options(start_requested_logging);
     app.connect_startup(|_| register_resources());
     app.connect_activate(build_window);
-    app.run()
+    let exit_code = app.run();
+    logging::finish_logging();
+    exit_code
+}
+
+/// Turns logging on when `--log-level` asks for it, before this start
+/// contacts a running Mailbag (specs/003-logging/research.md §2).
+fn start_requested_logging(
+    app: &adw::Application,
+    options: &glib::VariantDict,
+) -> ControlFlow<glib::ExitCode> {
+    let Ok(Some(requested_level)) = options.lookup::<String>(LOG_LEVEL_OPTION) else {
+        return ControlFlow::Continue(());
+    };
+    let level = match logging::parse_log_level(&requested_level) {
+        Ok(level) => level,
+        Err(message) => {
+            let _ = writeln!(std::io::stderr(), "{message}");
+            return ControlFlow::Break(glib::ExitCode::FAILURE);
+        }
+    };
+    // A second start would only raise the running window and leave the record
+    // empty. Registering as the first start runs startup, which initializes GTK.
+    match app.register(None::<&gio::Cancellable>) {
+        Ok(()) if app.is_remote() => {
+            let _ = writeln!(
+                std::io::stderr(),
+                "Mailbag is already running, so logging was not turned on. \
+                 Quit Mailbag and start it again with this option."
+            );
+            ControlFlow::Break(glib::ExitCode::FAILURE)
+        }
+        Ok(()) => {
+            logging::start_logging(level, std::io::stderr);
+            ControlFlow::Continue(())
+        }
+        // The application reports a failed registration when it retries it.
+        Err(_) => ControlFlow::Continue(()),
+    }
 }
 
 fn register_resources() {

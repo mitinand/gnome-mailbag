@@ -87,13 +87,36 @@ pub enum ContentExplanation {
 pub fn select_text_parts(root: &MimePart) -> TextSelection {
     let mut walk = Walk::default();
     visit(root, &mut walk);
-    match (walk.parts.is_empty(), walk.explanation) {
+    let selection = match (walk.parts.is_empty(), walk.explanation) {
         (false, _) => TextSelection::Parts(walk.parts),
         (true, Some(explanation)) => TextSelection::Explained(explanation),
         (true, None) => TextSelection::Explained(ContentExplanation::NoPlainText {
             has_html: walk.has_html,
         }),
+    };
+    match &selection {
+        TextSelection::Parts(sections) => tracing::debug!(
+            sections = sections
+                .iter()
+                .map(|section| section_name(section))
+                .collect::<Vec<_>>()
+                .join(" "),
+            "text parts selected"
+        ),
+        TextSelection::Explained(explanation) => {
+            tracing::debug!(?explanation, "no text part selected");
+        }
     }
+    selection
+}
+
+/// A section as IMAP writes it, such as `2.1`; the whole message is empty.
+fn section_name(section: &[u32]) -> String {
+    section
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(".")
 }
 
 #[derive(Default)]
@@ -111,7 +134,7 @@ fn visit(part: &MimePart, walk: &mut Walk) {
     match (part.media_type.as_str(), part.media_subtype.as_str()) {
         ("multipart", "alternative") => {
             let mut chosen = None;
-            for child in &part.children {
+            for (number, child) in (1..).zip(&part.children) {
                 let mut branch = Walk::default();
                 visit(child, &mut branch);
                 walk.has_html |= branch.has_html;
@@ -119,10 +142,17 @@ fn visit(part: &MimePart, walk: &mut Walk) {
                     walk.explanation = walk.explanation.take().or(branch.explanation);
                 } else {
                     // The last branch with plain text is the richest one to show.
-                    chosen = Some(branch.parts);
+                    chosen = Some((number, branch.parts));
                 }
             }
-            walk.parts.extend(chosen.unwrap_or_default());
+            if let Some((number, parts)) = chosen {
+                tracing::debug!(
+                    section = section_name(&part.section),
+                    alternative = number,
+                    "the last alternative with plain text was chosen"
+                );
+                walk.parts.extend(parts);
+            }
         }
         // Only the signed content matters; the signature is not verified.
         ("multipart", "signed") => walk_first_child(part, walk),
@@ -141,6 +171,10 @@ fn visit(part: &MimePart, walk: &mut Walk) {
         ("text", "plain") if !part.has_file_name() || part.disposition_is("inline") => {
             walk.parts.push(part.section.clone());
         }
+        ("text", "plain") => tracing::debug!(
+            section = section_name(&part.section),
+            "text part left out as a file"
+        ),
         ("text", "html") => walk.has_html = true,
         ("application", "pkcs7-mime" | "x-pkcs7-mime") => {
             walk.explanation
@@ -183,6 +217,11 @@ fn walk_related_root(part: &MimePart, walk: &mut Walk) {
             .iter()
             .find(|child| child.content_id.as_deref() == Some(start))
     });
+    tracing::debug!(
+        section = section_name(&part.section),
+        start_matched = named_root.is_some(),
+        "the root of a related set was chosen"
+    );
     match named_root {
         Some(root) => visit(root, walk),
         None => walk_first_child(part, walk),
@@ -193,6 +232,14 @@ fn walk_related_root(part: &MimePart, walk: &mut Walk) {
 /// Invalid bytes become replacement characters; only an unknown character set
 /// or transfer encoding hides the text.
 pub fn decode_text_part(mime_header: &[u8], body: &[u8]) -> Result<String, ContentExplanation> {
+    let decoded = decode_entity(mime_header, body);
+    if let Err(cause) = &decoded {
+        tracing::debug!(?cause, "text part could not be decoded");
+    }
+    decoded
+}
+
+fn decode_entity(mime_header: &[u8], body: &[u8]) -> Result<String, ContentExplanation> {
     let mut entity = Vec::with_capacity(mime_header.len() + body.len() + 2);
     entity.extend_from_slice(mime_header);
     // A header the server returned without its line ending needs one.
@@ -234,10 +281,19 @@ pub fn decode_text_part(mime_header: &[u8], body: &[u8]) -> Result<String, Conte
         // NUL cannot reach GTK text APIs.
         PartType::Text(text) => {
             let text = text.replace('\0', "\u{FFFD}");
-            Ok(match flowed_join(part) {
+            let flowed = flowed_join(part);
+            let text = match flowed {
                 Some(delete_space) => unflow_text(&text, delete_space),
                 None => text,
-            })
+            };
+            tracing::debug!(
+                charset = part.content_type().and_then(|ty| ty.attribute("charset")),
+                transfer_encoding = (!encoding.is_empty()).then_some(encoding),
+                flowed = flowed.is_some(),
+                characters_out = text.chars().count(),
+                "text part decoded"
+            );
+            Ok(text)
         }
         _ => Err(ContentExplanation::Undecodable),
     }

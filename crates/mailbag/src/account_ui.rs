@@ -103,7 +103,10 @@ impl AccountUi {
     }
 
     pub fn connect_retry_check(&self, retry_check: impl Fn() + 'static) {
-        self.retry_check.connect_activate(move |_, _| retry_check());
+        self.retry_check.connect_activate(move |_, _| {
+            tracing::info!("Retry Check requested");
+            retry_check();
+        });
     }
 
     /// Called after the user selected an account, so the window can show that

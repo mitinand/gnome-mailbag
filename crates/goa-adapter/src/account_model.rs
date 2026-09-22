@@ -7,7 +7,8 @@ use std::{collections::BTreeMap, fmt};
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AccountId(String);
 impl AccountId {
-    pub(crate) fn as_str(&self) -> &str {
+    /// The identifier's text, by which the record names the account.
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 }

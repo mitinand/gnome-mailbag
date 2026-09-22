@@ -136,6 +136,7 @@ impl InboxController {
         }
         self.inboxes
             .insert(account_id.clone(), AccountInbox::Loading);
+        tracing::info!(account = account_id.as_str(), "Inbox load started");
         self.running_load = Some(RunningLoad {
             account_id: account_id.clone(),
             cancellation: None,
@@ -162,29 +163,54 @@ impl InboxController {
     /// Stores how the load ended under the account it was started for, and
     /// leaves Loading so Refresh Inbox becomes available again.
     pub fn finish_load(&mut self, account_id: &AccountId, result: LoadResult) {
-        let finished = self
+        if self
             .running_load
-            .as_ref()
-            .is_some_and(|running| running.account_id == *account_id);
-        if !finished {
+            .take_if(|running| running.account_id == *account_id)
+            .is_none()
+        {
             return;
         }
-        self.running_load = None;
-        match result {
+        let account = account_id.as_str();
+        let inbox = match result {
+            // The cancellation was recorded where it was requested.
+            LoadResult::Cancelled => return,
+            _ if !self.awaits_result(account_id) => {
+                tracing::info!(
+                    account,
+                    "Inbox load result discarded: the account is no longer shown"
+                );
+                return;
+            }
             LoadResult::Received(batch) => {
-                self.show_result(account_id, AccountInbox::Received(Rc::new(batch)));
+                log_received_batch(account, &batch);
+                AccountInbox::Received(Rc::new(batch))
             }
             LoadResult::Failed(failure) => {
-                self.show_result(account_id, AccountInbox::Failed(failure));
+                log_load_failure(account, &failure);
+                AccountInbox::Failed(failure)
             }
-            LoadResult::Cancelled => {}
-        }
+        };
+        self.inboxes.insert(account_id.clone(), inbox);
     }
 
     /// Discards the mail of accounts Online Accounts no longer shows and
     /// cancels a load running for one of them.
     pub fn discard_excluded(&mut self, is_visible: impl Fn(&AccountId) -> bool) {
-        self.inboxes.retain(|account_id, _| is_visible(account_id));
+        self.inboxes.retain(|account_id, inbox| {
+            let visible = is_visible(account_id);
+            // Only a received batch holds mail; a failed or running load holds none.
+            if !visible
+                && let AccountInbox::Received(batch) = inbox
+                && !batch.messages.is_empty()
+            {
+                tracing::info!(
+                    account = account_id.as_str(),
+                    messages = batch.messages.len(),
+                    "mail of an account no longer shown was discarded"
+                );
+            }
+            visible
+        });
         if let Some(running) = self
             .running_load
             .as_mut()
@@ -192,27 +218,106 @@ impl InboxController {
         {
             // Dropping the step closes the connection; the load then reports
             // that it was cancelled.
-            running.cancellation = None;
+            if let Some(cancellation) = running.cancellation.take() {
+                tracing::info!(
+                    account = running.account_id.as_str(),
+                    reason = "account excluded",
+                    "Inbox load cancelled"
+                );
+                drop(cancellation);
+            }
         }
     }
 
     /// Quit: cancels a running load. The worker closes its connection on its
     /// own thread, which GTK never waits for.
     pub fn cancel_load(&mut self) {
-        self.running_load = None;
+        if let Some(running) = self.running_load.take()
+            && running.cancellation.is_some()
+        {
+            tracing::info!(
+                account = running.account_id.as_str(),
+                reason = "quitting",
+                "Inbox load cancelled"
+            );
+        }
     }
 
     /// A result reaches the account only while its mail is still loading, so
     /// mail discarded by a confirmed exclusion stays discarded.
-    fn show_result(&mut self, account_id: &AccountId, inbox: AccountInbox) {
-        if let Some(loading) = self
-            .inboxes
-            .get_mut(account_id)
-            .filter(|inbox| matches!(inbox, AccountInbox::Loading))
-        {
-            *loading = inbox;
-        }
+    fn awaits_result(&self, account_id: &AccountId) -> bool {
+        matches!(self.inboxes.get(account_id), Some(AccountInbox::Loading))
     }
+}
+
+/// How an accepted load ended, with warnings for what the reader cannot show.
+fn log_received_batch(account: &str, batch: &ReceivedBatch) {
+    let explanations = || {
+        batch
+            .messages
+            .iter()
+            .filter_map(|message| match &message.content {
+                ReceivedContent::Explained(explanation) => Some(explanation),
+                ReceivedContent::Text(_) => None,
+            })
+    };
+    tracing::info!(
+        account,
+        messages = batch.messages.len(),
+        unsupported = explanations()
+            .filter(|explanation| is_unsupported(explanation))
+            .count(),
+        "Inbox load finished"
+    );
+    let unreadable = explanations()
+        .filter(|explanation| !is_unsupported(explanation))
+        .count();
+    if unreadable > 0 {
+        tracing::warn!(
+            account,
+            messages = unreadable,
+            "some messages have content that could not be read"
+        );
+    }
+    if let Some(refusal) = &batch.list_refusal {
+        tracing::warn!(
+            account,
+            code = refusal.code.as_deref(),
+            "the server refused to finish the message list"
+        );
+    }
+}
+
+/// Content this version does not show by design, as opposed to content that
+/// could not be read.
+fn is_unsupported(explanation: &ContentExplanation) -> bool {
+    matches!(
+        explanation,
+        ContentExplanation::NoPlainText { .. }
+            | ContentExplanation::Encrypted
+            | ContentExplanation::SecuredWithSMime
+    )
+}
+
+/// The load's single error line: the failure value the UI explains, the
+/// server's response code and the number of alerts, never the server's text.
+/// The failure values hold no server text, so the record can name them as they
+/// are (`ImapFailure`, `ImapAccessError`).
+fn log_load_failure(account: &str, failure: &LoadFailure) {
+    let (cause, server): (&dyn fmt::Debug, Option<&ServerFailure>) = match failure {
+        LoadFailure::OnlineAccounts(error) => (error, None),
+        LoadFailure::Server(server) => (&server.failure, Some(server)),
+        LoadFailure::WorkerStopped => (&"WorkerStopped", None),
+    };
+    tracing::error!(
+        account,
+        cause = ?cause,
+        code = server.and_then(|server| server.server_reply.as_ref()?.code.as_deref()),
+        alerts = server
+            .map(|server| server.alerts.len())
+            .filter(|alerts| *alerts > 0),
+        "Inbox load failed"
+    );
 }
 
 // Received mail is shown to the user, never written to diagnostics.

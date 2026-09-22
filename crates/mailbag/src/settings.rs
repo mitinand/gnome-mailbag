@@ -79,11 +79,12 @@ impl SettingsLauncher {
                 let connection = connection_request.await?;
                 activate_online_accounts(&connection).await
             }
-            .await;
+            .await
+            .map_err(|error| LaunchError::from_error(&error));
             if let Some(launcher) = weak.upgrade() {
                 launcher.launch_pending.set(false);
                 if let Err(error) = result {
-                    (launcher.on_error)(LaunchError::from_error(&error));
+                    (launcher.on_error)(error);
                 }
             }
         });

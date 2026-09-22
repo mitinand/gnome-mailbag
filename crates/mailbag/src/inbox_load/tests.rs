@@ -3,10 +3,11 @@
 
 use super::*;
 use crate::inbox::ReceivedBatch;
+use crate::logging::{LogLevel, capture::start_record};
 use goa_adapter::AccountId;
 use mailbag_imap::test_server::{
-    FaultKind, FaultyCommand, FixtureMessage, FixtureSetup, ImapFixture, TEST_LOGIN, TEST_PASSWORD,
-    test_certificates_trusted,
+    FaultKind, FaultyCommand, FixtureMessage, FixtureSetup, ImapFixture, PRIVATE_MARKERS,
+    TEST_LOGIN, TEST_PASSWORD, test_certificates_trusted,
 };
 use std::time::{Duration, Instant};
 
@@ -398,4 +399,67 @@ async fn load_with_online_accounts(
         finished.try_send(outcome).ok();
     });
     Ok(outcomes.recv().await.expect("the load reports its outcome"))
+}
+
+/// Runs a load as the window starts it and returns the record of the test
+/// thread and the worker.
+fn load_inbox_with_account(access: ImapAccess, level: LogLevel) -> (LoadOutcome, String) {
+    let record = start_record(level);
+    let outcome = run_on_context(async {
+        let worker = MailWorker::new();
+        let (sender, outcomes) = async_channel::bounded(1);
+        let _handle = worker.load_inbox(access, move |outcome| {
+            sender.try_send(outcome).ok();
+        });
+        outcomes.recv().await.expect("the load reports its outcome")
+    });
+    (outcome, record.text())
+}
+
+#[test]
+fn a_refused_sign_in_leaves_the_error_line_to_the_load() {
+    let fixture = ImapFixture::start(FixtureSetup::default());
+    let mut access = account_access(&fixture);
+    access.password = "wrong password".to_owned();
+    let (outcome, text) = load_inbox_with_account(access, LogLevel::Debug);
+    assert!(matches!(outcome, LoadOutcome::Failed(_)), "{outcome:?}");
+    assert!(!text.contains(" ERROR "), "{text}");
+    assert!(!text.contains("wrong password"), "{text}");
+}
+
+#[test]
+fn no_private_value_reaches_the_record_at_any_level() {
+    for level in [LogLevel::Info, LogLevel::Debug] {
+        let fixture = ImapFixture::start(FixtureSetup {
+            messages: vec![FixtureMessage::with_private_markers(10)],
+            ..FixtureSetup::default()
+        });
+        let (outcome, text) = load_inbox_with_account(account_access(&fixture), level);
+        // The markers were read, so the record had the chance to leak them.
+        let batch = published_batch(outcome);
+        assert_eq!(text_of(&batch.messages[0].content), "marker-body-text");
+        assert_eq!(
+            batch.messages[0].fields.subject.as_deref(),
+            Some("marker-subject")
+        );
+        for marker in PRIVATE_MARKERS {
+            assert!(
+                !text.contains(marker),
+                "{level:?}: {marker} reached the record:\n{text}"
+            );
+        }
+        if level == LogLevel::Info {
+            // A folder name, a host and a message identifier never reach info.
+            for detail in ["INBOX", "localhost", "uid="] {
+                assert!(!text.contains(detail), "{detail} at info:\n{text}");
+            }
+        } else {
+            // Debug names the server and the message, so the check above ran
+            // on a record that could have carried them.
+            for detail in ["localhost", "uid="] {
+                assert!(text.contains(detail), "{detail} missing at debug:\n{text}");
+            }
+            assert!(text.contains("text part left out as a file"), "{text}");
+        }
+    }
 }

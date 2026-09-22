@@ -75,7 +75,8 @@ pub struct ImapError {
     pub alerts: Vec<String>,
 }
 
-/// Server text is shown to the user only, never written to diagnostics.
+/// Leaves the server's text out: it reaches the record only at debug, with the
+/// sign-in name replaced, where the failure is built (specs/003-logging).
 impl fmt::Debug for ImapError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
