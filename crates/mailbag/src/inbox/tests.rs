@@ -26,6 +26,7 @@ fn batch_of(account_id: &AccountId, uids: &[u32]) -> ReceivedBatch {
                 internal_date: None,
                 seen: false,
                 content: ReceivedContent::Text("Text".to_owned()),
+                gmail: None,
             })
             .collect(),
     }
@@ -217,6 +218,7 @@ fn message_with(uid: u32, content: ReceivedContent) -> ReceivedMessage {
         internal_date: None,
         seen: false,
         content,
+        gmail: None,
     }
 }
 

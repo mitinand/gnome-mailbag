@@ -6,7 +6,7 @@
 
 use goa_adapter::{AccountId, ImapAccessError};
 use mailbag_content::{ContentExplanation, DisplayFields};
-use mailbag_imap::{ImapError, ImapFailure, ServerReply};
+use mailbag_imap::{GmailRow, ImapError, ImapFailure, ServerReply};
 use std::fmt;
 
 /// One account's Inbox as a single load received it.
@@ -29,6 +29,8 @@ pub struct ReceivedMessage {
     pub internal_date: Option<i64>,
     pub seen: bool,
     pub content: ReceivedContent,
+    /// Gmail's own identifier and labels; `None` for every other provider.
+    pub gmail: Option<GmailRow>,
 }
 
 /// The text of a message, or why the reader shows none.

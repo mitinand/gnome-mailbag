@@ -6,7 +6,9 @@
 //! no application state.
 
 mod batch;
+mod gmail;
 mod imap;
+mod load;
 mod worker;
 
 #[cfg(test)]
@@ -24,6 +26,14 @@ pub use worker::{LoadHandle, MailWorker};
 
 use goa_adapter::{AccountId, GoaAdapter, ImapAccessError, ImapAccessRequest};
 use std::{cell::RefCell, rc::Rc};
+
+/// Which load sequence an account needs. The window turns the account's
+/// provider into this; no provider name reaches the crates below.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MailProvider {
+    GenericImap,
+    Gmail,
+}
 
 /// How one load ended.
 #[derive(Debug)]
@@ -46,6 +56,7 @@ pub trait LoadsInbox {
     fn start_load(
         &self,
         account_id: &AccountId,
+        provider: MailProvider,
         report: Box<dyn FnOnce(LoadResult)>,
     ) -> Box<dyn CancelsLoadOnDrop>;
 }
@@ -70,6 +81,7 @@ impl LoadsInbox for MailLoader {
     fn start_load(
         &self,
         account_id: &AccountId,
+        provider: MailProvider,
         report: Box<dyn FnOnce(LoadResult)>,
     ) -> Box<dyn CancelsLoadOnDrop> {
         let step = Rc::new(RefCell::new(LoadStep::RequestingAccess(None)));
@@ -83,8 +95,9 @@ impl LoadsInbox for MailLoader {
                         encryption = ?access.encryption,
                         "Online Accounts gave the settings and password"
                     );
-                    let transfer =
-                        worker.load_inbox(access, move |outcome| report(load_result(outcome)));
+                    let transfer = worker.load_inbox(access, provider, move |outcome| {
+                        report(load_result(outcome))
+                    });
                     *transfer_step.borrow_mut() = LoadStep::Transferring {
                         _transfer: transfer,
                     };

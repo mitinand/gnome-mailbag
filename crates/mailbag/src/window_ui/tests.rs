@@ -101,13 +101,15 @@ fn every_failed_step_names_itself() {
 }
 
 #[test]
-fn a_rejected_sign_in_points_to_the_password_only_when_the_server_blames_it() {
+fn a_rejected_sign_in_points_to_the_sign_in_only_when_the_server_blames_it() {
     for code in [None, Some("authenticationfailed")] {
         let status = failure_status(&rejected_sign_in(code, "Invalid credentials"));
+        // One sentence for every provider: a Google account has no password
+        // to change (specs/004-gmail-integration/research.md §9).
         assert!(
             status
                 .explanation
-                .contains("change this account's password"),
+                .contains("Check this account's sign-in in Online Accounts."),
             "{code:?}: {}",
             status.explanation
         );
@@ -155,10 +157,18 @@ fn server_and_alert_text_reach_the_page_as_bounded_plain_text() {
 
 #[test]
 fn an_account_without_mail_never_claims_an_empty_inbox() {
-    let generic = nothing_loaded_status(Some(AccountProvider::ImapSmtp));
-    assert_eq!(generic.title, "No mail loaded");
-    assert!(generic.explanation.contains("Refresh Inbox"));
-    for provider in [AccountProvider::Google, AccountProvider::Microsoft365] {
+    // Both loadable providers get the hint; the others are told plainly that
+    // Mailbag cannot load their mail yet.
+    for provider in [AccountProvider::ImapSmtp, AccountProvider::Google] {
+        let status = nothing_loaded_status(Some(provider));
+        assert_eq!(status.title, "No mail loaded");
+        assert!(
+            status.explanation.contains("Refresh Inbox"),
+            "{provider:?}: {}",
+            status.explanation
+        );
+    }
+    for provider in [AccountProvider::Microsoft365, AccountProvider::Other] {
         let status = nothing_loaded_status(Some(provider));
         assert_eq!(status.title, "No mail loaded");
         assert!(
@@ -166,5 +176,22 @@ fn an_account_without_mail_never_claims_an_empty_inbox() {
             "{provider:?}: {}",
             status.explanation
         );
+    }
+}
+
+/// The one place a provider becomes a load sequence.
+#[test]
+fn only_generic_imap_and_google_accounts_can_be_loaded() {
+    use crate::accounts::mail_provider;
+    assert_eq!(
+        mail_provider(AccountProvider::ImapSmtp),
+        Some(MailProvider::GenericImap)
+    );
+    assert_eq!(
+        mail_provider(AccountProvider::Google),
+        Some(MailProvider::Gmail)
+    );
+    for provider in [AccountProvider::Microsoft365, AccountProvider::Other] {
+        assert_eq!(mail_provider(provider), None, "{provider:?}");
     }
 }

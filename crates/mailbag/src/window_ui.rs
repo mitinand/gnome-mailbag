@@ -9,12 +9,13 @@ mod tests;
 
 use crate::account_ui::AccountUi;
 use crate::accounts::AccountPage;
+use crate::accounts::mail_provider;
 use crate::inbox::{AccountInbox, InboxController};
 use crate::mail_ui::{MailUi, inert_text, show_inert_text};
 use adw::{gio, gtk, prelude::*};
 use goa_adapter::{AccountId, AccountProvider, AccountUpdate, ImapAccessError};
 use mailbag_imap::{ImapFailure, ImapStep, ServerReply};
-use mailbag_providers::{LoadFailure, LoadResult, LoadsInbox, ServerFailure};
+use mailbag_providers::{LoadFailure, LoadResult, LoadsInbox, MailProvider, ServerFailure};
 use std::{cell::RefCell, rc::Rc};
 
 pub struct WindowUi {
@@ -120,7 +121,7 @@ impl WindowUi {
     /// Refresh Inbox: clears the selected account's list and reader and
     /// starts the only load.
     fn refresh_inbox(self: &Rc<Self>) {
-        let Some(account_id) = self.refreshable_account() else {
+        let Some((account_id, provider)) = self.refreshable_account() else {
             return;
         };
         if !self.inboxes.borrow_mut().begin_load(&account_id) {
@@ -132,6 +133,7 @@ impl WindowUi {
         let loaded_account = account_id.clone();
         let cancellation = self.loader.start_load(
             &account_id,
+            provider,
             Box::new(move |result| {
                 if let Some(window) = window.upgrade() {
                     window.finish_load(&loaded_account, result);
@@ -157,13 +159,11 @@ impl WindowUi {
         self.render();
     }
 
-    /// The account Refresh Inbox would load: a selected Generic IMAP account.
-    fn refreshable_account(&self) -> Option<AccountId> {
+    /// The account Refresh Inbox would load, with the sequence it needs.
+    fn refreshable_account(&self) -> Option<(AccountId, MailProvider)> {
         let accounts = self.accounts.borrow();
-        match accounts.selected_provider() {
-            Some(AccountProvider::ImapSmtp) => accounts.selected_id().cloned(),
-            _ => None,
-        }
+        let provider = mail_provider(accounts.selected_provider()?)?;
+        Some((accounts.selected_id().cloned()?, provider))
     }
 
     fn render(&self) {
@@ -209,7 +209,9 @@ impl WindowUi {
         self.loading_spinner_box.set_visible(inboxes.is_loading());
         self.refresh_inbox.set_enabled(
             !inboxes.is_loading()
-                && accounts.selected_provider() == Some(AccountProvider::ImapSmtp),
+                && accounts
+                    .selected_provider()
+                    .is_some_and(|provider| mail_provider(provider).is_some()),
         );
     }
 }
@@ -249,11 +251,9 @@ fn incomplete_list_notice(account: Option<String>, refusal: &ServerReply) -> Str
 fn nothing_loaded_status(provider: Option<AccountProvider>) -> MailStatus {
     MailStatus::explained(
         "No mail loaded",
-        match provider {
-            Some(AccountProvider::ImapSmtp) => {
-                "Choose Refresh Inbox in the main menu to load this account's Inbox."
-            }
-            _ => "Mailbag cannot load mail for this account yet.",
+        match provider.and_then(mail_provider) {
+            Some(_) => "Choose Refresh Inbox in the main menu to load this account's Inbox.",
+            None => "Mailbag cannot load mail for this account yet.",
         },
     )
 }
@@ -324,8 +324,8 @@ fn server_status(failure: &ServerFailure) -> MailStatus {
     if let Some(reply) = &failure.server_reply {
         explanation.push(format!("The mail server said: {}", inert_text(&reply.text)));
     }
-    if password_may_be_wrong(failure) {
-        explanation.push("You can change this account's password in Online Accounts.".to_owned());
+    if credential_may_be_wrong(failure) {
+        explanation.push("Check this account's sign-in in Online Accounts.".to_owned());
     }
     explanation.extend(
         failure
@@ -342,7 +342,7 @@ fn server_status(failure: &ServerFailure) -> MailStatus {
 /// A rejected sign-in points to the password only when the server blamed the
 /// credentials or gave no code; another code, such as a temporary
 /// UNAVAILABLE, says nothing about the password.
-fn password_may_be_wrong(failure: &ServerFailure) -> bool {
+fn credential_may_be_wrong(failure: &ServerFailure) -> bool {
     if failure.failure != ImapFailure::Failed(ImapStep::SignIn) {
         return false;
     }
