@@ -11,6 +11,7 @@ use crate::{
 };
 use gio::prelude::*;
 use glib::variant::{FromVariant, ObjectPath};
+use std::collections::BTreeMap;
 
 /// GOA's PasswordBased key for the IMAP password of a Generic IMAP account.
 const IMAP_PASSWORD_KEY: &str = "imap-password";
@@ -45,7 +46,8 @@ pub enum ImapEncryption {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AccessError {
-    /// Online Accounts did not return the account's IMAP settings.
+    /// Online Accounts did not list the account, or its object lacks the
+    /// settings or the credential interface the request needs.
     Settings,
     /// Neither SSL nor STARTTLS is set, so no password was requested.
     NoEncryption,
@@ -60,7 +62,7 @@ pub enum AccessError {
 }
 
 /// Cancels its access request when cancelled or dropped. Holds no credentials.
-pub struct AccessRequest(gio::Cancellable);
+pub struct AccessRequest(pub(crate) gio::Cancellable);
 impl AccessRequest {
     pub fn cancel(&self) {
         self.0.cancel();
@@ -214,7 +216,7 @@ fn password_from(reply: &glib::Variant) -> ImapCredential {
 }
 
 /// A D-Bus timeout at either step is Timeout; other errors fail their step.
-fn access_error(error: &glib::Error, step_failure: AccessError) -> AccessError {
+pub(crate) fn access_error(error: &glib::Error, step_failure: AccessError) -> AccessError {
     if error.matches(gio::IOErrorEnum::Cancelled) {
         AccessError::Cancelled
     } else if classify_glib_error(error) == ErrorCause::Timeout {
@@ -224,13 +226,15 @@ fn access_error(error: &glib::Error, step_failure: AccessError) -> AccessError {
     }
 }
 
-fn find_imap_settings(
+/// The path GOA returned for the account and the interfaces of its object.
+/// An account that is no longer listed is Settings.
+pub(crate) fn find_account_object(
     reply: &glib::Variant,
     account_id: &AccountId,
-) -> Result<ImapSettings, AccessError> {
+) -> Result<(ObjectPath, BTreeMap<String, Properties>), AccessError> {
     // GIO checked the reply against the signature passed to the call.
     let (objects,) = reply.get::<(ManagedObjects,)>().unwrap();
-    let (object_path, interfaces) = objects
+    objects
         .into_iter()
         .find(|(_, interfaces)| {
             interfaces
@@ -238,7 +242,14 @@ fn find_imap_settings(
                 .and_then(|account| read_property::<String>(account, "Id"))
                 .is_some_and(|id| id == account_id.as_str())
         })
-        .ok_or(AccessError::Settings)?;
+        .ok_or(AccessError::Settings)
+}
+
+fn find_imap_settings(
+    reply: &glib::Variant,
+    account_id: &AccountId,
+) -> Result<ImapSettings, AccessError> {
+    let (object_path, interfaces) = find_account_object(reply, account_id)?;
     let mail = interfaces
         .get(MAIL_INTERFACE)
         .ok_or(AccessError::Settings)?;

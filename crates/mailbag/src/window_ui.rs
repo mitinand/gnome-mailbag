@@ -280,8 +280,8 @@ fn failure_status(failure: &LoadFailure) -> MailStatus {
 fn online_accounts_status(error: AccessError) -> MailStatus {
     match error {
         AccessError::Settings => MailStatus::explained(
-            "Mail settings unavailable",
-            "Unable to get this account's IMAP settings from Online Accounts.",
+            "Account settings unavailable",
+            "Unable to get this account's settings from Online Accounts.",
         ),
         AccessError::NoEncryption => MailStatus::explained(
             "No encryption configured",

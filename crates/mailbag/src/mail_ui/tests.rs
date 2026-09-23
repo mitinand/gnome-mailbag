@@ -590,7 +590,7 @@ fn mail_ui_transitions() {
     refresh.activate(None);
     dispatch_pending();
     assert_eq!(loader.running_loads(), 0);
-    assert_eq!(widgets.status_title(), "Mail settings unavailable");
+    assert_eq!(widgets.status_title(), "Account settings unavailable");
     assert!(!widgets.shows_load_feedback());
     assert!(refresh.is_enabled());
 

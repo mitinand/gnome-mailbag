@@ -20,8 +20,8 @@ fn every_failed_step_names_itself() {
     let cases = [
         (
             LoadFailure::OnlineAccounts(AccessError::Settings),
-            "Mail settings unavailable",
-            "IMAP settings",
+            "Account settings unavailable",
+            "this account's settings",
         ),
         (
             LoadFailure::OnlineAccounts(AccessError::NoEncryption),

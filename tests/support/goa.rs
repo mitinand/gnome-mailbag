@@ -81,6 +81,26 @@ pub fn make_google_account(id: &str) -> Interfaces {
     );
     account
 }
+/// A Microsoft 365 account as GOA builds one: its Mail interface carries the
+/// address and name only, and the credential is OAuth2Based (005 research §1).
+pub fn make_microsoft365_account(id: &str) -> Interfaces {
+    let mut account = make_account(id);
+    account.remove(PASSWORD_BASED_INTERFACE);
+    account.insert(OAUTH2_BASED_INTERFACE.into(), Properties::new());
+    let provider = account.get_mut(ACCOUNT_INTERFACE).unwrap();
+    provider.insert("ProviderType".into(), "ms_graph".to_variant());
+    account.insert(
+        MAIL_INTERFACE.into(),
+        BTreeMap::from([
+            (
+                "EmailAddress".into(),
+                "synthetic@outlook.invalid".to_variant(),
+            ),
+            ("Name".into(), "Synthetic Name".to_variant()),
+        ]),
+    );
+    account
+}
 pub fn account_object_path(index: usize) -> String {
     format!("{GOA_ROOT_PATH}/Accounts/account_{index}")
 }
