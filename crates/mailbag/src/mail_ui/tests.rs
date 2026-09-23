@@ -456,7 +456,7 @@ fn mail_ui_transitions() {
     refresh.activate(None);
     dispatch_pending();
     assert_eq!(loader.loading_provider(), Some(MailProvider::Gmail));
-    loader.report(LoadResult::Cancelled);
+    loader.report(LoadResult::Failed(rejected_sign_in()));
     dispatch_pending();
     widgets.select_account(0);
 
@@ -599,7 +599,7 @@ fn mail_ui_transitions() {
     dispatch_pending();
     widgets.select_account(1);
     dispatch_pending();
-    assert_eq!(widgets.status_title(), "No mail loaded");
+    assert_eq!(widgets.status_title(), "The mail server rejected sign-in");
     assert!(widgets.shows_load_feedback());
     // The load continues for the account it was started for.
     assert_eq!(loader.loading_account().as_ref(), Some(&generic));
