@@ -5,12 +5,23 @@ use crate::logging;
 use goa_adapter::{
     AccountCheckResult, AccountDetails, AccountId, AccountProvider, AccountUpdate, ErrorCause,
 };
+use mailbag_providers::MailProvider;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
 };
 
 const GENERIC_ACCOUNT_ICON: &str = "mail-unread-symbolic";
+
+/// Which load sequence an account needs, or `None` when Mailbag cannot load
+/// its mail yet. This is the only place a provider becomes a load sequence.
+pub fn mail_provider(provider: AccountProvider) -> Option<MailProvider> {
+    match provider {
+        AccountProvider::ImapSmtp => Some(MailProvider::GenericImap),
+        AccountProvider::Google => Some(MailProvider::Gmail),
+        AccountProvider::Microsoft365 | AccountProvider::Other => None,
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AccountProblem {

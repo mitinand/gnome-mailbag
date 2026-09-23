@@ -331,8 +331,8 @@ Install per-crate notices below `share/licenses/io.github.mitinand.Mailbag`.
 transport, the IMAP session and commands, and a typed BODYSTRUCTURE projection
 with section paths. `mailbag-content` owns text-part selection and decoding,
 including header display fields, through mail-parser. Neither depends on the
-other. The worker and the load sequence that joins them stay in `mailbag` until
-a scheduling layer exists.
+other. The worker and the load sequence that joins them stayed in `mailbag`
+until the second provider; feature 004 moves them into `mailbag-providers`.
 
 | Crate | May depend on | Must not depend on |
 |---|---|---|
@@ -340,12 +340,13 @@ a scheduling layer exists.
 | `goa-adapter` | glib, gio | gtk, libadwaita |
 | `mailbag-imap` | glib, gio, async-imap, imap-proto | gtk, libadwaita, mail-parser, `mailbag-content` |
 | `mailbag-content` | mail-parser | gtk, libadwaita, glib, gio, `mailbag-imap` |
+| `mailbag-providers` (added by [004](../004-gmail-integration/plan.md), 2026-09-23) | glib, gio, goa-adapter, mailbag-imap, mailbag-content | gtk, libadwaita, `mailbag` |
 
 No crate depends on `mailbag`. The rules are the dependency lists themselves, so
 a forbidden call does not compile; `scripts/check.sh` inspects `cargo tree` so a
-new dependency cannot add a forbidden edge quietly. The load sequence in
-`mailbag` is the one place the compiler cannot guard: review keeps widgets out
-of it.
+new dependency cannot add a forbidden edge quietly. Since 004 moved the load
+sequence into `mailbag-providers`, the compiler guards it too: nothing outside
+`mailbag` can reach a widget.
 
 **Why crates rather than modules:** A crate is the only privacy boundary the
 compiler enforces. Inside one crate, every module can reach `pub(crate)` items

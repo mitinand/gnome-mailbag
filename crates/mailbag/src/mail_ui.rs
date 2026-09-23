@@ -9,9 +9,9 @@
 #[cfg(test)]
 mod tests;
 
-use crate::inbox::{ReceivedBatch, ReceivedContent, ReceivedMessage};
 use adw::{gio, glib, gtk, prelude::*};
 use mailbag_content::{ContentExplanation, DisplayFields};
+use mailbag_providers::{ReceivedBatch, ReceivedContent, ReceivedMessage};
 use std::{cell::RefCell, rc::Rc};
 
 /// How much text a GTK label shows, in UTF-8 bytes. Longer text is cut at a

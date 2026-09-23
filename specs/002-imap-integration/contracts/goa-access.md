@@ -98,3 +98,32 @@ References: [Mail properties](https://gnome.pages.gitlab.gnome.org/gnome-online-
 [finite D-Bus calls](https://docs.gtk.org/gio/method.DBusConnection.call.html).
 The false/false rule and its GOA source evidence are recorded in
 [research](../research.md#10-goa-encryption-flags).
+
+## Amendment by 004 (proposed and approved by the maintainer 2026-09-23)
+
+Google accounts hold no password: their object exports
+`org.gnome.OnlineAccounts.OAuth2Based` instead of `PasswordBased`
+([004 research §1](../../004-gmail-integration/research.md)). The contract
+changes in the credential step only.
+
+| Public role | Change |
+|---|---|
+| ImapAccess | `password: String` becomes `credential: ImapCredential`. Same ownership rules; no sensitive Debug/Display, no Clone. |
+| ImapCredential | `Password(String)` or `AccessToken(String)`. |
+| ImapAccessError | New variant `AccessToken`: Online Accounts did not return the access token. `Password` keeps its meaning for password accounts. |
+
+Preparation algorithm, step 5 becomes:
+
+5. Choose the credential by the interface the account's object exports:
+   `OAuth2Based` → call `GetAccessToken()` and keep the token; the returned
+   `expires_in` is read for the signature and discarded, because GOA renews a
+   token that is close to expiry before returning it. Otherwise
+   `PasswordBased` → `GetPassword("imap-password")` as today. An object with
+   neither interface fails as Settings. The kind is never chosen from the
+   provider type.
+
+Everything else stays: one request, one completion, the observer's connection,
+GIO's call timeout, no EnsureCredentials, no credential cache, and the same
+privacy rules with the token treated exactly as a password. The window's
+wording for the new error is "Unable to get this account's authorization from
+Online Accounts. No server sign-in was attempted."

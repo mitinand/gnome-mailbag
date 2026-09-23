@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::{
-    ImapAccount, ImapError, ImapFailure, ImapStep, MessageList, MessagePart, MessageRow,
-    MessageText, ReceivedPart, ServerReply, TextParts, TextRequest,
+    GmailRow, ImapAccount, ImapError, ImapFailure, ImapStep, MessageList, MessagePart, MessageRow,
+    MessageText, OpenOptions, ReceivedPart, RowItems, ServerReply, TextParts, TextRequest,
     session::{
         self, InboxSession, ServerNotices, StepFailure, command_failure, server_text_for_log,
     },
@@ -21,13 +21,17 @@ use std::{collections::BTreeMap, fmt, io};
 const SOCKET_TIMEOUT_SECONDS: u32 = 30;
 /// A load reads at most this many of the newest Inbox messages.
 const MESSAGE_WINDOW: u32 = 100;
-const ROW_ITEMS: &str = "(UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT)])";
+const ROW_ITEMS: &str = "UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT)]";
+/// Gmail's message identifier and labels, added to the row FETCH on request.
+const GMAIL_ROW_ITEMS: &str = "X-GM-MSGID X-GM-LABELS";
 const STRUCTURE_ITEMS: &str = "(UID BODYSTRUCTURE)";
 
 /// A signed-in, read-only session with an account's Inbox. It never changes
 /// mail on the server. Dropping it closes the connection at once.
 pub struct InboxReader {
     account: ImapAccount,
+    /// Kept for the reconnection that an unreadable structure forces.
+    options: OpenOptions,
     socket_timeout_seconds: u32,
     pub(crate) inbox: InboxSession,
     notices: ServerNotices,
@@ -57,27 +61,30 @@ enum FetchEnd {
 
 impl InboxReader {
     /// Connects securely, signs in and opens the Inbox read-only.
-    pub async fn open(account: ImapAccount) -> Result<Self, ImapError> {
-        Self::open_with_socket_timeout(account, SOCKET_TIMEOUT_SECONDS).await
+    pub async fn open(account: ImapAccount, options: OpenOptions) -> Result<Self, ImapError> {
+        Self::open_with_socket_timeout(account, options, SOCKET_TIMEOUT_SECONDS).await
     }
 
     /// Tests shorten the socket timeout to observe stalled servers quickly.
     #[cfg(any(test, feature = "test-support"))]
     pub async fn open_with_short_socket_timeout(
         account: ImapAccount,
+        options: OpenOptions,
         socket_timeout_seconds: u32,
     ) -> Result<Self, ImapError> {
-        Self::open_with_socket_timeout(account, socket_timeout_seconds).await
+        Self::open_with_socket_timeout(account, options, socket_timeout_seconds).await
     }
 
     async fn open_with_socket_timeout(
         account: ImapAccount,
+        options: OpenOptions,
         socket_timeout_seconds: u32,
     ) -> Result<Self, ImapError> {
         let mut notices = ServerNotices::default();
-        match session::open_inbox(&account, socket_timeout_seconds, &mut notices).await {
+        match session::open_inbox(&account, &options, socket_timeout_seconds, &mut notices).await {
             Ok(inbox) => Ok(Self {
                 account,
+                options,
                 socket_timeout_seconds,
                 inbox,
                 notices,
@@ -98,7 +105,7 @@ impl InboxReader {
     /// messages and then refuses the command leaves the list short; its
     /// reason travels with the rows, because a missing row explains nothing
     /// by itself.
-    pub async fn fetch_rows(&mut self) -> Result<MessageList, ImapError> {
+    pub async fn fetch_rows(&mut self, row_items: RowItems) -> Result<MessageList, ImapError> {
         let count = self.inbox.message_count;
         if count == 0 {
             return Ok(MessageList {
@@ -107,8 +114,12 @@ impl InboxReader {
             });
         }
         let first = count.saturating_sub(MESSAGE_WINDOW - 1).max(1);
+        let items = match row_items {
+            RowItems::Standard => format!("({ROW_ITEMS})"),
+            RowItems::WithGmailAttributes => format!("({ROW_ITEMS} {GMAIL_ROW_ITEMS})"),
+        };
         let responses = self
-            .fetch(MessageSet::Sequence(first, count), ROW_ITEMS)
+            .fetch(MessageSet::Sequence(first, count), &items)
             .await?;
         let rows = collect_rows(&responses.fetches, first, count);
         if !rows.is_empty() {
@@ -215,6 +226,7 @@ impl InboxReader {
         self.inbox.connection.close();
         let opened = session::open_inbox(
             &self.account,
+            &self.options,
             self.socket_timeout_seconds,
             &mut self.notices,
         )
@@ -373,11 +385,23 @@ fn collect_rows(fetches: &[Fetch], first: u32, last: u32) -> Vec<MessageRow> {
                 seen,
                 internal_date: internal_date.map(|date| date.timestamp()),
                 list_headers: list_headers.to_vec(),
+                gmail: gmail_attributes(&responses),
             })
         })
         .collect();
     rows.sort_unstable_by_key(|row| std::cmp::Reverse(row.uid));
     rows
+}
+
+/// Gmail's attributes among one message's responses. A server that answered
+/// without them leaves the row without them.
+fn gmail_attributes(responses: &[&Fetch]) -> Option<GmailRow> {
+    let message_id = *responses.iter().find_map(|fetch| fetch.gmail_msg_id())?;
+    let labels = responses.iter().find_map(|fetch| fetch.gmail_labels())?;
+    Some(GmailRow {
+        message_id,
+        labels: labels.iter().map(|label| label.to_string()).collect(),
+    })
 }
 
 impl FetchResponses {

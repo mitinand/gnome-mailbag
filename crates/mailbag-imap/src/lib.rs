@@ -22,14 +22,68 @@ pub use reader::InboxReader;
 
 use std::fmt;
 
-/// Where and how to sign in. It holds the password, so it has no Debug,
+/// Where and how to sign in. It holds the credential, so it has no Debug,
 /// Display or Clone.
 pub struct ImapAccount {
     /// Host as Online Accounts stores it, optionally with a port.
     pub host: String,
     pub login: String,
-    pub password: String,
+    pub credential: Credential,
     pub encryption: Encryption,
+}
+
+/// What the account signs in with. Neither value may reach the record, so this
+/// type has no Debug, Display or Clone.
+pub enum Credential {
+    Password(String),
+    /// An OAuth access token, sent with AUTHENTICATE XOAUTH2.
+    AccessToken(String),
+}
+
+/// What the caller asks for between sign-in and EXAMINE. A server that refuses
+/// either command keeps the load going.
+#[derive(Debug, Default)]
+pub struct OpenOptions {
+    /// Offer UTF8=ACCEPT, so that mailbox and label names arrive as UTF-8
+    /// instead of modified UTF-7.
+    pub readable_names: bool,
+    /// Name this client to the server, as Gmail asks clients to do.
+    pub client_identity: Option<ClientIdentity>,
+}
+
+/// How this client names itself in the ID command. Google asks for a contact
+/// address as well, so that it can reach the client's author if it changes its
+/// extensions (specs/004-gmail-integration/research.md §6).
+#[derive(Clone, Debug)]
+pub struct ClientIdentity {
+    /// Name of the program that speaks IMAP, never of whoever issued the
+    /// credential: RFC 2971 forbids false information here.
+    pub name: String,
+    pub version: String,
+    /// Who makes the program.
+    pub vendor: String,
+    /// Where to write about the program, such as a mail address.
+    pub contact: String,
+    /// Where the program is described, for a reader who outlives the address.
+    pub support_url: String,
+}
+
+/// Which fields the message list asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowItems {
+    Standard,
+    /// Also Gmail's message identifier and labels.
+    WithGmailAttributes,
+}
+
+/// Gmail's own fields of one message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GmailRow {
+    /// X-GM-MSGID: the same message keeps it in every folder.
+    pub message_id: u64,
+    /// X-GM-LABELS, as the server sent them. Gmail leaves out the label of the
+    /// opened folder.
+    pub labels: Vec<String>,
 }
 
 /// How the connection is secured. There is no unencrypted option.
@@ -120,6 +174,9 @@ pub struct MessageRow {
     pub internal_date: Option<i64>,
     /// The raw From, To and Subject header lines.
     pub list_headers: Vec<u8>,
+    /// Gmail's fields, asked for with `RowItems::WithGmailAttributes` and
+    /// absent when the server did not answer with them.
+    pub gmail: Option<GmailRow>,
 }
 
 /// The message list as one command delivered it.

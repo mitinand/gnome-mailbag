@@ -2,12 +2,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::*;
-use crate::inbox::ReceivedBatch;
-use crate::logging::{LogLevel, capture::start_record};
-use goa_adapter::AccountId;
-use mailbag_imap::test_server::{
-    FaultKind, FaultyCommand, FixtureMessage, FixtureSetup, ImapFixture, PRIVATE_MARKERS,
-    TEST_LOGIN, TEST_PASSWORD, test_certificates_trusted,
+use crate::test_record::CapturedRecord;
+use crate::worker::{MailWorker, report_outcome};
+use goa_adapter::{AccountId, ImapAccess, ImapCredential, ImapEncryption};
+use mailbag_content::ContentExplanation;
+use mailbag_imap::{
+    GmailRow,
+    test_server::{
+        FaultKind, FaultyCommand, FixtureMessage, FixtureSetup, ImapFixture, PRIVATE_MARKERS,
+        TEST_ACCESS_TOKEN, TEST_LOGIN, TEST_PASSWORD, test_certificates_trusted,
+    },
 };
 use std::time::{Duration, Instant};
 
@@ -16,7 +20,7 @@ fn account_access(fixture: &ImapFixture) -> ImapAccess {
         account_id: AccountId::try_from("synthetic-account").unwrap(),
         host: format!("localhost:{}", fixture.port()),
         login: TEST_LOGIN.to_owned(),
-        password: TEST_PASSWORD.to_owned(),
+        credential: ImapCredential::Password(TEST_PASSWORD.to_owned()),
         encryption: ImapEncryption::ImplicitTls,
     }
 }
@@ -27,18 +31,22 @@ fn plain_messages(count: u32) -> Vec<FixtureMessage> {
         .collect()
 }
 
-/// Runs a load to its end on a fresh GLib context, as the window would.
+/// Runs a Generic IMAP load to its end, as the window would.
 fn load_inbox(fixture: &ImapFixture) -> LoadOutcome {
+    load_with_provider(account_access(fixture), MailProvider::GenericImap)
+}
+
+/// Runs one provider's load to its end, as the window would.
+fn load_with_provider(access: ImapAccess, provider: MailProvider) -> LoadOutcome {
     run_on_context(async {
         let worker = MailWorker::new();
         let (sender, outcomes) = async_channel::bounded(1);
-        let _handle = worker.load_inbox(account_access(fixture), move |outcome| {
+        let _handle = worker.load_inbox(access, provider, move |outcome| {
             sender.try_send(outcome).ok();
         });
         outcomes.recv().await.expect("the load reports its outcome")
     })
 }
-
 fn run_on_context<T>(future: impl Future<Output = T>) -> T {
     let context = glib::MainContext::new();
     context
@@ -181,9 +189,13 @@ fn a_cancelled_load_closes_its_connection_before_it_ends() {
     run_on_context(async {
         let worker = MailWorker::new();
         let (sender, outcomes) = async_channel::bounded(1);
-        let handle = worker.load_inbox(account_access(&fixture), move |outcome| {
-            sender.try_send(outcome).ok();
-        });
+        let handle = worker.load_inbox(
+            account_access(&fixture),
+            MailProvider::GenericImap,
+            move |outcome| {
+                sender.try_send(outcome).ok();
+            },
+        );
         // Cancel while the server is stalling on the text command.
         wait_until(|| fixture.log().fetches.len() == 3).await;
         drop(handle);
@@ -266,9 +278,13 @@ fn the_next_load_starts_a_new_worker_after_one_stopped() {
         *worker.loads.borrow_mut() = Some(loads);
 
         let (sender, outcomes) = async_channel::bounded(1);
-        let _handle = worker.load_inbox(account_access(&fixture), move |outcome| {
-            sender.try_send(outcome).ok();
-        });
+        let _handle = worker.load_inbox(
+            account_access(&fixture),
+            MailProvider::GenericImap,
+            move |outcome| {
+                sender.try_send(outcome).ok();
+            },
+        );
         outcomes.recv().await.expect("the load reports its outcome")
     });
     assert_eq!(published_batch(outcome).messages.len(), 1);
@@ -329,7 +345,7 @@ fn a_batch_short_of_a_refused_message_says_why() {
 }
 
 /// Manual acceptance of the whole chain against a running `serve_fixture`:
-/// the real Online Accounts service provides the settings and password, and
+/// the real Online Accounts service provides the settings and credential, and
 /// the host's trust store decides the connection, see quickstart.md:
 /// `MAILBAG_TEST_ACCOUNT_ID=account_… cargo test --locked -p mailbag online_accounts -- --ignored --nocapture`
 ///
@@ -369,7 +385,7 @@ fn online_accounts_settings_load_the_inbox() {
     }
 }
 
-/// Reads the account's settings and password from Online Accounts, then loads
+/// Reads the account's settings and credential from Online Accounts, then loads
 /// its Inbox on the mail worker, as Refresh Inbox does. An account Online
 /// Accounts cannot give settings for never reaches the worker.
 async fn load_with_online_accounts(
@@ -395,46 +411,44 @@ async fn load_with_online_accounts(
     let access = access?;
     let (finished, outcomes) = async_channel::bounded(1);
     let worker = MailWorker::new();
-    let _load = worker.load_inbox(access, move |outcome| {
+    let _load = worker.load_inbox(access, MailProvider::GenericImap, move |outcome| {
         finished.try_send(outcome).ok();
     });
     Ok(outcomes.recv().await.expect("the load reports its outcome"))
 }
 
 /// Runs a load as the window starts it and returns the record of the test
-/// thread and the worker.
-fn load_inbox_with_account(access: ImapAccess, level: LogLevel) -> (LoadOutcome, String) {
-    let record = start_record(level);
-    let outcome = run_on_context(async {
-        let worker = MailWorker::new();
-        let (sender, outcomes) = async_channel::bounded(1);
-        let _handle = worker.load_inbox(access, move |outcome| {
-            sender.try_send(outcome).ok();
-        });
-        outcomes.recv().await.expect("the load reports its outcome")
-    });
-    (outcome, record.text())
+/// thread and the worker, which inherits the dispatcher started here.
+fn load_inbox_with_account(
+    access: ImapAccess,
+    level: tracing::Level,
+) -> (LoadOutcome, CapturedRecord) {
+    let record = CapturedRecord::start(level);
+    let outcome = load_with_provider(access, MailProvider::GenericImap);
+    (outcome, record)
 }
 
 #[test]
 fn a_refused_sign_in_leaves_the_error_line_to_the_load() {
     let fixture = ImapFixture::start(FixtureSetup::default());
     let mut access = account_access(&fixture);
-    access.password = "wrong password".to_owned();
-    let (outcome, text) = load_inbox_with_account(access, LogLevel::Debug);
+    access.credential = ImapCredential::Password("wrong password".to_owned());
+    let (outcome, record) = load_inbox_with_account(access, tracing::Level::DEBUG);
+    let text = record.text();
     assert!(matches!(outcome, LoadOutcome::Failed(_)), "{outcome:?}");
-    assert!(!text.contains(" ERROR "), "{text}");
+    assert!(record.lines_at("ERROR").is_empty(), "{text}");
     assert!(!text.contains("wrong password"), "{text}");
 }
 
 #[test]
 fn no_private_value_reaches_the_record_at_any_level() {
-    for level in [LogLevel::Info, LogLevel::Debug] {
+    for level in [tracing::Level::INFO, tracing::Level::DEBUG] {
         let fixture = ImapFixture::start(FixtureSetup {
             messages: vec![FixtureMessage::with_private_markers(10)],
             ..FixtureSetup::default()
         });
-        let (outcome, text) = load_inbox_with_account(account_access(&fixture), level);
+        let (outcome, record) = load_inbox_with_account(account_access(&fixture), level);
+        let text = record.text();
         // The markers were read, so the record had the chance to leak them.
         let batch = published_batch(outcome);
         assert_eq!(text_of(&batch.messages[0].content), "marker-body-text");
@@ -448,7 +462,7 @@ fn no_private_value_reaches_the_record_at_any_level() {
                 "{level:?}: {marker} reached the record:\n{text}"
             );
         }
-        if level == LogLevel::Info {
+        if level == tracing::Level::INFO {
             // A folder name, a host and a message identifier never reach info.
             for detail in ["INBOX", "localhost", "uid="] {
                 assert!(!text.contains(detail), "{detail} at info:\n{text}");
@@ -462,4 +476,139 @@ fn no_private_value_reaches_the_record_at_any_level() {
             assert!(text.contains("text part left out as a file"), "{text}");
         }
     }
+}
+
+/// A server that offers the token mechanism, with Gmail's attributes on every
+/// message, and an account that signs in with a token.
+fn gmail_fixture(messages: Vec<FixtureMessage>) -> ImapFixture {
+    let messages = messages
+        .into_iter()
+        .map(|message| {
+            let uid = message.uid;
+            message.with_gmail_attributes(u64::from(uid) * 1_000, &["\\Important", "Счета"])
+        })
+        .collect();
+    ImapFixture::start(FixtureSetup {
+        access_token: Some(TEST_ACCESS_TOKEN.to_owned()),
+        messages,
+        ..FixtureSetup::default()
+    })
+}
+
+fn gmail_access(fixture: &ImapFixture) -> ImapAccess {
+    ImapAccess {
+        credential: ImapCredential::AccessToken(TEST_ACCESS_TOKEN.to_owned()),
+        ..account_access(fixture)
+    }
+}
+
+#[test]
+fn a_gmail_batch_carries_the_message_identifier_and_labels_of_every_row() {
+    let fixture = gmail_fixture(plain_messages(2));
+    let batch = published_batch(load_with_provider(
+        gmail_access(&fixture),
+        MailProvider::Gmail,
+    ));
+    let carried: Vec<Option<GmailRow>> = batch
+        .messages
+        .iter()
+        .map(|message| message.gmail.clone())
+        .collect();
+    assert_eq!(
+        carried,
+        [20_u32, 10].map(|uid| Some(GmailRow {
+            message_id: u64::from(uid) * 1_000,
+            labels: vec!["\\Important".to_owned(), "Счета".to_owned()],
+        }))
+    );
+}
+
+#[test]
+fn the_gmail_load_offers_utf8_names_and_names_itself_before_the_row_fetch() {
+    let fixture = gmail_fixture(plain_messages(1));
+    published_batch(load_with_provider(
+        gmail_access(&fixture),
+        MailProvider::Gmail,
+    ));
+    let commands = fixture.log().commands;
+    let position = |name: &str| commands.iter().position(|command| command == name);
+    assert!(
+        position("ENABLE") > position("AUTHENTICATE"),
+        "{commands:?}"
+    );
+    assert!(position("ID") > position("AUTHENTICATE"), "{commands:?}");
+    assert!(position("ENABLE") < position("FETCH"), "{commands:?}");
+    assert!(position("ID") < position("FETCH"), "{commands:?}");
+    assert!(!commands.contains(&"LOGIN".to_owned()), "{commands:?}");
+    assert_eq!(fixture.log().sign_in_mechanisms, ["XOAUTH2"]);
+}
+
+#[test]
+fn the_record_names_gmails_fields_and_never_the_token() {
+    let fixture = gmail_fixture(plain_messages(1));
+    let record = CapturedRecord::start(tracing::Level::DEBUG);
+    published_batch(load_with_provider(
+        gmail_access(&fixture),
+        MailProvider::Gmail,
+    ));
+    let text = record.text();
+    assert!(text.contains("gmail_message_id=10000"), "{text}");
+    assert!(text.contains("Important"), "{text}");
+    assert!(!text.contains(TEST_ACCESS_TOKEN), "{text}");
+}
+
+/// The Generic IMAP load asks Gmail's server for none of it.
+#[test]
+fn a_generic_imap_load_sends_no_gmail_command_and_carries_no_gmail_fields() {
+    let fixture = gmail_fixture(plain_messages(1));
+    let batch = published_batch(load_with_provider(
+        account_access(&fixture),
+        MailProvider::GenericImap,
+    ));
+    assert_eq!(batch.messages[0].gmail, None);
+    let commands = fixture.log().commands;
+    assert!(!commands.contains(&"ENABLE".to_owned()), "{commands:?}");
+    assert!(!commands.contains(&"ID".to_owned()), "{commands:?}");
+}
+
+/// Text acquisition is the shared step, so Gmail reads the same parts and
+/// gives the same explanations as a Generic IMAP load (T025).
+#[test]
+fn gmail_reads_the_same_text_parts_and_gives_the_same_explanations() {
+    let messages = vec![
+        FixtureMessage::plain_text(10, "Plain text"),
+        FixtureMessage::multipart(20, &[("html", "<p>Only HTML</p>")]),
+        FixtureMessage::with_private_markers(30),
+    ];
+    let gmail = gmail_fixture(messages.clone());
+    let generic = ImapFixture::start(FixtureSetup {
+        messages,
+        ..FixtureSetup::default()
+    });
+    let by_gmail = published_batch(load_with_provider(
+        gmail_access(&gmail),
+        MailProvider::Gmail,
+    ));
+    let by_imap = published_batch(load_with_provider(
+        account_access(&generic),
+        MailProvider::GenericImap,
+    ));
+    let contents = |batch: &ReceivedBatch| {
+        batch
+            .messages
+            .iter()
+            .map(|message| message.content.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(contents(&by_gmail), contents(&by_imap));
+    let sections = |fixture: &ImapFixture| {
+        fixture
+            .log()
+            .fetches
+            .iter()
+            .flat_map(|fetch| fetch.items.clone())
+            .filter(|item| item.starts_with("BODY.PEEK["))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(sections(&gmail), sections(&generic));
 }

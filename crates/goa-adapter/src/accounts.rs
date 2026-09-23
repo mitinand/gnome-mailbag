@@ -15,6 +15,7 @@ pub(crate) const GOA_BUS_NAME: &str = "org.gnome.OnlineAccounts";
 pub(crate) const ACCOUNT_INTERFACE: &str = "org.gnome.OnlineAccounts.Account";
 pub(crate) const MAIL_INTERFACE: &str = "org.gnome.OnlineAccounts.Mail";
 pub(crate) const PASSWORD_BASED_INTERFACE: &str = "org.gnome.OnlineAccounts.PasswordBased";
+pub(crate) const OAUTH2_BASED_INTERFACE: &str = "org.gnome.OnlineAccounts.OAuth2Based";
 pub(crate) const OBJECT_MANAGER_INTERFACE: &str = "org.freedesktop.DBus.ObjectManager";
 
 pub(crate) type Properties = BTreeMap<String, Variant>;

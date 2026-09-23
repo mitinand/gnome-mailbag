@@ -1,5 +1,11 @@
 [workspace]
-members = ["crates/mailbag", "crates/goa-adapter", "crates/mailbag-imap", "crates/mailbag-content"]
+members = [
+    "crates/mailbag",
+    "crates/goa-adapter",
+    "crates/mailbag-imap",
+    "crates/mailbag-content",
+    "crates/mailbag-providers",
+]
 default-members = ["crates/mailbag"]
 resolver = "3"
 

@@ -19,9 +19,13 @@ pub const GOA_ROOT_PATH: &str = "/org/gnome/OnlineAccounts";
 pub const GOA_BUS_NAME: &str = "org.gnome.OnlineAccounts";
 pub const ACCOUNT_INTERFACE: &str = "org.gnome.OnlineAccounts.Account";
 pub const MAIL_INTERFACE: &str = "org.gnome.OnlineAccounts.Mail";
+pub const PASSWORD_BASED_INTERFACE: &str = "org.gnome.OnlineAccounts.PasswordBased";
+pub const OAUTH2_BASED_INTERFACE: &str = "org.gnome.OnlineAccounts.OAuth2Based";
 pub const SYNTHETIC_PASSWORD: &str = "synthetic-password";
-/// GetPassword answers on the paths of the first accounts in make_object_map.
-const PASSWORD_ACCOUNT_COUNT: usize = 4;
+pub const SYNTHETIC_ACCESS_TOKEN: &str = "synthetic-access-token";
+/// The credential interfaces answer on the paths of the first accounts in
+/// make_object_map.
+const CREDENTIAL_ACCOUNT_COUNT: usize = 4;
 pub const OBJECT_MANAGER_INTERFACE: &str = "org.freedesktop.DBus.ObjectManager";
 pub type Properties = BTreeMap<String, Variant>;
 pub type Interfaces = BTreeMap<String, Properties>;
@@ -56,7 +60,26 @@ pub fn make_account(id: &str) -> Interfaces {
                 ("ImapAcceptSslErrors".into(), false.to_variant()),
             ]),
         ),
+        // GOA lists an object's interfaces whether or not they hold properties.
+        (PASSWORD_BASED_INTERFACE.into(), Properties::new()),
     ])
+}
+
+/// A Google account as GOA builds one: OAuth2Based instead of PasswordBased,
+/// Gmail's host and implicit TLS (004 research §1).
+pub fn make_google_account(id: &str) -> Interfaces {
+    let mut account = make_account(id);
+    account.remove(PASSWORD_BASED_INTERFACE);
+    account.insert(OAUTH2_BASED_INTERFACE.into(), Properties::new());
+    let provider = account.get_mut(ACCOUNT_INTERFACE).unwrap();
+    provider.insert("ProviderType".into(), "google".to_variant());
+    let mail = account.get_mut(MAIL_INTERFACE).unwrap();
+    mail.insert("ImapHost".into(), "imap.gmail.com".to_variant());
+    mail.insert(
+        "ImapUserName".into(),
+        "synthetic@gmail.invalid".to_variant(),
+    );
+    account
 }
 pub fn account_object_path(index: usize) -> String {
     format!("{GOA_ROOT_PATH}/Accounts/account_{index}")
@@ -96,6 +119,13 @@ struct HeldReplies {
 pub struct PasswordRequest {
     pub object_path: String,
     pub password_key: String,
+}
+
+/// One GetAccessToken call as the fixture received it. It takes no arguments,
+/// so only the object it was sent to distinguishes it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AccessTokenRequest {
+    pub object_path: String,
 }
 
 fn answer_call(
@@ -138,6 +168,8 @@ pub struct FakeGoaService {
     reply: Arc<Mutex<ReplyBehavior>>,
     password_reply: Arc<Mutex<ReplyBehavior>>,
     password_requests: Arc<Mutex<Vec<PasswordRequest>>>,
+    access_token_reply: Arc<Mutex<ReplyBehavior>>,
+    access_token_requests: Arc<Mutex<Vec<AccessTokenRequest>>>,
     held_replies: Arc<HeldReplies>,
     main_loop: glib::MainLoop,
     thread: Option<thread::JoinHandle<()>>,
@@ -180,6 +212,14 @@ impl FakeGoaService {
         self.password_requests.lock().unwrap().clone()
     }
 
+    pub fn set_access_token_reply(&self, reply: ReplyBehavior) {
+        *self.access_token_reply.lock().unwrap() = reply;
+    }
+
+    pub fn access_token_requests(&self) -> Vec<AccessTokenRequest> {
+        self.access_token_requests.lock().unwrap().clone()
+    }
+
     pub fn emit_signal(&self, path: &str, interface: &str, member: &str, body: &Variant) {
         self.connection
             .emit_signal(None, path, interface, member, Some(body))
@@ -209,6 +249,13 @@ impl FakeGoaService {
         let handler_password_reply = password_reply.clone();
         let password_requests = Arc::new(Mutex::new(Vec::new()));
         let handler_password_requests = password_requests.clone();
+        // GOA answers GetAccessToken with the token and its remaining seconds.
+        let access_token_reply = Arc::new(Mutex::new(ReplyBehavior::Value(
+            (SYNTHETIC_ACCESS_TOKEN, 1669_i32).to_variant(),
+        )));
+        let handler_access_token_reply = access_token_reply.clone();
+        let access_token_requests = Arc::new(Mutex::new(Vec::new()));
+        let handler_access_token_requests = access_token_requests.clone();
         let held_replies = Arc::new(HeldReplies::default());
         let handler_held_replies = held_replies.clone();
         let address = address.to_owned();
@@ -221,7 +268,7 @@ impl FakeGoaService {
                 let connection = gio::DBusConnection::for_address_sync(&address,
                     gio::DBusConnectionFlags::AUTHENTICATION_CLIENT | gio::DBusConnectionFlags::MESSAGE_BUS_CONNECTION,
                     None::<&gio::DBusAuthObserver>, None::<&gio::Cancellable>).unwrap();
-                let info = gio::DBusNodeInfo::for_xml(r#"<node><interface name="org.freedesktop.DBus.ObjectManager"><method name="GetManagedObjects"><arg type="a{oa{sa{sv}}}" direction="out"/></method><signal name="InterfacesAdded"><arg type="o"/><arg type="a{sa{sv}}"/></signal><signal name="InterfacesRemoved"><arg type="o"/><arg type="as"/></signal></interface><interface name="org.gnome.OnlineAccounts.PasswordBased"><method name="GetPassword"><arg type="s" direction="in"/><arg type="s" direction="out"/></method></interface></node>"#).unwrap();
+                let info = gio::DBusNodeInfo::for_xml(r#"<node><interface name="org.freedesktop.DBus.ObjectManager"><method name="GetManagedObjects"><arg type="a{oa{sa{sv}}}" direction="out"/></method><signal name="InterfacesAdded"><arg type="o"/><arg type="a{sa{sv}}"/></signal><signal name="InterfacesRemoved"><arg type="o"/><arg type="as"/></signal></interface><interface name="org.gnome.OnlineAccounts.PasswordBased"><method name="GetPassword"><arg type="s" direction="in"/><arg type="s" direction="out"/></method></interface><interface name="org.gnome.OnlineAccounts.OAuth2Based"><method name="GetAccessToken"><arg type="s" direction="out"/><arg type="i" direction="out"/></method></interface></node>"#).unwrap();
                 let held_invocations = std::rc::Rc::new(RefCell::new(Vec::new()));
                 let mut registrations = Vec::new();
                 let (held_replies, invocations) = (handler_held_replies.clone(), held_invocations.clone());
@@ -230,13 +277,20 @@ impl FakeGoaService {
                     let reply = handler_reply.lock().unwrap().clone();
                     answer_call(reply, &connection, invocation, &held_replies, &invocations);
                 }).build().unwrap());
-                for index in 0..PASSWORD_ACCOUNT_COUNT {
+                for index in 0..CREDENTIAL_ACCOUNT_COUNT {
                     let (password_reply, password_requests) = (handler_password_reply.clone(), handler_password_requests.clone());
                     let (held_replies, invocations) = (handler_held_replies.clone(), held_invocations.clone());
                     registrations.push(connection.register_object(&account_object_path(index), &info.interfaces()[1]).method_call(move |connection, _, object_path, _, _, parameters, invocation| {
                         let (password_key,) = parameters.get::<(String,)>().unwrap();
                         password_requests.lock().unwrap().push(PasswordRequest { object_path: object_path.into(), password_key });
                         let reply = password_reply.lock().unwrap().clone();
+                        answer_call(reply, &connection, invocation, &held_replies, &invocations);
+                    }).build().unwrap());
+                    let (access_token_reply, access_token_requests) = (handler_access_token_reply.clone(), handler_access_token_requests.clone());
+                    let (held_replies, invocations) = (handler_held_replies.clone(), held_invocations.clone());
+                    registrations.push(connection.register_object(&account_object_path(index), &info.interfaces()[2]).method_call(move |connection, _, object_path, _, _, _, invocation| {
+                        access_token_requests.lock().unwrap().push(AccessTokenRequest { object_path: object_path.into() });
+                        let reply = access_token_reply.lock().unwrap().clone();
                         answer_call(reply, &connection, invocation, &held_replies, &invocations);
                     }).build().unwrap());
                 }
@@ -262,6 +316,8 @@ impl FakeGoaService {
             reply,
             password_reply,
             password_requests,
+            access_token_reply,
+            access_token_requests,
             held_replies,
             read_count,
             main_loop,

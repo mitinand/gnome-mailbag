@@ -3,7 +3,10 @@
 
 use super::*;
 use crate::logging::{LogLevel, capture::start_record};
-use mailbag_imap::ImapStep;
+use goa_adapter::ImapAccessError;
+use mailbag_content::DisplayFields;
+use mailbag_imap::{ImapFailure, ImapStep, ServerReply};
+use mailbag_providers::{ReceivedMessage, ServerFailure};
 use std::cell::Cell;
 
 fn account(name: &str) -> AccountId {
@@ -23,6 +26,7 @@ fn batch_of(account_id: &AccountId, uids: &[u32]) -> ReceivedBatch {
                 internal_date: None,
                 seen: false,
                 content: ReceivedContent::Text("Text".to_owned()),
+                gmail: None,
             })
             .collect(),
     }
@@ -214,6 +218,7 @@ fn message_with(uid: u32, content: ReceivedContent) -> ReceivedMessage {
         internal_date: None,
         seen: false,
         content,
+        gmail: None,
     }
 }
 

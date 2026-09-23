@@ -10,7 +10,9 @@ pub use account_model::{
     AccountUpdate, ErrorCause,
 };
 pub use client::GoaAdapter;
-pub use imap_access::{ImapAccess, ImapAccessError, ImapAccessRequest, ImapEncryption};
+pub use imap_access::{
+    ImapAccess, ImapAccessError, ImapAccessRequest, ImapCredential, ImapEncryption,
+};
 
 #[cfg(test)]
 #[path = "../../../tests/support/bus.rs"]

@@ -2,14 +2,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::*;
-use crate::inbox::{CancelsLoadOnDrop, LoadFailure, LoadResult, ServerFailure};
-use crate::inbox_load::LoadsInbox;
 use crate::window_ui::WindowUi;
 use goa_adapter::{
     AccountCheckError, AccountCheckResult, AccountDetails, AccountId, AccountProvider,
     AccountUpdate, ErrorCause, ImapAccessError,
 };
 use mailbag_imap::{ImapFailure, ImapStep, ServerReply};
+use mailbag_providers::{
+    CancelsLoadOnDrop, LoadFailure, LoadResult, LoadsInbox, MailProvider, ServerFailure,
+};
 use std::{
     cell::Cell,
     time::{Duration, Instant},
@@ -18,6 +19,7 @@ use std::{
 /// One load the window started, waiting for the result the test chooses.
 struct StartedLoad {
     account_id: AccountId,
+    provider: MailProvider,
     report: Box<dyn FnOnce(LoadResult)>,
 }
 
@@ -46,6 +48,7 @@ impl LoadsInbox for ScriptedLoader {
     fn start_load(
         &self,
         account_id: &AccountId,
+        provider: MailProvider,
         report: Box<dyn FnOnce(LoadResult)>,
     ) -> Box<dyn CancelsLoadOnDrop> {
         let at_once = self.result_at_once.borrow_mut().take();
@@ -53,6 +56,7 @@ impl LoadsInbox for ScriptedLoader {
             Some(result) => report(result),
             None => self.started_loads.borrow_mut().push(StartedLoad {
                 account_id: account_id.clone(),
+                provider,
                 report,
             }),
         }
@@ -60,13 +64,18 @@ impl LoadsInbox for ScriptedLoader {
     }
 }
 
-impl LoadsInbox for Rc<ScriptedLoader> {
+/// The window owns its loader, while the test keeps a handle to the same one.
+/// `LoadsInbox` now lives in another crate, so `Rc` itself cannot carry it.
+struct SharedLoader(Rc<ScriptedLoader>);
+
+impl LoadsInbox for SharedLoader {
     fn start_load(
         &self,
         account_id: &AccountId,
+        provider: MailProvider,
         report: Box<dyn FnOnce(LoadResult)>,
     ) -> Box<dyn CancelsLoadOnDrop> {
-        LoadsInbox::start_load(&**self, account_id, report)
+        self.0.start_load(account_id, provider, report)
     }
 }
 
@@ -81,6 +90,14 @@ impl ScriptedLoader {
             .borrow()
             .last()
             .map(|started| started.account_id.clone())
+    }
+
+    /// The load sequence the window chose for the running load.
+    fn loading_provider(&self) -> Option<MailProvider> {
+        self.started_loads
+            .borrow()
+            .last()
+            .map(|started| started.provider)
     }
 
     /// Ends the running load the way the worker would.
@@ -138,6 +155,7 @@ fn batch_with_two_messages(account_id: &AccountId) -> ReceivedBatch {
                 internal_date: Some(1_700_000_000),
                 seen: false,
                 content: ReceivedContent::Text("Second body".to_owned()),
+                gmail: None,
             },
             ReceivedMessage {
                 uid: 10,
@@ -149,6 +167,7 @@ fn batch_with_two_messages(account_id: &AccountId) -> ReceivedBatch {
                 internal_date: Some(1_699_000_000),
                 seen: true,
                 content: ReceivedContent::Explained(ContentExplanation::UnreadableStructure),
+                gmail: None,
             },
         ],
     }
@@ -177,6 +196,7 @@ fn unwrapped_and_ordinary_batch(account_id: &AccountId) -> ReceivedBatch {
                 internal_date: Some(1_700_000_000),
                 seen: true,
                 content: ReceivedContent::Text(body),
+                gmail: None,
             })
             .collect(),
     }
@@ -384,7 +404,7 @@ fn mail_ui_transitions() {
     let builder = gtk::Builder::from_string(include_str!("../../resources/ui/mailbag.ui"));
     let window: adw::Window = builder.object("window").expect("window");
     let loader = Rc::new(ScriptedLoader::default());
-    let ui = WindowUi::new(&builder, Box::new(loader.clone()));
+    let ui = WindowUi::new(&builder, Box::new(SharedLoader(loader.clone())));
     let widgets = WindowWidgets {
         builder: builder.clone(),
     };
@@ -421,16 +441,22 @@ fn mail_ui_transitions() {
     assert!(refresh.is_enabled());
     assert!(!widgets.shows_load_feedback());
 
-    // Refresh Inbox is unavailable for a Google account.
+    // A Google account is loadable too, and gets the same hint.
     widgets.select_account(1);
     dispatch_pending();
-    assert!(!refresh.is_enabled());
+    assert!(refresh.is_enabled());
     assert_eq!(widgets.status_title(), "No mail loaded");
     assert!(
         widgets
             .mail_explanation()
-            .is_some_and(|text| !text.contains("Refresh Inbox"))
+            .is_some_and(|text| text.contains("Refresh Inbox"))
     );
+    // Refreshing it asks for the Gmail sequence, not the Generic IMAP one.
+    refresh.activate(None);
+    dispatch_pending();
+    assert_eq!(loader.loading_provider(), Some(MailProvider::Gmail));
+    loader.report(LoadResult::Cancelled);
+    dispatch_pending();
     widgets.select_account(0);
 
     // A refresh loads once, with the spinner and without a second attempt.
@@ -439,6 +465,7 @@ fn mail_ui_transitions() {
     dispatch_pending();
     assert_eq!(loader.running_loads(), 1);
     assert_eq!(loader.loading_account().as_ref(), Some(&generic));
+    assert_eq!(loader.loading_provider(), Some(MailProvider::GenericImap));
     assert_eq!(widgets.status_title(), "Loading Inbox");
     assert_eq!(widgets.list_page(), "empty");
     assert!(widgets.shows_load_feedback());

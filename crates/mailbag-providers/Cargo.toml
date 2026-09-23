@@ -1,5 +1,5 @@
 [package]
-name = "mailbag"
+name = "mailbag-providers"
 version = "0.1.0-dev"
 edition = "2024"
 rust-version = "1.95"
@@ -8,15 +8,19 @@ repository = "https://github.com/mitinand/gnome-mailbag"
 publish = false
 
 [dependencies]
-adw = { workspace = true, features = ["gtk_v4_10"] }
 # Runtime-independent channels between GTK's context and the mail worker.
 async-channel = "2"
 futures-util = "0.3"
+glib.workspace = true
 goa-adapter = { path = "../goa-adapter" }
 mailbag-content = { path = "../mailbag-content" }
 mailbag-imap = { path = "../mailbag-imap" }
-mailbag-providers = { path = "../mailbag-providers" }
 tracing.workspace = true
+
+[dev-dependencies]
+# Load-sequence tests drive the scripted IMAP server.
+mailbag-imap = { path = "../mailbag-imap", features = ["test-support"] }
+# Tests read the lines a load logs (tests/support/record.rs).
 tracing-subscriber.workspace = true
 
 [lints]

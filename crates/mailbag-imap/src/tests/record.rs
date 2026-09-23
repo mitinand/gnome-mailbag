@@ -8,7 +8,7 @@
 use super::test_record::CapturedRecord;
 use super::{expect_failure, run};
 use crate::{
-    Encryption, ImapAccount, ImapFailure, ImapStep, InboxReader,
+    Credential, Encryption, ImapAccount, ImapFailure, ImapStep, InboxReader, OpenOptions,
     session::server_text_for_log,
     test_server::{FixtureSetup, ImapFixture, TEST_LOGIN, TEST_PASSWORD},
 };
@@ -49,11 +49,11 @@ fn a_connection_that_fails_leaves_the_host_in_the_record() {
     let unreachable = ImapAccount {
         host: "localhost:1".to_owned(),
         login: TEST_LOGIN.to_owned(),
-        password: TEST_PASSWORD.to_owned(),
+        credential: Credential::Password(TEST_PASSWORD.to_owned()),
         encryption: Encryption::ImplicitTls,
     };
     let record = CapturedRecord::start(tracing::Level::DEBUG);
-    let error = expect_failure(run(InboxReader::open(unreachable)));
+    let error = expect_failure(run(InboxReader::open(unreachable, OpenOptions::default())));
     assert_eq!(error.failure, ImapFailure::Failed(ImapStep::Connect));
     let attempts: Vec<String> = record
         .lines_at("DEBUG")
@@ -74,7 +74,7 @@ fn a_refused_sign_in_is_logged_with_a_short_sign_in_name_replaced() {
     let mut account = fixture.account_with_password("wrong password");
     account.login = "ab".to_owned();
     let record = CapturedRecord::start(tracing::Level::DEBUG);
-    expect_failure(run(InboxReader::open(account)));
+    expect_failure(run(InboxReader::open(account, OpenOptions::default())));
     let replies: Vec<String> = record
         .lines_at("DEBUG")
         .into_iter()
