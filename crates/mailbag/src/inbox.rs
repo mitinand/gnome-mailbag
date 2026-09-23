@@ -11,7 +11,8 @@ mod tests;
 use goa_adapter::AccountId;
 use mailbag_content::ContentExplanation;
 use mailbag_providers::{
-    CancelsLoadOnDrop, LoadFailure, LoadResult, ReceivedBatch, ReceivedContent, ServerFailure,
+    CancelsLoadOnDrop, IncompleteList, LoadFailure, LoadResult, ReceivedBatch, ReceivedContent,
+    ServerFailure,
 };
 use std::{collections::BTreeMap, fmt, rc::Rc};
 
@@ -199,12 +200,17 @@ fn log_received_batch(account: &str, batch: &ReceivedBatch) {
             "some messages have content that could not be read"
         );
     }
-    if let Some(refusal) = &batch.list_refusal {
-        tracing::warn!(
+    match &batch.incomplete {
+        Some(IncompleteList::ServerRefused(refusal)) => tracing::warn!(
             account,
             code = refusal.code.as_deref(),
             "the server refused to finish the message list"
-        );
+        ),
+        Some(IncompleteList::MoreAvailable) => tracing::warn!(
+            account,
+            "the mail service offered more messages than one request holds"
+        ),
+        None => {}
     }
 }
 
@@ -222,7 +228,7 @@ fn is_unsupported(explanation: &ContentExplanation) -> bool {
 /// The load's single error line: the failure value the UI explains, the
 /// server's response code and the number of alerts, never the server's text.
 /// The failure values hold no server text, so the record can name them as they
-/// are (`ImapFailure`, `ImapAccessError`).
+/// are (`ImapFailure`, `AccessError`).
 fn log_load_failure(account: &str, failure: &LoadFailure) {
     let (cause, server): (&dyn fmt::Debug, Option<&ServerFailure>) = match failure {
         LoadFailure::OnlineAccounts(error) => (error, None),

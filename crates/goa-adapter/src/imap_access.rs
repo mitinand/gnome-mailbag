@@ -44,7 +44,7 @@ pub enum ImapEncryption {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ImapAccessError {
+pub enum AccessError {
     /// Online Accounts did not return the account's IMAP settings.
     Settings,
     /// Neither SSL nor STARTTLS is set, so no password was requested.
@@ -60,13 +60,13 @@ pub enum ImapAccessError {
 }
 
 /// Cancels its access request when cancelled or dropped. Holds no credentials.
-pub struct ImapAccessRequest(gio::Cancellable);
-impl ImapAccessRequest {
+pub struct AccessRequest(gio::Cancellable);
+impl AccessRequest {
     pub fn cancel(&self) {
         self.0.cancel();
     }
 }
-impl Drop for ImapAccessRequest {
+impl Drop for AccessRequest {
     fn drop(&mut self) {
         self.0.cancel();
     }
@@ -82,8 +82,8 @@ impl GoaAdapter {
     pub fn request_imap_access(
         &self,
         account_id: &AccountId,
-        on_complete: impl FnOnce(Result<ImapAccess, ImapAccessError>) + 'static,
-    ) -> ImapAccessRequest {
+        on_complete: impl FnOnce(Result<ImapAccess, AccessError>) + 'static,
+    ) -> AccessRequest {
         let cancellable = gio::Cancellable::new();
         let attempt = AccessAttempt {
             account_id: account_id.clone(),
@@ -94,9 +94,9 @@ impl GoaAdapter {
         let connection = self.0.connection.borrow().clone();
         match connection {
             Some(connection) => attempt.read_settings(connection),
-            None => (attempt.on_complete)(Err(ImapAccessError::Settings)),
+            None => (attempt.on_complete)(Err(AccessError::Settings)),
         }
-        ImapAccessRequest(cancellable)
+        AccessRequest(cancellable)
     }
 }
 
@@ -105,7 +105,7 @@ struct AccessAttempt {
     account_id: AccountId,
     cancellable: gio::Cancellable,
     timeout_msec: i32,
-    on_complete: Box<dyn FnOnce(Result<ImapAccess, ImapAccessError>)>,
+    on_complete: Box<dyn FnOnce(Result<ImapAccess, AccessError>)>,
 }
 
 /// Settings read before the credential is requested.
@@ -141,7 +141,7 @@ impl AccessAttempt {
             Some(&cancellable),
             move |reply| {
                 let settings = reply
-                    .map_err(|error| access_error(&error, ImapAccessError::Settings))
+                    .map_err(|error| access_error(&error, AccessError::Settings))
                     .and_then(|reply| find_imap_settings(&reply, &self.account_id));
                 match settings {
                     Ok(settings) => self.read_credential(connection, settings),
@@ -161,7 +161,7 @@ impl AccessAttempt {
                     "GetAccessToken",
                     None,
                     "(si)",
-                    ImapAccessError::AccessToken,
+                    AccessError::AccessToken,
                     access_token_from as ReplyParser,
                 ),
                 CredentialInterface::PasswordBased => (
@@ -169,7 +169,7 @@ impl AccessAttempt {
                     "GetPassword",
                     Some((IMAP_PASSWORD_KEY,).to_variant()),
                     "(s)",
-                    ImapAccessError::Password,
+                    AccessError::Password,
                     password_from as ReplyParser,
                 ),
             };
@@ -214,11 +214,11 @@ fn password_from(reply: &glib::Variant) -> ImapCredential {
 }
 
 /// A D-Bus timeout at either step is Timeout; other errors fail their step.
-fn access_error(error: &glib::Error, step_failure: ImapAccessError) -> ImapAccessError {
+fn access_error(error: &glib::Error, step_failure: AccessError) -> AccessError {
     if error.matches(gio::IOErrorEnum::Cancelled) {
-        ImapAccessError::Cancelled
+        AccessError::Cancelled
     } else if classify_glib_error(error) == ErrorCause::Timeout {
-        ImapAccessError::Timeout
+        AccessError::Timeout
     } else {
         step_failure
     }
@@ -227,7 +227,7 @@ fn access_error(error: &glib::Error, step_failure: ImapAccessError) -> ImapAcces
 fn find_imap_settings(
     reply: &glib::Variant,
     account_id: &AccountId,
-) -> Result<ImapSettings, ImapAccessError> {
+) -> Result<ImapSettings, AccessError> {
     // GIO checked the reply against the signature passed to the call.
     let (objects,) = reply.get::<(ManagedObjects,)>().unwrap();
     let (object_path, interfaces) = objects
@@ -238,10 +238,10 @@ fn find_imap_settings(
                 .and_then(|account| read_property::<String>(account, "Id"))
                 .is_some_and(|id| id == account_id.as_str())
         })
-        .ok_or(ImapAccessError::Settings)?;
+        .ok_or(AccessError::Settings)?;
     let mail = interfaces
         .get(MAIL_INTERFACE)
-        .ok_or(ImapAccessError::Settings)?;
+        .ok_or(AccessError::Settings)?;
     // ImapAcceptSslErrors is ignored: certificates are always verified.
     let encryption = match (
         read_setting(mail, "ImapUseSsl")?,
@@ -249,7 +249,7 @@ fn find_imap_settings(
     ) {
         (true, _) => ImapEncryption::ImplicitTls,
         (false, true) => ImapEncryption::StartTls,
-        (false, false) => return Err(ImapAccessError::NoEncryption),
+        (false, false) => return Err(AccessError::NoEncryption),
     };
     // GOA lists an object's interfaces whether or not they carry properties.
     let credential_interface = if interfaces.contains_key(OAUTH2_BASED_INTERFACE) {
@@ -257,7 +257,7 @@ fn find_imap_settings(
     } else if interfaces.contains_key(PASSWORD_BASED_INTERFACE) {
         CredentialInterface::PasswordBased
     } else {
-        return Err(ImapAccessError::Settings);
+        return Err(AccessError::Settings);
     };
     Ok(ImapSettings {
         object_path,
@@ -268,8 +268,8 @@ fn find_imap_settings(
     })
 }
 
-fn read_setting<T: FromVariant>(mail: &Properties, name: &str) -> Result<T, ImapAccessError> {
-    read_property(mail, name).ok_or(ImapAccessError::Settings)
+fn read_setting<T: FromVariant>(mail: &Properties, name: &str) -> Result<T, AccessError> {
+    read_property(mail, name).ok_or(AccessError::Settings)
 }
 
 #[cfg(test)]

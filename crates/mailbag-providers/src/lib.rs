@@ -19,12 +19,13 @@ mod test_record;
 mod tests;
 
 pub use batch::{
-    CancelsLoadOnDrop, LoadFailure, LoadResult, ReceivedBatch, ReceivedContent, ReceivedMessage,
-    ServerFailure,
+    CancelsLoadOnDrop, IncompleteList, LoadFailure, LoadResult, MessageIdentity, ReceivedBatch,
+    ReceivedContent, ReceivedMessage, ServerFailure,
 };
+use worker::LoadKind;
 pub use worker::{LoadHandle, MailWorker};
 
-use goa_adapter::{AccountId, GoaAdapter, ImapAccessError, ImapAccessRequest};
+use goa_adapter::{AccessError, AccessRequest, AccountId, GoaAdapter};
 use std::{cell::RefCell, rc::Rc};
 
 /// Which load sequence an account needs. The window turns the account's
@@ -39,7 +40,7 @@ pub enum MailProvider {
 #[derive(Debug)]
 pub enum LoadOutcome {
     Loaded(ReceivedBatch),
-    Failed(ServerFailure),
+    Failed(LoadFailure),
     /// The load was cancelled and its connection is closed.
     Cancelled,
     /// The mail worker stopped without a result, so nothing was loaded. The
@@ -95,15 +96,18 @@ impl LoadsInbox for MailLoader {
                         encryption = ?access.encryption,
                         "Online Accounts gave the settings and credential"
                     );
-                    let transfer = worker.load_inbox(access, provider, move |outcome| {
-                        report(load_result(outcome))
-                    });
+                    let kind = match provider {
+                        MailProvider::GenericImap => LoadKind::GenericImap(access),
+                        MailProvider::Gmail => LoadKind::Gmail(access),
+                    };
+                    let transfer =
+                        worker.load_inbox(kind, move |outcome| report(load_result(outcome)));
                     *transfer_step.borrow_mut() = LoadStep::Transferring {
                         _transfer: transfer,
                     };
                 }
                 // The request was cancelled by an exclusion or by quitting.
-                Err(ImapAccessError::Cancelled) => report(LoadResult::Cancelled),
+                Err(AccessError::Cancelled) => report(LoadResult::Cancelled),
                 Err(error) => report(LoadResult::Failed(LoadFailure::OnlineAccounts(error))),
             });
         // Online Accounts answers later, except for the settings failure it
@@ -118,7 +122,7 @@ impl LoadsInbox for MailLoader {
 /// How far a load has come. Dropping a step cancels it.
 enum LoadStep {
     /// None only between starting the request and holding it.
-    RequestingAccess(Option<ImapAccessRequest>),
+    RequestingAccess(Option<AccessRequest>),
     /// Dropping the handle cancels the transfer and closes its connection.
     Transferring {
         _transfer: LoadHandle,
@@ -144,7 +148,7 @@ impl Drop for LoadCancellation {
 fn load_result(outcome: LoadOutcome) -> LoadResult {
     match outcome {
         LoadOutcome::Loaded(batch) => LoadResult::Received(batch),
-        LoadOutcome::Failed(failure) => LoadResult::Failed(LoadFailure::Server(failure)),
+        LoadOutcome::Failed(failure) => LoadResult::Failed(failure),
         LoadOutcome::Cancelled => LoadResult::Cancelled,
         LoadOutcome::WorkerStopped => LoadResult::Failed(LoadFailure::WorkerStopped),
     }

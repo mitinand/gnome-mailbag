@@ -4,7 +4,7 @@
 //! The mail worker: a thread with its own GLib context that runs one load at
 //! a time. It touches no widget.
 
-use crate::{LoadOutcome, MailProvider, gmail::load_gmail_inbox, imap::load_imap_inbox};
+use crate::{LoadFailure, LoadOutcome, gmail::load_gmail_inbox, imap::load_imap_inbox};
 use futures_util::future::{self, Either};
 use goa_adapter::ImapAccess;
 use std::{cell::RefCell, pin::pin, thread};
@@ -17,9 +17,15 @@ pub struct MailWorker {
     pub(crate) loads: RefCell<Option<async_channel::Sender<LoadRequest>>>,
 }
 
+/// Which load sequence to run, with the access it needs. The access and the
+/// sequence travel together, so they cannot disagree.
+pub(crate) enum LoadKind {
+    GenericImap(ImapAccess),
+    Gmail(ImapAccess),
+}
+
 pub(crate) struct LoadRequest {
-    access: ImapAccess,
-    provider: MailProvider,
+    kind: LoadKind,
     /// Closed when the caller cancels or drops the load.
     cancelled: async_channel::Receiver<()>,
     outcome: async_channel::Sender<LoadOutcome>,
@@ -38,17 +44,15 @@ impl MailWorker {
     /// Loads the Inbox of the account the access data names. `on_finished`
     /// runs once on the calling GLib context, even when the worker stops,
     /// so a load always ends and Refresh Inbox becomes available again.
-    pub fn load_inbox(
+    pub(crate) fn load_inbox(
         &self,
-        access: ImapAccess,
-        provider: MailProvider,
+        kind: LoadKind,
         on_finished: impl FnOnce(LoadOutcome) + 'static,
     ) -> LoadHandle {
         let (cancel, cancelled) = async_channel::bounded(1);
         let (sender, outcome) = async_channel::bounded(1);
         let request = LoadRequest {
-            access,
-            provider,
+            kind,
             cancelled,
             outcome: sender,
         };
@@ -100,8 +104,7 @@ fn run_worker(requests: &async_channel::Receiver<LoadRequest>) {
         .with_thread_default(|| {
             context.block_on(async {
                 while let Ok(request) = requests.recv().await {
-                    let outcome =
-                        run_load(request.access, request.provider, &request.cancelled).await;
+                    let outcome = run_load(request.kind, &request.cancelled).await;
                     request.outcome.try_send(outcome).ok();
                 }
             });
@@ -110,18 +113,15 @@ fn run_worker(requests: &async_channel::Receiver<LoadRequest>) {
 }
 
 /// Runs one provider's load until it finishes or the caller cancels it.
-async fn run_load(
-    access: ImapAccess,
-    provider: MailProvider,
-    cancelled: &async_channel::Receiver<()>,
-) -> LoadOutcome {
-    // The provider is read once, here, to choose the sequence; neither
-    // sequence asks about it again (004 plan, decision D1).
+async fn run_load(kind: LoadKind, cancelled: &async_channel::Receiver<()>) -> LoadOutcome {
+    // The kind is read once, here, to choose the sequence; no sequence asks
+    // about the provider again (004 plan, decision D1).
     let mut load = Box::pin(async move {
-        match provider {
-            MailProvider::GenericImap => load_imap_inbox(access).await,
-            MailProvider::Gmail => load_gmail_inbox(access).await,
+        match kind {
+            LoadKind::GenericImap(access) => load_imap_inbox(access).await,
+            LoadKind::Gmail(access) => load_gmail_inbox(access).await,
         }
+        .map_err(LoadFailure::Server)
     });
     match future::select(&mut load, pin!(cancelled.recv())).await {
         Either::Left((Ok(batch), _)) => LoadOutcome::Loaded(batch),

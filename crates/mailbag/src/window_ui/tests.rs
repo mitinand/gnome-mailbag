@@ -19,27 +19,27 @@ fn rejected_sign_in(code: Option<&str>, text: &str) -> LoadFailure {
 fn every_failed_step_names_itself() {
     let cases = [
         (
-            LoadFailure::OnlineAccounts(ImapAccessError::Settings),
+            LoadFailure::OnlineAccounts(AccessError::Settings),
             "Mail settings unavailable",
             "IMAP settings",
         ),
         (
-            LoadFailure::OnlineAccounts(ImapAccessError::NoEncryption),
+            LoadFailure::OnlineAccounts(AccessError::NoEncryption),
             "No encryption configured",
             "No password was requested",
         ),
         (
-            LoadFailure::OnlineAccounts(ImapAccessError::Password),
+            LoadFailure::OnlineAccounts(AccessError::Password),
             "Password unavailable",
             "No server sign-in was attempted",
         ),
         (
-            LoadFailure::OnlineAccounts(ImapAccessError::AccessToken),
+            LoadFailure::OnlineAccounts(AccessError::AccessToken),
             "Authorization unavailable",
             "this account's authorization from Online Accounts",
         ),
         (
-            LoadFailure::OnlineAccounts(ImapAccessError::Timeout),
+            LoadFailure::OnlineAccounts(AccessError::Timeout),
             "Online Accounts did not respond",
             "in time",
         ),
@@ -153,6 +153,14 @@ fn server_and_alert_text_reach_the_page_as_bounded_plain_text() {
     assert!(!explanation.contains('\0'));
     // Only the server's own text is bounded; the step sentences stay whole.
     assert!(explanation.len() < 66_000, "{}", explanation.len());
+}
+
+#[test]
+fn further_messages_on_offer_are_noticed_without_claiming_a_failure() {
+    assert_eq!(
+        incomplete_list_notice(Some("Work".to_owned()), &IncompleteList::MoreAvailable),
+        "Not all messages in Work were loaded: the mail service offered more than one request holds."
+    );
 }
 
 #[test]

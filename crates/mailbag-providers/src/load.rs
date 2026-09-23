@@ -4,7 +4,9 @@
 //! The steps every provider's load shares: opening an account on the server,
 //! and turning a message list into a batch the reader can show.
 
-use crate::batch::{ReceivedBatch, ReceivedContent, ReceivedMessage, ServerFailure};
+use crate::batch::{
+    IncompleteList, MessageIdentity, ReceivedBatch, ReceivedContent, ReceivedMessage, ServerFailure,
+};
 use goa_adapter::{AccountId, ImapAccess, ImapCredential, ImapEncryption};
 use mailbag_content::{
     ContentExplanation, MimePart, TextSelection, decode_display_fields, decode_text_part,
@@ -89,7 +91,7 @@ pub(crate) async fn load_batch_from_rows(
                 },
             };
             Some(ReceivedMessage {
-                uid: row.uid,
+                identity: MessageIdentity::ImapUid(row.uid),
                 fields: tracing::debug_span!("message", uid = row.uid)
                     .in_scope(|| decode_display_fields(&row.list_headers)),
                 internal_date: row.internal_date,
@@ -109,7 +111,7 @@ pub(crate) async fn load_batch_from_rows(
         account_id,
         uid_validity: reader.uid_validity(),
         messages,
-        list_refusal: listed.refusal,
+        incomplete: listed.refusal.map(IncompleteList::ServerRefused),
     })
 }
 

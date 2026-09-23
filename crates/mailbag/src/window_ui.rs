@@ -13,9 +13,11 @@ use crate::accounts::mail_provider;
 use crate::inbox::{AccountInbox, InboxController};
 use crate::mail_ui::{MailUi, inert_text, show_inert_text};
 use adw::{gio, gtk, prelude::*};
-use goa_adapter::{AccountId, AccountProvider, AccountUpdate, ImapAccessError};
-use mailbag_imap::{ImapFailure, ImapStep, ServerReply};
-use mailbag_providers::{LoadFailure, LoadResult, LoadsInbox, MailProvider, ServerFailure};
+use goa_adapter::{AccessError, AccountId, AccountProvider, AccountUpdate};
+use mailbag_imap::{ImapFailure, ImapStep};
+use mailbag_providers::{
+    IncompleteList, LoadFailure, LoadResult, LoadsInbox, MailProvider, ServerFailure,
+};
 use std::{cell::RefCell, rc::Rc};
 
 pub struct WindowUi {
@@ -146,13 +148,13 @@ impl WindowUi {
     }
 
     fn finish_load(&self, account_id: &AccountId, result: LoadResult) {
-        // A short list explains nothing by itself, so the refusal that caused
-        // it is said once, as the load ends.
+        // A short list explains nothing by itself, so its reason is said once,
+        // as the load ends.
         if let LoadResult::Received(batch) = &result
-            && let Some(refusal) = &batch.list_refusal
+            && let Some(incomplete) = &batch.incomplete
         {
             let accounts = self.accounts.borrow();
-            let notice = incomplete_list_notice(accounts.label_of(account_id), refusal);
+            let notice = incomplete_list_notice(accounts.label_of(account_id), incomplete);
             accounts.show_toast(&notice);
         }
         self.inboxes.borrow_mut().finish_load(account_id, result);
@@ -235,15 +237,20 @@ impl MailStatus {
 
 /// The server refused to finish the message list, so messages are missing from
 /// the batch that is now on screen.
-fn incomplete_list_notice(account: Option<String>, refusal: &ServerReply) -> String {
+fn incomplete_list_notice(account: Option<String>, incomplete: &IncompleteList) -> String {
     let where_from = match account {
         Some(label) => format!("in {label}"),
         None => "in this account".to_owned(),
     };
-    format!(
-        "Some messages {where_from} could not be loaded. The mail server said: {}",
-        inert_text(&refusal.text)
-    )
+    match incomplete {
+        IncompleteList::ServerRefused(refusal) => format!(
+            "Some messages {where_from} could not be loaded. The mail server said: {}",
+            inert_text(&refusal.text)
+        ),
+        IncompleteList::MoreAvailable => format!(
+            "Not all messages {where_from} were loaded: the mail service offered more than one request holds."
+        ),
+    }
 }
 
 /// Nothing has been loaded for this account in this run, which never means an
@@ -270,33 +277,33 @@ fn failure_status(failure: &LoadFailure) -> MailStatus {
     }
 }
 
-fn online_accounts_status(error: ImapAccessError) -> MailStatus {
+fn online_accounts_status(error: AccessError) -> MailStatus {
     match error {
-        ImapAccessError::Settings => MailStatus::explained(
+        AccessError::Settings => MailStatus::explained(
             "Mail settings unavailable",
             "Unable to get this account's IMAP settings from Online Accounts.",
         ),
-        ImapAccessError::NoEncryption => MailStatus::explained(
+        AccessError::NoEncryption => MailStatus::explained(
             "No encryption configured",
             "This account has no encryption configured. Choose SSL or STARTTLS for it in Online \
              Accounts. No password was requested and no connection was made.",
         ),
-        ImapAccessError::Password => MailStatus::explained(
+        AccessError::Password => MailStatus::explained(
             "Password unavailable",
             "Unable to get this account's password from Online Accounts. No server sign-in was \
              attempted.",
         ),
-        ImapAccessError::AccessToken => MailStatus::explained(
+        AccessError::AccessToken => MailStatus::explained(
             "Authorization unavailable",
             "Unable to get this account's authorization from Online Accounts. No server sign-in \
              was attempted.",
         ),
-        ImapAccessError::Timeout => MailStatus::explained(
+        AccessError::Timeout => MailStatus::explained(
             "Online Accounts did not respond",
             "Online Accounts did not respond in time. Try Refresh Inbox again.",
         ),
         // A cancelled request ends the load without a failure to explain.
-        ImapAccessError::Cancelled => MailStatus::explained(
+        AccessError::Cancelled => MailStatus::explained(
             "Mail could not be loaded",
             "Loading this Inbox stopped. Try Refresh Inbox again.",
         ),

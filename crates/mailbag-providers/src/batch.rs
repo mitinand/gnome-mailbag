@@ -4,7 +4,7 @@
 //! What one load delivered, and how a load that failed is described. These
 //! types cross from the mail worker to whatever shows the mail.
 
-use goa_adapter::{AccountId, ImapAccessError};
+use goa_adapter::{AccessError, AccountId};
 use mailbag_content::{ContentExplanation, DisplayFields};
 use mailbag_imap::{GmailRow, ImapError, ImapFailure, ServerReply};
 use std::fmt;
@@ -16,14 +16,22 @@ pub struct ReceivedBatch {
     pub uid_validity: Option<u32>,
     /// Newest first, at most 100.
     pub messages: Vec<ReceivedMessage>,
-    /// What the server said when it refused to finish the message list, which
-    /// means messages are missing from this batch. `None` when it is complete.
-    pub list_refusal: Option<ServerReply>,
+    /// Why messages are missing from this batch. `None` when it is complete.
+    pub incomplete: Option<IncompleteList>,
+}
+
+/// Why a batch holds fewer messages than the Inbox offered.
+#[derive(Clone, PartialEq, Eq)]
+pub enum IncompleteList {
+    /// The server refused to finish the message list; this is what it said.
+    ServerRefused(ServerReply),
+    /// The mail service offered further messages beyond the one request.
+    MoreAvailable,
 }
 
 /// One message of a batch. Raw MIME is released once it is decoded.
 pub struct ReceivedMessage {
-    pub uid: u32,
+    pub identity: MessageIdentity,
     pub fields: DisplayFields,
     /// INTERNALDATE as seconds since the Unix epoch.
     pub internal_date: Option<i64>,
@@ -31,6 +39,15 @@ pub struct ReceivedMessage {
     pub content: ReceivedContent,
     /// Gmail's own identifier and labels; `None` for every other provider.
     pub gmail: Option<GmailRow>,
+}
+
+/// How the message's provider identifies it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MessageIdentity {
+    /// The IMAP UID, valid with the batch's `uid_validity`.
+    ImapUid(u32),
+    /// Microsoft Graph's identifier, which survives moves between folders.
+    GraphImmutableId(String),
 }
 
 /// The text of a message, or why the reader shows none.
@@ -44,7 +61,7 @@ pub enum ReceivedContent {
 #[derive(Clone, PartialEq, Eq)]
 pub enum LoadFailure {
     /// Online Accounts did not give the settings or the credential.
-    OnlineAccounts(ImapAccessError),
+    OnlineAccounts(AccessError),
     /// The connection, the sign-in or the transfer failed.
     Server(ServerFailure),
     /// The mail worker stopped without a result.
@@ -102,10 +119,7 @@ impl fmt::Debug for ReceivedBatch {
             .debug_struct("ReceivedBatch")
             .field("account_id", &self.account_id)
             .field("uid_validity", &self.uid_validity)
-            .field(
-                "list_refusal",
-                &self.list_refusal.as_ref().map(|reply| &reply.code),
-            )
+            .field("incomplete", &self.incomplete)
             .field("messages", &self.messages)
             .finish()
     }
@@ -115,10 +129,19 @@ impl fmt::Debug for ReceivedMessage {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ReceivedMessage")
-            .field("uid", &self.uid)
+            .field("identity", &self.identity)
             .field("seen", &self.seen)
             .field("content", &self.content)
             .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for IncompleteList {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ServerRefused(reply) => write!(formatter, "ServerRefused({:?})", reply.code),
+            Self::MoreAvailable => write!(formatter, "MoreAvailable"),
+        }
     }
 }
 

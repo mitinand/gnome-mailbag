@@ -159,7 +159,7 @@ impl MailUi {
         let message = &listed.batch.messages[listed.position];
         tracing::debug!(
             account = listed.batch.account_id.as_str(),
-            uid = message.uid,
+            identity = ?message.identity,
             "message opened"
         );
         show_inert_text(&self.reader_subject, &subject_text(&message.fields));

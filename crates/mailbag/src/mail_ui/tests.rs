@@ -4,12 +4,13 @@
 use super::*;
 use crate::window_ui::WindowUi;
 use goa_adapter::{
-    AccountCheckError, AccountCheckResult, AccountDetails, AccountId, AccountProvider,
-    AccountUpdate, ErrorCause, ImapAccessError,
+    AccessError, AccountCheckError, AccountCheckResult, AccountDetails, AccountId, AccountProvider,
+    AccountUpdate, ErrorCause,
 };
 use mailbag_imap::{ImapFailure, ImapStep, ServerReply};
 use mailbag_providers::{
-    CancelsLoadOnDrop, LoadFailure, LoadResult, LoadsInbox, MailProvider, ServerFailure,
+    CancelsLoadOnDrop, IncompleteList, LoadFailure, LoadResult, LoadsInbox, MailProvider,
+    MessageIdentity, ServerFailure,
 };
 use std::{
     cell::Cell,
@@ -143,10 +144,10 @@ fn batch_with_two_messages(account_id: &AccountId) -> ReceivedBatch {
     ReceivedBatch {
         account_id: account_id.clone(),
         uid_validity: Some(7),
-        list_refusal: None,
+        incomplete: None,
         messages: vec![
             ReceivedMessage {
-                uid: 20,
+                identity: MessageIdentity::ImapUid(20),
                 fields: DisplayFields {
                     subject: Some("Second subject".to_owned()),
                     from: Some("Second sender".to_owned()),
@@ -158,7 +159,7 @@ fn batch_with_two_messages(account_id: &AccountId) -> ReceivedBatch {
                 gmail: None,
             },
             ReceivedMessage {
-                uid: 10,
+                identity: MessageIdentity::ImapUid(10),
                 fields: DisplayFields {
                     subject: Some("First subject".to_owned()),
                     from: Some("First sender".to_owned()),
@@ -183,11 +184,11 @@ fn unwrapped_and_ordinary_batch(account_id: &AccountId) -> ReceivedBatch {
     ReceivedBatch {
         account_id: account_id.clone(),
         uid_validity: Some(7),
-        list_refusal: None,
+        incomplete: None,
         messages: (1..)
             .zip(bodies)
             .map(|(number, (subject, body))| ReceivedMessage {
-                uid: number * 10,
+                identity: MessageIdentity::ImapUid(number * 10),
                 fields: DisplayFields {
                     subject: Some(subject.to_owned()),
                     from: Some("Long sender".to_owned()),
@@ -513,10 +514,10 @@ fn mail_ui_transitions() {
     dispatch_pending();
     let mut short_batch = batch_with_two_messages(&generic);
     short_batch.messages.pop();
-    short_batch.list_refusal = Some(ServerReply {
+    short_batch.incomplete = Some(IncompleteList::ServerRefused(ServerReply {
         code: None,
         text: "Some messages could not be FETCHed".to_owned(),
-    });
+    }));
     loader.report(LoadResult::Received(short_batch));
     dispatch_pending();
     assert_eq!(widgets.rows().len(), 1);
@@ -584,7 +585,7 @@ fn mail_ui_transitions() {
 
     // A settings failure Online Accounts reports at once still ends the load.
     *loader.result_at_once.borrow_mut() = Some(LoadResult::Failed(LoadFailure::OnlineAccounts(
-        ImapAccessError::Settings,
+        AccessError::Settings,
     )));
     refresh.activate(None);
     dispatch_pending();

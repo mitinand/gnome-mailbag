@@ -3,10 +3,10 @@
 
 use super::*;
 use crate::logging::{LogLevel, capture::start_record};
-use goa_adapter::ImapAccessError;
+use goa_adapter::AccessError;
 use mailbag_content::DisplayFields;
 use mailbag_imap::{ImapFailure, ImapStep, ServerReply};
-use mailbag_providers::{ReceivedMessage, ServerFailure};
+use mailbag_providers::{MessageIdentity, ReceivedMessage, ServerFailure};
 use std::cell::Cell;
 
 fn account(name: &str) -> AccountId {
@@ -17,11 +17,11 @@ fn batch_of(account_id: &AccountId, uids: &[u32]) -> ReceivedBatch {
     ReceivedBatch {
         account_id: account_id.clone(),
         uid_validity: Some(1),
-        list_refusal: None,
+        incomplete: None,
         messages: uids
             .iter()
             .map(|uid| ReceivedMessage {
-                uid: *uid,
+                identity: MessageIdentity::ImapUid(*uid),
                 fields: DisplayFields::default(),
                 internal_date: None,
                 seen: false,
@@ -54,7 +54,14 @@ fn counted_step(cancellations: &Rc<Cell<usize>>) -> Box<dyn CancelsLoadOnDrop> {
 
 fn received_uids(inbox: Option<&AccountInbox>) -> Vec<u32> {
     match inbox {
-        Some(AccountInbox::Received(batch)) => batch.messages.iter().map(|m| m.uid).collect(),
+        Some(AccountInbox::Received(batch)) => batch
+            .messages
+            .iter()
+            .map(|message| match &message.identity {
+                MessageIdentity::ImapUid(uid) => *uid,
+                other => panic!("not an IMAP message: {other:?}"),
+            })
+            .collect(),
         other => panic!("the account shows no batch: {other:?}"),
     }
 }
@@ -213,7 +220,7 @@ fn discarding_received_mail_of_an_account_no_longer_shown_is_recorded() {
 
 fn message_with(uid: u32, content: ReceivedContent) -> ReceivedMessage {
     ReceivedMessage {
-        uid,
+        identity: MessageIdentity::ImapUid(uid),
         fields: DisplayFields::default(),
         internal_date: None,
         seen: false,
@@ -231,10 +238,10 @@ fn unreadable_content_and_a_refused_list_each_warn_without_server_text() {
     let batch = ReceivedBatch {
         account_id: loaded.clone(),
         uid_validity: Some(1),
-        list_refusal: Some(ServerReply {
+        incomplete: Some(IncompleteList::ServerRefused(ServerReply {
             code: Some("LIMIT".to_owned()),
             text: "private refusal text".to_owned(),
-        }),
+        })),
         messages: vec![
             message_with(30, ReceivedContent::Text("Text".to_owned())),
             // Not supported by design, so counted at info and not warned about.
@@ -284,7 +291,7 @@ fn each_failed_load_is_one_error_line_naming_its_cause() {
             "cause=InboxChanged",
         ),
         (
-            LoadFailure::OnlineAccounts(ImapAccessError::Timeout),
+            LoadFailure::OnlineAccounts(AccessError::Timeout),
             "cause=Timeout",
         ),
         (LoadFailure::WorkerStopped, r#"cause="WorkerStopped""#),
