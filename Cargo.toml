@@ -5,6 +5,7 @@ members = [
     "crates/mailbag-imap",
     "crates/mailbag-content",
     "crates/mailbag-providers",
+    "crates/mailbag-graph",
 ]
 default-members = ["crates/mailbag"]
 resolver = "3"
