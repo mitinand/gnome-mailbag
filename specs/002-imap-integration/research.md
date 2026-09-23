@@ -340,7 +340,8 @@ until the second provider; feature 004 moves them into `mailbag-providers`.
 | `goa-adapter` | glib, gio | gtk, libadwaita |
 | `mailbag-imap` | glib, gio, async-imap, imap-proto | gtk, libadwaita, mail-parser, `mailbag-content` |
 | `mailbag-content` | mail-parser | gtk, libadwaita, glib, gio, `mailbag-imap` |
-| `mailbag-providers` (added by [004](../004-gmail-integration/plan.md), 2026-09-23) | glib, gio, goa-adapter, mailbag-imap, mailbag-content | gtk, libadwaita, `mailbag` |
+| `mailbag-providers` (added by [004](../004-gmail-integration/plan.md), 2026-09-23) | glib, gio, goa-adapter, mailbag-imap, mailbag-content, mailbag-graph (since 005) | gtk, libadwaita, `mailbag` |
+| `mailbag-graph` (added by [005](../005-microsoft-graph-integration/plan.md), 2026-09-23) | glib, gio, soup3, serde_json | gtk, libadwaita, mail-parser, `mailbag-imap`, `mailbag-content`, `mailbag-providers`, `mailbag` |
 
 No crate depends on `mailbag`. The rules are the dependency lists themselves, so
 a forbidden call does not compile; `scripts/check.sh` inspects `cargo tree` so a

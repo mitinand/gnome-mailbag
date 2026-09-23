@@ -264,6 +264,8 @@ server reason and are shown the way 002 shows any refusal (see Assumptions).
   what the IMAP integration records for a load.
 - **FR-009 — UI for verification**: Refresh Inbox MUST become available for a
   selected Google account and remain unavailable for Microsoft 365 accounts.
+  *Amended 2026-09-23 by [Microsoft 365 integration](../005-microsoft-graph-integration/spec.md):
+  Microsoft 365 accounts become eligible under that feature's rules.*
   The approved layout, adaptive behaviour and accessibility are preserved; no
   Gmail-specific widget, column or wording is added. The wording changes are
   the sign-in sentence of FR-002, which serves every provider, the explanation
