@@ -43,7 +43,7 @@ pub enum ReceivedContent {
 /// Why a refresh delivered no mail, at the step where it stopped.
 #[derive(Clone, PartialEq, Eq)]
 pub enum LoadFailure {
-    /// Online Accounts did not give the settings or the password.
+    /// Online Accounts did not give the settings or the credential.
     OnlineAccounts(ImapAccessError),
     /// The connection, the sign-in or the transfer failed.
     Server(ServerFailure),

@@ -28,7 +28,7 @@ use goa_adapter::{AccountId, GoaAdapter, ImapAccessError, ImapAccessRequest};
 use std::{cell::RefCell, rc::Rc};
 
 /// Which load sequence an account needs. The window turns the account's
-/// provider into this; no provider name reaches the crates below.
+/// `AccountProvider` into this; that type does not reach this crate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MailProvider {
     GenericImap,
@@ -61,7 +61,7 @@ pub trait LoadsInbox {
     ) -> Box<dyn CancelsLoadOnDrop>;
 }
 
-/// Loads an Inbox with the account's Online Accounts settings and password,
+/// Loads an Inbox with the account's Online Accounts settings and credential,
 /// and the mail worker that speaks to the server.
 pub struct MailLoader {
     accounts: GoaAdapter,
@@ -93,7 +93,7 @@ impl LoadsInbox for MailLoader {
                 Ok(access) => {
                     tracing::info!(
                         encryption = ?access.encryption,
-                        "Online Accounts gave the settings and password"
+                        "Online Accounts gave the settings and credential"
                     );
                     let transfer = worker.load_inbox(access, provider, move |outcome| {
                         report(load_result(outcome))

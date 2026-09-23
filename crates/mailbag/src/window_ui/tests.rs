@@ -115,7 +115,7 @@ fn a_rejected_sign_in_points_to_the_sign_in_only_when_the_server_blames_it() {
         );
         assert!(status.explanation.contains("Invalid credentials"));
     }
-    // A temporary server problem says nothing about the password.
+    // A temporary server problem says nothing about the credential.
     let status = failure_status(&rejected_sign_in(
         Some("UNAVAILABLE"),
         "Service temporarily unavailable",

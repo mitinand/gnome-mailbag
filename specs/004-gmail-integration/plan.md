@@ -2,8 +2,8 @@
 
 **Branch**: `claude/gmail` | **Feature**: `004-gmail-integration`
 **Date**: 2026-09-23 | **Spec**: [spec.md](spec.md)
-**Status**: Draft for maintainer review; revised 2026-09-23 after the plan
-challenge (see the last section). The goa-adapter contract amendment below
+**Status**: Implemented on `claude/gmail` and accepted live by the maintainer
+2026-09-23; revised 2026-09-23 after the plan challenge (see the last section). The goa-adapter contract amendment below
 was approved on 2026-09-23; tasks are in [tasks.md](tasks.md).
 
 ## Size

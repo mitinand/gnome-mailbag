@@ -9,8 +9,8 @@ use crate::{
 use async_imap::{
     Authenticator, Client, Session,
     error::{Error, StatusResponse},
-    imap_proto::{self, Response, ResponseCode, Status},
-    types::{Capabilities, Capability, UnsolicitedResponse},
+    imap_proto::{Response, ResponseCode, Status},
+    types::{Capability, UnsolicitedResponse},
 };
 use std::{borrow::Cow, collections::HashMap, io};
 
@@ -98,8 +98,9 @@ impl ServerNotices {
             // know which arrived. Gmail sends its full list only after sign-in
             // (research.md §2, §4).
             Response::Capabilities(announced) => {
+                let announced: Vec<Capability> = announced.iter().map(Capability::from).collect();
                 tracing::debug!(
-                    names = announced_names(announced),
+                    names = capability_names(&announced),
                     "the server announced capabilities or enabled extensions"
                 );
                 return;
@@ -286,7 +287,7 @@ async fn sign_in(
     });
     let capabilities = capabilities.map_err(|error| command_failure(ImapStep::SignIn, &error))?;
     tracing::info!(
-        capabilities = capability_names(&capabilities),
+        capabilities = capability_names(capabilities.iter()),
         "server capabilities"
     );
     let (method, signed_in) = match &account.credential {
@@ -331,27 +332,14 @@ async fn sign_in(
     }
 }
 
-/// The capability list as the server named it, for the record.
-fn capability_names(capabilities: &Capabilities) -> String {
+/// A capability list as the server named it, for the record.
+fn capability_names<'a>(capabilities: impl IntoIterator<Item = &'a Capability>) -> String {
     capabilities
-        .iter()
+        .into_iter()
         .map(|capability| match capability {
             Capability::Imap4rev1 => "IMAP4rev1".to_owned(),
             Capability::Auth(mechanism) => format!("AUTH={mechanism}"),
             Capability::Atom(name) => name.clone(),
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-/// The names of an untagged list the server sent on its own.
-fn announced_names(announced: &[imap_proto::Capability<'_>]) -> String {
-    announced
-        .iter()
-        .map(|name| match name {
-            imap_proto::Capability::Imap4rev1 => "IMAP4rev1".to_owned(),
-            imap_proto::Capability::Auth(mechanism) => format!("AUTH={mechanism}"),
-            imap_proto::Capability::Atom(name) => name.to_string(),
         })
         .collect::<Vec<_>>()
         .join(" ")

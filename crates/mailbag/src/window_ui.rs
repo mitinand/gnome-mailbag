@@ -339,9 +339,9 @@ fn server_status(failure: &ServerFailure) -> MailStatus {
     }
 }
 
-/// A rejected sign-in points to the password only when the server blamed the
+/// A rejected sign-in points to the sign-in only when the server blamed the
 /// credentials or gave no code; another code, such as a temporary
-/// UNAVAILABLE, says nothing about the password.
+/// UNAVAILABLE, says nothing about the credential.
 fn credential_may_be_wrong(failure: &ServerFailure) -> bool {
     if failure.failure != ImapFailure::Failed(ImapStep::SignIn) {
         return false;

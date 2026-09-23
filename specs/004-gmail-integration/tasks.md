@@ -1,7 +1,7 @@
 # Tasks: Gmail Integration
 
 **Feature**: F04 / `004-gmail-integration`
-**Created**: 2026-09-23 · **Branch**: `claude/gmail` · **Status**: Portions 1–4 built; portion 4 awaits review and live acceptance
+**Created**: 2026-09-23 · **Branch**: `claude/gmail` · **Status**: Complete. Portions 1–4 built, reviewed, simplified and accepted live by the maintainer on 2026-09-23
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table,
 boundaries and portions, [research](research.md) owns decisions and probe
@@ -91,8 +91,8 @@ then live acceptance per quickstart.md.
 - [X] T023 [US1] [US3] In crates/mailbag/src/accounts.rs add `mail_provider(provider: AccountProvider) -> Option<MailProvider>` (ImapSmtp → GenericImap, Google → Gmail, others → None) and use it in crates/mailbag/src/window_ui.rs for `refreshable_account`, the Refresh Inbox sensitivity, `nothing_loaded_status` (the "Choose Refresh Inbox…" hint for both loadable providers) and the `start_load` call; replace "You can change this account's password in Online Accounts." with "Check this account's sign-in in Online Accounts."; update `ScriptedLoader` in crates/mailbag/src/mail_ui/tests.rs for the new signature; add window tests: a Google account is refreshable and a Microsoft 365 account is not; a refused sign-in shows the new sentence.
 - [X] T024 [US1] [US4] Add tests in crates/mailbag-providers/src/tests.rs with the scripted server and a token: the Gmail load publishes a batch whose messages carry the fixture's `GmailRow` values; the transcript has `ENABLE UTF8=ACCEPT` and `ID` after sign-in and before the row FETCH and no LOGIN; the record at debug has the message identifiers and labels and not the token; a Generic IMAP load's transcript has neither ENABLE nor ID and its messages have `gmail: None`.
 - [X] T025 [US2] Confirm by the moved tests and one Gmail test that text acquisition is unchanged for Gmail: the same part requests and the same content explanations for a fixture with plain, HTML-only and attachment messages loaded through `load_gmail_inbox`.
-- [ ] T026 STOP: run `cargo test --workspace` and ./scripts/check.sh; run ./scripts/build-flatpak.sh and confirm that the Flatpak manifest and its permissions are unchanged (FR-010); run the live acceptance of quickstart.md on the maintainer's Google account (SC-001–008), including the record comparison with the web interface and the revocation steps, and record what was verified live and what only by tests; run git diff --check; compare the whole feature with plan.md's size table; review constitution I/II over the whole feature; report, suggest the commit and the PR description, and wait.
-- [ ] T027 After the last portion is accepted, run the `simplify-review` skill in a fresh subagent on the branch diff against main; bring findings that would add scope to the maintainer with alternatives and costs; apply only what the maintainer approves.
+- [X] T026 STOP: run `cargo test --workspace` and ./scripts/check.sh; run ./scripts/build-flatpak.sh and confirm that the Flatpak manifest and its permissions are unchanged (FR-010); run the live acceptance of quickstart.md on the maintainer's Google account (SC-001–008), including the record comparison with the web interface and the revocation steps, and record what was verified live and what only by tests; run git diff --check; compare the whole feature with plan.md's size table; review constitution I/II over the whole feature; report, suggest the commit and the PR description, and wait. Live acceptance done by the maintainer on 2026-09-23.
+- [X] T027 After the last portion is accepted, run the `simplify-review` skill in a fresh subagent on the branch diff against main; bring findings that would add scope to the maintainer with alternatives and costs; apply only what the maintainer approves. Done 2026-09-23: applied one credential-reply parser table (F4), one capability formatter (F5), the corrected crate doc line (F7) and a synthetic contact address in the protocol test; the rest kept by the maintainer's decision.
 
 ## Dependencies
 
@@ -115,3 +115,7 @@ Each portion is one reviewable commit. Portions 1 and 2 add capabilities
 nothing uses yet, so Mailbag's behaviour is unchanged until portion 4; that
 keeps the move in portion 3 free of behaviour changes. Live acceptance
 happens once, at the end, on the maintainer's account.
+
+## Phase 6: Convergence
+
+- [X] T028 Amend specs/004-gmail-integration/spec.md FR-007 and its acceptance scenario US4-3 so that the specification names the five identification fields the code sends (`name`, `version`, `vendor`, `contact`, `support-url`) and records the maintainer's decision of 2026-09-23 to include a contact address, as plan.md and research.md §6 already do, per FR-007 (unrequested)

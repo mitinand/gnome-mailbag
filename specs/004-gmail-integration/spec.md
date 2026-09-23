@@ -3,7 +3,7 @@
 **Feature**: `004-gmail-integration`
 **Created**: 2026-09-22
 **Revised**: 2026-09-23 after the specification challenge
-**Status**: Draft
+**Status**: Approved and implemented on `claude/gmail`; live acceptance by the maintainer 2026-09-23
 **Input**: On an explicit refresh, load recent Inbox message metadata and
 plain-text body parts of the selected Google account into memory, the way
 [IMAP integration](../002-imap-integration/spec.md) does for a Generic IMAP
@@ -53,7 +53,10 @@ provider (FR-006). Technical mechanisms and concrete limits belong to the plan.
 - Q: Where are Gmail's mechanisms visible at this stage? → A: In the record at
   debug only. No widget, column or wording is added to the window.
 - Q: Does Mailbag identify itself to Gmail? → A: Yes; Google asks clients to,
-  and it is one command.
+  and it is one command. Decided during implementation (2026-09-23): the
+  identification carries the fields Google's example asks for, `name`,
+  `version`, `vendor` and `contact`, plus `support-url`; the contact is the
+  maintainer's address.
 - Q: Where do the two providers' load sequences live? → A: In a provider layer
   of their own, outside the window code; the plan describes the structure.
 
@@ -173,7 +176,9 @@ user label whose name is not in Latin letters.
    the record, **then** it is readable text, not an encoded form.
 3. **Given** a load at debug, **when** the session is established, **then** the
    record shows the capabilities Gmail announced, the name, vendor and version
-   Gmail gave for its server, and Gmail's answer to the readable-name offer.
+   Gmail gave for its server, that Mailbag sent its name, version, vendor,
+   contact and support address, and Gmail's answer to the readable-name
+   offer.
 4. **Given** the same message opened in the Gmail web interface, **when** its
    identifier is compared with the record, **then** they refer to the same
    message (the web interface shows the identifier in hexadecimal, the record
@@ -244,8 +249,9 @@ server reason and are shown the way 002 shows any refusal (see Assumptions).
   logic lives in one place outside the window code; the structure is
   described in the plan.
 - **FR-007 — Client identification**: Because Google asks IMAP clients to
-  identify themselves, Mailbag MUST announce its name and version to Gmail
-  after sign-in through the standard identification command and MUST record
+  identify themselves and to leave a contact, Mailbag MUST announce its name,
+  version, vendor, contact address and support address to Gmail after sign-in
+  through the standard identification command and MUST record
   the name, vendor and version the server gives in return, at debug, and
   nothing else from that reply: Gmail's reply also carries the client's
   address and a connection token. A refused identification MUST NOT fail the

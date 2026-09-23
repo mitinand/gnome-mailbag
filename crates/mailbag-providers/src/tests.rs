@@ -345,7 +345,7 @@ fn a_batch_short_of_a_refused_message_says_why() {
 }
 
 /// Manual acceptance of the whole chain against a running `serve_fixture`:
-/// the real Online Accounts service provides the settings and password, and
+/// the real Online Accounts service provides the settings and credential, and
 /// the host's trust store decides the connection, see quickstart.md:
 /// `MAILBAG_TEST_ACCOUNT_ID=account_… cargo test --locked -p mailbag online_accounts -- --ignored --nocapture`
 ///
@@ -385,7 +385,7 @@ fn online_accounts_settings_load_the_inbox() {
     }
 }
 
-/// Reads the account's settings and password from Online Accounts, then loads
+/// Reads the account's settings and credential from Online Accounts, then loads
 /// its Inbox on the mail worker, as Refresh Inbox does. An account Online
 /// Accounts cannot give settings for never reaches the worker.
 async fn load_with_online_accounts(

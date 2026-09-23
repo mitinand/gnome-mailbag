@@ -36,7 +36,7 @@ fn gmail_options() -> OpenOptions {
             name: "Mailbag".to_owned(),
             version: "0.1.0-dev".to_owned(),
             vendor: "Andrey Mitin".to_owned(),
-            contact: "mitin.andrey@outlook.com".to_owned(),
+            contact: "tests@mailbag.invalid".to_owned(),
             support_url: "https://github.com/mitinand/gnome-mailbag".to_owned(),
         }),
     }
@@ -134,7 +134,7 @@ fn the_identification_reply_reaches_the_record_without_its_private_fields() {
             sent,
             concat!(
                 r#"("name" "Mailbag" "version" "0.1.0-dev" "#,
-                r#""vendor" "Andrey Mitin" "contact" "mitin.andrey@outlook.com" "#,
+                r#""vendor" "Andrey Mitin" "contact" "tests@mailbag.invalid" "#,
                 r#""support-url" "https://github.com/mitinand/gnome-mailbag")"#
             ),
             "refused: {refused}"

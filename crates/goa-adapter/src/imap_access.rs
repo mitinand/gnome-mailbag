@@ -73,7 +73,7 @@ impl Drop for ImapAccessRequest {
 }
 
 impl GoaAdapter {
-    /// Reads the current IMAP settings and password of one account for a load.
+    /// Reads the current IMAP settings and credential of one account for a load.
     ///
     /// Call on the adapter's GLib context; `on_complete` runs on it exactly
     /// once, also after `cancel()` or dropping the request. Without the
@@ -121,7 +121,6 @@ struct ImapSettings {
 /// Which interface of the account's object holds its credential. GOA's own
 /// data model decides this, not the provider type: a Google account exports
 /// OAuth2Based and no PasswordBased (004 research §1).
-#[derive(Clone, Copy)]
 enum CredentialInterface {
     OAuth2Based,
     PasswordBased,
@@ -155,23 +154,25 @@ impl AccessAttempt {
     /// Asks the interface the account's object exports for its credential.
     fn read_credential(self, connection: gio::DBusConnection, settings: ImapSettings) {
         let cancellable = self.cancellable.clone();
-        let credential_interface = settings.credential_interface;
-        let (interface, method, arguments, reply_type, step_failure) = match credential_interface {
-            CredentialInterface::OAuth2Based => (
-                OAUTH2_BASED_INTERFACE,
-                "GetAccessToken",
-                None,
-                "(si)",
-                ImapAccessError::AccessToken,
-            ),
-            CredentialInterface::PasswordBased => (
-                PASSWORD_BASED_INTERFACE,
-                "GetPassword",
-                Some((IMAP_PASSWORD_KEY,).to_variant()),
-                "(s)",
-                ImapAccessError::Password,
-            ),
-        };
+        let (interface, method, arguments, reply_type, step_failure, credential_from) =
+            match settings.credential_interface {
+                CredentialInterface::OAuth2Based => (
+                    OAUTH2_BASED_INTERFACE,
+                    "GetAccessToken",
+                    None,
+                    "(si)",
+                    ImapAccessError::AccessToken,
+                    access_token_from as ReplyParser,
+                ),
+                CredentialInterface::PasswordBased => (
+                    PASSWORD_BASED_INTERFACE,
+                    "GetPassword",
+                    Some((IMAP_PASSWORD_KEY,).to_variant()),
+                    "(s)",
+                    ImapAccessError::Password,
+                    password_from as ReplyParser,
+                ),
+            };
         connection.call(
             Some(GOA_BUS_NAME),
             settings.object_path.as_str(),
@@ -190,7 +191,7 @@ impl AccessAttempt {
                         host: settings.host,
                         login: settings.login,
                         encryption: settings.encryption,
-                        credential: credential_from(&reply, credential_interface),
+                        credential: credential_from(&reply),
                     });
                 (self.on_complete)(access);
             },
@@ -198,18 +199,18 @@ impl AccessAttempt {
     }
 }
 
-/// GIO checked the reply against the signature its call asked for. A token's
-/// `expires_in` is discarded: GOA renews a token close to expiry before it
-/// returns one, and a load lasts seconds (004 research §1).
-fn credential_from(reply: &glib::Variant, interface: CredentialInterface) -> ImapCredential {
-    match interface {
-        CredentialInterface::OAuth2Based => {
-            ImapCredential::AccessToken(reply.get::<(String, i32)>().unwrap().0)
-        }
-        CredentialInterface::PasswordBased => {
-            ImapCredential::Password(reply.get::<(String,)>().unwrap().0)
-        }
-    }
+/// Reads the credential out of a reply GIO already checked against the
+/// signature its call asked for.
+type ReplyParser = fn(&glib::Variant) -> ImapCredential;
+
+/// A token's `expires_in` is discarded: GOA renews a token close to expiry
+/// before it returns one, and a load lasts seconds (004 research §1).
+fn access_token_from(reply: &glib::Variant) -> ImapCredential {
+    ImapCredential::AccessToken(reply.get::<(String, i32)>().unwrap().0)
+}
+
+fn password_from(reply: &glib::Variant) -> ImapCredential {
+    ImapCredential::Password(reply.get::<(String,)>().unwrap().0)
 }
 
 /// A D-Bus timeout at either step is Timeout; other errors fail their step.
