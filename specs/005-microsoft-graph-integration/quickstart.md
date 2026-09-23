@@ -41,21 +41,24 @@ Refresh the Microsoft 365 account, quit, then read `ms365.log`:
 
 ## Authorization (SC-003)
 
-1. Sign the account out in Online Accounts (or remove GNOME's access on the
-   Microsoft account's privacy page, "Apps and services").
-2. Refresh the Microsoft 365 account in Mailbag. Expect "The mail service
-   rejected the sign-in" with the service's code and the sentence "Check
-   this account's sign-in in Online Accounts." Until the cached token expires
-   GOA may still hand it out; the refusal then comes from the service, which
-   is the expected outcome. No password prompt appears. Run this refresh at
-   debug as well: the failure line carries the status and the code and no
-   token (SC-006).
+1. Remove GNOME's access on the Microsoft account's privacy page ("Apps and
+   services"). This stops new tokens; a token already issued stays valid
+   until it expires, and GOA keeps handing it out, so refreshes still load
+   mail until then. Ask GOA how long the current token lives (the second
+   value of `GetAccessToken`, never the token itself).
+2. After that time, refresh the Microsoft 365 account in Mailbag. GOA cannot
+   renew the token, so expect "Authorization unavailable" and the account
+   marked for attention; no password prompt appears. Run this refresh at
+   debug as well: the failure line names the cause and carries no token.
 3. Sign in again in Online Accounts. Refresh without restarting Mailbag.
    Expect the batch.
-4. "GOA cannot provide the token" has no reliable live reproduction; the
-   goa-adapter test with the fake bus covers it (GetAccessToken answered with
-   an error, then a hang), and the window test covers the wording. Record
-   this as verified by tests, not live.
+4. A token the service refuses (SC-003, SC-006) has no reliable live
+   reproduction, because GOA does not hand out a token it failed to renew.
+   The service's answer to an invalid token (401,
+   `InvalidAuthenticationToken`) was checked live by the probe in research
+   §5; the scripted service covers the load and the record, and the window
+   test covers the wording. Record this as verified by the probe and by
+   tests, not live.
 
 ## Window (SC-009)
 

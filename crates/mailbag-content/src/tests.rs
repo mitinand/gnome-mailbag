@@ -342,6 +342,12 @@ fn missing_display_fields_leave_the_row_usable() {
     assert_eq!(fields, DisplayFields::default());
 }
 
+#[test]
+fn nobody_to_name_gives_no_display_names() {
+    assert_eq!(display_names([]), None);
+    assert_eq!(display_names([(None, None)]), None);
+}
+
 /// Builds a part the way a server's BODYSTRUCTURE describes one.
 fn part(section: &[u32], media_type: &str, subtype: &str) -> MimePart {
     MimePart {

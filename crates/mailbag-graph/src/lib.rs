@@ -90,6 +90,7 @@ pub enum GraphFailure {
     InvalidReply,
 }
 
+#[derive(Clone, PartialEq, Eq)]
 pub struct GraphError {
     pub failure: GraphFailure,
     /// The platform's text about a failed connection, or the service's

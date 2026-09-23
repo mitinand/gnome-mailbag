@@ -4,8 +4,9 @@
 use super::*;
 use crate::test_record::CapturedRecord;
 use crate::worker::{LoadKind, MailWorker, report_outcome};
-use goa_adapter::{AccountId, ImapAccess, ImapCredential, ImapEncryption};
-use mailbag_content::ContentExplanation;
+use goa_adapter::{AccountId, GraphAccess, ImapAccess, ImapCredential, ImapEncryption};
+use mailbag_content::{ContentExplanation, DisplayFields};
+use mailbag_graph::{GraphFailure, test_server as graph_service};
 use mailbag_imap::{
     GmailRow,
     test_server::{
@@ -33,18 +34,14 @@ fn plain_messages(count: u32) -> Vec<FixtureMessage> {
 
 /// Runs a Generic IMAP load to its end, as the window would.
 fn load_inbox(fixture: &ImapFixture) -> LoadOutcome {
-    load_with_provider(account_access(fixture), MailProvider::GenericImap)
+    load_with_kind(LoadKind::GenericImap(account_access(fixture)))
 }
 
-/// Runs one provider's load to its end, as the window would.
-fn load_with_provider(access: ImapAccess, provider: MailProvider) -> LoadOutcome {
+/// Runs one load sequence to its end, as the window would.
+fn load_with_kind(kind: LoadKind) -> LoadOutcome {
     run_on_context(async {
         let worker = MailWorker::new();
         let (sender, outcomes) = async_channel::bounded(1);
-        let kind = match provider {
-            MailProvider::GenericImap => LoadKind::GenericImap(access),
-            MailProvider::Gmail => LoadKind::Gmail(access),
-        };
         let _handle = worker.load_inbox(kind, move |outcome| {
             sender.try_send(outcome).ok();
         });
@@ -438,7 +435,7 @@ fn load_inbox_with_account(
     level: tracing::Level,
 ) -> (LoadOutcome, CapturedRecord) {
     let record = CapturedRecord::start(level);
-    let outcome = load_with_provider(access, MailProvider::GenericImap);
+    let outcome = load_with_kind(LoadKind::GenericImap(access));
     (outcome, record)
 }
 
@@ -519,10 +516,7 @@ fn gmail_access(fixture: &ImapFixture) -> ImapAccess {
 #[test]
 fn a_gmail_batch_carries_the_message_identifier_and_labels_of_every_row() {
     let fixture = gmail_fixture(plain_messages(2));
-    let batch = published_batch(load_with_provider(
-        gmail_access(&fixture),
-        MailProvider::Gmail,
-    ));
+    let batch = published_batch(load_with_kind(LoadKind::Gmail(gmail_access(&fixture))));
     let carried: Vec<Option<GmailRow>> = batch
         .messages
         .iter()
@@ -540,10 +534,7 @@ fn a_gmail_batch_carries_the_message_identifier_and_labels_of_every_row() {
 #[test]
 fn the_gmail_load_offers_utf8_names_and_names_itself_before_the_row_fetch() {
     let fixture = gmail_fixture(plain_messages(1));
-    published_batch(load_with_provider(
-        gmail_access(&fixture),
-        MailProvider::Gmail,
-    ));
+    published_batch(load_with_kind(LoadKind::Gmail(gmail_access(&fixture))));
     let commands = fixture.log().commands;
     let position = |name: &str| commands.iter().position(|command| command == name);
     assert!(
@@ -561,10 +552,7 @@ fn the_gmail_load_offers_utf8_names_and_names_itself_before_the_row_fetch() {
 fn the_record_names_gmails_fields_and_never_the_token() {
     let fixture = gmail_fixture(plain_messages(1));
     let record = CapturedRecord::start(tracing::Level::DEBUG);
-    published_batch(load_with_provider(
-        gmail_access(&fixture),
-        MailProvider::Gmail,
-    ));
+    published_batch(load_with_kind(LoadKind::Gmail(gmail_access(&fixture))));
     let text = record.text();
     assert!(text.contains("gmail_message_id=10000"), "{text}");
     assert!(text.contains("Important"), "{text}");
@@ -575,10 +563,9 @@ fn the_record_names_gmails_fields_and_never_the_token() {
 #[test]
 fn a_generic_imap_load_sends_no_gmail_command_and_carries_no_gmail_fields() {
     let fixture = gmail_fixture(plain_messages(1));
-    let batch = published_batch(load_with_provider(
-        account_access(&fixture),
-        MailProvider::GenericImap,
-    ));
+    let batch = published_batch(load_with_kind(LoadKind::GenericImap(account_access(
+        &fixture,
+    ))));
     assert_eq!(batch.messages[0].gmail, None);
     let commands = fixture.log().commands;
     assert!(!commands.contains(&"ENABLE".to_owned()), "{commands:?}");
@@ -599,14 +586,10 @@ fn gmail_reads_the_same_text_parts_and_gives_the_same_explanations() {
         messages,
         ..FixtureSetup::default()
     });
-    let by_gmail = published_batch(load_with_provider(
-        gmail_access(&gmail),
-        MailProvider::Gmail,
-    ));
-    let by_imap = published_batch(load_with_provider(
-        account_access(&generic),
-        MailProvider::GenericImap,
-    ));
+    let by_gmail = published_batch(load_with_kind(LoadKind::Gmail(gmail_access(&gmail))));
+    let by_imap = published_batch(load_with_kind(LoadKind::GenericImap(account_access(
+        &generic,
+    ))));
     let contents = |batch: &ReceivedBatch| {
         batch
             .messages
@@ -625,4 +608,131 @@ fn gmail_reads_the_same_text_parts_and_gives_the_same_explanations() {
             .collect::<Vec<_>>()
     };
     assert_eq!(sections(&gmail), sections(&generic));
+}
+
+/// Runs a Microsoft 365 load against the scripted service, as the window
+/// would, with the scripted service in place of Microsoft Graph.
+fn load_microsoft365(service: &graph_service::ScriptedService) -> LoadOutcome {
+    load_with_kind(LoadKind::Microsoft365 {
+        access: GraphAccess {
+            account_id: AccountId::try_from("synthetic-microsoft365").unwrap(),
+            access_token: graph_service::TEST_ACCESS_TOKEN.to_owned(),
+        },
+        service_url: service.url().to_owned(),
+    })
+}
+
+#[test]
+fn a_microsoft_365_load_publishes_the_services_messages_and_text() {
+    let service = graph_service::ScriptedService::start(graph_service::ScriptedAnswer::inbox(3));
+    let batch = published_batch(load_microsoft365(&service));
+    assert_eq!(
+        batch.account_id,
+        AccountId::try_from("synthetic-microsoft365").unwrap()
+    );
+    assert_eq!(batch.uid_validity, None);
+    assert_eq!(batch.incomplete, None);
+    let summary: Vec<_> = batch
+        .messages
+        .iter()
+        .map(|message| {
+            (
+                &message.identity,
+                &message.fields,
+                message.internal_date,
+                message.seen,
+                &message.content,
+            )
+        })
+        .collect();
+    let fields = |number, to: Option<&str>| DisplayFields {
+        subject: Some(format!("Subject {number}")),
+        from: Some(format!("Sender {number}")),
+        to: to.map(str::to_owned),
+    };
+    let identity =
+        |number| MessageIdentity::GraphImmutableId(graph_service::fixture_immutable_id(number));
+    let received = |number| Some(graph_service::fixture_received_unix(number));
+    assert_eq!(
+        summary,
+        [
+            (
+                &identity(1),
+                &fields(1, Some("Recipient")),
+                received(1),
+                true,
+                &ReceivedContent::Text("Text 1".to_owned()),
+            ),
+            (
+                &identity(2),
+                &fields(2, None),
+                received(2),
+                false,
+                &ReceivedContent::Text("Text 2".to_owned()),
+            ),
+            (
+                &identity(3),
+                &fields(3, Some("Recipient")),
+                received(3),
+                true,
+                &ReceivedContent::Explained(ContentExplanation::TextNotReturned),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn only_a_microsoft_365_page_cut_short_is_published_as_incomplete() {
+    // The Inbox holds more than one batch: the service offers a further page
+    // after a full one, which is complete.
+    let full =
+        graph_service::ScriptedService::start(graph_service::ScriptedAnswer::page_with_more(100));
+    let batch = published_batch(load_microsoft365(&full));
+    assert_eq!(batch.messages.len(), 100);
+    assert_eq!(batch.incomplete, None);
+
+    let cut_short =
+        graph_service::ScriptedService::start(graph_service::ScriptedAnswer::page_with_more(1));
+    let batch = published_batch(load_microsoft365(&cut_short));
+    assert_eq!(batch.messages.len(), 1);
+    assert_eq!(batch.incomplete, Some(IncompleteList::MoreAvailable));
+}
+
+#[test]
+fn a_refused_microsoft_365_request_fails_the_load_after_one_request() {
+    let service =
+        graph_service::ScriptedService::start(graph_service::ScriptedAnswer::sign_in_refused());
+    match load_microsoft365(&service) {
+        LoadOutcome::Failed(LoadFailure::MicrosoftGraph(error)) => assert_eq!(
+            error.failure,
+            GraphFailure::Refused {
+                status: 401,
+                code: Some("InvalidAuthenticationToken".to_owned()),
+            }
+        ),
+        other => panic!("a refused request must fail the load: {other:?}"),
+    }
+    assert_eq!(service.received_requests().len(), 1);
+}
+
+#[test]
+fn a_microsoft_365_load_names_each_message_and_never_the_token() {
+    let service = graph_service::ScriptedService::start(graph_service::ScriptedAnswer::inbox(3));
+    let record = CapturedRecord::start(tracing::Level::DEBUG);
+    published_batch(load_microsoft365(&service));
+    let text = record.text();
+    for number in 1..=3 {
+        let named = format!(
+            r#"immutable_id="{}""#,
+            graph_service::fixture_immutable_id(number)
+        );
+        assert!(
+            record
+                .lines_at("DEBUG")
+                .iter()
+                .any(|line| line.contains(&named) && line.contains("received_unix")),
+            "{named} is missing: {text}"
+        );
+    }
+    assert!(!text.contains(graph_service::TEST_ACCESS_TOKEN), "{text}");
 }

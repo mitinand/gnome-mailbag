@@ -36,10 +36,11 @@ impl ScriptedAnswer {
         Self::ok(serde_json::json!({ "value": inbox_messages(message_count) }))
     }
 
-    /// One message and a link to a further page.
-    pub fn short_page() -> Self {
+    /// `message_count` messages as `inbox` gives them, and a link to a
+    /// further page.
+    pub fn page_with_more(message_count: u32) -> Self {
         Self::ok(serde_json::json!({
-            "value": inbox_messages(1),
+            "value": inbox_messages(message_count),
             "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$skip=1",
         }))
     }

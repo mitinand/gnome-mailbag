@@ -5,6 +5,7 @@ use super::*;
 use crate::logging::{LogLevel, capture::start_record};
 use goa_adapter::AccessError;
 use mailbag_content::DisplayFields;
+use mailbag_graph::{GraphError, GraphFailure};
 use mailbag_imap::{ImapFailure, ImapStep, ServerReply};
 use mailbag_providers::{MessageIdentity, ReceivedMessage, ServerFailure};
 use std::cell::Cell;
@@ -293,6 +294,16 @@ fn each_failed_load_is_one_error_line_naming_its_cause() {
         (
             LoadFailure::OnlineAccounts(AccessError::Timeout),
             "cause=Timeout",
+        ),
+        (
+            LoadFailure::MicrosoftGraph(GraphError {
+                failure: GraphFailure::Refused {
+                    status: 401,
+                    code: Some("InvalidAuthenticationToken".to_owned()),
+                },
+                reason: Some("private server text".to_owned()),
+            }),
+            r#"cause=Refused { status: 401, code: Some("InvalidAuthenticationToken") } code="InvalidAuthenticationToken""#,
         ),
         (LoadFailure::WorkerStopped, r#"cause="WorkerStopped""#),
     ];

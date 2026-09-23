@@ -6,6 +6,7 @@
 
 use goa_adapter::{AccessError, AccountId};
 use mailbag_content::{ContentExplanation, DisplayFields};
+use mailbag_graph::GraphError;
 use mailbag_imap::{GmailRow, ImapError, ImapFailure, ServerReply};
 use std::fmt;
 
@@ -64,6 +65,8 @@ pub enum LoadFailure {
     OnlineAccounts(AccessError),
     /// The connection, the sign-in or the transfer failed.
     Server(ServerFailure),
+    /// The Microsoft Graph request failed or was refused.
+    MicrosoftGraph(GraphError),
     /// The mail worker stopped without a result.
     WorkerStopped,
 }
@@ -159,6 +162,7 @@ impl fmt::Debug for LoadFailure {
         match self {
             Self::OnlineAccounts(error) => write!(formatter, "OnlineAccounts({error:?})"),
             Self::Server(failure) => write!(formatter, "Server({failure:?})"),
+            Self::MicrosoftGraph(error) => write!(formatter, "MicrosoftGraph({error:?})"),
             Self::WorkerStopped => write!(formatter, "WorkerStopped"),
         }
     }

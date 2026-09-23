@@ -4,9 +4,12 @@
 //! The mail worker: a thread with its own GLib context that runs one load at
 //! a time. It touches no widget.
 
-use crate::{LoadFailure, LoadOutcome, gmail::load_gmail_inbox, imap::load_imap_inbox};
+use crate::{
+    LoadFailure, LoadOutcome, gmail::load_gmail_inbox, imap::load_imap_inbox,
+    microsoft365::load_microsoft365_inbox,
+};
 use futures_util::future::{self, Either};
-use goa_adapter::ImapAccess;
+use goa_adapter::{GraphAccess, ImapAccess};
 use std::{cell::RefCell, pin::pin, thread};
 
 /// The mail worker. It runs one load at a time for the selected account and
@@ -22,6 +25,11 @@ pub struct MailWorker {
 pub(crate) enum LoadKind {
     GenericImap(ImapAccess),
     Gmail(ImapAccess),
+    /// `service_url` is Microsoft Graph's address, or a test service's.
+    Microsoft365 {
+        access: GraphAccess,
+        service_url: String,
+    },
 }
 
 pub(crate) struct LoadRequest {
@@ -118,10 +126,17 @@ async fn run_load(kind: LoadKind, cancelled: &async_channel::Receiver<()>) -> Lo
     // about the provider again (004 plan, decision D1).
     let mut load = Box::pin(async move {
         match kind {
-            LoadKind::GenericImap(access) => load_imap_inbox(access).await,
-            LoadKind::Gmail(access) => load_gmail_inbox(access).await,
+            LoadKind::GenericImap(access) => {
+                load_imap_inbox(access).await.map_err(LoadFailure::Server)
+            }
+            LoadKind::Gmail(access) => load_gmail_inbox(access).await.map_err(LoadFailure::Server),
+            LoadKind::Microsoft365 {
+                access,
+                service_url,
+            } => load_microsoft365_inbox(access, &service_url)
+                .await
+                .map_err(LoadFailure::MicrosoftGraph),
         }
-        .map_err(LoadFailure::Server)
     });
     match future::select(&mut load, pin!(cancelled.recv())).await {
         Either::Left((Ok(batch), _)) => LoadOutcome::Loaded(batch),

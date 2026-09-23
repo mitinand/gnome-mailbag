@@ -14,6 +14,7 @@ use crate::inbox::{AccountInbox, InboxController};
 use crate::mail_ui::{MailUi, inert_text, show_inert_text};
 use adw::{gio, gtk, prelude::*};
 use goa_adapter::{AccessError, AccountId, AccountProvider, AccountUpdate};
+use mailbag_graph::{GraphError, GraphFailure};
 use mailbag_imap::{ImapFailure, ImapStep};
 use mailbag_providers::{
     IncompleteList, LoadFailure, LoadResult, LoadsInbox, MailProvider, ServerFailure,
@@ -270,6 +271,7 @@ fn failure_status(failure: &LoadFailure) -> MailStatus {
     match failure {
         LoadFailure::OnlineAccounts(error) => online_accounts_status(*error),
         LoadFailure::Server(failure) => server_status(failure),
+        LoadFailure::MicrosoftGraph(error) => service_status(error),
         LoadFailure::WorkerStopped => MailStatus::explained(
             "Mail could not be loaded",
             "Mailbag stopped loading this Inbox. Try Refresh Inbox again.",
@@ -343,6 +345,46 @@ fn server_status(failure: &ServerFailure) -> MailStatus {
     MailStatus {
         title: title.to_owned(),
         explanation: explanation.join("\n"),
+    }
+}
+
+/// The service's own message about a refusal is developer text and stays in
+/// the record; its status and code explain the refusal
+/// (specs/005-microsoft-graph-integration/research.md §5).
+fn service_status(error: &GraphError) -> MailStatus {
+    let (title, explanation) = match &error.failure {
+        GraphFailure::ConnectionFailed => (
+            "Could not connect to the mail service",
+            error.reason.as_deref().map(inert_text).unwrap_or_default(),
+        ),
+        GraphFailure::TimedOut => (
+            "The mail service stopped responding",
+            "No answer arrived within the wait limit. Try Refresh Inbox again.".to_owned(),
+        ),
+        GraphFailure::Refused { status, code } => {
+            let said = match code {
+                Some(code) => format!(
+                    "The mail service said: status {status}, code {}.",
+                    inert_text(code)
+                ),
+                None => format!("The mail service said: status {status}."),
+            };
+            match status {
+                401 => (
+                    "The mail service rejected the sign-in",
+                    format!("{said}\nCheck this account's sign-in in Online Accounts."),
+                ),
+                _ => ("The mail service refused the request", said),
+            }
+        }
+        GraphFailure::InvalidReply => (
+            "The mail service answered in an unexpected form",
+            "Try Refresh Inbox again.".to_owned(),
+        ),
+    };
+    MailStatus {
+        title: title.to_owned(),
+        explanation,
     }
 }
 

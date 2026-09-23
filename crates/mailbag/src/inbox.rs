@@ -10,9 +10,9 @@ mod tests;
 
 use goa_adapter::AccountId;
 use mailbag_content::ContentExplanation;
+use mailbag_graph::GraphFailure;
 use mailbag_providers::{
     CancelsLoadOnDrop, IncompleteList, LoadFailure, LoadResult, ReceivedBatch, ReceivedContent,
-    ServerFailure,
 };
 use std::{collections::BTreeMap, fmt, rc::Rc};
 
@@ -230,18 +230,31 @@ fn is_unsupported(explanation: &ContentExplanation) -> bool {
 /// The failure values hold no server text, so the record can name them as they
 /// are (`ImapFailure`, `AccessError`).
 fn log_load_failure(account: &str, failure: &LoadFailure) {
-    let (cause, server): (&dyn fmt::Debug, Option<&ServerFailure>) = match failure {
-        LoadFailure::OnlineAccounts(error) => (error, None),
-        LoadFailure::Server(server) => (&server.failure, Some(server)),
-        LoadFailure::WorkerStopped => (&"WorkerStopped", None),
+    let (cause, code, alerts): (&dyn fmt::Debug, Option<&str>, usize) = match failure {
+        LoadFailure::OnlineAccounts(error) => (error, None, 0),
+        LoadFailure::Server(server) => (
+            &server.failure,
+            server
+                .server_reply
+                .as_ref()
+                .and_then(|reply| reply.code.as_deref()),
+            server.alerts.len(),
+        ),
+        LoadFailure::MicrosoftGraph(error) => (
+            &error.failure,
+            match &error.failure {
+                GraphFailure::Refused { code, .. } => code.as_deref(),
+                _ => None,
+            },
+            0,
+        ),
+        LoadFailure::WorkerStopped => (&"WorkerStopped", None, 0),
     };
     tracing::error!(
         account,
         cause = ?cause,
-        code = server.and_then(|server| server.server_reply.as_ref()?.code.as_deref()),
-        alerts = server
-            .map(|server| server.alerts.len())
-            .filter(|alerts| *alerts > 0),
+        code,
+        alerts = Some(alerts).filter(|alerts| *alerts > 0),
         "Inbox load failed"
     );
 }

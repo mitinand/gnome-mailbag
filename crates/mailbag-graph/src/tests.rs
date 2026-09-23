@@ -106,7 +106,7 @@ fn messages_arrive_with_their_fields_and_text() {
 
 #[test]
 fn a_short_page_with_more_offered_is_marked_and_not_followed() {
-    let service = ScriptedService::start(ScriptedAnswer::short_page());
+    let service = ScriptedService::start(ScriptedAnswer::page_with_more(1));
     let page = list_from(service.url()).expect("a page");
     assert_eq!(page.messages.len(), 1);
     assert!(page.more_available);

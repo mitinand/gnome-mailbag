@@ -165,9 +165,13 @@ fn further_messages_on_offer_are_noticed_without_claiming_a_failure() {
 
 #[test]
 fn an_account_without_mail_never_claims_an_empty_inbox() {
-    // Both loadable providers get the hint; the others are told plainly that
+    // The loadable providers get the hint; the others are told plainly that
     // Mailbag cannot load their mail yet.
-    for provider in [AccountProvider::ImapSmtp, AccountProvider::Google] {
+    for provider in [
+        AccountProvider::ImapSmtp,
+        AccountProvider::Google,
+        AccountProvider::Microsoft365,
+    ] {
         let status = nothing_loaded_status(Some(provider));
         assert_eq!(status.title, "No mail loaded");
         assert!(
@@ -176,20 +180,18 @@ fn an_account_without_mail_never_claims_an_empty_inbox() {
             status.explanation
         );
     }
-    for provider in [AccountProvider::Microsoft365, AccountProvider::Other] {
-        let status = nothing_loaded_status(Some(provider));
-        assert_eq!(status.title, "No mail loaded");
-        assert!(
-            !status.explanation.contains("Refresh Inbox"),
-            "{provider:?}: {}",
-            status.explanation
-        );
-    }
+    let status = nothing_loaded_status(Some(AccountProvider::Other));
+    assert_eq!(status.title, "No mail loaded");
+    assert!(
+        !status.explanation.contains("Refresh Inbox"),
+        "{}",
+        status.explanation
+    );
 }
 
 /// The one place a provider becomes a load sequence.
 #[test]
-fn only_generic_imap_and_google_accounts_can_be_loaded() {
+fn generic_imap_google_and_microsoft_365_accounts_can_be_loaded() {
     use crate::accounts::mail_provider;
     assert_eq!(
         mail_provider(AccountProvider::ImapSmtp),
@@ -199,7 +201,63 @@ fn only_generic_imap_and_google_accounts_can_be_loaded() {
         mail_provider(AccountProvider::Google),
         Some(MailProvider::Gmail)
     );
-    for provider in [AccountProvider::Microsoft365, AccountProvider::Other] {
-        assert_eq!(mail_provider(provider), None, "{provider:?}");
+    assert_eq!(
+        mail_provider(AccountProvider::Microsoft365),
+        Some(MailProvider::Microsoft365)
+    );
+    assert_eq!(mail_provider(AccountProvider::Other), None);
+}
+
+#[test]
+fn each_service_failure_names_itself_and_only_401_points_to_the_sign_in() {
+    let service_failure = |failure, reason: Option<&str>| {
+        failure_status(&LoadFailure::MicrosoftGraph(GraphError {
+            failure,
+            reason: reason.map(str::to_owned),
+        }))
+    };
+    let refused = |status, code: &str| GraphFailure::Refused {
+        status,
+        code: Some(code.to_owned()),
+    };
+    let sign_in = "Check this account's sign-in in Online Accounts.";
+
+    let rejected = service_failure(
+        refused(401, "InvalidAuthenticationToken"),
+        Some("Access token has expired."),
+    );
+    assert_eq!(rejected.title, "The mail service rejected the sign-in");
+    assert_eq!(
+        rejected.explanation,
+        format!("The mail service said: status 401, code InvalidAuthenticationToken.\n{sign_in}")
+    );
+
+    let throttled = service_failure(refused(429, "ApplicationThrottled"), None);
+    assert_eq!(throttled.title, "The mail service refused the request");
+    assert_eq!(
+        throttled.explanation,
+        "The mail service said: status 429, code ApplicationThrottled."
+    );
+
+    let unreachable = service_failure(
+        GraphFailure::ConnectionFailed,
+        Some("Error resolving “graph.microsoft.com”"),
+    );
+    assert_eq!(unreachable.title, "Could not connect to the mail service");
+    assert!(unreachable.explanation.contains("graph.microsoft.com"));
+
+    for (failure, title) in [
+        (
+            GraphFailure::TimedOut,
+            "The mail service stopped responding",
+        ),
+        (
+            GraphFailure::InvalidReply,
+            "The mail service answered in an unexpected form",
+        ),
+    ] {
+        let status = service_failure(failure, None);
+        assert_eq!(status.title, title);
+        assert!(status.explanation.contains("Try Refresh Inbox again."));
     }
 }

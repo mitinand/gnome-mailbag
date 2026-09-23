@@ -9,6 +9,7 @@ mod batch;
 mod gmail;
 mod imap;
 mod load;
+mod microsoft365;
 mod worker;
 
 #[cfg(test)]
@@ -34,7 +35,11 @@ use std::{cell::RefCell, rc::Rc};
 pub enum MailProvider {
     GenericImap,
     Gmail,
+    Microsoft365,
 }
+
+/// Where Microsoft 365 mail is read.
+pub const MICROSOFT_GRAPH: &str = "https://graph.microsoft.com/v1.0";
 
 /// How one load ended.
 #[derive(Debug)]
@@ -88,28 +93,47 @@ impl LoadsInbox for MailLoader {
         let step = Rc::new(RefCell::new(LoadStep::RequestingAccess(None)));
         let transfer_step = step.clone();
         let worker = self.worker.clone();
-        let request = self
-            .accounts
-            .request_imap_access(account_id, move |access| match access {
-                Ok(access) => {
-                    tracing::info!(
-                        encryption = ?access.encryption,
-                        "Online Accounts gave the settings and credential"
-                    );
-                    let kind = match provider {
-                        MailProvider::GenericImap => LoadKind::GenericImap(access),
-                        MailProvider::Gmail => LoadKind::Gmail(access),
-                    };
-                    let transfer =
-                        worker.load_inbox(kind, move |outcome| report(load_result(outcome)));
-                    *transfer_step.borrow_mut() = LoadStep::Transferring {
-                        _transfer: transfer,
-                    };
-                }
-                // The request was cancelled by an exclusion or by quitting.
-                Err(AccessError::Cancelled) => report(LoadResult::Cancelled),
-                Err(error) => report(LoadResult::Failed(LoadFailure::OnlineAccounts(error))),
-            });
+        let start_transfer = move |access: Result<LoadKind, AccessError>| match access {
+            Ok(kind) => {
+                let transfer = worker.load_inbox(kind, move |outcome| report(load_result(outcome)));
+                *transfer_step.borrow_mut() = LoadStep::Transferring {
+                    _transfer: transfer,
+                };
+            }
+            // The request was cancelled by an exclusion or by quitting.
+            Err(AccessError::Cancelled) => report(LoadResult::Cancelled),
+            Err(error) => report(LoadResult::Failed(LoadFailure::OnlineAccounts(error))),
+        };
+        let request = match provider {
+            MailProvider::GenericImap | MailProvider::Gmail => {
+                self.accounts
+                    .request_imap_access(account_id, move |access| {
+                        start_transfer(access.map(|access| {
+                            tracing::info!(
+                                encryption = ?access.encryption,
+                                "Online Accounts gave the settings and credential"
+                            );
+                            if provider == MailProvider::Gmail {
+                                LoadKind::Gmail(access)
+                            } else {
+                                LoadKind::GenericImap(access)
+                            }
+                        }))
+                    })
+            }
+            MailProvider::Microsoft365 => {
+                self.accounts
+                    .request_graph_access(account_id, move |access| {
+                        start_transfer(access.map(|access| {
+                            tracing::info!("Online Accounts gave the access token");
+                            LoadKind::Microsoft365 {
+                                access,
+                                service_url: MICROSOFT_GRAPH.to_owned(),
+                            }
+                        }))
+                    })
+            }
+        };
         // Online Accounts answers later, except for the settings failure it
         // reports at once, which has already used the step above.
         if let LoadStep::RequestingAccess(pending) = &mut *step.borrow_mut() {

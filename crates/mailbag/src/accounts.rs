@@ -19,7 +19,8 @@ pub fn mail_provider(provider: AccountProvider) -> Option<MailProvider> {
     match provider {
         AccountProvider::ImapSmtp => Some(MailProvider::GenericImap),
         AccountProvider::Google => Some(MailProvider::Gmail),
-        AccountProvider::Microsoft365 | AccountProvider::Other => None,
+        AccountProvider::Microsoft365 => Some(MailProvider::Microsoft365),
+        AccountProvider::Other => None,
     }
 }
 

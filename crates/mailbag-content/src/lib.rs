@@ -394,16 +394,27 @@ pub fn decode_display_fields(header_lines: &[u8]) -> DisplayFields {
         return DisplayFields::default();
     };
     let names = |addresses: Option<&mail_parser::Address<'_>>| {
-        let names: Vec<String> = addresses?
-            .iter()
-            .filter_map(|address| address.name().or(address.address()))
-            .map(str::to_owned)
-            .collect();
-        (!names.is_empty()).then(|| names.join(", "))
+        display_names(
+            addresses?
+                .iter()
+                .map(|address| (address.name(), address.address())),
+        )
     };
     DisplayFields {
         subject: message.subject().map(str::to_owned),
         from: names(message.from()),
         to: names(message.to()),
     }
+}
+
+/// How senders or recipients are shown, given each one's name and address:
+/// the name, else the address, joined by ", ". `None` when no one has either.
+pub fn display_names<'a>(
+    names: impl IntoIterator<Item = (Option<&'a str>, Option<&'a str>)>,
+) -> Option<String> {
+    let names: Vec<&str> = names
+        .into_iter()
+        .filter_map(|(name, address)| name.or(address))
+        .collect();
+    (!names.is_empty()).then(|| names.join(", "))
 }
