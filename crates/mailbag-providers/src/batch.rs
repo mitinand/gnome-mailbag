@@ -7,15 +7,19 @@
 use goa_adapter::{AccessError, AccountId};
 use mailbag_content::{ContentExplanation, DisplayFields};
 use mailbag_graph::GraphError;
-use mailbag_imap::{GmailRow, ImapError, ImapFailure, ServerReply};
+use mailbag_imap::{GmailRow, ImapError, ServerReply};
 use std::fmt;
+
+/// How many of the newest Inbox messages one load delivers, for every
+/// provider (specs/002-imap-integration FR-002).
+pub(crate) const BATCH_SIZE: u32 = 100;
 
 /// One account's Inbox as a single load received it.
 pub struct ReceivedBatch {
     pub account_id: AccountId,
     /// The Inbox version these UIDs belong to.
     pub uid_validity: Option<u32>,
-    /// Newest first, at most 100.
+    /// Newest first, at most `BATCH_SIZE`.
     pub messages: Vec<ReceivedMessage>,
     /// Why messages are missing from this batch. `None` when it is complete.
     pub incomplete: Option<IncompleteList>,
@@ -63,42 +67,12 @@ pub enum ReceivedContent {
 pub enum LoadFailure {
     /// Online Accounts did not give the settings or the credential.
     OnlineAccounts(AccessError),
-    /// The connection, the sign-in or the transfer failed.
-    Server(ServerFailure),
+    /// The IMAP connection, the sign-in or the transfer failed.
+    Imap(ImapError),
     /// The Microsoft Graph request failed or was refused.
     MicrosoftGraph(GraphError),
     /// The mail worker stopped without a result.
     WorkerStopped,
-}
-
-/// A failed server step, with what the server said about it.
-#[derive(Clone, PartialEq, Eq)]
-pub struct ServerFailure {
-    pub failure: ImapFailure,
-    /// The server's own reason, for the failure explanation only.
-    pub server_reply: Option<ServerReply>,
-    pub alerts: Vec<String>,
-}
-
-impl From<ImapFailure> for ServerFailure {
-    /// A failure the load itself found, which the server did not explain.
-    fn from(failure: ImapFailure) -> Self {
-        Self {
-            failure,
-            server_reply: None,
-            alerts: Vec::new(),
-        }
-    }
-}
-
-impl From<ImapError> for ServerFailure {
-    fn from(error: ImapError) -> Self {
-        Self {
-            failure: error.failure,
-            server_reply: error.server_reply,
-            alerts: error.alerts,
-        }
-    }
 }
 
 /// How one load ended.
@@ -161,23 +135,9 @@ impl fmt::Debug for LoadFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::OnlineAccounts(error) => write!(formatter, "OnlineAccounts({error:?})"),
-            Self::Server(failure) => write!(formatter, "Server({failure:?})"),
+            Self::Imap(error) => write!(formatter, "Imap({error:?})"),
             Self::MicrosoftGraph(error) => write!(formatter, "MicrosoftGraph({error:?})"),
             Self::WorkerStopped => write!(formatter, "WorkerStopped"),
         }
-    }
-}
-
-impl fmt::Debug for ServerFailure {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("ServerFailure")
-            .field("failure", &self.failure)
-            .field(
-                "server_code",
-                &self.server_reply.as_ref().map(|reply| &reply.code),
-            )
-            .field("alert_count", &self.alerts.len())
-            .finish()
     }
 }

@@ -6,8 +6,8 @@ use crate::logging::{LogLevel, capture::start_record};
 use goa_adapter::AccessError;
 use mailbag_content::DisplayFields;
 use mailbag_graph::{GraphError, GraphFailure};
-use mailbag_imap::{ImapFailure, ImapStep, ServerReply};
-use mailbag_providers::{MessageIdentity, ReceivedMessage, ServerFailure};
+use mailbag_imap::{ImapError, ImapFailure, ImapStep, ServerReply};
+use mailbag_providers::{MessageIdentity, ReceivedMessage};
 use std::cell::Cell;
 
 fn account(name: &str) -> AccountId {
@@ -34,7 +34,7 @@ fn batch_of(account_id: &AccountId, uids: &[u32]) -> ReceivedBatch {
 }
 
 fn sign_in_failure() -> LoadFailure {
-    LoadFailure::Server(ImapFailure::Failed(ImapStep::SignIn).into())
+    LoadFailure::Imap(ImapFailure::Failed(ImapStep::SignIn).into())
 }
 
 /// A running step that records its cancellation, as dropping the Online
@@ -139,7 +139,7 @@ fn a_failed_load_leaves_the_account_without_mail() {
     controller.finish_load(&id, LoadResult::Failed(sign_in_failure()));
     assert!(matches!(
         controller.inbox_of(&id),
-        Some(AccountInbox::Failed(LoadFailure::Server(_)))
+        Some(AccountInbox::Failed(LoadFailure::Imap(_)))
     ));
     assert!(!controller.is_loading());
 }
@@ -150,7 +150,7 @@ fn a_confirmed_exclusion_discards_the_mail_and_cancels_its_load() {
     let excluded = account("excluded-account");
     let kept = account("kept-account");
     controller.begin_load(&kept);
-    controller.finish_load(&kept, LoadResult::Received(batch_of(&kept, &[10])));
+    assert!(controller.finish_load(&kept, LoadResult::Received(batch_of(&kept, &[10]))));
     let cancellations = start_load(&mut controller, &excluded);
 
     controller.discard_excluded(|account_id| *account_id == kept);
@@ -160,8 +160,9 @@ fn a_confirmed_exclusion_discards_the_mail_and_cancels_its_load() {
     // The load ends only once its connection is closed.
     assert!(controller.is_loading());
 
-    // A result that arrives after the exclusion restores nothing.
-    controller.finish_load(&excluded, LoadResult::Received(batch_of(&excluded, &[40])));
+    // A result that arrives after the exclusion restores nothing, so the
+    // window says nothing about it.
+    assert!(!controller.finish_load(&excluded, LoadResult::Received(batch_of(&excluded, &[40]))));
     assert!(controller.inbox_of(&excluded).is_none());
     assert!(!controller.is_loading());
 }
@@ -270,7 +271,7 @@ fn unreadable_content_and_a_refused_list_each_warn_without_server_text() {
 
 #[test]
 fn each_failed_load_is_one_error_line_naming_its_cause() {
-    let refused_sign_in = ServerFailure {
+    let refused_sign_in = ImapError {
         failure: ImapFailure::Failed(ImapStep::SignIn),
         server_reply: Some(ServerReply {
             code: Some("AUTHENTICATIONFAILED".to_owned()),
@@ -280,15 +281,15 @@ fn each_failed_load_is_one_error_line_naming_its_cause() {
     };
     let failures = [
         (
-            LoadFailure::Server(refused_sign_in),
+            LoadFailure::Imap(refused_sign_in),
             r#"cause=Failed(SignIn) code="AUTHENTICATIONFAILED" alerts=1"#,
         ),
         (
-            LoadFailure::Server(ImapFailure::TimedOut(ImapStep::FetchText).into()),
+            LoadFailure::Imap(ImapFailure::TimedOut(ImapStep::FetchText).into()),
             "cause=TimedOut(FetchText)",
         ),
         (
-            LoadFailure::Server(ImapFailure::InboxChanged.into()),
+            LoadFailure::Imap(ImapFailure::InboxChanged.into()),
             "cause=InboxChanged",
         ),
         (
@@ -303,9 +304,9 @@ fn each_failed_load_is_one_error_line_naming_its_cause() {
                 },
                 reason: Some("private server text".to_owned()),
             }),
-            r#"cause=Refused { status: 401, code: Some("InvalidAuthenticationToken") } code="InvalidAuthenticationToken""#,
+            r#"cause=Refused status=401 code="InvalidAuthenticationToken""#,
         ),
-        (LoadFailure::WorkerStopped, r#"cause="WorkerStopped""#),
+        (LoadFailure::WorkerStopped, "cause=WorkerStopped"),
     ];
     for (failure, fields) in failures {
         let record = start_record(LogLevel::Debug);

@@ -33,12 +33,12 @@ fn plain_messages(count: u32) -> Vec<FixtureMessage> {
 }
 
 /// Runs a Generic IMAP load to its end, as the window would.
-fn load_inbox(fixture: &ImapFixture) -> LoadOutcome {
+fn load_inbox(fixture: &ImapFixture) -> LoadResult {
     load_with_kind(LoadKind::GenericImap(account_access(fixture)))
 }
 
 /// Runs one load sequence to its end, as the window would.
-fn load_with_kind(kind: LoadKind) -> LoadOutcome {
+fn load_with_kind(kind: LoadKind) -> LoadResult {
     run_on_context(async {
         let worker = MailWorker::new();
         let (sender, outcomes) = async_channel::bounded(1);
@@ -63,9 +63,9 @@ async fn wait_until(mut condition: impl FnMut() -> bool) {
     }
 }
 
-fn published_batch(outcome: LoadOutcome) -> ReceivedBatch {
+fn published_batch(outcome: LoadResult) -> ReceivedBatch {
     match outcome {
-        LoadOutcome::Loaded(batch) => batch,
+        LoadResult::Received(batch) => batch,
         other => panic!("the load published no batch: {other:?}"),
     }
 }
@@ -174,7 +174,7 @@ fn an_interrupted_transfer_publishes_no_batch() {
         ..FixtureSetup::default()
     });
     match load_inbox(&fixture) {
-        LoadOutcome::Failed(LoadFailure::Server(failure)) => {
+        LoadResult::Failed(LoadFailure::Imap(failure)) => {
             assert_eq!(
                 failure.failure,
                 mailbag_imap::ImapFailure::Failed(mailbag_imap::ImapStep::FetchText)
@@ -204,7 +204,7 @@ fn a_cancelled_load_closes_its_connection_before_it_ends() {
         wait_until(|| fixture.log().fetches.len() == 3).await;
         drop(handle);
         let outcome = outcomes.recv().await.expect("the load reports its outcome");
-        assert!(matches!(outcome, LoadOutcome::Cancelled), "{outcome:?}");
+        assert!(matches!(outcome, LoadResult::Cancelled), "{outcome:?}");
         // The worker closes the socket before it reports the outcome; the
         // server sees the closed connection as soon as it runs again.
         wait_until(|| fixture.log().closed_connections == 1).await;
@@ -220,7 +220,7 @@ fn a_window_that_empties_during_the_load_is_not_an_empty_inbox() {
         ..FixtureSetup::default()
     });
     match load_inbox(&fixture) {
-        LoadOutcome::Failed(LoadFailure::Server(failure)) => {
+        LoadResult::Failed(LoadFailure::Imap(failure)) => {
             assert_eq!(failure.failure, mailbag_imap::ImapFailure::InboxChanged);
         }
         other => panic!("an emptied window must not publish a batch: {other:?}"),
@@ -255,13 +255,16 @@ fn text_the_server_does_not_return_keeps_its_row_with_an_explanation() {
 fn a_stopped_worker_ends_the_load_with_a_visible_failure() {
     run_on_context(async {
         // A worker thread that stopped leaves its outcome channel closed.
-        let (sender, outcome) = async_channel::bounded::<LoadOutcome>(1);
+        let (sender, outcome) = async_channel::bounded::<LoadResult>(1);
         drop(sender);
         for reported in [Some(outcome), None] {
             let mut outcome = None;
             report_outcome(reported, |result| outcome = Some(result)).await;
             assert!(
-                matches!(outcome, Some(LoadOutcome::WorkerStopped)),
+                matches!(
+                    outcome,
+                    Some(LoadResult::Failed(LoadFailure::WorkerStopped))
+                ),
                 "{outcome:?}"
             );
         }
@@ -376,10 +379,10 @@ fn online_accounts_settings_load_the_inbox() {
     .expect("account id");
     let loaded = run_on_context(load_with_online_accounts(account_id));
     match (std::env::var("MAILBAG_IMAP_EXPECT").as_deref(), loaded) {
-        (Ok("success") | Err(_), Ok(LoadOutcome::Loaded(batch))) => {
+        (Ok("success") | Err(_), Ok(LoadResult::Received(batch))) => {
             println!("loaded {} messages", batch.messages.len());
         }
-        (Ok("rejected"), Ok(LoadOutcome::Failed(LoadFailure::Server(failure)))) => {
+        (Ok("rejected"), Ok(LoadResult::Failed(LoadFailure::Imap(failure)))) => {
             assert_eq!(
                 failure.failure,
                 mailbag_imap::ImapFailure::Failed(mailbag_imap::ImapStep::SecureConnection)
@@ -401,7 +404,7 @@ fn online_accounts_settings_load_the_inbox() {
 /// Accounts cannot give settings for never reaches the worker.
 async fn load_with_online_accounts(
     account_id: AccountId,
-) -> Result<LoadOutcome, goa_adapter::AccessError> {
+) -> Result<LoadResult, goa_adapter::AccessError> {
     let observed_account = account_id.clone();
     let (observed, observations) = async_channel::unbounded();
     let accounts = goa_adapter::GoaAdapter::start(move |update| {
@@ -433,7 +436,7 @@ async fn load_with_online_accounts(
 fn load_inbox_with_account(
     access: ImapAccess,
     level: tracing::Level,
-) -> (LoadOutcome, CapturedRecord) {
+) -> (LoadResult, CapturedRecord) {
     let record = CapturedRecord::start(level);
     let outcome = load_with_kind(LoadKind::GenericImap(access));
     (outcome, record)
@@ -446,7 +449,7 @@ fn a_refused_sign_in_leaves_the_error_line_to_the_load() {
     access.credential = ImapCredential::Password("wrong password".to_owned());
     let (outcome, record) = load_inbox_with_account(access, tracing::Level::DEBUG);
     let text = record.text();
-    assert!(matches!(outcome, LoadOutcome::Failed(_)), "{outcome:?}");
+    assert!(matches!(outcome, LoadResult::Failed(_)), "{outcome:?}");
     assert!(record.lines_at("ERROR").is_empty(), "{text}");
     assert!(!text.contains("wrong password"), "{text}");
 }
@@ -612,7 +615,7 @@ fn gmail_reads_the_same_text_parts_and_gives_the_same_explanations() {
 
 /// Runs a Microsoft 365 load against the scripted service, as the window
 /// would, with the scripted service in place of Microsoft Graph.
-fn load_microsoft365(service: &graph_service::ScriptedService) -> LoadOutcome {
+fn load_microsoft365(service: &graph_service::ScriptedService) -> LoadResult {
     load_with_kind(LoadKind::Microsoft365 {
         access: GraphAccess {
             account_id: AccountId::try_from("synthetic-microsoft365").unwrap(),
@@ -703,7 +706,7 @@ fn a_refused_microsoft_365_request_fails_the_load_after_one_request() {
     let service =
         graph_service::ScriptedService::start(graph_service::ScriptedAnswer::sign_in_refused());
     match load_microsoft365(&service) {
-        LoadOutcome::Failed(LoadFailure::MicrosoftGraph(error)) => assert_eq!(
+        LoadResult::Failed(LoadFailure::MicrosoftGraph(error)) => assert_eq!(
             error.failure,
             GraphFailure::Refused {
                 status: 401,

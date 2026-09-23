@@ -15,10 +15,8 @@ use crate::mail_ui::{MailUi, inert_text, show_inert_text};
 use adw::{gio, gtk, prelude::*};
 use goa_adapter::{AccessError, AccountId, AccountProvider, AccountUpdate};
 use mailbag_graph::{GraphError, GraphFailure};
-use mailbag_imap::{ImapFailure, ImapStep};
-use mailbag_providers::{
-    IncompleteList, LoadFailure, LoadResult, LoadsInbox, MailProvider, ServerFailure,
-};
+use mailbag_imap::{ImapError, ImapFailure, ImapStep};
+use mailbag_providers::{IncompleteList, LoadFailure, LoadResult, LoadsInbox, MailProvider};
 use std::{cell::RefCell, rc::Rc};
 
 pub struct WindowUi {
@@ -150,15 +148,17 @@ impl WindowUi {
 
     fn finish_load(&self, account_id: &AccountId, result: LoadResult) {
         // A short list explains nothing by itself, so its reason is said once,
-        // as the load ends.
-        if let LoadResult::Received(batch) = &result
-            && let Some(incomplete) = &batch.incomplete
-        {
-            let accounts = self.accounts.borrow();
-            let notice = incomplete_list_notice(accounts.label_of(account_id), incomplete);
-            accounts.show_toast(&notice);
+        // as the load ends, and only for a batch the window keeps.
+        let notice = match &result {
+            LoadResult::Received(batch) => batch.incomplete.as_ref().map(|incomplete| {
+                incomplete_list_notice(self.accounts.borrow().label_of(account_id), incomplete)
+            }),
+            _ => None,
+        };
+        let kept = self.inboxes.borrow_mut().finish_load(account_id, result);
+        if kept && let Some(notice) = notice {
+            self.accounts.borrow().show_toast(&notice);
         }
-        self.inboxes.borrow_mut().finish_load(account_id, result);
         self.render();
     }
 
@@ -236,8 +236,9 @@ impl MailStatus {
     }
 }
 
-/// The server refused to finish the message list, so messages are missing from
-/// the batch that is now on screen.
+/// Messages are missing from the batch that is now on screen: the server
+/// refused to finish the list, or the service offered more than one request
+/// holds.
 fn incomplete_list_notice(account: Option<String>, incomplete: &IncompleteList) -> String {
     let where_from = match account {
         Some(label) => format!("in {label}"),
@@ -270,8 +271,8 @@ fn nothing_loaded_status(provider: Option<AccountProvider>) -> MailStatus {
 fn failure_status(failure: &LoadFailure) -> MailStatus {
     match failure {
         LoadFailure::OnlineAccounts(error) => online_accounts_status(*error),
-        LoadFailure::Server(failure) => server_status(failure),
-        LoadFailure::MicrosoftGraph(error) => service_status(error),
+        LoadFailure::Imap(error) => imap_failure_status(error),
+        LoadFailure::MicrosoftGraph(error) => graph_failure_status(error),
         LoadFailure::WorkerStopped => MailStatus::explained(
             "Mail could not be loaded",
             "Mailbag stopped loading this Inbox. Try Refresh Inbox again.",
@@ -312,8 +313,8 @@ fn online_accounts_status(error: AccessError) -> MailStatus {
     }
 }
 
-fn server_status(failure: &ServerFailure) -> MailStatus {
-    let (title, reason) = match failure.failure {
+fn imap_failure_status(error: &ImapError) -> MailStatus {
+    let (title, reason) = match error.failure {
         ImapFailure::Failed(step) => (failed_step_title(step), failed_step_reason(step)),
         ImapFailure::TimedOut(step) => (
             "The mail server stopped responding",
@@ -330,14 +331,14 @@ fn server_status(failure: &ServerFailure) -> MailStatus {
         ),
     };
     let mut explanation = vec![reason.to_owned()];
-    if let Some(reply) = &failure.server_reply {
+    if let Some(reply) = &error.server_reply {
         explanation.push(format!("The mail server said: {}", inert_text(&reply.text)));
     }
-    if credential_may_be_wrong(failure) {
+    if credential_may_be_wrong(error) {
         explanation.push("Check this account's sign-in in Online Accounts.".to_owned());
     }
     explanation.extend(
-        failure
+        error
             .alerts
             .iter()
             .map(|alert| format!("Alert from the mail server: {}", inert_text(alert))),
@@ -351,7 +352,7 @@ fn server_status(failure: &ServerFailure) -> MailStatus {
 /// The service's own message about a refusal is developer text and stays in
 /// the record; its status and code explain the refusal
 /// (specs/005-microsoft-graph-integration/research.md §5).
-fn service_status(error: &GraphError) -> MailStatus {
+fn graph_failure_status(error: &GraphError) -> MailStatus {
     let (title, explanation) = match &error.failure {
         GraphFailure::ConnectionFailed => (
             "Could not connect to the mail service",
@@ -391,11 +392,11 @@ fn service_status(error: &GraphError) -> MailStatus {
 /// A rejected sign-in points to the sign-in only when the server blamed the
 /// credentials or gave no code; another code, such as a temporary
 /// UNAVAILABLE, says nothing about the credential.
-fn credential_may_be_wrong(failure: &ServerFailure) -> bool {
-    if failure.failure != ImapFailure::Failed(ImapStep::SignIn) {
+fn credential_may_be_wrong(error: &ImapError) -> bool {
+    if error.failure != ImapFailure::Failed(ImapStep::SignIn) {
         return false;
     }
-    match failure
+    match error
         .server_reply
         .as_ref()
         .and_then(|reply| reply.code.as_deref())

@@ -8,7 +8,7 @@
 mod batch;
 mod gmail;
 mod imap;
-mod load;
+mod imap_batch;
 mod microsoft365;
 mod worker;
 
@@ -21,13 +21,12 @@ mod tests;
 
 pub use batch::{
     CancelsLoadOnDrop, IncompleteList, LoadFailure, LoadResult, MessageIdentity, ReceivedBatch,
-    ReceivedContent, ReceivedMessage, ServerFailure,
+    ReceivedContent, ReceivedMessage,
 };
-use worker::LoadKind;
-pub use worker::{LoadHandle, MailWorker};
 
-use goa_adapter::{AccessError, AccessRequest, AccountId, GoaAdapter};
+use goa_adapter::{AccessError, AccessRequest, AccountId, GoaAdapter, ImapAccess};
 use std::{cell::RefCell, rc::Rc};
+use worker::{LoadHandle, LoadKind, MailWorker};
 
 /// Which load sequence an account needs. The window turns the account's
 /// `AccountProvider` into this; that type does not reach this crate.
@@ -39,19 +38,7 @@ pub enum MailProvider {
 }
 
 /// Where Microsoft 365 mail is read.
-pub const MICROSOFT_GRAPH: &str = "https://graph.microsoft.com/v1.0";
-
-/// How one load ended.
-#[derive(Debug)]
-pub enum LoadOutcome {
-    Loaded(ReceivedBatch),
-    Failed(LoadFailure),
-    /// The load was cancelled and its connection is closed.
-    Cancelled,
-    /// The mail worker stopped without a result, so nothing was loaded. The
-    /// next refresh starts a new worker.
-    WorkerStopped,
-}
+const MICROSOFT_GRAPH: &str = "https://graph.microsoft.com/v1.0";
 
 /// Starts one account's Inbox load and reports how it ended. The window loads
 /// with Online Accounts and the mail worker; the graphical test reports
@@ -95,7 +82,7 @@ impl LoadsInbox for MailLoader {
         let worker = self.worker.clone();
         let start_transfer = move |access: Result<LoadKind, AccessError>| match access {
             Ok(kind) => {
-                let transfer = worker.load_inbox(kind, move |outcome| report(load_result(outcome)));
+                let transfer = worker.load_inbox(kind, report);
                 *transfer_step.borrow_mut() = LoadStep::Transferring {
                     _transfer: transfer,
                 };
@@ -105,21 +92,14 @@ impl LoadsInbox for MailLoader {
             Err(error) => report(LoadResult::Failed(LoadFailure::OnlineAccounts(error))),
         };
         let request = match provider {
-            MailProvider::GenericImap | MailProvider::Gmail => {
-                self.accounts
-                    .request_imap_access(account_id, move |access| {
-                        start_transfer(access.map(|access| {
-                            tracing::info!(
-                                encryption = ?access.encryption,
-                                "Online Accounts gave the settings and credential"
-                            );
-                            if provider == MailProvider::Gmail {
-                                LoadKind::Gmail(access)
-                            } else {
-                                LoadKind::GenericImap(access)
-                            }
-                        }))
-                    })
+            MailProvider::GenericImap => request_imap_load(
+                &self.accounts,
+                account_id,
+                LoadKind::GenericImap,
+                start_transfer,
+            ),
+            MailProvider::Gmail => {
+                request_imap_load(&self.accounts, account_id, LoadKind::Gmail, start_transfer)
             }
             MailProvider::Microsoft365 => {
                 self.accounts
@@ -143,6 +123,25 @@ impl LoadsInbox for MailLoader {
     }
 }
 
+/// Asks Online Accounts for an IMAP account's settings and credential;
+/// `load_kind` names the IMAP sequence that runs with them.
+fn request_imap_load(
+    accounts: &GoaAdapter,
+    account_id: &AccountId,
+    load_kind: fn(ImapAccess) -> LoadKind,
+    start_transfer: impl FnOnce(Result<LoadKind, AccessError>) + 'static,
+) -> AccessRequest {
+    accounts.request_imap_access(account_id, move |access| {
+        start_transfer(access.map(|access| {
+            tracing::info!(
+                encryption = ?access.encryption,
+                "Online Accounts gave the settings and credential"
+            );
+            load_kind(access)
+        }))
+    })
+}
+
 /// How far a load has come. Dropping a step cancels it.
 enum LoadStep {
     /// None only between starting the request and holding it.
@@ -155,7 +154,7 @@ enum LoadStep {
 }
 
 /// Cancels its load when dropped, at whichever step the load has reached.
-pub struct LoadCancellation(Rc<RefCell<LoadStep>>);
+struct LoadCancellation(Rc<RefCell<LoadStep>>);
 
 impl CancelsLoadOnDrop for LoadCancellation {}
 
@@ -165,15 +164,5 @@ impl Drop for LoadCancellation {
         // completion callback can still use it.
         let step = std::mem::replace(&mut *self.0.borrow_mut(), LoadStep::Cancelled);
         drop(step);
-    }
-}
-
-/// Reports a finished transfer the way the window stores it.
-fn load_result(outcome: LoadOutcome) -> LoadResult {
-    match outcome {
-        LoadOutcome::Loaded(batch) => LoadResult::Received(batch),
-        LoadOutcome::Failed(failure) => LoadResult::Failed(failure),
-        LoadOutcome::Cancelled => LoadResult::Cancelled,
-        LoadOutcome::WorkerStopped => LoadResult::Failed(LoadFailure::WorkerStopped),
     }
 }

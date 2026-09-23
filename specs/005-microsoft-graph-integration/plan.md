@@ -139,7 +139,8 @@ interface that changes is the goa-adapter access contract, amended in place.
 
 ```text
 crates/goa-adapter/src/graph_access.rs     # new: request_graph_access, GraphAccess
-crates/goa-adapter/src/imap_access.rs      # AccessError, AccessRequest; find_account_object shared
+crates/goa-adapter/src/access_calls.rs     # AccessError, AccessRequest; calls both requests share
+crates/goa-adapter/src/imap_access.rs      # request_imap_access over the shared calls
 crates/goa-adapter/src/lib.rs              # exports
 crates/mailbag-graph/                      # new crate
 ├── Cargo.toml
@@ -153,11 +154,11 @@ crates/mailbag-providers/src/
 ├── lib.rs           # MailProvider::Microsoft365; start_load chooses the access request
 ├── worker.rs        # LoadKind; run_load dispatches three sequences
 ├── batch.rs         # MessageIdentity, IncompleteList, LoadFailure::MicrosoftGraph
-├── load.rs          # identity and incomplete on the IMAP batch
+├── imap_batch.rs    # identity and incomplete on the IMAP batch (was load.rs)
 ├── microsoft365.rs  # new: load_microsoft365_inbox
 └── tests.rs         # Microsoft 365 load against the scripted service
 crates/mailbag/src/accounts.rs             # eligibility
-crates/mailbag/src/window_ui.rs            # service_status, notice, Settings wording
+crates/mailbag/src/window_ui.rs            # graph_failure_status, notice, Settings wording
 crates/mailbag/src/mail_ui.rs              # the identity in the "message opened" line
 crates/mailbag/src/inbox.rs                # failure and incomplete lines
 tests/support/goa.rs                       # fake Microsoft 365 object
@@ -224,7 +225,7 @@ point next to `request_imap_access`):
 access and becomes `LoadKind::Microsoft365`. The worker's `run_load(kind)`
 runs the matching sequence; a failure of either kind becomes `LoadFailure`.
 
-**mailbag, `service_status(error)`**: title and reason by `GraphFailure`;
+**mailbag, `graph_failure_status(error)`**: title and reason by `GraphFailure`;
 `Refused` adds "The mail service said: status, code"; status 401 adds the
 sign-in sentence; `incomplete_list_notice` words `ServerRefused` as today and
 `MoreAvailable` as "Not all messages in this account were loaded: the mail
@@ -291,3 +292,18 @@ The reviewer's gap, empty sender names arriving as empty strings, was
 checked live: over the newest 100 messages no name, address, subject, date
 or body was missing or empty; 9 messages had an empty recipient list, which
 the display rule already turns into no To row. Nothing is built for it.
+
+## Simplify review (2026-09-24)
+
+After live acceptance a fresh reviewer read the provider layer of all three
+providers. Applied, with no change to behaviour except the last item: both
+Online Accounts requests share their D-Bus calls and types
+(`access_calls.rs`); `ServerFailure` is gone and the IMAP failure travels as
+`LoadFailure::Imap(ImapError)`, worded by `imap_failure_status` next to
+`graph_failure_status`; `LoadOutcome` is gone and the worker reports a
+`LoadResult`; types no other crate uses are crate-private; the batch size has
+one owner in `mailbag-providers`, which passes it to `fetch_rows`; `load.rs`
+is `imap_batch.rs`; the Graph error line names its status and code as fields;
+the incomplete-list notice appears only for a batch the window keeps (a batch
+discarded by an exclusion no longer produces one). Declined: narrowing
+`GraphError`, the unreachable Cancelled wording, and merging test helpers.

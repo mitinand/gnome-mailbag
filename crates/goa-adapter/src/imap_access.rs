@@ -2,16 +2,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::{
-    AccountId, ErrorCause, GoaAdapter,
+    AccountId, GoaAdapter,
+    access_calls::{
+        AccessError, AccessRequest, access_error, find_account_object, read_access_token,
+        read_account_objects,
+    },
     accounts::{
-        ACCOUNT_INTERFACE, GOA_BUS_NAME, GOA_ROOT_PATH, MAIL_INTERFACE, ManagedObjects,
-        OAUTH2_BASED_INTERFACE, OBJECT_MANAGER_INTERFACE, PASSWORD_BASED_INTERFACE, Properties,
-        classify_glib_error, read_property,
+        GOA_BUS_NAME, MAIL_INTERFACE, OAUTH2_BASED_INTERFACE, PASSWORD_BASED_INTERFACE, Properties,
+        read_property,
     },
 };
 use gio::prelude::*;
 use glib::variant::{FromVariant, ObjectPath};
-use std::collections::BTreeMap;
 
 /// GOA's PasswordBased key for the IMAP password of a Generic IMAP account.
 const IMAP_PASSWORD_KEY: &str = "imap-password";
@@ -42,36 +44,6 @@ pub enum ImapEncryption {
     ImplicitTls,
     /// A plain connection that must switch to TLS with STARTTLS before sign-in.
     StartTls,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AccessError {
-    /// Online Accounts did not list the account, or its object lacks the
-    /// settings or the credential interface the request needs.
-    Settings,
-    /// Neither SSL nor STARTTLS is set, so no password was requested.
-    NoEncryption,
-    /// Online Accounts did not return the password.
-    Password,
-    /// Online Accounts did not return the access token of an OAuth account.
-    AccessToken,
-    /// Online Accounts did not answer in time, for example while GetPassword
-    /// waits for the keyring to be unlocked.
-    Timeout,
-    Cancelled,
-}
-
-/// Cancels its access request when cancelled or dropped. Holds no credentials.
-pub struct AccessRequest(pub(crate) gio::Cancellable);
-impl AccessRequest {
-    pub fn cancel(&self) {
-        self.0.cancel();
-    }
-}
-impl Drop for AccessRequest {
-    fn drop(&mut self) {
-        self.0.cancel();
-    }
 }
 
 impl GoaAdapter {
@@ -131,16 +103,10 @@ enum CredentialInterface {
 impl AccessAttempt {
     fn read_settings(self, connection: gio::DBusConnection) {
         let cancellable = self.cancellable.clone();
-        connection.clone().call(
-            Some(GOA_BUS_NAME),
-            GOA_ROOT_PATH,
-            OBJECT_MANAGER_INTERFACE,
-            "GetManagedObjects",
-            None,
-            Some(glib::VariantTy::new("(a{oa{sa{sv}}})").unwrap()),
-            gio::DBusCallFlags::NONE,
+        read_account_objects(
+            &connection.clone(),
             self.timeout_msec,
-            Some(&cancellable),
+            &cancellable,
             move |reply| {
                 let settings = reply
                     .map_err(|error| access_error(&error, AccessError::Settings))
@@ -156,93 +122,50 @@ impl AccessAttempt {
     /// Asks the interface the account's object exports for its credential.
     fn read_credential(self, connection: gio::DBusConnection, settings: ImapSettings) {
         let cancellable = self.cancellable.clone();
-        let (interface, method, arguments, reply_type, step_failure, credential_from) =
-            match settings.credential_interface {
-                CredentialInterface::OAuth2Based => (
-                    OAUTH2_BASED_INTERFACE,
-                    "GetAccessToken",
-                    None,
-                    "(si)",
-                    AccessError::AccessToken,
-                    access_token_from as ReplyParser,
-                ),
-                CredentialInterface::PasswordBased => (
-                    PASSWORD_BASED_INTERFACE,
-                    "GetPassword",
-                    Some((IMAP_PASSWORD_KEY,).to_variant()),
-                    "(s)",
-                    AccessError::Password,
-                    password_from as ReplyParser,
-                ),
-            };
-        connection.call(
-            Some(GOA_BUS_NAME),
-            settings.object_path.as_str(),
-            interface,
-            method,
-            arguments.as_ref(),
-            Some(glib::VariantTy::new(reply_type).unwrap()),
-            gio::DBusCallFlags::NONE,
-            self.timeout_msec,
-            Some(&cancellable),
-            move |reply| {
-                let access = reply
-                    .map_err(|error| access_error(&error, step_failure))
-                    .map(|reply| ImapAccess {
-                        account_id: self.account_id,
-                        host: settings.host,
-                        login: settings.login,
-                        encryption: settings.encryption,
-                        credential: credential_from(&reply),
-                    });
-                (self.on_complete)(access);
-            },
-        );
+        let object_path = settings.object_path.clone();
+        match settings.credential_interface {
+            CredentialInterface::OAuth2Based => read_access_token(
+                &connection,
+                &object_path,
+                self.timeout_msec,
+                &cancellable,
+                move |reply| {
+                    let credential = reply
+                        .map(ImapCredential::AccessToken)
+                        .map_err(|error| access_error(&error, AccessError::AccessToken));
+                    self.finish(settings, credential);
+                },
+            ),
+            CredentialInterface::PasswordBased => connection.call(
+                Some(GOA_BUS_NAME),
+                object_path.as_str(),
+                PASSWORD_BASED_INTERFACE,
+                "GetPassword",
+                Some(&(IMAP_PASSWORD_KEY,).to_variant()),
+                Some(glib::VariantTy::new("(s)").unwrap()),
+                gio::DBusCallFlags::NONE,
+                self.timeout_msec,
+                Some(&cancellable),
+                move |reply| {
+                    // GIO checked the reply against the signature above.
+                    let credential = reply
+                        .map(|reply| ImapCredential::Password(reply.get::<(String,)>().unwrap().0))
+                        .map_err(|error| access_error(&error, AccessError::Password));
+                    self.finish(settings, credential);
+                },
+            ),
+        }
     }
-}
 
-/// Reads the credential out of a reply GIO already checked against the
-/// signature its call asked for.
-type ReplyParser = fn(&glib::Variant) -> ImapCredential;
-
-/// A token's `expires_in` is discarded: GOA renews a token close to expiry
-/// before it returns one, and a load lasts seconds (004 research §1).
-fn access_token_from(reply: &glib::Variant) -> ImapCredential {
-    ImapCredential::AccessToken(reply.get::<(String, i32)>().unwrap().0)
-}
-
-fn password_from(reply: &glib::Variant) -> ImapCredential {
-    ImapCredential::Password(reply.get::<(String,)>().unwrap().0)
-}
-
-/// A D-Bus timeout at either step is Timeout; other errors fail their step.
-pub(crate) fn access_error(error: &glib::Error, step_failure: AccessError) -> AccessError {
-    if error.matches(gio::IOErrorEnum::Cancelled) {
-        AccessError::Cancelled
-    } else if classify_glib_error(error) == ErrorCause::Timeout {
-        AccessError::Timeout
-    } else {
-        step_failure
+    fn finish(self, settings: ImapSettings, credential: Result<ImapCredential, AccessError>) {
+        (self.on_complete)(credential.map(|credential| ImapAccess {
+            account_id: self.account_id,
+            host: settings.host,
+            login: settings.login,
+            encryption: settings.encryption,
+            credential,
+        }));
     }
-}
-
-/// The path GOA returned for the account and the interfaces of its object.
-/// An account that is no longer listed is Settings.
-pub(crate) fn find_account_object(
-    reply: &glib::Variant,
-    account_id: &AccountId,
-) -> Result<(ObjectPath, BTreeMap<String, Properties>), AccessError> {
-    // GIO checked the reply against the signature passed to the call.
-    let (objects,) = reply.get::<(ManagedObjects,)>().unwrap();
-    objects
-        .into_iter()
-        .find(|(_, interfaces)| {
-            interfaces
-                .get(ACCOUNT_INTERFACE)
-                .and_then(|account| read_property::<String>(account, "Id"))
-                .is_some_and(|id| id == account_id.as_str())
-        })
-        .ok_or(AccessError::Settings)
 }
 
 fn find_imap_settings(

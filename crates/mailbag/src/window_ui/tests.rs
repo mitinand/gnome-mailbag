@@ -5,7 +5,7 @@ use super::*;
 use mailbag_imap::ServerReply;
 
 fn rejected_sign_in(code: Option<&str>, text: &str) -> LoadFailure {
-    LoadFailure::Server(ServerFailure {
+    LoadFailure::Imap(ImapError {
         failure: ImapFailure::Failed(ImapStep::SignIn),
         server_reply: Some(ServerReply {
             code: code.map(str::to_owned),
@@ -44,42 +44,42 @@ fn every_failed_step_names_itself() {
             "in time",
         ),
         (
-            LoadFailure::Server(ImapFailure::Failed(ImapStep::Connect).into()),
+            LoadFailure::Imap(ImapFailure::Failed(ImapStep::Connect).into()),
             "Unable to reach the mail server",
             "could not reach",
         ),
         (
-            LoadFailure::Server(ImapFailure::Failed(ImapStep::SecureConnection).into()),
+            LoadFailure::Imap(ImapFailure::Failed(ImapStep::SecureConnection).into()),
             "Secure connection failed",
             "sent no password",
         ),
         (
-            LoadFailure::Server(ImapFailure::Failed(ImapStep::OpenInbox).into()),
+            LoadFailure::Imap(ImapFailure::Failed(ImapStep::OpenInbox).into()),
             "Unable to open the Inbox",
             "did not open the Inbox",
         ),
         (
-            LoadFailure::Server(ImapFailure::Failed(ImapStep::FetchMessages).into()),
+            LoadFailure::Imap(ImapFailure::Failed(ImapStep::FetchMessages).into()),
             "Unable to get the message list",
             "did not return this Inbox's messages",
         ),
         (
-            LoadFailure::Server(ImapFailure::Failed(ImapStep::FetchText).into()),
+            LoadFailure::Imap(ImapFailure::Failed(ImapStep::FetchText).into()),
             "Unable to get the message text",
             "did not return the text",
         ),
         (
-            LoadFailure::Server(ImapFailure::TimedOut(ImapStep::OpenInbox).into()),
+            LoadFailure::Imap(ImapFailure::TimedOut(ImapStep::OpenInbox).into()),
             "The mail server stopped responding",
             "while opening the Inbox",
         ),
         (
-            LoadFailure::Server(ImapFailure::NoSignInMethod.into()),
+            LoadFailure::Imap(ImapFailure::NoSignInMethod.into()),
             "No supported sign-in method",
             "no sign-in method Mailbag supports",
         ),
         (
-            LoadFailure::Server(ImapFailure::InboxChanged.into()),
+            LoadFailure::Imap(ImapFailure::InboxChanged.into()),
             "The Inbox changed while loading",
             "Try Refresh Inbox again",
         ),
@@ -136,7 +136,7 @@ fn a_rejected_sign_in_points_to_the_sign_in_only_when_the_server_blames_it() {
 
 #[test]
 fn server_and_alert_text_reach_the_page_as_bounded_plain_text() {
-    let failure = LoadFailure::Server(ServerFailure {
+    let failure = LoadFailure::Imap(ImapError {
         failure: ImapFailure::Failed(ImapStep::OpenInbox),
         server_reply: Some(ServerReply {
             code: None,

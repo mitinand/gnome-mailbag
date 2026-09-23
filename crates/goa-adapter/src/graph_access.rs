@@ -7,8 +7,11 @@
 
 use crate::{
     AccountId, GoaAdapter,
-    accounts::{GOA_BUS_NAME, GOA_ROOT_PATH, OAUTH2_BASED_INTERFACE, OBJECT_MANAGER_INTERFACE},
-    imap_access::{AccessError, AccessRequest, access_error, find_account_object},
+    access_calls::{
+        AccessError, AccessRequest, access_error, find_account_object, read_access_token,
+        read_account_objects,
+    },
+    accounts::OAUTH2_BASED_INTERFACE,
 };
 use glib::variant::ObjectPath;
 
@@ -58,16 +61,10 @@ struct GraphAccessAttempt {
 impl GraphAccessAttempt {
     fn read_objects(self, connection: gio::DBusConnection) {
         let cancellable = self.cancellable.clone();
-        connection.clone().call(
-            Some(GOA_BUS_NAME),
-            GOA_ROOT_PATH,
-            OBJECT_MANAGER_INTERFACE,
-            "GetManagedObjects",
-            None,
-            Some(glib::VariantTy::new("(a{oa{sa{sv}}})").unwrap()),
-            gio::DBusCallFlags::NONE,
+        read_account_objects(
+            &connection.clone(),
             self.timeout_msec,
-            Some(&cancellable),
+            &cancellable,
             move |reply| {
                 let object_path = reply
                     .map_err(|error| access_error(&error, AccessError::Settings))
@@ -82,34 +79,27 @@ impl GraphAccessAttempt {
                         }
                     });
                 match object_path {
-                    Ok(object_path) => self.read_access_token(connection, object_path),
+                    Ok(object_path) => self.read_token(&connection, &object_path),
                     Err(error) => (self.on_complete)(Err(error)),
                 }
             },
         );
     }
 
-    /// A token's `expires_in` is discarded, as for a Google account.
-    fn read_access_token(self, connection: gio::DBusConnection, object_path: ObjectPath) {
+    fn read_token(self, connection: &gio::DBusConnection, object_path: &ObjectPath) {
         let cancellable = self.cancellable.clone();
-        connection.call(
-            Some(GOA_BUS_NAME),
-            object_path.as_str(),
-            OAUTH2_BASED_INTERFACE,
-            "GetAccessToken",
-            None,
-            Some(glib::VariantTy::new("(si)").unwrap()),
-            gio::DBusCallFlags::NONE,
+        read_access_token(
+            connection,
+            object_path,
             self.timeout_msec,
-            Some(&cancellable),
+            &cancellable,
             move |reply| {
                 let access = reply
-                    .map_err(|error| access_error(&error, AccessError::AccessToken))
-                    .map(|reply| GraphAccess {
+                    .map(|access_token| GraphAccess {
                         account_id: self.account_id,
-                        // GIO checked the reply against the signature above.
-                        access_token: reply.get::<(String, i32)>().unwrap().0,
-                    });
+                        access_token,
+                    })
+                    .map_err(|error| access_error(&error, AccessError::AccessToken));
                 (self.on_complete)(access);
             },
         );

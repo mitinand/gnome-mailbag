@@ -82,25 +82,26 @@ impl InboxController {
     }
 
     /// Stores how the load ended under the account it was started for, and
-    /// leaves Loading so Refresh Inbox becomes available again.
-    pub fn finish_load(&mut self, account_id: &AccountId, result: LoadResult) {
+    /// leaves Loading so Refresh Inbox becomes available again. Returns
+    /// whether the account keeps the result.
+    pub fn finish_load(&mut self, account_id: &AccountId, result: LoadResult) -> bool {
         if self
             .running_load
             .take_if(|running| running.account_id == *account_id)
             .is_none()
         {
-            return;
+            return false;
         }
         let account = account_id.as_str();
         let inbox = match result {
             // The cancellation was recorded where it was requested.
-            LoadResult::Cancelled => return,
+            LoadResult::Cancelled => return false,
             _ if !self.awaits_result(account_id) => {
                 tracing::info!(
                     account,
                     "Inbox load result discarded: the account is no longer shown"
                 );
-                return;
+                return false;
             }
             LoadResult::Received(batch) => {
                 log_received_batch(account, &batch);
@@ -112,6 +113,7 @@ impl InboxController {
             }
         };
         self.inboxes.insert(account_id.clone(), inbox);
+        true
     }
 
     /// Discards the mail of accounts Online Accounts no longer shows and
@@ -225,36 +227,46 @@ fn is_unsupported(explanation: &ContentExplanation) -> bool {
     )
 }
 
-/// The load's single error line: the failure value the UI explains, the
-/// server's response code and the number of alerts, never the server's text.
-/// The failure values hold no server text, so the record can name them as they
-/// are (`ImapFailure`, `AccessError`).
+/// The load's single error line: the failure the UI explains, the mail
+/// service's status, the server's or the service's error code and the number
+/// of alerts, never the server's text. The failure values hold no server text,
+/// so the record can name them as they are (`ImapFailure`, `AccessError`).
 fn log_load_failure(account: &str, failure: &LoadFailure) {
-    let (cause, code, alerts): (&dyn fmt::Debug, Option<&str>, usize) = match failure {
-        LoadFailure::OnlineAccounts(error) => (error, None, 0),
-        LoadFailure::Server(server) => (
-            &server.failure,
-            server
-                .server_reply
-                .as_ref()
-                .and_then(|reply| reply.code.as_deref()),
-            server.alerts.len(),
-        ),
-        LoadFailure::MicrosoftGraph(error) => (
-            &error.failure,
-            match &error.failure {
-                GraphFailure::Refused { code, .. } => code.as_deref(),
-                _ => None,
+    let (cause, status, code, alerts): (&dyn fmt::Debug, Option<u32>, Option<&str>, usize) =
+        match failure {
+            LoadFailure::OnlineAccounts(error) => (error, None, None, 0),
+            LoadFailure::Imap(error) => (
+                &error.failure,
+                None,
+                error
+                    .server_reply
+                    .as_ref()
+                    .and_then(|reply| reply.code.as_deref()),
+                error.alerts.len(),
+            ),
+            LoadFailure::MicrosoftGraph(error) => match &error.failure {
+                GraphFailure::Refused { status, code } => {
+                    (&CauseName("Refused"), Some(*status), code.as_deref(), 0)
+                }
+                other => (other, None, None, 0),
             },
-            0,
-        ),
-        LoadFailure::WorkerStopped => (&"WorkerStopped", None, 0),
-    };
+            LoadFailure::WorkerStopped => (&CauseName("WorkerStopped"), None, None, 0),
+        };
     tracing::error!(
         account,
         cause = ?cause,
+        status,
         code,
         alerts = Some(alerts).filter(|alerts| *alerts > 0),
         "Inbox load failed"
     );
+}
+
+/// A failure named bare in the record, as the other causes' Debug names them.
+struct CauseName(&'static str);
+
+impl fmt::Debug for CauseName {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.0)
+    }
 }

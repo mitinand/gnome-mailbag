@@ -121,12 +121,24 @@ pub enum ImapFailure {
     InboxChanged,
 }
 
+#[derive(Clone, PartialEq, Eq)]
 pub struct ImapError {
     pub failure: ImapFailure,
     /// The server's own reason for the failure, if it gave one.
     pub server_reply: Option<ServerReply>,
     /// ALERT texts the server sent during this attempt.
     pub alerts: Vec<String>,
+}
+
+impl From<ImapFailure> for ImapError {
+    /// A failure the caller found itself, which the server did not explain.
+    fn from(failure: ImapFailure) -> Self {
+        Self {
+            failure,
+            server_reply: None,
+            alerts: Vec::new(),
+        }
+    }
 }
 
 /// Leaves the server's text out: it reaches the record only at debug, with the

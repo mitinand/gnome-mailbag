@@ -5,7 +5,7 @@
 //! a time. It touches no widget.
 
 use crate::{
-    LoadFailure, LoadOutcome, gmail::load_gmail_inbox, imap::load_imap_inbox,
+    LoadFailure, LoadResult, gmail::load_gmail_inbox, imap::load_imap_inbox,
     microsoft365::load_microsoft365_inbox,
 };
 use futures_util::future::{self, Either};
@@ -16,7 +16,7 @@ use std::{cell::RefCell, pin::pin, thread};
 /// keeps GTK's context free of mail access. Its thread starts with the first
 /// load, and again if it ever stops.
 #[derive(Default)]
-pub struct MailWorker {
+pub(crate) struct MailWorker {
     pub(crate) loads: RefCell<Option<async_channel::Sender<LoadRequest>>>,
 }
 
@@ -36,16 +36,16 @@ pub(crate) struct LoadRequest {
     kind: LoadKind,
     /// Closed when the caller cancels or drops the load.
     cancelled: async_channel::Receiver<()>,
-    outcome: async_channel::Sender<LoadOutcome>,
+    outcome: async_channel::Sender<LoadResult>,
 }
 
 /// Cancels its load when dropped, which closes the connection.
-pub struct LoadHandle {
+pub(crate) struct LoadHandle {
     _cancel: async_channel::Sender<()>,
 }
 
 impl MailWorker {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
@@ -55,7 +55,7 @@ impl MailWorker {
     pub(crate) fn load_inbox(
         &self,
         kind: LoadKind,
-        on_finished: impl FnOnce(LoadOutcome) + 'static,
+        on_finished: impl FnOnce(LoadResult) + 'static,
     ) -> LoadHandle {
         let (cancel, cancelled) = async_channel::bounded(1);
         let (sender, outcome) = async_channel::bounded(1);
@@ -95,14 +95,14 @@ impl MailWorker {
 /// thread panicked on hostile input, leaves no outcome behind; the window
 /// still hears that the load is over.
 pub(crate) async fn report_outcome(
-    outcome: Option<async_channel::Receiver<LoadOutcome>>,
-    on_finished: impl FnOnce(LoadOutcome),
+    outcome: Option<async_channel::Receiver<LoadResult>>,
+    on_finished: impl FnOnce(LoadResult),
 ) {
     let reported = match outcome {
         Some(outcome) => outcome.recv().await.ok(),
         None => None,
     };
-    on_finished(reported.unwrap_or(LoadOutcome::WorkerStopped));
+    on_finished(reported.unwrap_or(LoadResult::Failed(LoadFailure::WorkerStopped)));
 }
 
 /// Runs loads until the last worker handle is dropped.
@@ -121,15 +121,15 @@ fn run_worker(requests: &async_channel::Receiver<LoadRequest>) {
 }
 
 /// Runs one provider's load until it finishes or the caller cancels it.
-async fn run_load(kind: LoadKind, cancelled: &async_channel::Receiver<()>) -> LoadOutcome {
+async fn run_load(kind: LoadKind, cancelled: &async_channel::Receiver<()>) -> LoadResult {
     // The kind is read once, here, to choose the sequence; no sequence asks
     // about the provider again (004 plan, decision D1).
     let mut load = Box::pin(async move {
         match kind {
             LoadKind::GenericImap(access) => {
-                load_imap_inbox(access).await.map_err(LoadFailure::Server)
+                load_imap_inbox(access).await.map_err(LoadFailure::Imap)
             }
-            LoadKind::Gmail(access) => load_gmail_inbox(access).await.map_err(LoadFailure::Server),
+            LoadKind::Gmail(access) => load_gmail_inbox(access).await.map_err(LoadFailure::Imap),
             LoadKind::Microsoft365 {
                 access,
                 service_url,
@@ -139,13 +139,13 @@ async fn run_load(kind: LoadKind, cancelled: &async_channel::Receiver<()>) -> Lo
         }
     });
     match future::select(&mut load, pin!(cancelled.recv())).await {
-        Either::Left((Ok(batch), _)) => LoadOutcome::Loaded(batch),
-        Either::Left((Err(failure), _)) => LoadOutcome::Failed(failure),
+        Either::Left((Ok(batch), _)) => LoadResult::Received(batch),
+        Either::Left((Err(failure), _)) => LoadResult::Failed(failure),
         Either::Right(_) => {
             // Dropping the unfinished load closes its connection, before the
             // outcome tells the window that the load has ended.
             drop(load);
-            LoadOutcome::Cancelled
+            LoadResult::Cancelled
         }
     }
 }

@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
-use super::{AccessError, AccessRequest, ImapAccess, ImapCredential, ImapEncryption};
+use super::{ImapAccess, ImapCredential, ImapEncryption};
 use crate::client::tests::{
     RecordedUpdates, dispatch_for, run_in_context, start_test_client, wait_until,
 };
-use crate::{AccountId, GoaAdapter, test_bus::TestBus, test_goa::*};
+use crate::{AccessError, AccessRequest, AccountId, GoaAdapter, test_bus::TestBus, test_goa::*};
 use gio::prelude::*;
 use glib::Variant;
 use std::{cell::RefCell, rc::Rc, time::Duration};

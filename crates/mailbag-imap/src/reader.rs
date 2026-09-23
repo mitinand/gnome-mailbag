@@ -19,8 +19,6 @@ use std::{collections::BTreeMap, fmt, io};
 
 /// Seconds without progress after which connecting, TLS, a read or a write fails.
 const SOCKET_TIMEOUT_SECONDS: u32 = 30;
-/// A load reads at most this many of the newest Inbox messages.
-const MESSAGE_WINDOW: u32 = 100;
 const ROW_ITEMS: &str = "UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT)]";
 /// Gmail's message identifier and labels, added to the row FETCH on request.
 const GMAIL_ROW_ITEMS: &str = "X-GM-MSGID X-GM-LABELS";
@@ -99,13 +97,16 @@ impl InboxReader {
         self.inbox.uid_validity
     }
 
-    /// Reads the newest messages, at most 100, in descending UID order. A
-    /// message the server did not answer for is left out.
-    /// Reads the newest rows of the Inbox. A server that answers for some
-    /// messages and then refuses the command leaves the list short; its
-    /// reason travels with the rows, because a missing row explains nothing
-    /// by itself.
-    pub async fn fetch_rows(&mut self, row_items: RowItems) -> Result<MessageList, ImapError> {
+    /// Reads the rows of the newest `batch_size` Inbox messages, at least one,
+    /// in descending UID order. A message the server did not answer for is
+    /// left out. A server that answers for some messages and then refuses the
+    /// command leaves the list short; its reason travels with the rows,
+    /// because a missing row explains nothing by itself.
+    pub async fn fetch_rows(
+        &mut self,
+        row_items: RowItems,
+        batch_size: u32,
+    ) -> Result<MessageList, ImapError> {
         let count = self.inbox.message_count;
         if count == 0 {
             return Ok(MessageList {
@@ -113,7 +114,7 @@ impl InboxReader {
                 refusal: None,
             });
         }
-        let first = count.saturating_sub(MESSAGE_WINDOW - 1).max(1);
+        let first = count.saturating_sub(batch_size - 1).max(1);
         let items = match row_items {
             RowItems::Standard => format!("({ROW_ITEMS})"),
             RowItems::WithGmailAttributes => format!("({ROW_ITEMS} {GMAIL_ROW_ITEMS})"),

@@ -7,10 +7,10 @@ use goa_adapter::{
     AccessError, AccountCheckError, AccountCheckResult, AccountDetails, AccountId, AccountProvider,
     AccountUpdate, ErrorCause,
 };
-use mailbag_imap::{ImapFailure, ImapStep, ServerReply};
+use mailbag_imap::{ImapError, ImapFailure, ImapStep, ServerReply};
 use mailbag_providers::{
     CancelsLoadOnDrop, IncompleteList, LoadFailure, LoadResult, LoadsInbox, MailProvider,
-    MessageIdentity, ServerFailure,
+    MessageIdentity,
 };
 use std::{
     cell::Cell,
@@ -204,7 +204,7 @@ fn unwrapped_and_ordinary_batch(account_id: &AccountId) -> ReceivedBatch {
 }
 
 fn rejected_sign_in() -> LoadFailure {
-    LoadFailure::Server(ServerFailure {
+    LoadFailure::Imap(ImapError {
         failure: ImapFailure::Failed(ImapStep::SignIn),
         server_reply: Some(ServerReply {
             code: Some("AUTHENTICATIONFAILED".to_owned()),

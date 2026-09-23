@@ -7,14 +7,11 @@
 //! (specs/005-microsoft-graph-integration/spec.md FR-005).
 
 use crate::batch::{
-    IncompleteList, MessageIdentity, ReceivedBatch, ReceivedContent, ReceivedMessage,
+    BATCH_SIZE, IncompleteList, MessageIdentity, ReceivedBatch, ReceivedContent, ReceivedMessage,
 };
 use goa_adapter::GraphAccess;
 use mailbag_content::{ContentExplanation, DisplayFields, display_names};
 use mailbag_graph::{GraphError, GraphMessage, Mailbox, list_inbox_messages};
-
-/// The batch size of every provider (specs/002-imap-integration FR-002).
-const BATCH_SIZE: u32 = 100;
 
 pub(crate) async fn load_microsoft365_inbox(
     access: GraphAccess,
