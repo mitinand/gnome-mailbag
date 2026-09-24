@@ -56,6 +56,27 @@ data, handlers, and behavior that cannot be expressed in the forms; missing or
 nonworking handlers do not justify changing the layout. Obtain explicit maintainer
 approval before changing it.
 
+Every widget that a `.ui` file can declare is declared there: pages, boxes,
+labels, buttons, banners, dialogs and their children. Code binds data, sets
+text and visibility and connects handlers; it instantiates a form only for
+repeated items (a row, a block) and never builds layout with widget
+constructors. A new widget is a change to the forms, approved as such.
+Code written before this rule moves into the forms when its feature is next
+changed.
+
+## UI wording
+
+User-visible text never names Mailbag inside a sentence and never speaks for it
+("Mailbag could not…", "Mailbag cannot decrypt it"). Write impersonally or name
+the real actor, as GNOME applications do: "Could not reach the mail server",
+"No password was sent", "This message cannot be decrypted". The name appears
+only as a title: the window, About. This holds for every feature and every
+string, `.ui` files included.
+
+Widget structure, style classes and dialog shapes follow a GNOME Workbench
+Library demo when one fits, unless the maintainer decides otherwise for a case.
+Say which demo was followed, or that none fits.
+
 ## Documentation
 
 Keep the root `README.md` as the public introduction and getting-started guide.
