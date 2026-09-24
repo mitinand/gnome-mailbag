@@ -320,6 +320,8 @@ server reason and are shown the way 002 shows any refusal (see Assumptions).
 - **SC-008**: Refresh Inbox is available for a selected Google account, stays
   unavailable for a Microsoft 365 account, and accessibility established by
   F01 and the IMAP integration does not regress (FR-009).
+  *Amended 2026-09-23 by [Microsoft 365 integration](../005-microsoft-graph-integration/spec.md):
+  Refresh Inbox becomes available for Microsoft 365 accounts too.*
 
 ## Deferred to later features
 
@@ -375,6 +377,8 @@ them gets requirements, plan decisions or code in this feature.
 - FR-012 of the IMAP integration, which made Google accounts ineligible for
   Refresh Inbox, is amended by this feature: Google accounts become eligible;
   Microsoft 365 accounts remain ineligible until their own feature.
+  *Amended 2026-09-23 by [Microsoft 365 integration](../005-microsoft-graph-integration/spec.md):
+  that feature makes Microsoft 365 accounts eligible.*
 - Acceptance uses the existing Fedora/GNOME environment, the installed
   application and the maintainer's Google account in GOA, with a user label
   whose name uses non-Latin letters on at least one Inbox message.

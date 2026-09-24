@@ -104,8 +104,8 @@ room:
   list page also says the operation "returns message bodies in only HTML
   format"; the probe settled it: on the list, 100 of 100 bodies came with
   `contentType` `text`. The answer's `Preference-Applied` header echoed only
-  `IdType=ImmutableId`, so the body's own `contentType` is what the code
-  checks, never the header.
+  `IdType=ImmutableId`, so the body's own field, not the header, is where
+  another form would show; the code examines neither (decision below).
 - `Prefer: IdType="ImmutableId"` per request gives identifiers that survive
   folder moves ([immutable identifiers](https://learn.microsoft.com/en-us/graph/outlook-immutable-id)).
   Probe: immutable identifiers are 68 characters, default ones 136; the two

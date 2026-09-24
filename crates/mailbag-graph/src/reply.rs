@@ -5,7 +5,9 @@
 //! refusal. Only the list's shape and each message's identifier and read state
 //! are required; any other field the service leaves out, or sends in another
 //! form, is left out of the message, so one odd message never fails the list
-//! (specs/005-microsoft-graph-integration/research.md §4).
+//! (specs/005-microsoft-graph-integration/research.md §4). An empty subject,
+//! name or address is left out too: the window then shows its fallback, and
+//! the name rule falls back to the address.
 
 use crate::{GraphFailure, GraphMessage, InboxPage, Mailbox};
 use serde_json::Value;
@@ -38,7 +40,7 @@ pub(crate) fn read_error(answer: &[u8]) -> Option<(Option<String>, Option<String
 fn read_message(entry: &Value) -> Option<GraphMessage> {
     Some(GraphMessage {
         immutable_id: entry["id"].as_str()?.to_owned(),
-        subject: owned_text(&entry["subject"]),
+        subject: present_text(&entry["subject"]),
         from: read_mailbox(&entry["from"]),
         to: entry["toRecipients"]
             .as_array()
@@ -53,9 +55,14 @@ fn read_message(entry: &Value) -> Option<GraphMessage> {
 fn read_mailbox(recipient: &Value) -> Option<Mailbox> {
     let email_address = recipient.get("emailAddress")?;
     Some(Mailbox {
-        name: owned_text(&email_address["name"]),
-        address: owned_text(&email_address["address"]),
+        name: present_text(&email_address["name"]),
+        address: present_text(&email_address["address"]),
     })
+}
+
+/// A string field with text in it; an empty string carries nothing to show.
+fn present_text(field: &Value) -> Option<String> {
+    owned_text(field).filter(|text| !text.is_empty())
 }
 
 fn owned_text(field: &Value) -> Option<String> {
@@ -163,6 +170,33 @@ mod tests {
         let message =
             read_one(r#"{"id":"message-1","isRead":false,"body":{"contentType":"text"}}"#);
         assert_eq!(message.body_text, None);
+    }
+
+    #[test]
+    fn an_empty_subject_name_or_address_is_left_out() {
+        let message = read_one(
+            r#"{"id":"message-1","isRead":false,"subject":"",
+                "from":{"emailAddress":{"name":"","address":"ada@example.org"}},
+                "toRecipients":[{"emailAddress":{"name":"Bo Example","address":""}}],
+                "body":{"contentType":"text","content":""}}"#,
+        );
+        assert_eq!(message.subject, None);
+        assert_eq!(
+            message.from,
+            Some(Mailbox {
+                name: None,
+                address: Some("ada@example.org".to_owned()),
+            })
+        );
+        assert_eq!(
+            message.to,
+            [Mailbox {
+                name: Some("Bo Example".to_owned()),
+                address: None,
+            }]
+        );
+        // An empty rendering is the message's text (FR-005), not a missing field.
+        assert_eq!(message.body_text, Some(String::new()));
     }
 
     #[test]

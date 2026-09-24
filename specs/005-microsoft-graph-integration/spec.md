@@ -2,9 +2,9 @@
 
 **Feature**: `005-microsoft-graph-integration`
 **Created**: 2026-09-23
-**Status**: Approved 2026-09-23 with the plan; the size budget and the
-specify-first path were approved after the feature-start sizing and a
-read-only probe against the service; revised 2026-09-23 after the
+**Status**: Implemented on `claude/graph` and accepted live by the
+maintainer 2026-09-24; approved 2026-09-23 with the plan after the
+feature-start sizing, a read-only probe against the service and the
 specification challenge (see Clarifications)
 **Input**: On an explicit refresh, load recent Inbox message metadata and text
 of the selected Microsoft 365 account into memory, the way
@@ -402,8 +402,9 @@ the service delivers display fields and text as ready values in one answer.
   (US4; FR-009).
 - **SC-007**: A Microsoft 365 account, a Google account and a Generic IMAP
   account loaded in one run show their own batches; the other providers'
-  behaviour under 002 SC-001–007 and 004 SC-001–008 is unchanged by this
-  feature (US1; FR-007).
+  behaviour under 002 SC-001–007 and 004 SC-001–007 is unchanged by this
+  feature, and 004 SC-008 is amended so that Microsoft 365 accounts are
+  refreshable (US1; FR-007).
 - **SC-008**: Against a scripted service that refuses the request, a refresh
   fails with an explanation that states the service's status and error code,
   the service receives exactly one request for that load, and a later manual

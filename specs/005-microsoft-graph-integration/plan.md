@@ -2,9 +2,11 @@
 
 **Branch**: `claude/graph` | **Feature**: `005-microsoft-graph-integration`
 **Date**: 2026-09-23 | **Spec**: [spec.md](spec.md)
-**Status**: Approved by the maintainer 2026-09-23 after the plan challenge
-(see the last section), together with the goa-adapter contract amendment and
-the one-function change in mailbag-content; tasks are in [tasks.md](tasks.md).
+**Status**: Implemented on `claude/graph` and accepted live by the maintainer
+2026-09-24; approved 2026-09-23 after the plan challenge, together with the
+goa-adapter contract amendment and the one-function change in
+mailbag-content; tasks are in [tasks.md](tasks.md); the simplify and
+post-implementation reviews are in the last two sections.
 
 ## Size
 
@@ -19,9 +21,9 @@ after reading the code. Reassess with the maintainer before exceeding about
 | New threads, timers, queues | 0 | 0. The wait limit of 002 (30 s) is set on the web library's session, which already owns the clock |
 | New state, types, error types | ~8 | 9 types and 2 variants: `GraphAccess` (goa-adapter); `InboxPage`, `GraphMessage`, `Mailbox`, `GraphError`, `GraphFailure` (mailbag-graph); `MessageIdentity`, `IncompleteList`, `LoadKind` (providers; the last is crate-private); `LoadFailure::MicrosoftGraph`, `MailProvider::Microsoft365`. Over the budget by one: `IncompleteList` is the cheapest form of the spec challenge's decision 1; `Mailbox` is a plain name-and-address pair so that the display rule stays in mailbag-content |
 | New fields in existing data | identity on the message | `ReceivedMessage.identity` replaces `uid`; `ReceivedBatch.incomplete` replaces `list_refusal` with a wider type |
-| Changes to other features' contracts or documents | goa-access contract; 002 research §9; 002 FR-012; 004 FR-009 | The same four, plus mailbag-content exposes its display-name rule (a function, no behaviour change); this is the one exception to "no change to mailbag-content", taken for constitution IV |
+| Changes to other features' contracts or documents | goa-access contract; 002 research §9; 002 FR-012; 004 FR-009 | The same four, with 004 SC-008 and its Assumption amended beside FR-009, plus mailbag-content exposes its display-name rule (a function, no behaviour change); this is the one exception to "no change to mailbag-content", taken for constitution IV |
 | New dependencies | soup3, serde_json | `soup3` 0.9 (+ `soup3-sys`), `serde_json` 1 (+ `serde` without derive, `itoa`, `ryu`, `memchr`). Host builds need `libsoup3-devel` |
-| Tests | ~17 | ~24 scenarios plus ~9 small unit cases: mailbag-graph 10 (and 8 unit cases for the answer reader), goa-adapter 6, providers 4, UI 4 (and 1 unit case in mailbag-content). Over the ~17 by about 40 %, under 1.5×: the plan challenge split the 401 and 429 wordings, and the consistency analysis added the empty-page and one-request checks |
+| Tests | ~17 | ~24 scenarios plus ~9 small unit cases: mailbag-graph 10 (and 10 unit cases for the answer reader), goa-adapter 6, providers 4, UI 4 (and 1 unit case in mailbag-content). Over the ~17 by about 40 %, under 1.5×: the plan challenge split the 401 and 429 wordings, and the consistency analysis added the empty-page and one-request checks |
 
 ## Summary
 
@@ -50,11 +52,11 @@ Everything below is built. Each line names its cost.
 
 | Step | What it does | Cost |
 |---|---|---|
-| Token from GOA | `request_graph_access(account_id, on_complete)` in goa-adapter: find the account's object, require `OAuth2Based`, call `GetAccessToken`, return `GraphAccess { account_id, access_token }`. No Mail settings are read. `ImapAccessError` and `ImapAccessRequest` become `AccessError` and `AccessRequest`, shared by both requests; the variants stay | ~75 lines, the rename, 5 tests with the fake GOA (~15 fixture lines) |
+| Token from GOA | `request_graph_access(account_id, on_complete)` in goa-adapter: find the account's object, require `OAuth2Based`, call `GetAccessToken`, return `GraphAccess { account_id, access_token }`. No Mail settings are read. `ImapAccessError` and `ImapAccessRequest` become `AccessError` and `AccessRequest`, shared by both requests; the variants stay | ~75 lines, the rename, 6 cases in 5 tests with the fake GOA (~15 fixture lines) |
 | The list request | `mailbag-graph`: `list_inbox_messages(service_url, token, 100)` creates the web session for this load with the 30 s wait limit and a `Mailbag/<version>` user agent, sends one GET to `/me/mailFolders/inbox/messages` with `$top`, `$orderby=receivedDateTime desc`, `$select` of the seven fields, `Prefer: IdType="ImmutableId", outlook.body-content-type="text"` and the bearer token, and reads the JSON into `InboxPage { messages, more_available }`. Required in the answer: the object, `value`, each entry's `id` and `isRead`; the other fields are read when present and of the documented type, otherwise left out, and `body.contentType` is not examined. A non-200 answer is `GraphFailure::Refused { status, code }`, a transport error `ConnectionFailed` or `TimedOut`, an answer without the required shape `InvalidReply`. Tests shorten the wait limit through a second entry point, as `mailbag-imap` does | ~230 lines; scripted `soup::Server` for tests ~80; 8 tests |
 | The load | `load_microsoft365_inbox(access, service_url)` in providers: list, then one `ReceivedMessage` per answer row with `MessageIdentity::GraphImmutableId`, display fields through mailbag-content's rule, the received time, the read state and `ReceivedContent::Text(body)`, or the existing `TextNotReturned` explanation when the answer holds no body for that message; `more_available` sets `ReceivedBatch.incomplete = Some(IncompleteList::MoreAvailable)`; one debug line per message | ~60 lines, 3 tests |
-| The batch's shape | `ReceivedMessage.identity: MessageIdentity { ImapUid(u32), GraphImmutableId(String) }` replaces `uid`; `ReceivedBatch.incomplete: Option<IncompleteList { ServerRefused(ServerReply), MoreAvailable }>` replaces `list_refusal`; `LoadFailure::MicrosoftGraph(GraphError)`; the worker's request carries `LoadKind { GenericImap(ImapAccess), Gmail(ImapAccess), Microsoft365 { access: GraphAccess, service_url } }` instead of an access and a provider that could disagree, and `LoadOutcome::Failed` carries a `LoadFailure` of either kind | ~60 lines, test adaptations |
-| Window | Microsoft 365 eligible in `mail_provider`; `service_status` words the four `GraphFailure` kinds, with the sign-in sentence of 004 when the status is 401; the incomplete-list notice gets its second form, "Not all messages in this account were loaded: the mail service offered more than one request holds."; the Settings wording loses "IMAP" | ~35 lines, 4 tests |
+| The batch's shape | `ReceivedMessage.identity: MessageIdentity { ImapUid(u32), GraphImmutableId(String) }` replaces `uid`; `ReceivedBatch.incomplete: Option<IncompleteList { ServerRefused(ServerReply), MoreAvailable }>` replaces `list_refusal`; `LoadFailure::MicrosoftGraph(GraphError)`; the worker's request carries `LoadKind { GenericImap(ImapAccess), Gmail(ImapAccess), Microsoft365 { access: GraphAccess, service_url } }` instead of an access and a provider that could disagree, and the worker reports a `LoadResult` whose failure is of either kind | ~60 lines, test adaptations |
+| Window | Microsoft 365 eligible in `mail_provider`; `graph_failure_status` words the four `GraphFailure` kinds, with the sign-in sentence of 004 when the status is 401; the incomplete-list notice gets its second form, "Not all messages in this account were loaded: the mail service offered more than one request holds."; the Settings wording loses "IMAP" | ~35 lines, 4 tests |
 | Packaging | Workspace member; `check.sh` rules for the new crate; `cargo-sources.json` regenerated; `setup.sh` checks `libsoup-3.0` and its dnf line and the README setup list gain `libsoup3-devel`; the README's record description mentions the service's statuses and message identifiers | scripts and docs only |
 
 Not built: a page loop, a retry, a token cache, `Retry-After`, a separate
@@ -78,7 +80,7 @@ None is planned. Each would need the situation named beside it to occur.
 |---|---|
 | Microsoft 365 account selected, Refresh Inbox | Token from GOA, one request, up to 100 rows newest first with text; identifiers, received times and read states in the record at debug |
 | The service answers 401 | `Refused { status: 401, code }`: "The mail service rejected the sign-in" with the code, plus "Check this account's sign-in in Online Accounts." |
-| A message in the answer has no subject, sender, recipients, date or body | The row shows the window's existing fallbacks ("No subject", "Unknown sender", no To row, no date) or the existing "text not returned" explanation; the other messages load normally. Live: 9 of 100 messages had an empty recipient list, none lacked anything else |
+| A message in the answer has no, or an empty, subject, sender, recipients, date or body | The row shows the window's existing fallbacks ("No subject", "Unknown sender", no To row, no date) or the existing "text not returned" explanation; the other messages load normally. Live: 9 of 100 messages had an empty recipient list, none lacked anything else |
 | The service answers 403, 404, 429, 5xx | `Refused { status, code }`: "The mail service refused the request" with status and code; no retry |
 | GOA cannot provide the token | `LoadFailure::OnlineAccounts(AccessToken)`, wording unchanged from 004 |
 | The account's object has no `OAuth2Based` or is not listed | `LoadFailure::OnlineAccounts(Settings)`: "Unable to get this account's settings from Online Accounts." |
@@ -148,7 +150,7 @@ crates/mailbag-graph/                      # new crate
     ├── lib.rs           # list_inbox_messages, InboxPage, GraphMessage, Mailbox, GraphError, GraphFailure
     ├── reply.rs         # JSON of the answer into GraphMessage; the error body into a code
     ├── test_server.rs   # scripted service on soup::Server (feature test-support)
-    └── tests/           # request shape, answer, refusals, transport failures, record
+    └── tests.rs         # request shape, answer, refusals, transport failures, record
 crates/mailbag-content/src/lib.rs          # display_names exposed
 crates/mailbag-providers/src/
 ├── lib.rs           # MailProvider::Microsoft365; start_load chooses the access request
@@ -252,9 +254,9 @@ only on explicit instruction.
 | Portion | Reviewable result | Checks and proposed commit |
 |---|---|---|
 | 1 — Service crate | `mailbag-graph` with `list_inbox_messages`, its types and failures, the scripted service and its tests; workspace member, `check.sh` rules, `cargo-sources.json`, `setup.sh` and README prerequisite. The application's behaviour is unchanged | Ten scenarios: request shape (path, query, bearer, both preferences in one header); two messages with text bodies and fields, one of them without recipients; short page with a further page offered; 401 with code; 429 with code; answer without the required shape; connection refused; no answer within the limit; the token absent from the record; cancellation closes the request; plus unit cases for the answer reader, including an empty `value` as an empty page. Flatpak build. `feat(graph): read a mailbox's Inbox from Microsoft Graph` |
-| 2 — Mechanical, no behaviour change | The rename to `AccessError` and `AccessRequest`; `MessageIdentity` with both variants; `IncompleteList` with both variants and the notice's second form, which nothing produces yet; `LoadKind` with `GenericImap` and `Gmail`, replacing the access and provider pair in the worker, and `LoadOutcome::Failed` carrying `LoadFailure`; all existing tests adapted | All existing tests pass; the "message opened" line names the identity; `check.sh` clean without any `allow`. `refactor: name each message's identity by its provider's kind` |
+| 2 — Mechanical, no behaviour change | The rename to `AccessError` and `AccessRequest`; `MessageIdentity` with both variants; `IncompleteList` with both variants and the notice's second form, which nothing produces yet; `LoadKind` with `GenericImap` and `Gmail`, replacing the access and provider pair in the worker, and the worker reporting a `LoadResult`; all existing tests adapted | All existing tests pass; the "message opened" line names the identity; `check.sh` clean without any `allow`. `refactor: name each message's identity by its provider's kind` |
 | 3 — GOA access | `request_graph_access`, `GraphAccess`, the fake GOA's Microsoft 365 object, the Settings wording without "IMAP" | Six goa-adapter scenarios: token returned; account absent; no `OAuth2Based`; `GetAccessToken` fails; held reply times out; cancel and drop. `feat(goa): provide the access token of a Microsoft 365 account` |
-| 4 — Microsoft 365 load and window | `LoadKind::Microsoft365`, `LoadFailure::MicrosoftGraph`, mailbag-content's `display_names`, `microsoft365.rs`, `start_load` for the third provider, eligibility, `service_status`, debug lines; live acceptance per quickstart | Four providers scenarios: batch from the scripted service with identities, fields, text and no incomplete notice; short page with the notice; refused request as `MicrosoftGraph` with exactly one request sent; token never logged and each message named by its identifier. Three window tests for eligibility and the 401 and 429 wordings. `feat: load the Inbox of Microsoft 365 accounts` |
+| 4 — Microsoft 365 load and window | `LoadKind::Microsoft365`, `LoadFailure::MicrosoftGraph`, mailbag-content's `display_names`, `microsoft365.rs`, `start_load` for the third provider, eligibility, `graph_failure_status`, debug lines; live acceptance per quickstart | Four providers scenarios: batch from the scripted service with identities, fields, text and no incomplete notice; short page with the notice; refused request as `MicrosoftGraph` with exactly one request sent; token never logged and each message named by its identifier. Three window tests for eligibility and the 401 and 429 wordings. `feat: load the Inbox of Microsoft 365 accounts` |
 
 The service crate comes first because it is the part with the new
 dependency and the new protocol; it can be reviewed and built for Flatpak
@@ -307,3 +309,31 @@ is `imap_batch.rs`; the Graph error line names its status and code as fields;
 the incomplete-list notice appears only for a batch the window keeps (a batch
 discarded by an exclusion no longer produces one). Declined: narrowing
 `GraphError`, the unreachable Cancelled wording, and merging test helpers.
+
+## Post-implementation reviews (2026-09-24)
+
+After the simplify review, a fresh reviewer read the branch for behaviour
+defects and another for security. `scripts/check.sh` was green before and
+after. Applied, at the maintainer's decision: an empty subject, name or
+address in the service's answer is treated as absent (`reply.rs`,
+`present_text`), so the window shows "No subject" and the name rule falls
+back to the address; an empty body stays the message's text (FR-005). Not
+applied, at the maintainer's decision: masking the account's address in the
+service's error text at debug (the error texts of `/me` requests carry no
+address) and blocking a same-host redirect from `https` to `http` (only the
+service itself could issue one, over a verified connection). No
+vulnerability was found: the token reaches only the `Authorization` header,
+the session verifies certificates with no exception, every service string
+ends in a plain-text label, and the six new crates come from crates.io with
+matching checksums in `Cargo.lock` and `cargo-sources.json`.
+
+Measured after the reviews, against the estimates above: mailbag-graph
+about 210 production lines (estimate 230) and about 210 in the scripted
+service (estimate 80, the one clear overrun: the service records requests
+and offers the stalled listener); goa-adapter about 110 (75), providers
+about 70 (120), the window about 80 (35, including the simplify review's
+reshaping of the IMAP wording). The feature stays under the ~510 budget.
+
+The pull request's first run showed that the CI check job, which builds in a
+Fedora container, needed `libsoup3-devel` as well; the workflow's package
+list gained it beside README and `setup.sh`.
