@@ -77,10 +77,17 @@ pub enum ContentExplanation {
     UnknownEncoding(String),
     /// The MIME entity itself could not be read.
     Undecodable,
-    /// The server's description of the message could not be read.
-    UnreadableStructure,
-    /// The server did not return this message's text.
-    TextNotReturned,
+}
+
+impl ContentExplanation {
+    /// Content this version does not show by design, as opposed to content
+    /// that could not be read.
+    pub fn is_by_design(&self) -> bool {
+        matches!(
+            self,
+            Self::NoPlainText { .. } | Self::Encrypted | Self::SecuredWithSMime
+        )
+    }
 }
 
 /// Chooses the plain-text parts to read, without reading any payload.
@@ -313,8 +320,9 @@ fn flowed_join(part: &mail_parser::MessagePart<'_>) -> Option<bool> {
 
 /// Joins the soft line breaks of RFC 3676: a line ending in a space continues
 /// in the next line of the same quoting depth. The `-- ` signature separator
-/// ends a paragraph, and one space the sender put in front of a line to
-/// protect it is not part of the text.
+/// is a line of its own, which neither joins the paragraph before it nor
+/// continues into the next line, and one space the sender put in front of a
+/// line to protect it is not part of the text.
 fn unflow_text(text: &str, delete_space: bool) -> String {
     let mut lines: Vec<String> = Vec::new();
     // The quoting depth of the paragraph still waiting for its next line.
@@ -327,12 +335,13 @@ fn unflow_text(text: &str, delete_space: bool) -> String {
             .strip_prefix(' ')
             .unwrap_or(quoted_text)
             .to_owned();
-        let ends_paragraph = content == "-- " || !content.ends_with(' ');
+        let is_separator = content == "-- ";
+        let ends_paragraph = is_separator || !content.ends_with(' ');
         if !ends_paragraph && delete_space {
             content.pop();
         }
         match open_paragraph {
-            Some(open) if open == depth => lines
+            Some(open) if open == depth && !is_separator => lines
                 .last_mut()
                 .expect("an open paragraph has its line")
                 .push_str(&content),
@@ -374,9 +383,17 @@ fn is_known_charset(charset: &str) -> bool {
     ) || charset_decoder(charset.as_bytes()).is_some()
 }
 
-/// Joins the decoded parts of one message into its text.
-pub fn join_message_text(parts: &[String]) -> String {
-    parts.join("\n\n")
+/// Decodes the selected parts of one message, each from its MIME header and
+/// its still-encoded body, and joins them into the message's text. One
+/// unreadable part leaves no complete text to show.
+pub fn decode_message_text<'a>(
+    parts: impl IntoIterator<Item = (&'a [u8], &'a [u8])>,
+) -> Result<String, ContentExplanation> {
+    let decoded: Vec<String> = parts
+        .into_iter()
+        .map(|(mime_header, body)| decode_text_part(mime_header, body))
+        .collect::<Result<_, _>>()?;
+    Ok(decoded.join("\n\n"))
 }
 
 /// Subject, sender and recipients for the list and the reader.
@@ -394,16 +411,27 @@ pub fn decode_display_fields(header_lines: &[u8]) -> DisplayFields {
         return DisplayFields::default();
     };
     let names = |addresses: Option<&mail_parser::Address<'_>>| {
-        let names: Vec<String> = addresses?
-            .iter()
-            .filter_map(|address| address.name().or(address.address()))
-            .map(str::to_owned)
-            .collect();
-        (!names.is_empty()).then(|| names.join(", "))
+        display_names(
+            addresses?
+                .iter()
+                .map(|address| (address.name(), address.address())),
+        )
     };
     DisplayFields {
         subject: message.subject().map(str::to_owned),
         from: names(message.from()),
         to: names(message.to()),
     }
+}
+
+/// How senders or recipients are shown, given each one's name and address:
+/// the name, else the address, joined by ", ". `None` when no one has either.
+pub fn display_names<'a>(
+    names: impl IntoIterator<Item = (Option<&'a str>, Option<&'a str>)>,
+) -> Option<String> {
+    let names: Vec<&str> = names
+        .into_iter()
+        .filter_map(|(name, address)| name.or(address))
+        .collect();
+    (!names.is_empty()).then(|| names.join(", "))
 }

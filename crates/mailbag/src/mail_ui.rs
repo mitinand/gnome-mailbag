@@ -159,7 +159,7 @@ impl MailUi {
         let message = &listed.batch.messages[listed.position];
         tracing::debug!(
             account = listed.batch.account_id.as_str(),
-            uid = message.uid,
+            identity = ?message.identity,
             "message opened"
         );
         show_inert_text(&self.reader_subject, &subject_text(&message.fields));
@@ -325,6 +325,14 @@ fn reader_body_text(message: &ReceivedMessage) -> String {
     match &message.content {
         ReceivedContent::Text(text) => inert_text(text),
         ReceivedContent::Explained(explanation) => explain_content(explanation),
+        ReceivedContent::StructureUnreadable => {
+            "The mail server could not describe this message, so its content could not be read."
+                .to_owned()
+        }
+        ReceivedContent::TextNotReturned => {
+            "The mail server did not return this message's text. Try Refresh Inbox again."
+                .to_owned()
+        }
     }
 }
 
@@ -354,14 +362,6 @@ fn explain_content(explanation: &ContentExplanation) -> String {
             inert_text(encoding)
         ),
         ContentExplanation::Undecodable => "This message's text could not be read.".to_owned(),
-        ContentExplanation::UnreadableStructure => {
-            "The mail server could not describe this message, so its content could not be read."
-                .to_owned()
-        }
-        ContentExplanation::TextNotReturned => {
-            "The mail server did not return this message's text. Try Refresh Inbox again."
-                .to_owned()
-        }
     }
 }
 

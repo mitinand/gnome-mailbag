@@ -4,56 +4,68 @@
 //! The mail worker: a thread with its own GLib context that runs one load at
 //! a time. It touches no widget.
 
-use crate::{LoadOutcome, MailProvider, gmail::load_gmail_inbox, imap::load_imap_inbox};
+use crate::{
+    LoadFailure, LoadResult, gmail::load_gmail_inbox, imap::load_imap_inbox,
+    microsoft365::load_microsoft365_inbox,
+};
 use futures_util::future::{self, Either};
-use goa_adapter::ImapAccess;
+use goa_adapter::{GraphAccess, ImapAccess};
 use std::{cell::RefCell, pin::pin, thread};
 
 /// The mail worker. It runs one load at a time for the selected account and
 /// keeps GTK's context free of mail access. Its thread starts with the first
 /// load, and again if it ever stops.
 #[derive(Default)]
-pub struct MailWorker {
+pub(crate) struct MailWorker {
     pub(crate) loads: RefCell<Option<async_channel::Sender<LoadRequest>>>,
 }
 
+/// Which load sequence to run, with the access it needs. The access and the
+/// sequence travel together, so they cannot disagree.
+pub(crate) enum LoadKind {
+    GenericImap(ImapAccess),
+    Gmail(ImapAccess),
+    /// `service_url` is Microsoft Graph's address, or a test service's.
+    Microsoft365 {
+        access: GraphAccess,
+        service_url: String,
+    },
+}
+
 pub(crate) struct LoadRequest {
-    access: ImapAccess,
-    provider: MailProvider,
+    kind: LoadKind,
     /// Closed when the caller cancels or drops the load.
     cancelled: async_channel::Receiver<()>,
-    outcome: async_channel::Sender<LoadOutcome>,
+    outcome: async_channel::Sender<LoadResult>,
 }
 
 /// Cancels its load when dropped, which closes the connection.
-pub struct LoadHandle {
+pub(crate) struct LoadHandle {
     _cancel: async_channel::Sender<()>,
 }
 
 impl MailWorker {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
     /// Loads the Inbox of the account the access data names. `on_finished`
     /// runs once on the calling GLib context, even when the worker stops,
     /// so a load always ends and Refresh Inbox becomes available again.
-    pub fn load_inbox(
+    pub(crate) fn load_inbox(
         &self,
-        access: ImapAccess,
-        provider: MailProvider,
-        on_finished: impl FnOnce(LoadOutcome) + 'static,
+        kind: LoadKind,
+        on_finished: impl FnOnce(LoadResult) + 'static,
     ) -> LoadHandle {
         let (cancel, cancelled) = async_channel::bounded(1);
         let (sender, outcome) = async_channel::bounded(1);
         let request = LoadRequest {
-            access,
-            provider,
+            kind,
             cancelled,
             outcome: sender,
         };
         // The worker's queue is unbounded, so sending cannot block GTK.
-        let accepted = self.worker().try_send(request).is_ok();
+        let accepted = self.queue().try_send(request).is_ok();
         glib::MainContext::ref_thread_default()
             .spawn_local(report_outcome(accepted.then_some(outcome), on_finished));
         LoadHandle { _cancel: cancel }
@@ -61,7 +73,7 @@ impl MailWorker {
 
     /// The running worker's queue, starting its thread when there is none or
     /// when the last one stopped, which closed its queue.
-    fn worker(&self) -> async_channel::Sender<LoadRequest> {
+    fn queue(&self) -> async_channel::Sender<LoadRequest> {
         let mut loads = self.loads.borrow_mut();
         if let Some(running) = loads.as_ref().filter(|loads| !loads.is_closed()) {
             return running.clone();
@@ -83,14 +95,14 @@ impl MailWorker {
 /// thread panicked on hostile input, leaves no outcome behind; the window
 /// still hears that the load is over.
 pub(crate) async fn report_outcome(
-    outcome: Option<async_channel::Receiver<LoadOutcome>>,
-    on_finished: impl FnOnce(LoadOutcome),
+    outcome: Option<async_channel::Receiver<LoadResult>>,
+    on_finished: impl FnOnce(LoadResult),
 ) {
     let reported = match outcome {
         Some(outcome) => outcome.recv().await.ok(),
         None => None,
     };
-    on_finished(reported.unwrap_or(LoadOutcome::WorkerStopped));
+    on_finished(reported.unwrap_or(LoadResult::Failed(LoadFailure::WorkerStopped)));
 }
 
 /// Runs loads until the last worker handle is dropped.
@@ -100,8 +112,7 @@ fn run_worker(requests: &async_channel::Receiver<LoadRequest>) {
         .with_thread_default(|| {
             context.block_on(async {
                 while let Ok(request) = requests.recv().await {
-                    let outcome =
-                        run_load(request.access, request.provider, &request.cancelled).await;
+                    let outcome = run_load(request.kind, &request.cancelled).await;
                     request.outcome.try_send(outcome).ok();
                 }
             });
@@ -110,27 +121,31 @@ fn run_worker(requests: &async_channel::Receiver<LoadRequest>) {
 }
 
 /// Runs one provider's load until it finishes or the caller cancels it.
-async fn run_load(
-    access: ImapAccess,
-    provider: MailProvider,
-    cancelled: &async_channel::Receiver<()>,
-) -> LoadOutcome {
-    // The provider is read once, here, to choose the sequence; neither
-    // sequence asks about it again (004 plan, decision D1).
+async fn run_load(kind: LoadKind, cancelled: &async_channel::Receiver<()>) -> LoadResult {
+    // The kind is read once, here, to choose the sequence; no sequence asks
+    // about the provider again (004 plan, decision D1).
     let mut load = Box::pin(async move {
-        match provider {
-            MailProvider::GenericImap => load_imap_inbox(access).await,
-            MailProvider::Gmail => load_gmail_inbox(access).await,
+        match kind {
+            LoadKind::GenericImap(access) => {
+                load_imap_inbox(access).await.map_err(LoadFailure::Imap)
+            }
+            LoadKind::Gmail(access) => load_gmail_inbox(access).await.map_err(LoadFailure::Imap),
+            LoadKind::Microsoft365 {
+                access,
+                service_url,
+            } => load_microsoft365_inbox(access, &service_url)
+                .await
+                .map_err(LoadFailure::MicrosoftGraph),
         }
     });
     match future::select(&mut load, pin!(cancelled.recv())).await {
-        Either::Left((Ok(batch), _)) => LoadOutcome::Loaded(batch),
-        Either::Left((Err(failure), _)) => LoadOutcome::Failed(failure),
+        Either::Left((Ok(batch), _)) => LoadResult::Received(batch),
+        Either::Left((Err(failure), _)) => LoadResult::Failed(failure),
         Either::Right(_) => {
             // Dropping the unfinished load closes its connection, before the
             // outcome tells the window that the load has ended.
             drop(load);
-            LoadOutcome::Cancelled
+            LoadResult::Cancelled
         }
     }
 }

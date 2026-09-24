@@ -23,7 +23,8 @@ caller knows its load has ended. Dropping the request cancels it.
 Only owned Rust data crosses to the mail worker. Proxies and GOA object paths
 stay on the adapter's context. The request uses the observer's existing bus
 connection; without one there is no account list to select from, and the
-request fails as Settings. D-Bus calls are asynchronous with GIO's finite call
+request fails as Settings, reported on the context's next turn like every
+other answer (never inside the call). D-Bus calls are asynchronous with GIO's finite call
 timeout, without another timer or retry loop. A D-Bus timeout at either step is
 Timeout: for example, GetPassword waits while the keyring asks to be unlocked.
 Any other D-Bus error is the failure of its step. The load owns the request;
@@ -127,3 +128,43 @@ GIO's call timeout, no EnsureCredentials, no credential cache, and the same
 privacy rules with the token treated exactly as a password. The window's
 wording for the new error is "Unable to get this account's authorization from
 Online Accounts. No server sign-in was attempted."
+
+## Amendment by 005 (proposed and approved by the maintainer 2026-09-23)
+
+A Microsoft 365 account holds no server settings: its object exports
+`org.gnome.OnlineAccounts.OAuth2Based` and a Mail interface that carries the
+address and nothing else ([005 research §1](../../005-microsoft-graph-integration/research.md)).
+The contract gains a second operation and provider-neutral names for the
+types both operations share.
+
+| Public role | Change |
+|---|---|
+| `request_graph_access(account_id, on_complete)` | New operation, same calling rules as `request_imap_access`: on the adapter's GLib context, one completion, cancellation by `cancel()` or drop. |
+| GraphAccess | AccountId and the access token. Owned data consumed by the caller; no sensitive Debug/Display, no Clone. |
+| AccessError | `ImapAccessError` renamed; the variants and their meanings stay. For the Graph operation only Settings, AccessToken, Timeout and Cancelled can occur. |
+| AccessRequest | `ImapAccessRequest` renamed; one cancellation handle type for both operations. |
+
+Preparation algorithm of the Graph operation:
+
+1. Read GetManagedObjects over the observer's connection, as step 1 of the
+   IMAP operation.
+2. Find the exact opaque AccountId and use its returned object path; never
+   construct a path from an account ID. An account that is no longer listed
+   is Settings.
+3. Require `OAuth2Based` on that object; an object without it is Settings. No
+   Mail setting is read and no encryption flag is examined.
+4. Call `GetAccessToken()`; keep the token, discard `expires_in`. A D-Bus
+   error is AccessToken; a timeout is Timeout; cancellation is Cancelled.
+
+Everything else stays: one request, one completion, the observer's
+connection, GIO's call timeout, no EnsureCredentials, no credential cache,
+and the same privacy rules with the token treated exactly as a password.
+The window's wording for Settings becomes provider-neutral: "Unable to get
+this account's settings from Online Accounts."
+
+Contract verification: extend the private D-Bus fixture with a Microsoft 365
+object (`ms_graph`, Mail with the address only, `OAuth2Based`). Cover the
+token returned; the account absent; an object without `OAuth2Based`;
+`GetAccessToken` answered with an error; a held reply as Timeout; cancelling
+and dropping the request as one Cancelled. Assert that no Mail setting is
+required and that the IMAP operation's tests are unchanged by the renames.

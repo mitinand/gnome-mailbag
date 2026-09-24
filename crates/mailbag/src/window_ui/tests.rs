@@ -5,7 +5,7 @@ use super::*;
 use mailbag_imap::ServerReply;
 
 fn rejected_sign_in(code: Option<&str>, text: &str) -> LoadFailure {
-    LoadFailure::Server(ServerFailure {
+    LoadFailure::Imap(ImapError {
         failure: ImapFailure::Failed(ImapStep::SignIn),
         server_reply: Some(ServerReply {
             code: code.map(str::to_owned),
@@ -19,67 +19,67 @@ fn rejected_sign_in(code: Option<&str>, text: &str) -> LoadFailure {
 fn every_failed_step_names_itself() {
     let cases = [
         (
-            LoadFailure::OnlineAccounts(ImapAccessError::Settings),
-            "Mail settings unavailable",
-            "IMAP settings",
+            LoadFailure::OnlineAccounts(AccessError::Settings),
+            "Account settings unavailable",
+            "this account's settings",
         ),
         (
-            LoadFailure::OnlineAccounts(ImapAccessError::NoEncryption),
+            LoadFailure::OnlineAccounts(AccessError::NoEncryption),
             "No encryption configured",
             "No password was requested",
         ),
         (
-            LoadFailure::OnlineAccounts(ImapAccessError::Password),
+            LoadFailure::OnlineAccounts(AccessError::Password),
             "Password unavailable",
             "No server sign-in was attempted",
         ),
         (
-            LoadFailure::OnlineAccounts(ImapAccessError::AccessToken),
+            LoadFailure::OnlineAccounts(AccessError::AccessToken),
             "Authorization unavailable",
             "this account's authorization from Online Accounts",
         ),
         (
-            LoadFailure::OnlineAccounts(ImapAccessError::Timeout),
+            LoadFailure::OnlineAccounts(AccessError::Timeout),
             "Online Accounts did not respond",
             "in time",
         ),
         (
-            LoadFailure::Server(ImapFailure::Failed(ImapStep::Connect).into()),
+            LoadFailure::Imap(ImapFailure::Failed(ImapStep::Connect).into()),
             "Unable to reach the mail server",
             "could not reach",
         ),
         (
-            LoadFailure::Server(ImapFailure::Failed(ImapStep::SecureConnection).into()),
+            LoadFailure::Imap(ImapFailure::Failed(ImapStep::SecureConnection).into()),
             "Secure connection failed",
             "sent no password",
         ),
         (
-            LoadFailure::Server(ImapFailure::Failed(ImapStep::OpenInbox).into()),
+            LoadFailure::Imap(ImapFailure::Failed(ImapStep::OpenInbox).into()),
             "Unable to open the Inbox",
             "did not open the Inbox",
         ),
         (
-            LoadFailure::Server(ImapFailure::Failed(ImapStep::FetchMessages).into()),
+            LoadFailure::Imap(ImapFailure::Failed(ImapStep::FetchMessages).into()),
             "Unable to get the message list",
             "did not return this Inbox's messages",
         ),
         (
-            LoadFailure::Server(ImapFailure::Failed(ImapStep::FetchText).into()),
+            LoadFailure::Imap(ImapFailure::Failed(ImapStep::FetchText).into()),
             "Unable to get the message text",
             "did not return the text",
         ),
         (
-            LoadFailure::Server(ImapFailure::TimedOut(ImapStep::OpenInbox).into()),
+            LoadFailure::Imap(ImapFailure::TimedOut(ImapStep::OpenInbox).into()),
             "The mail server stopped responding",
             "while opening the Inbox",
         ),
         (
-            LoadFailure::Server(ImapFailure::NoSignInMethod.into()),
+            LoadFailure::Imap(ImapFailure::NoSignInMethod.into()),
             "No supported sign-in method",
             "no sign-in method Mailbag supports",
         ),
         (
-            LoadFailure::Server(ImapFailure::InboxChanged.into()),
+            LoadFailure::Imap(ImapFailure::InboxChanged.into()),
             "The Inbox changed while loading",
             "Try Refresh Inbox again",
         ),
@@ -136,7 +136,7 @@ fn a_rejected_sign_in_points_to_the_sign_in_only_when_the_server_blames_it() {
 
 #[test]
 fn server_and_alert_text_reach_the_page_as_bounded_plain_text() {
-    let failure = LoadFailure::Server(ServerFailure {
+    let failure = LoadFailure::Imap(ImapError {
         failure: ImapFailure::Failed(ImapStep::OpenInbox),
         server_reply: Some(ServerReply {
             code: None,
@@ -156,33 +156,29 @@ fn server_and_alert_text_reach_the_page_as_bounded_plain_text() {
 }
 
 #[test]
-fn an_account_without_mail_never_claims_an_empty_inbox() {
-    // Both loadable providers get the hint; the others are told plainly that
-    // Mailbag cannot load their mail yet.
-    for provider in [AccountProvider::ImapSmtp, AccountProvider::Google] {
-        let status = nothing_loaded_status(Some(provider));
-        assert_eq!(status.title, "No mail loaded");
-        assert!(
-            status.explanation.contains("Refresh Inbox"),
-            "{provider:?}: {}",
-            status.explanation
-        );
-    }
-    for provider in [AccountProvider::Microsoft365, AccountProvider::Other] {
-        let status = nothing_loaded_status(Some(provider));
-        assert_eq!(status.title, "No mail loaded");
-        assert!(
-            !status.explanation.contains("Refresh Inbox"),
-            "{provider:?}: {}",
-            status.explanation
-        );
-    }
+fn further_messages_on_offer_are_noticed_without_claiming_a_failure() {
+    assert_eq!(
+        incomplete_list_notice(Some("Work".to_owned()), &IncompleteList::MoreAvailable),
+        "Not all messages in Work were loaded: the mail service offered more than one request holds."
+    );
+}
+
+#[test]
+fn an_account_without_a_load_points_to_refresh_inbox() {
+    let status = nothing_loaded_status();
+    assert_eq!(status.title, "No mail loaded");
+    assert!(
+        status.explanation.contains("Refresh Inbox"),
+        "{}",
+        status.explanation
+    );
 }
 
 /// The one place a provider becomes a load sequence.
 #[test]
-fn only_generic_imap_and_google_accounts_can_be_loaded() {
+fn generic_imap_google_and_microsoft_365_accounts_can_be_loaded() {
     use crate::accounts::mail_provider;
+    use goa_adapter::AccountProvider;
     assert_eq!(
         mail_provider(AccountProvider::ImapSmtp),
         Some(MailProvider::GenericImap)
@@ -191,7 +187,63 @@ fn only_generic_imap_and_google_accounts_can_be_loaded() {
         mail_provider(AccountProvider::Google),
         Some(MailProvider::Gmail)
     );
-    for provider in [AccountProvider::Microsoft365, AccountProvider::Other] {
-        assert_eq!(mail_provider(provider), None, "{provider:?}");
+    assert_eq!(
+        mail_provider(AccountProvider::Microsoft365),
+        Some(MailProvider::Microsoft365)
+    );
+    assert_eq!(mail_provider(AccountProvider::Other), None);
+}
+
+#[test]
+fn each_service_failure_names_itself_and_only_401_points_to_the_sign_in() {
+    let service_failure = |failure, reason: Option<&str>| {
+        failure_status(&LoadFailure::MicrosoftGraph(GraphError {
+            failure,
+            reason: reason.map(str::to_owned),
+        }))
+    };
+    let refused = |status, code: &str| GraphFailure::Refused {
+        status,
+        code: Some(code.to_owned()),
+    };
+    let sign_in = "Check this account's sign-in in Online Accounts.";
+
+    let rejected = service_failure(
+        refused(401, "InvalidAuthenticationToken"),
+        Some("Access token has expired."),
+    );
+    assert_eq!(rejected.title, "The mail service rejected the sign-in");
+    assert_eq!(
+        rejected.explanation,
+        format!("The mail service said: status 401, code InvalidAuthenticationToken.\n{sign_in}")
+    );
+
+    let throttled = service_failure(refused(429, "ApplicationThrottled"), None);
+    assert_eq!(throttled.title, "The mail service refused the request");
+    assert_eq!(
+        throttled.explanation,
+        "The mail service said: status 429, code ApplicationThrottled."
+    );
+
+    let unreachable = service_failure(
+        GraphFailure::ConnectionFailed,
+        Some("Error resolving “graph.microsoft.com”"),
+    );
+    assert_eq!(unreachable.title, "Could not connect to the mail service");
+    assert!(unreachable.explanation.contains("graph.microsoft.com"));
+
+    for (failure, title) in [
+        (
+            GraphFailure::TimedOut,
+            "The mail service stopped responding",
+        ),
+        (
+            GraphFailure::InvalidReply,
+            "The mail service answered in an unexpected form",
+        ),
+    ] {
+        let status = service_failure(failure, None);
+        assert_eq!(status.title, title);
+        assert!(status.explanation.contains("Try Refresh Inbox again."));
     }
 }

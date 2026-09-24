@@ -9,9 +9,9 @@
 mod tests;
 
 use goa_adapter::AccountId;
-use mailbag_content::ContentExplanation;
+use mailbag_graph::GraphFailure;
 use mailbag_providers::{
-    CancelsLoadOnDrop, LoadFailure, LoadResult, ReceivedBatch, ReceivedContent, ServerFailure,
+    CancelsLoadOnDrop, IncompleteList, LoadFailure, LoadResult, ReceivedBatch, ReceivedContent,
 };
 use std::{collections::BTreeMap, fmt, rc::Rc};
 
@@ -48,58 +48,41 @@ impl InboxController {
         self.running_load.is_some()
     }
 
-    /// Refresh Inbox: clears the account's mail and enters Loading. Returns
-    /// false while another load runs, because Refresh is not queued.
-    pub fn begin_load(&mut self, account_id: &AccountId) -> bool {
-        if self.running_load.is_some() {
-            return false;
-        }
+    /// Refresh Inbox: clears the account's mail, enters Loading and keeps what
+    /// cancels the load just started. The caller checks `is_loading` first,
+    /// because Refresh is not queued.
+    pub fn begin_load(&mut self, account_id: &AccountId, cancellation: Box<dyn CancelsLoadOnDrop>) {
+        debug_assert!(self.running_load.is_none(), "one load at a time");
         self.inboxes
             .insert(account_id.clone(), AccountInbox::Loading);
         tracing::info!(account = account_id.as_str(), "Inbox load started");
         self.running_load = Some(RunningLoad {
             account_id: account_id.clone(),
-            cancellation: None,
+            cancellation: Some(cancellation),
         });
-        true
-    }
-
-    /// Keeps what cancels the load `begin_load` started. A load that already
-    /// reported its result, such as a settings failure Online Accounts
-    /// answered at once, cancels the handle here instead.
-    pub fn hold_cancellation(
-        &mut self,
-        account_id: &AccountId,
-        cancellation: Box<dyn CancelsLoadOnDrop>,
-    ) {
-        match self.running_load.as_mut() {
-            Some(running) if running.account_id == *account_id => {
-                running.cancellation = Some(cancellation);
-            }
-            _ => drop(cancellation),
-        }
     }
 
     /// Stores how the load ended under the account it was started for, and
-    /// leaves Loading so Refresh Inbox becomes available again.
-    pub fn finish_load(&mut self, account_id: &AccountId, result: LoadResult) {
+    /// leaves Loading so Refresh Inbox becomes available again. Returns
+    /// whether the account keeps the result.
+    pub fn finish_load(&mut self, account_id: &AccountId, result: LoadResult) -> bool {
         if self
             .running_load
             .take_if(|running| running.account_id == *account_id)
             .is_none()
         {
-            return;
+            return false;
         }
         let account = account_id.as_str();
         let inbox = match result {
             // The cancellation was recorded where it was requested.
-            LoadResult::Cancelled => return,
+            LoadResult::Cancelled => return false,
             _ if !self.awaits_result(account_id) => {
                 tracing::info!(
                     account,
                     "Inbox load result discarded: the account is no longer shown"
                 );
-                return;
+                return false;
             }
             LoadResult::Received(batch) => {
                 log_received_batch(account, &batch);
@@ -111,6 +94,7 @@ impl InboxController {
             }
         };
         self.inboxes.insert(account_id.clone(), inbox);
+        true
     }
 
     /// Discards the mail of accounts Online Accounts no longer shows and
@@ -172,26 +156,30 @@ impl InboxController {
 
 /// How an accepted load ended, with warnings for what the reader cannot show.
 fn log_received_batch(account: &str, batch: &ReceivedBatch) {
-    let explanations = || {
+    // Content the reader does not show by design, and content that could not
+    // be read, counted once over the batch.
+    let (unsupported, unreadable) =
         batch
             .messages
             .iter()
-            .filter_map(|message| match &message.content {
-                ReceivedContent::Explained(explanation) => Some(explanation),
-                ReceivedContent::Text(_) => None,
-            })
-    };
+            .fold(
+                (0, 0),
+                |(unsupported, unreadable), message| match &message.content {
+                    ReceivedContent::Text(_) => (unsupported, unreadable),
+                    ReceivedContent::Explained(explanation) if explanation.is_by_design() => {
+                        (unsupported + 1, unreadable)
+                    }
+                    ReceivedContent::Explained(_)
+                    | ReceivedContent::StructureUnreadable
+                    | ReceivedContent::TextNotReturned => (unsupported, unreadable + 1),
+                },
+            );
     tracing::info!(
         account,
         messages = batch.messages.len(),
-        unsupported = explanations()
-            .filter(|explanation| is_unsupported(explanation))
-            .count(),
+        unsupported,
         "Inbox load finished"
     );
-    let unreadable = explanations()
-        .filter(|explanation| !is_unsupported(explanation))
-        .count();
     if unreadable > 0 {
         tracing::warn!(
             account,
@@ -199,43 +187,60 @@ fn log_received_batch(account: &str, batch: &ReceivedBatch) {
             "some messages have content that could not be read"
         );
     }
-    if let Some(refusal) = &batch.list_refusal {
-        tracing::warn!(
+    match &batch.incomplete {
+        Some(IncompleteList::ServerRefused(refusal)) => tracing::warn!(
             account,
             code = refusal.code.as_deref(),
             "the server refused to finish the message list"
-        );
+        ),
+        Some(IncompleteList::MoreAvailable) => tracing::warn!(
+            account,
+            "the mail service offered more messages than one request holds"
+        ),
+        None => {}
     }
 }
 
-/// Content this version does not show by design, as opposed to content that
-/// could not be read.
-fn is_unsupported(explanation: &ContentExplanation) -> bool {
-    matches!(
-        explanation,
-        ContentExplanation::NoPlainText { .. }
-            | ContentExplanation::Encrypted
-            | ContentExplanation::SecuredWithSMime
-    )
-}
-
-/// The load's single error line: the failure value the UI explains, the
-/// server's response code and the number of alerts, never the server's text.
-/// The failure values hold no server text, so the record can name them as they
-/// are (`ImapFailure`, `ImapAccessError`).
+/// The load's single error line: the failure the UI explains, the mail
+/// service's status, the server's or the service's error code and the number
+/// of alerts, never the server's text. The failure values hold no server text,
+/// so the record can name them as they are (`ImapFailure`, `AccessError`).
 fn log_load_failure(account: &str, failure: &LoadFailure) {
-    let (cause, server): (&dyn fmt::Debug, Option<&ServerFailure>) = match failure {
-        LoadFailure::OnlineAccounts(error) => (error, None),
-        LoadFailure::Server(server) => (&server.failure, Some(server)),
-        LoadFailure::WorkerStopped => (&"WorkerStopped", None),
-    };
+    let (cause, status, code, alerts): (&dyn fmt::Debug, Option<u32>, Option<&str>, usize) =
+        match failure {
+            LoadFailure::OnlineAccounts(error) => (error, None, None, 0),
+            LoadFailure::Imap(error) => (
+                &error.failure,
+                None,
+                error
+                    .server_reply
+                    .as_ref()
+                    .and_then(|reply| reply.code.as_deref()),
+                error.alerts.len(),
+            ),
+            LoadFailure::MicrosoftGraph(error) => match &error.failure {
+                GraphFailure::Refused { status, code } => {
+                    (&CauseName("Refused"), Some(*status), code.as_deref(), 0)
+                }
+                other => (other, None, None, 0),
+            },
+            LoadFailure::WorkerStopped => (&CauseName("WorkerStopped"), None, None, 0),
+        };
     tracing::error!(
         account,
         cause = ?cause,
-        code = server.and_then(|server| server.server_reply.as_ref()?.code.as_deref()),
-        alerts = server
-            .map(|server| server.alerts.len())
-            .filter(|alerts| *alerts > 0),
+        status,
+        code,
+        alerts = Some(alerts).filter(|alerts| *alerts > 0),
         "Inbox load failed"
     );
+}
+
+/// A failure named bare in the record, as the other causes' Debug names them.
+struct CauseName(&'static str);
+
+impl fmt::Debug for CauseName {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.0)
+    }
 }

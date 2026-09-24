@@ -148,7 +148,7 @@ store, each by its own filter so that no other test replaces the trust database:
 ```bash
 MAILBAG_IMAP_EXPECT=rejected cargo test --locked -p mailbag-imap host_trust -- --ignored --nocapture
 MAILBAG_TEST_ACCOUNT_ID=account_… MAILBAG_IMAP_EXPECT=success \
-  cargo test --locked -p mailbag online_accounts -- --ignored --nocapture
+  cargo test --locked -p mailbag-providers online_accounts -- --ignored --nocapture
 ```
 
 The first checks the transport alone; the second runs the whole chain, taking

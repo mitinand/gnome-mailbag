@@ -14,12 +14,15 @@ futures-util = "0.3"
 glib.workspace = true
 goa-adapter = { path = "../goa-adapter" }
 mailbag-content = { path = "../mailbag-content" }
+mailbag-graph = { path = "../mailbag-graph" }
 mailbag-imap = { path = "../mailbag-imap" }
 tracing.workspace = true
 
 [dev-dependencies]
 # Load-sequence tests drive the scripted IMAP server.
 mailbag-imap = { path = "../mailbag-imap", features = ["test-support"] }
+# Microsoft 365 load tests drive the scripted Microsoft Graph service.
+mailbag-graph = { path = "../mailbag-graph", features = ["test-support"] }
 # Tests read the lines a load logs (tests/support/record.rs).
 tracing-subscriber.workspace = true
 

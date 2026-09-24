@@ -173,7 +173,8 @@ fn gmail_attributes_arrive_only_when_the_row_fetch_asks_for_them() {
         fixture.account_with_token(),
         gmail_options(),
     )));
-    let with_attributes = expect_success(run(reader.fetch_rows(RowItems::WithGmailAttributes)));
+    let with_attributes =
+        expect_success(run(reader.fetch_rows(RowItems::WithGmailAttributes, 100)));
     assert_eq!(
         with_attributes.rows[0].gmail,
         Some(GmailRow {
@@ -181,7 +182,7 @@ fn gmail_attributes_arrive_only_when_the_row_fetch_asks_for_them() {
             labels: vec!["\\Important".to_owned(), "Работа/Счета".to_owned()],
         })
     );
-    let standard = expect_success(run(reader.fetch_rows(RowItems::Standard)));
+    let standard = expect_success(run(reader.fetch_rows(RowItems::Standard, 100)));
     assert_eq!(standard.rows[0].gmail, None);
     let items = fixture.log().fetches;
     assert!(
@@ -206,7 +207,7 @@ fn a_row_without_gmail_attributes_keeps_none() {
         fixture.account_with_token(),
         gmail_options(),
     )));
-    let listed = expect_success(run(reader.fetch_rows(RowItems::WithGmailAttributes)));
+    let listed = expect_success(run(reader.fetch_rows(RowItems::WithGmailAttributes, 100)));
     assert_eq!(listed.rows[0].gmail, None);
 }
 
@@ -217,7 +218,7 @@ fn the_token_never_reaches_the_record_accepted_or_refused() {
         let account = fixture.account_with_credential(Credential::AccessToken(token.to_owned()));
         let record = CapturedRecord::start(tracing::Level::DEBUG);
         if let Ok(mut reader) = run(InboxReader::open(account, gmail_options())) {
-            expect_success(run(reader.fetch_rows(RowItems::WithGmailAttributes)));
+            expect_success(run(reader.fetch_rows(RowItems::WithGmailAttributes, 100)));
         }
         assert!(!record.text().contains(token), "{}", record.text());
     }

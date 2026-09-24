@@ -14,12 +14,24 @@ use std::{
 const GENERIC_ACCOUNT_ICON: &str = "mail-unread-symbolic";
 
 /// Which load sequence an account needs, or `None` when Mailbag cannot load
-/// its mail yet. This is the only place a provider becomes a load sequence.
+/// its mail yet. This is the only place a provider becomes a load sequence,
+/// and an account without one is not shown.
 pub fn mail_provider(provider: AccountProvider) -> Option<MailProvider> {
     match provider {
         AccountProvider::ImapSmtp => Some(MailProvider::GenericImap),
         AccountProvider::Google => Some(MailProvider::Gmail),
-        AccountProvider::Microsoft365 | AccountProvider::Other => None,
+        AccountProvider::Microsoft365 => Some(MailProvider::Microsoft365),
+        AccountProvider::Other => None,
+    }
+}
+
+/// The Online Accounts provider a shown row came from, for the record's
+/// provider field; the inverse of `mail_provider` for the shown providers.
+fn account_provider(provider: MailProvider) -> AccountProvider {
+    match provider {
+        MailProvider::GenericImap => AccountProvider::ImapSmtp,
+        MailProvider::Gmail => AccountProvider::Google,
+        MailProvider::Microsoft365 => AccountProvider::Microsoft365,
     }
 }
 
@@ -54,8 +66,9 @@ pub enum AccountPage {
 pub struct AccountRow {
     /// Final row label, including a number when account names match.
     pub label: String,
-    /// Last known provider, which decides whether mail can be loaded for it.
-    pub provider: AccountProvider,
+    /// The load sequence the account needs. A provider Mailbag cannot load
+    /// is never shown, so every row has one.
+    pub provider: MailProvider,
     pub icon_name: &'static str,
     pub problems: Vec<AccountProblem>,
     /// Account name or address before adding a distinguishing number.
@@ -181,7 +194,11 @@ impl AccountList {
             let removed = details.is_none();
             if removed {
                 // A disabled account is logged with the accounts not shown.
-                log_account_not_shown(id, row.provider, "removed from Online Accounts");
+                log_account_not_shown(
+                    id,
+                    account_provider(row.provider),
+                    "removed from Online Accounts",
+                );
             }
             if disabled || removed {
                 hidden_notices.push(AccountHiddenNotice {
@@ -197,13 +214,13 @@ impl AccountList {
 
     fn update_visible_accounts(&mut self, accounts: &BTreeMap<AccountId, AccountDetails>) {
         for (id, details) in accounts {
-            if details.provider == AccountProvider::Other {
+            let Some(provider) = mail_provider(details.provider) else {
                 self.visible_accounts.remove(id);
                 self.excluded_reasons
                     .insert(ExclusionReason::UnsupportedProvider);
                 log_account_not_shown(id, details.provider, "unsupported provider");
                 continue;
-            }
+            };
             if !details.mail_enabled {
                 self.excluded_reasons.insert(ExclusionReason::MailDisabled);
                 log_account_not_shown(id, details.provider, "mail disabled");
@@ -211,19 +228,19 @@ impl AccountList {
             }
             if let Some(row) = self.visible_accounts.get_mut(id) {
                 let previous_problems = std::mem::take(&mut row.problems);
-                row.update_details(details);
+                row.update_details(details, provider);
                 log_problem_changes(id, &previous_problems, &row.problems);
             } else if details.mail_service_available {
                 let mut row = AccountRow {
                     label: String::new(),
                     base_label: String::new(),
-                    provider: details.provider,
+                    provider,
                     icon_name: GENERIC_ACCOUNT_ICON,
                     problems: vec![],
                     label_number: self.next_label_number,
                 };
                 self.next_label_number += 1;
-                row.update_details(details);
+                row.update_details(details, provider);
                 tracing::info!(
                     account = id.as_str(),
                     provider = logging::provider_type(details.provider),
@@ -307,7 +324,7 @@ impl AccountRow {
         }
     }
 
-    fn update_details(&mut self, details: &AccountDetails) {
+    fn update_details(&mut self, details: &AccountDetails, provider: MailProvider) {
         self.problems.clear();
         if !details.mail_service_available {
             self.problems.push(AccountProblem::MailUnavailable);
@@ -321,11 +338,11 @@ impl AccountRow {
             .or(details.email_address.as_ref())
             .cloned()
             .unwrap_or_else(|| "Mail account".into());
-        self.provider = details.provider;
-        self.icon_name = match details.provider {
-            AccountProvider::Google => "mailbag-account-google-symbolic",
-            AccountProvider::Microsoft365 => "mailbag-account-ms365-symbolic",
-            AccountProvider::ImapSmtp | AccountProvider::Other => GENERIC_ACCOUNT_ICON,
+        self.provider = provider;
+        self.icon_name = match provider {
+            MailProvider::Gmail => "mailbag-account-google-symbolic",
+            MailProvider::Microsoft365 => "mailbag-account-ms365-symbolic",
+            MailProvider::GenericImap => GENERIC_ACCOUNT_ICON,
         };
     }
 }

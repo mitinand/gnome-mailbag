@@ -1,22 +1,24 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The steps every provider's load shares: opening an account on the server,
-//! and turning a message list into a batch the reader can show.
+//! The steps both IMAP loads share, Generic IMAP and Gmail: opening the
+//! account on the server, and turning a message list into a batch the reader
+//! can show.
 
-use crate::batch::{ReceivedBatch, ReceivedContent, ReceivedMessage, ServerFailure};
+use crate::batch::{
+    IncompleteList, MessageIdentity, ReceivedBatch, ReceivedContent, ReceivedMessage,
+};
 use goa_adapter::{AccountId, ImapAccess, ImapCredential, ImapEncryption};
 use mailbag_content::{
-    ContentExplanation, MimePart, TextSelection, decode_display_fields, decode_text_part,
-    join_message_text, select_text_parts,
+    MimePart, TextSelection, decode_display_fields, decode_message_text, select_text_parts,
 };
 use mailbag_imap::{
-    Credential, Encryption, ImapAccount, ImapFailure, InboxReader, MessageList, MessagePart,
-    MessageText, TextParts, TextRequest,
+    Credential, Encryption, ImapAccount, ImapError, ImapFailure, InboxReader, MessageList,
+    MessagePart, MessageText, TextParts, TextRequest,
 };
 use std::collections::BTreeMap;
 
-pub(crate) fn server_account(access: ImapAccess) -> ImapAccount {
+pub(crate) fn imap_account(access: ImapAccess) -> ImapAccount {
     ImapAccount {
         host: access.host,
         login: access.login,
@@ -32,13 +34,13 @@ pub(crate) fn server_account(access: ImapAccess) -> ImapAccount {
 }
 
 /// Reads the part structures of the listed messages, decodes the text each one
-/// needs and assembles the batch. Every provider reaches this with its own
-/// message list; nothing below here is provider-specific.
+/// needs and assembles the batch. Both IMAP loads reach this with their own
+/// message list; nothing below here depends on the provider.
 pub(crate) async fn load_batch_from_rows(
     reader: &mut InboxReader,
     listed: MessageList,
     account_id: AccountId,
-) -> Result<ReceivedBatch, ServerFailure> {
+) -> Result<ReceivedBatch, ImapError> {
     let rows = listed.rows;
     let window = rows.len();
     let uids: Vec<u32> = rows.iter().map(|row| row.uid).collect();
@@ -68,7 +70,7 @@ pub(crate) async fn load_batch_from_rows(
         .fetch_text(requests, |uid, text| {
             let _message = tracing::debug_span!("message", uid).entered();
             // A message absent here disappeared from the Inbox during the load.
-            if let Some(content) = decode_message_text(&text) {
+            if let Some(content) = received_text(&text) {
                 texts.insert(uid, content);
             }
         })
@@ -79,7 +81,7 @@ pub(crate) async fn load_batch_from_rows(
         .filter_map(|row| {
             let content = match structures.get(&row.uid)? {
                 // The server could not describe this message.
-                None => ReceivedContent::Explained(ContentExplanation::UnreadableStructure),
+                None => ReceivedContent::StructureUnreadable,
                 Some(_) => match selections.get(&row.uid)? {
                     TextSelection::Explained(explanation) => {
                         ReceivedContent::Explained(explanation.clone())
@@ -89,7 +91,7 @@ pub(crate) async fn load_batch_from_rows(
                 },
             };
             Some(ReceivedMessage {
-                uid: row.uid,
+                identity: MessageIdentity::ImapUid(row.uid),
                 fields: tracing::debug_span!("message", uid = row.uid)
                     .in_scope(|| decode_display_fields(&row.list_headers)),
                 internal_date: row.internal_date,
@@ -109,7 +111,7 @@ pub(crate) async fn load_batch_from_rows(
         account_id,
         uid_validity: reader.uid_validity(),
         messages,
-        list_refusal: listed.refusal,
+        incomplete: listed.refusal.map(IncompleteList::ServerRefused),
     })
 }
 
@@ -136,25 +138,20 @@ fn text_parts(root: &MessagePart, sections: &[Vec<u32>]) -> TextParts {
     }
 }
 
-/// Decodes one message's received text, or explains why there is none.
-/// `None` means the message disappeared from the Inbox.
-fn decode_message_text(text: &MessageText) -> Option<ReceivedContent> {
-    let parts = match text {
-        MessageText::Received(parts) => parts,
-        MessageText::NotReturned => {
-            return Some(ReceivedContent::Explained(
-                ContentExplanation::TextNotReturned,
-            ));
+/// One message's received text, or why there is none. `None` means the
+/// message disappeared from the Inbox.
+fn received_text(text: &MessageText) -> Option<ReceivedContent> {
+    Some(match text {
+        MessageText::Received(parts) => {
+            let parts = parts
+                .iter()
+                .map(|part| (part.header.as_slice(), part.body.as_slice()));
+            match decode_message_text(parts) {
+                Ok(text) => ReceivedContent::Text(text),
+                Err(explanation) => ReceivedContent::Explained(explanation),
+            }
         }
+        MessageText::NotReturned => ReceivedContent::TextNotReturned,
         MessageText::Disappeared => return None,
-    };
-    let decoded: Result<Vec<String>, ContentExplanation> = parts
-        .iter()
-        .map(|part| decode_text_part(&part.header, &part.body))
-        .collect();
-    Some(match decoded {
-        Ok(texts) => ReceivedContent::Text(join_message_text(&texts)),
-        // One unreadable part leaves no complete text to show.
-        Err(explanation) => ReceivedContent::Explained(explanation),
     })
 }

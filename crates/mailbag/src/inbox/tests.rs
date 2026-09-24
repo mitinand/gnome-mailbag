@@ -3,10 +3,12 @@
 
 use super::*;
 use crate::logging::{LogLevel, capture::start_record};
-use goa_adapter::ImapAccessError;
+use goa_adapter::AccessError;
+use mailbag_content::ContentExplanation;
 use mailbag_content::DisplayFields;
-use mailbag_imap::{ImapFailure, ImapStep, ServerReply};
-use mailbag_providers::{ReceivedMessage, ServerFailure};
+use mailbag_graph::{GraphError, GraphFailure};
+use mailbag_imap::{ImapError, ImapFailure, ImapStep, ServerReply};
+use mailbag_providers::{MessageIdentity, ReceivedMessage};
 use std::cell::Cell;
 
 fn account(name: &str) -> AccountId {
@@ -17,11 +19,11 @@ fn batch_of(account_id: &AccountId, uids: &[u32]) -> ReceivedBatch {
     ReceivedBatch {
         account_id: account_id.clone(),
         uid_validity: Some(1),
-        list_refusal: None,
+        incomplete: None,
         messages: uids
             .iter()
             .map(|uid| ReceivedMessage {
-                uid: *uid,
+                identity: MessageIdentity::ImapUid(*uid),
                 fields: DisplayFields::default(),
                 internal_date: None,
                 seen: false,
@@ -33,7 +35,7 @@ fn batch_of(account_id: &AccountId, uids: &[u32]) -> ReceivedBatch {
 }
 
 fn sign_in_failure() -> LoadFailure {
-    LoadFailure::Server(ImapFailure::Failed(ImapStep::SignIn).into())
+    LoadFailure::Imap(ImapFailure::Failed(ImapStep::SignIn).into())
 }
 
 /// A running step that records its cancellation, as dropping the Online
@@ -54,7 +56,14 @@ fn counted_step(cancellations: &Rc<Cell<usize>>) -> Box<dyn CancelsLoadOnDrop> {
 
 fn received_uids(inbox: Option<&AccountInbox>) -> Vec<u32> {
     match inbox {
-        Some(AccountInbox::Received(batch)) => batch.messages.iter().map(|m| m.uid).collect(),
+        Some(AccountInbox::Received(batch)) => batch
+            .messages
+            .iter()
+            .map(|message| match &message.identity {
+                MessageIdentity::ImapUid(uid) => *uid,
+                other => panic!("not an IMAP message: {other:?}"),
+            })
+            .collect(),
         other => panic!("the account shows no batch: {other:?}"),
     }
 }
@@ -62,8 +71,8 @@ fn received_uids(inbox: Option<&AccountInbox>) -> Vec<u32> {
 /// Starts a load that has reached the mail worker.
 fn start_load(controller: &mut InboxController, account_id: &AccountId) -> Rc<Cell<usize>> {
     let cancellations = Rc::new(Cell::new(0));
-    assert!(controller.begin_load(account_id));
-    controller.hold_cancellation(account_id, counted_step(&cancellations));
+    assert!(!controller.is_loading());
+    controller.begin_load(account_id, counted_step(&cancellations));
     cancellations
 }
 
@@ -97,13 +106,14 @@ fn refresh_inbox_is_unavailable_while_a_load_runs() {
     let loading = account("loading-account");
     let other = account("other-account");
     let cancellations = start_load(&mut controller, &loading);
-    assert!(!controller.begin_load(&loading));
-    assert!(!controller.begin_load(&other));
+    assert!(controller.is_loading());
     assert!(controller.inbox_of(&other).is_none());
     assert_eq!(cancellations.get(), 0);
 
     controller.finish_load(&loading, LoadResult::Received(batch_of(&loading, &[10])));
-    assert!(controller.begin_load(&other));
+    assert!(!controller.is_loading());
+    start_load(&mut controller, &other);
+    assert!(controller.is_loading());
 }
 
 #[test]
@@ -131,7 +141,7 @@ fn a_failed_load_leaves_the_account_without_mail() {
     controller.finish_load(&id, LoadResult::Failed(sign_in_failure()));
     assert!(matches!(
         controller.inbox_of(&id),
-        Some(AccountInbox::Failed(LoadFailure::Server(_)))
+        Some(AccountInbox::Failed(LoadFailure::Imap(_)))
     ));
     assert!(!controller.is_loading());
 }
@@ -141,8 +151,8 @@ fn a_confirmed_exclusion_discards_the_mail_and_cancels_its_load() {
     let mut controller = InboxController::default();
     let excluded = account("excluded-account");
     let kept = account("kept-account");
-    controller.begin_load(&kept);
-    controller.finish_load(&kept, LoadResult::Received(batch_of(&kept, &[10])));
+    start_load(&mut controller, &kept);
+    assert!(controller.finish_load(&kept, LoadResult::Received(batch_of(&kept, &[10]))));
     let cancellations = start_load(&mut controller, &excluded);
 
     controller.discard_excluded(|account_id| *account_id == kept);
@@ -152,8 +162,9 @@ fn a_confirmed_exclusion_discards_the_mail_and_cancels_its_load() {
     // The load ends only once its connection is closed.
     assert!(controller.is_loading());
 
-    // A result that arrives after the exclusion restores nothing.
-    controller.finish_load(&excluded, LoadResult::Received(batch_of(&excluded, &[40])));
+    // A result that arrives after the exclusion restores nothing, so the
+    // window says nothing about it.
+    assert!(!controller.finish_load(&excluded, LoadResult::Received(batch_of(&excluded, &[40]))));
     assert!(controller.inbox_of(&excluded).is_none());
     assert!(!controller.is_loading());
 }
@@ -195,7 +206,7 @@ fn discarding_received_mail_of_an_account_no_longer_shown_is_recorded() {
         ),
         (&failed, LoadResult::Failed(sign_in_failure())),
     ] {
-        assert!(controller.begin_load(account_id));
+        start_load(&mut controller, account_id);
         controller.finish_load(account_id, result);
     }
     let before_discarding = record.text().lines().count();
@@ -213,7 +224,7 @@ fn discarding_received_mail_of_an_account_no_longer_shown_is_recorded() {
 
 fn message_with(uid: u32, content: ReceivedContent) -> ReceivedMessage {
     ReceivedMessage {
-        uid,
+        identity: MessageIdentity::ImapUid(uid),
         fields: DisplayFields::default(),
         internal_date: None,
         seen: false,
@@ -231,10 +242,10 @@ fn unreadable_content_and_a_refused_list_each_warn_without_server_text() {
     let batch = ReceivedBatch {
         account_id: loaded.clone(),
         uid_validity: Some(1),
-        list_refusal: Some(ServerReply {
+        incomplete: Some(IncompleteList::ServerRefused(ServerReply {
             code: Some("LIMIT".to_owned()),
             text: "private refusal text".to_owned(),
-        }),
+        })),
         messages: vec![
             message_with(30, ReceivedContent::Text("Text".to_owned())),
             // Not supported by design, so counted at info and not warned about.
@@ -262,7 +273,7 @@ fn unreadable_content_and_a_refused_list_each_warn_without_server_text() {
 
 #[test]
 fn each_failed_load_is_one_error_line_naming_its_cause() {
-    let refused_sign_in = ServerFailure {
+    let refused_sign_in = ImapError {
         failure: ImapFailure::Failed(ImapStep::SignIn),
         server_reply: Some(ServerReply {
             code: Some("AUTHENTICATIONFAILED".to_owned()),
@@ -272,22 +283,32 @@ fn each_failed_load_is_one_error_line_naming_its_cause() {
     };
     let failures = [
         (
-            LoadFailure::Server(refused_sign_in),
+            LoadFailure::Imap(refused_sign_in),
             r#"cause=Failed(SignIn) code="AUTHENTICATIONFAILED" alerts=1"#,
         ),
         (
-            LoadFailure::Server(ImapFailure::TimedOut(ImapStep::FetchText).into()),
+            LoadFailure::Imap(ImapFailure::TimedOut(ImapStep::FetchText).into()),
             "cause=TimedOut(FetchText)",
         ),
         (
-            LoadFailure::Server(ImapFailure::InboxChanged.into()),
+            LoadFailure::Imap(ImapFailure::InboxChanged.into()),
             "cause=InboxChanged",
         ),
         (
-            LoadFailure::OnlineAccounts(ImapAccessError::Timeout),
+            LoadFailure::OnlineAccounts(AccessError::Timeout),
             "cause=Timeout",
         ),
-        (LoadFailure::WorkerStopped, r#"cause="WorkerStopped""#),
+        (
+            LoadFailure::MicrosoftGraph(GraphError {
+                failure: GraphFailure::Refused {
+                    status: 401,
+                    code: Some("InvalidAuthenticationToken".to_owned()),
+                },
+                reason: Some("private server text".to_owned()),
+            }),
+            r#"cause=Refused status=401 code="InvalidAuthenticationToken""#,
+        ),
+        (LoadFailure::WorkerStopped, "cause=WorkerStopped"),
     ];
     for (failure, fields) in failures {
         let record = start_record(LogLevel::Debug);

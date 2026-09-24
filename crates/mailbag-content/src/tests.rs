@@ -21,14 +21,10 @@ impl Sample {
         let TextSelection::Parts(parts) = selection else {
             panic!("the sample has no text parts: {selection:?}");
         };
-        let decoded: Result<Vec<String>, ContentExplanation> = parts
-            .iter()
-            .map(|part| {
-                let (header, body) = &self.sections[&section_name(part)];
-                decode_text_part(header, body)
-            })
-            .collect();
-        Ok(join_message_text(&decoded?))
+        decode_message_text(parts.iter().map(|part| {
+            let (header, body) = &self.sections[&section_name(part)];
+            (header.as_slice(), body.as_slice())
+        }))
     }
 }
 
@@ -212,6 +208,21 @@ fn flowed_text_becomes_whole_paragraphs_again() {
     assert!(text.contains("-- \nПодпись"), "{text:?}");
 }
 
+/// The sender ended the paragraph before the signature with a soft break, which
+/// RFC 3676 tells senders not to do; the separator still stands on its own.
+#[test]
+fn a_signature_separator_after_a_soft_break_stays_a_line_of_its_own() {
+    let header = b"Content-Type: text/plain; charset=utf-8; format=flowed\r\n";
+    assert_eq!(
+        decode_text_part(header, b"hello \r\n-- \r\nname\r\n").unwrap(),
+        "hello \n-- \nname\n"
+    );
+    assert_eq!(
+        decode_text_part(header, b">hello \r\n>-- \r\n>name\r\n").unwrap(),
+        "> hello \n> -- \n> name\n"
+    );
+}
+
 #[test]
 fn a_flowed_message_with_delsp_joins_words_without_a_space() {
     let sample = load_sample("19-flowed-delsp.eml");
@@ -340,6 +351,12 @@ fn display_fields_decode_encoded_headers() {
 fn missing_display_fields_leave_the_row_usable() {
     let fields = decode_display_fields(b"Subject: \r\n");
     assert_eq!(fields, DisplayFields::default());
+}
+
+#[test]
+fn nobody_to_name_gives_no_display_names() {
+    assert_eq!(display_names([]), None);
+    assert_eq!(display_names([(None, None)]), None);
 }
 
 /// Builds a part the way a server's BODYSTRUCTURE describes one.

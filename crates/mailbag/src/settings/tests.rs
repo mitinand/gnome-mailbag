@@ -43,7 +43,7 @@ fn settings_errors_are_reported_once_and_allow_another_attempt() {
         let (launcher, errors) = test_launcher();
         for (reply, expected) in [
             (SettingsReply::AccessDenied, LaunchError::AccessDenied),
-            (SettingsReply::WrongType, LaunchError::InvalidReply),
+            (SettingsReply::WrongType, LaunchError::Unavailable),
         ] {
             service.reply.set(reply);
             launcher.open_with_connection(connect_to_bus(&bus.address));

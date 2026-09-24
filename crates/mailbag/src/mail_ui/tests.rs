@@ -5,11 +5,12 @@ use super::*;
 use crate::window_ui::WindowUi;
 use goa_adapter::{
     AccountCheckError, AccountCheckResult, AccountDetails, AccountId, AccountProvider,
-    AccountUpdate, ErrorCause, ImapAccessError,
+    AccountUpdate, ErrorCause,
 };
-use mailbag_imap::{ImapFailure, ImapStep, ServerReply};
+use mailbag_imap::{ImapError, ImapFailure, ImapStep, ServerReply};
 use mailbag_providers::{
-    CancelsLoadOnDrop, LoadFailure, LoadResult, LoadsInbox, MailProvider, ServerFailure,
+    CancelsLoadOnDrop, IncompleteList, LoadFailure, LoadResult, LoadsInbox, MailProvider,
+    MessageIdentity,
 };
 use std::{
     cell::Cell,
@@ -29,9 +30,6 @@ struct StartedLoad {
 struct ScriptedLoader {
     started_loads: RefCell<Vec<StartedLoad>>,
     cancelled_loads: Rc<Cell<usize>>,
-    /// Set to report a result before start_load returns, as Online Accounts
-    /// does when it has no bus connection.
-    result_at_once: RefCell<Option<LoadResult>>,
 }
 
 struct CountedStep(Rc<Cell<usize>>);
@@ -51,15 +49,11 @@ impl LoadsInbox for ScriptedLoader {
         provider: MailProvider,
         report: Box<dyn FnOnce(LoadResult)>,
     ) -> Box<dyn CancelsLoadOnDrop> {
-        let at_once = self.result_at_once.borrow_mut().take();
-        match at_once {
-            Some(result) => report(result),
-            None => self.started_loads.borrow_mut().push(StartedLoad {
-                account_id: account_id.clone(),
-                provider,
-                report,
-            }),
-        }
+        self.started_loads.borrow_mut().push(StartedLoad {
+            account_id: account_id.clone(),
+            provider,
+            report,
+        });
         Box::new(CountedStep(self.cancelled_loads.clone()))
     }
 }
@@ -143,10 +137,10 @@ fn batch_with_two_messages(account_id: &AccountId) -> ReceivedBatch {
     ReceivedBatch {
         account_id: account_id.clone(),
         uid_validity: Some(7),
-        list_refusal: None,
+        incomplete: None,
         messages: vec![
             ReceivedMessage {
-                uid: 20,
+                identity: MessageIdentity::ImapUid(20),
                 fields: DisplayFields {
                     subject: Some("Second subject".to_owned()),
                     from: Some("Second sender".to_owned()),
@@ -158,7 +152,7 @@ fn batch_with_two_messages(account_id: &AccountId) -> ReceivedBatch {
                 gmail: None,
             },
             ReceivedMessage {
-                uid: 10,
+                identity: MessageIdentity::ImapUid(10),
                 fields: DisplayFields {
                     subject: Some("First subject".to_owned()),
                     from: Some("First sender".to_owned()),
@@ -166,7 +160,7 @@ fn batch_with_two_messages(account_id: &AccountId) -> ReceivedBatch {
                 },
                 internal_date: Some(1_699_000_000),
                 seen: true,
-                content: ReceivedContent::Explained(ContentExplanation::UnreadableStructure),
+                content: ReceivedContent::StructureUnreadable,
                 gmail: None,
             },
         ],
@@ -183,11 +177,11 @@ fn unwrapped_and_ordinary_batch(account_id: &AccountId) -> ReceivedBatch {
     ReceivedBatch {
         account_id: account_id.clone(),
         uid_validity: Some(7),
-        list_refusal: None,
+        incomplete: None,
         messages: (1..)
             .zip(bodies)
             .map(|(number, (subject, body))| ReceivedMessage {
-                uid: number * 10,
+                identity: MessageIdentity::ImapUid(number * 10),
                 fields: DisplayFields {
                     subject: Some(subject.to_owned()),
                     from: Some("Long sender".to_owned()),
@@ -203,7 +197,7 @@ fn unwrapped_and_ordinary_batch(account_id: &AccountId) -> ReceivedBatch {
 }
 
 fn rejected_sign_in() -> LoadFailure {
-    LoadFailure::Server(ServerFailure {
+    LoadFailure::Imap(ImapError {
         failure: ImapFailure::Failed(ImapStep::SignIn),
         server_reply: Some(ServerReply {
             code: Some("AUTHENTICATIONFAILED".to_owned()),
@@ -455,7 +449,7 @@ fn mail_ui_transitions() {
     refresh.activate(None);
     dispatch_pending();
     assert_eq!(loader.loading_provider(), Some(MailProvider::Gmail));
-    loader.report(LoadResult::Cancelled);
+    loader.report(LoadResult::Failed(rejected_sign_in()));
     dispatch_pending();
     widgets.select_account(0);
 
@@ -513,10 +507,10 @@ fn mail_ui_transitions() {
     dispatch_pending();
     let mut short_batch = batch_with_two_messages(&generic);
     short_batch.messages.pop();
-    short_batch.list_refusal = Some(ServerReply {
+    short_batch.incomplete = Some(IncompleteList::ServerRefused(ServerReply {
         code: None,
         text: "Some messages could not be FETCHed".to_owned(),
-    });
+    }));
     loader.report(LoadResult::Received(short_batch));
     dispatch_pending();
     assert_eq!(widgets.rows().len(), 1);
@@ -582,23 +576,12 @@ fn mail_ui_transitions() {
     );
     assert!(refresh.is_enabled());
 
-    // A settings failure Online Accounts reports at once still ends the load.
-    *loader.result_at_once.borrow_mut() = Some(LoadResult::Failed(LoadFailure::OnlineAccounts(
-        ImapAccessError::Settings,
-    )));
-    refresh.activate(None);
-    dispatch_pending();
-    assert_eq!(loader.running_loads(), 0);
-    assert_eq!(widgets.status_title(), "Mail settings unavailable");
-    assert!(!widgets.shows_load_feedback());
-    assert!(refresh.is_enabled());
-
     // A repeated refresh that switches accounts keeps loading for its own one.
     refresh.activate(None);
     dispatch_pending();
     widgets.select_account(1);
     dispatch_pending();
-    assert_eq!(widgets.status_title(), "No mail loaded");
+    assert_eq!(widgets.status_title(), "The mail server rejected sign-in");
     assert!(widgets.shows_load_feedback());
     // The load continues for the account it was started for.
     assert_eq!(loader.loading_account().as_ref(), Some(&generic));
@@ -672,7 +655,14 @@ fn a_message_without_text_explains_why_in_the_reader() {
     assert!(charset.contains("x-weird"), "{charset}");
     let html_only = explain_content(&ContentExplanation::NoPlainText { has_html: true });
     assert!(html_only.contains("HTML"), "{html_only}");
-    let not_returned = explain_content(&ContentExplanation::TextNotReturned);
+    let not_returned = reader_body_text(&ReceivedMessage {
+        identity: MessageIdentity::ImapUid(1),
+        fields: DisplayFields::default(),
+        internal_date: None,
+        seen: false,
+        content: ReceivedContent::TextNotReturned,
+        gmail: None,
+    });
     assert!(not_returned.contains("Refresh Inbox"), "{not_returned}");
 }
 

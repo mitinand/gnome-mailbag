@@ -8,7 +8,8 @@
 mod batch;
 mod gmail;
 mod imap;
-mod load;
+mod imap_batch;
+mod microsoft365;
 mod worker;
 
 #[cfg(test)]
@@ -19,13 +20,13 @@ mod test_record;
 mod tests;
 
 pub use batch::{
-    CancelsLoadOnDrop, LoadFailure, LoadResult, ReceivedBatch, ReceivedContent, ReceivedMessage,
-    ServerFailure,
+    CancelsLoadOnDrop, IncompleteList, LoadFailure, LoadResult, MessageIdentity, ReceivedBatch,
+    ReceivedContent, ReceivedMessage,
 };
-pub use worker::{LoadHandle, MailWorker};
 
-use goa_adapter::{AccountId, GoaAdapter, ImapAccessError, ImapAccessRequest};
+use goa_adapter::{AccessError, AccessRequest, AccountId, GoaAdapter, ImapAccess};
 use std::{cell::RefCell, rc::Rc};
+use worker::{LoadHandle, LoadKind, MailWorker};
 
 /// Which load sequence an account needs. The window turns the account's
 /// `AccountProvider` into this; that type does not reach this crate.
@@ -33,19 +34,11 @@ use std::{cell::RefCell, rc::Rc};
 pub enum MailProvider {
     GenericImap,
     Gmail,
+    Microsoft365,
 }
 
-/// How one load ended.
-#[derive(Debug)]
-pub enum LoadOutcome {
-    Loaded(ReceivedBatch),
-    Failed(ServerFailure),
-    /// The load was cancelled and its connection is closed.
-    Cancelled,
-    /// The mail worker stopped without a result, so nothing was loaded. The
-    /// next refresh starts a new worker.
-    WorkerStopped,
-}
+/// Where Microsoft 365 mail is read.
+const MICROSOFT_GRAPH: &str = "https://graph.microsoft.com/v1.0";
 
 /// Starts one account's Inbox load and reports how it ended. The window loads
 /// with Online Accounts and the mail worker; the graphical test reports
@@ -84,68 +77,83 @@ impl LoadsInbox for MailLoader {
         provider: MailProvider,
         report: Box<dyn FnOnce(LoadResult)>,
     ) -> Box<dyn CancelsLoadOnDrop> {
-        let step = Rc::new(RefCell::new(LoadStep::RequestingAccess(None)));
-        let transfer_step = step.clone();
+        let transfer = Rc::new(RefCell::new(None));
+        let started_transfer = transfer.clone();
         let worker = self.worker.clone();
-        let request = self
-            .accounts
-            .request_imap_access(account_id, move |access| match access {
-                Ok(access) => {
-                    tracing::info!(
-                        encryption = ?access.encryption,
-                        "Online Accounts gave the settings and credential"
-                    );
-                    let transfer = worker.load_inbox(access, provider, move |outcome| {
-                        report(load_result(outcome))
-                    });
-                    *transfer_step.borrow_mut() = LoadStep::Transferring {
-                        _transfer: transfer,
-                    };
-                }
-                // The request was cancelled by an exclusion or by quitting.
-                Err(ImapAccessError::Cancelled) => report(LoadResult::Cancelled),
-                Err(error) => report(LoadResult::Failed(LoadFailure::OnlineAccounts(error))),
-            });
-        // Online Accounts answers later, except for the settings failure it
-        // reports at once, which has already used the step above.
-        if let LoadStep::RequestingAccess(pending) = &mut *step.borrow_mut() {
-            *pending = Some(request);
-        }
-        Box::new(LoadCancellation(step))
+        let start_transfer = move |access: Result<LoadKind, AccessError>| match access {
+            Ok(kind) => {
+                *started_transfer.borrow_mut() = Some(worker.load_inbox(kind, report));
+            }
+            // The request was cancelled by an exclusion or by quitting.
+            Err(AccessError::Cancelled) => report(LoadResult::Cancelled),
+            Err(error) => report(LoadResult::Failed(LoadFailure::OnlineAccounts(error))),
+        };
+        let request = match provider {
+            MailProvider::GenericImap => request_imap_load(
+                &self.accounts,
+                account_id,
+                LoadKind::GenericImap,
+                start_transfer,
+            ),
+            MailProvider::Gmail => {
+                request_imap_load(&self.accounts, account_id, LoadKind::Gmail, start_transfer)
+            }
+            MailProvider::Microsoft365 => {
+                self.accounts
+                    .request_graph_access(account_id, move |access| {
+                        start_transfer(access.map(|access| {
+                            tracing::info!("Online Accounts gave the access token");
+                            LoadKind::Microsoft365 {
+                                access,
+                                service_url: MICROSOFT_GRAPH.to_owned(),
+                            }
+                        }))
+                    })
+            }
+        };
+        Box::new(LoadCancellation {
+            _access: request,
+            transfer,
+        })
     }
 }
 
-/// How far a load has come. Dropping a step cancels it.
-enum LoadStep {
-    /// None only between starting the request and holding it.
-    RequestingAccess(Option<ImapAccessRequest>),
-    /// Dropping the handle cancels the transfer and closes its connection.
-    Transferring {
-        _transfer: LoadHandle,
-    },
-    Cancelled,
+/// Asks Online Accounts for an IMAP account's settings and credential;
+/// `load_kind` names the IMAP sequence that runs with them.
+fn request_imap_load(
+    accounts: &GoaAdapter,
+    account_id: &AccountId,
+    load_kind: fn(ImapAccess) -> LoadKind,
+    start_transfer: impl FnOnce(Result<LoadKind, AccessError>) + 'static,
+) -> AccessRequest {
+    accounts.request_imap_access(account_id, move |access| {
+        start_transfer(access.map(|access| {
+            tracing::info!(
+                encryption = ?access.encryption,
+                "Online Accounts gave the settings and credential"
+            );
+            load_kind(access)
+        }))
+    })
 }
 
-/// Cancels its load when dropped, at whichever step the load has reached.
-pub struct LoadCancellation(Rc<RefCell<LoadStep>>);
+/// Cancels its load when dropped, at whichever step it has reached: the
+/// Online Accounts request, or the transfer once the request answered.
+struct LoadCancellation {
+    /// Dropping it cancels a pending request; after the answer it is inert.
+    _access: AccessRequest,
+    /// The transfer, once Online Accounts answered. Dropping the handle cancels
+    /// the transfer and closes its connection.
+    transfer: Rc<RefCell<Option<LoadHandle>>>,
+}
 
 impl CancelsLoadOnDrop for LoadCancellation {}
 
 impl Drop for LoadCancellation {
     fn drop(&mut self) {
-        // The step is dropped after the cell is free, so that the step's own
-        // completion callback can still use it.
-        let step = std::mem::replace(&mut *self.0.borrow_mut(), LoadStep::Cancelled);
-        drop(step);
-    }
-}
-
-/// Reports a finished transfer the way the window stores it.
-fn load_result(outcome: LoadOutcome) -> LoadResult {
-    match outcome {
-        LoadOutcome::Loaded(batch) => LoadResult::Received(batch),
-        LoadOutcome::Failed(failure) => LoadResult::Failed(LoadFailure::Server(failure)),
-        LoadOutcome::Cancelled => LoadResult::Cancelled,
-        LoadOutcome::WorkerStopped => LoadResult::Failed(LoadFailure::WorkerStopped),
+        // Taken out of the cell first: the transfer's outcome arrives later on
+        // this context, never inside this borrow.
+        let transfer = self.transfer.borrow_mut().take();
+        drop(transfer);
     }
 }

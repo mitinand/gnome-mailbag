@@ -9,7 +9,7 @@ Linux is required; Fedora is the primary development environment.
 Install [rustup](https://rustup.rs/) and the system prerequisites:
 
 ```bash
-sudo dnf install git curl openssl gcc pkgconf-pkg-config gtk4-devel libadwaita-devel python3 python3-pip desktop-file-utils appstream dbus-daemon meson ninja-build flatpak flatpak-builder
+sudo dnf install git curl openssl gcc pkgconf-pkg-config gtk4-devel libadwaita-devel libsoup3-devel python3 python3-pip desktop-file-utils appstream dbus-daemon meson ninja-build flatpak flatpak-builder
 ```
 
 Then run from the repository root:
@@ -76,10 +76,11 @@ Reproduce the problem, quit Mailbag and attach `mailbag.log` to the issue. The
 levels are `error`, `warning`, `info` and `debug`; `debug` tells the most.
 
 A debug record contains the Online Accounts identifiers of your accounts, also at
-the other levels; message numbers (UIDs); the mail server's host and port; how
-messages are built (content types, character sets, sizes); the replies and alerts
-the server sent, with your sign-in name replaced by `<login>`; and the reason a
-secure connection failed. It never contains passwords, sign-in names, mail
+the other levels; message numbers (UIDs) and, for Microsoft 365 accounts, message
+identifiers; the mail server's host and port; the mail service's response
+statuses; how messages are built (content types, character sets, sizes); the
+replies and alerts the server sent, with your sign-in name replaced by `<login>`;
+and the reason a secure connection failed. It never contains passwords, sign-in names, mail
 addresses, subjects or other header values, attachment file names or the text of
 messages.
 

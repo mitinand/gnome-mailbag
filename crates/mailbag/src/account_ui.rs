@@ -4,7 +4,8 @@
 use crate::accounts::{AccountList, AccountPage, AccountProblem, AccountRow, ExclusionReason};
 use crate::settings::LaunchError;
 use adw::{gio, glib, gtk, prelude::*};
-use goa_adapter::{AccountId, AccountProvider, AccountUpdate, ErrorCause};
+use goa_adapter::{AccountId, AccountUpdate, ErrorCause};
+use mailbag_providers::MailProvider;
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 #[cfg(test)]
@@ -28,9 +29,8 @@ pub struct AccountUi {
     store: gio::ListStore,
     selection: gtk::SingleSelection,
     tree: gtk::ListView,
-    status: adw::StatusPage,
     /// Where the status page keeps its buttons and the window's mail
-    /// explanation.
+    /// explanation. The page's title and description belong to the window.
     status_actions: gtk::Box,
     retry: gtk::Button,
     online_accounts: gtk::Button,
@@ -61,7 +61,6 @@ impl AccountUi {
             store,
             selection,
             tree: tree.clone(),
-            status,
             status_actions: status_buttons.actions,
             retry: status_buttons.retry,
             online_accounts: status_buttons.online_accounts,
@@ -87,7 +86,7 @@ impl AccountUi {
                 let id = item.borrow::<AccountWidgets>().id.clone();
                 ui.accounts.select_account(id);
                 ui.selection.set_selected(position);
-                ui.show_status();
+                ui.show_page_buttons();
                 ui.mail_split.set_show_content(false);
                 if ui.folders_split.is_collapsed() {
                     ui.folders_split.set_show_sidebar(false);
@@ -98,7 +97,7 @@ impl AccountUi {
             ui.borrow().notify_selection_changed();
         });
         ui.borrow().mail_split.set_show_content(false);
-        ui.borrow().show_status();
+        ui.borrow().show_page_buttons();
         ui
     }
 
@@ -125,11 +124,40 @@ impl AccountUi {
         self.accounts.selected_id()
     }
 
-    /// The provider of the selected account, which decides whether Mailbag
-    /// can load its mail.
-    pub fn selected_provider(&self) -> Option<AccountProvider> {
+    /// The load sequence of the selected account.
+    pub fn selected_provider(&self) -> Option<MailProvider> {
         let id = self.accounts.selected_id()?;
         Some(self.accounts.visible_accounts()[id].provider)
+    }
+
+    /// Title and description of the account page, for the window to show.
+    pub fn page_text(&self) -> (&'static str, &'static str) {
+        match self.accounts.page() {
+            AccountPage::Loading => ("Loading accounts", ""),
+            AccountPage::MailUnavailable => (
+                "Mail settings unavailable",
+                "Unable to get mail settings from Online Accounts. Try checking again.",
+            ),
+            AccountPage::ReadFailed(cause) => ("Unable to get accounts", check_error_text(cause)),
+            AccountPage::NoAccounts | AccountPage::NoEligibleAccounts => (
+                "No mail accounts",
+                if self
+                    .accounts
+                    .excluded_reasons()
+                    .contains(&ExclusionReason::MailDisabled)
+                    && !self
+                        .accounts
+                        .excluded_reasons()
+                        .contains(&ExclusionReason::UnsupportedProvider)
+                {
+                    "Enable Mail for your account in Online Accounts."
+                } else {
+                    "Add a mail account or enable Mail in Online Accounts."
+                },
+            ),
+            AccountPage::SelectAccount => ("Select an account", ""),
+            AccountPage::SelectedAccount => ("", ""),
+        }
     }
 
     /// The disambiguated row label, for the mail list title.
@@ -187,7 +215,7 @@ impl AccountUi {
             .and_then(|id| self.store.find(&self.rows[id]));
         self.selection
             .set_selected(selected_position.unwrap_or(gtk::INVALID_LIST_POSITION));
-        self.show_status();
+        self.show_page_buttons();
         if removed_focus {
             focus_widget(&self.tree);
         }
@@ -209,36 +237,10 @@ impl AccountUi {
             .add_toast(adw::Toast::builder().title(title).use_markup(false).build());
     }
 
-    fn show_status(&self) {
+    /// The buttons of the account page follow the page; the text is the
+    /// window's, written in one place with the mail status.
+    fn show_page_buttons(&self) {
         let page = self.accounts.page();
-        let (title, description) = match page {
-            AccountPage::Loading => ("Loading accounts", ""),
-            AccountPage::MailUnavailable => (
-                "Mail settings unavailable",
-                "Unable to get mail settings from Online Accounts. Try checking again.",
-            ),
-            AccountPage::ReadFailed(cause) => ("Unable to get accounts", check_error_text(cause)),
-            AccountPage::NoAccounts | AccountPage::NoEligibleAccounts => (
-                "No mail accounts",
-                if self
-                    .accounts
-                    .excluded_reasons()
-                    .contains(&ExclusionReason::MailDisabled)
-                    && !self
-                        .accounts
-                        .excluded_reasons()
-                        .contains(&ExclusionReason::UnsupportedProvider)
-                {
-                    "Enable Mail for your account in Online Accounts."
-                } else {
-                    "Add a mail account or enable Mail in Online Accounts."
-                },
-            ),
-            AccountPage::SelectAccount => ("Select an account", ""),
-            AccountPage::SelectedAccount => ("", ""),
-        };
-        self.status.set_title(title);
-        self.status.set_description(Some(description));
         self.retry.set_visible(matches!(
             page,
             AccountPage::ReadFailed(_) | AccountPage::MailUnavailable

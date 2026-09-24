@@ -9,13 +9,13 @@ mod tests;
 
 use crate::account_ui::AccountUi;
 use crate::accounts::AccountPage;
-use crate::accounts::mail_provider;
 use crate::inbox::{AccountInbox, InboxController};
 use crate::mail_ui::{MailUi, inert_text, show_inert_text};
 use adw::{gio, gtk, prelude::*};
-use goa_adapter::{AccountId, AccountProvider, AccountUpdate, ImapAccessError};
-use mailbag_imap::{ImapFailure, ImapStep, ServerReply};
-use mailbag_providers::{LoadFailure, LoadResult, LoadsInbox, MailProvider, ServerFailure};
+use goa_adapter::{AccessError, AccountId, AccountUpdate};
+use mailbag_graph::{GraphError, GraphFailure};
+use mailbag_imap::{ImapError, ImapFailure, ImapStep};
+use mailbag_providers::{IncompleteList, LoadFailure, LoadResult, LoadsInbox, MailProvider};
 use std::{cell::RefCell, rc::Rc};
 
 pub struct WindowUi {
@@ -31,6 +31,9 @@ pub struct WindowUi {
     /// The sidebar box that shows the spinner while a load runs.
     loading_spinner_box: gtk::Box,
 }
+
+/// Where a rejected sign-in sends the user, for every provider.
+const SIGN_IN_HINT: &str = "Check this account's sign-in in Online Accounts.";
 
 /// What the status page says about the selected account's mail.
 struct MailStatus {
@@ -124,13 +127,12 @@ impl WindowUi {
         let Some((account_id, provider)) = self.refreshable_account() else {
             return;
         };
-        if !self.inboxes.borrow_mut().begin_load(&account_id) {
+        if self.inboxes.borrow().is_loading() {
             return;
         }
-        // The cleared list and the spinner appear before the load starts.
-        self.render();
         let window = Rc::downgrade(self);
         let loaded_account = account_id.clone();
+        // The result arrives later on this context, never inside start_load.
         let cancellation = self.loader.start_load(
             &account_id,
             provider,
@@ -142,28 +144,33 @@ impl WindowUi {
         );
         self.inboxes
             .borrow_mut()
-            .hold_cancellation(&account_id, cancellation);
+            .begin_load(&account_id, cancellation);
+        self.render();
     }
 
     fn finish_load(&self, account_id: &AccountId, result: LoadResult) {
-        // A short list explains nothing by itself, so the refusal that caused
-        // it is said once, as the load ends.
-        if let LoadResult::Received(batch) = &result
-            && let Some(refusal) = &batch.list_refusal
-        {
-            let accounts = self.accounts.borrow();
-            let notice = incomplete_list_notice(accounts.label_of(account_id), refusal);
-            accounts.show_toast(&notice);
+        // A short list explains nothing by itself, so its reason is said once,
+        // as the load ends, and only for a batch the window keeps.
+        let notice = match &result {
+            LoadResult::Received(batch) => batch.incomplete.as_ref().map(|incomplete| {
+                incomplete_list_notice(self.accounts.borrow().label_of(account_id), incomplete)
+            }),
+            _ => None,
+        };
+        let kept = self.inboxes.borrow_mut().finish_load(account_id, result);
+        if kept && let Some(notice) = notice {
+            self.accounts.borrow().show_toast(&notice);
         }
-        self.inboxes.borrow_mut().finish_load(account_id, result);
         self.render();
     }
 
     /// The account Refresh Inbox would load, with the sequence it needs.
     fn refreshable_account(&self) -> Option<(AccountId, MailProvider)> {
         let accounts = self.accounts.borrow();
-        let provider = mail_provider(accounts.selected_provider()?)?;
-        Some((accounts.selected_id().cloned()?, provider))
+        Some((
+            accounts.selected_id().cloned()?,
+            accounts.selected_provider()?,
+        ))
     }
 
     fn render(&self) {
@@ -182,7 +189,7 @@ impl WindowUi {
         let shows_account_page = accounts.page() != AccountPage::SelectedAccount;
         let mail_status = match inbox {
             _ if shows_account_page => None,
-            None => Some(nothing_loaded_status(accounts.selected_provider())),
+            None => Some(nothing_loaded_status()),
             Some(AccountInbox::Loading) => Some(MailStatus::titled("Loading Inbox")),
             Some(AccountInbox::Failed(failure)) => Some(failure_status(failure)),
             Some(AccountInbox::Received(batch)) => batch
@@ -196,8 +203,14 @@ impl WindowUi {
             true => "messages",
             false => "empty",
         });
-        if let Some(status) = &mail_status {
-            // The account page left its own title and description empty.
+        // The status page has one writer: the account page's text, or the
+        // mail status with its plain-text explanation below the buttons.
+        if shows_account_page {
+            let (title, description) = accounts.page_text();
+            self.status.set_title(title);
+            self.status
+                .set_description((!description.is_empty()).then_some(description));
+        } else if let Some(status) = &mail_status {
             self.status.set_title(&status.title);
             self.status.set_description(None);
         }
@@ -207,12 +220,8 @@ impl WindowUi {
         show_inert_text(&self.mail_explanation, &explanation);
         self.mail_explanation.set_visible(!explanation.is_empty());
         self.loading_spinner_box.set_visible(inboxes.is_loading());
-        self.refresh_inbox.set_enabled(
-            !inboxes.is_loading()
-                && accounts
-                    .selected_provider()
-                    .is_some_and(|provider| mail_provider(provider).is_some()),
-        );
+        self.refresh_inbox
+            .set_enabled(!inboxes.is_loading() && accounts.selected_provider().is_some());
     }
 }
 
@@ -233,28 +242,31 @@ impl MailStatus {
     }
 }
 
-/// The server refused to finish the message list, so messages are missing from
-/// the batch that is now on screen.
-fn incomplete_list_notice(account: Option<String>, refusal: &ServerReply) -> String {
+/// Messages are missing from the batch that is now on screen: the server
+/// refused to finish the list, or the service offered more than one request
+/// holds.
+fn incomplete_list_notice(account: Option<String>, incomplete: &IncompleteList) -> String {
     let where_from = match account {
         Some(label) => format!("in {label}"),
         None => "in this account".to_owned(),
     };
-    format!(
-        "Some messages {where_from} could not be loaded. The mail server said: {}",
-        inert_text(&refusal.text)
-    )
+    match incomplete {
+        IncompleteList::ServerRefused(refusal) => format!(
+            "Some messages {where_from} could not be loaded. The mail server said: {}",
+            inert_text(&refusal.text)
+        ),
+        IncompleteList::MoreAvailable => format!(
+            "Not all messages {where_from} were loaded: the mail service offered more than one request holds."
+        ),
+    }
 }
 
 /// Nothing has been loaded for this account in this run, which never means an
 /// empty Inbox.
-fn nothing_loaded_status(provider: Option<AccountProvider>) -> MailStatus {
+fn nothing_loaded_status() -> MailStatus {
     MailStatus::explained(
         "No mail loaded",
-        match provider.and_then(mail_provider) {
-            Some(_) => "Choose Refresh Inbox in the main menu to load this account's Inbox.",
-            None => "Mailbag cannot load mail for this account yet.",
-        },
+        "Choose Refresh Inbox in the main menu to load this account's Inbox.",
     )
 }
 
@@ -262,7 +274,8 @@ fn nothing_loaded_status(provider: Option<AccountProvider>) -> MailStatus {
 fn failure_status(failure: &LoadFailure) -> MailStatus {
     match failure {
         LoadFailure::OnlineAccounts(error) => online_accounts_status(*error),
-        LoadFailure::Server(failure) => server_status(failure),
+        LoadFailure::Imap(error) => imap_failure_status(error),
+        LoadFailure::MicrosoftGraph(error) => graph_failure_status(error),
         LoadFailure::WorkerStopped => MailStatus::explained(
             "Mail could not be loaded",
             "Mailbag stopped loading this Inbox. Try Refresh Inbox again.",
@@ -270,41 +283,41 @@ fn failure_status(failure: &LoadFailure) -> MailStatus {
     }
 }
 
-fn online_accounts_status(error: ImapAccessError) -> MailStatus {
+fn online_accounts_status(error: AccessError) -> MailStatus {
     match error {
-        ImapAccessError::Settings => MailStatus::explained(
-            "Mail settings unavailable",
-            "Unable to get this account's IMAP settings from Online Accounts.",
+        AccessError::Settings => MailStatus::explained(
+            "Account settings unavailable",
+            "Unable to get this account's settings from Online Accounts.",
         ),
-        ImapAccessError::NoEncryption => MailStatus::explained(
+        AccessError::NoEncryption => MailStatus::explained(
             "No encryption configured",
             "This account has no encryption configured. Choose SSL or STARTTLS for it in Online \
              Accounts. No password was requested and no connection was made.",
         ),
-        ImapAccessError::Password => MailStatus::explained(
+        AccessError::Password => MailStatus::explained(
             "Password unavailable",
             "Unable to get this account's password from Online Accounts. No server sign-in was \
              attempted.",
         ),
-        ImapAccessError::AccessToken => MailStatus::explained(
+        AccessError::AccessToken => MailStatus::explained(
             "Authorization unavailable",
             "Unable to get this account's authorization from Online Accounts. No server sign-in \
              was attempted.",
         ),
-        ImapAccessError::Timeout => MailStatus::explained(
+        AccessError::Timeout => MailStatus::explained(
             "Online Accounts did not respond",
             "Online Accounts did not respond in time. Try Refresh Inbox again.",
         ),
         // A cancelled request ends the load without a failure to explain.
-        ImapAccessError::Cancelled => MailStatus::explained(
+        AccessError::Cancelled => MailStatus::explained(
             "Mail could not be loaded",
             "Loading this Inbox stopped. Try Refresh Inbox again.",
         ),
     }
 }
 
-fn server_status(failure: &ServerFailure) -> MailStatus {
-    let (title, reason) = match failure.failure {
+fn imap_failure_status(error: &ImapError) -> MailStatus {
+    let (title, reason) = match error.failure {
         ImapFailure::Failed(step) => (failed_step_title(step), failed_step_reason(step)),
         ImapFailure::TimedOut(step) => (
             "The mail server stopped responding",
@@ -321,14 +334,14 @@ fn server_status(failure: &ServerFailure) -> MailStatus {
         ),
     };
     let mut explanation = vec![reason.to_owned()];
-    if let Some(reply) = &failure.server_reply {
+    if let Some(reply) = &error.server_reply {
         explanation.push(format!("The mail server said: {}", inert_text(&reply.text)));
     }
-    if credential_may_be_wrong(failure) {
-        explanation.push("Check this account's sign-in in Online Accounts.".to_owned());
+    if credential_may_be_wrong(error) {
+        explanation.push(SIGN_IN_HINT.to_owned());
     }
     explanation.extend(
-        failure
+        error
             .alerts
             .iter()
             .map(|alert| format!("Alert from the mail server: {}", inert_text(alert))),
@@ -339,14 +352,54 @@ fn server_status(failure: &ServerFailure) -> MailStatus {
     }
 }
 
+/// The service's own message about a refusal is developer text and stays in
+/// the record; its status and code explain the refusal
+/// (specs/005-microsoft-graph-integration/research.md §5).
+fn graph_failure_status(error: &GraphError) -> MailStatus {
+    let (title, explanation) = match &error.failure {
+        GraphFailure::ConnectionFailed => (
+            "Could not connect to the mail service",
+            error.reason.as_deref().map(inert_text).unwrap_or_default(),
+        ),
+        GraphFailure::TimedOut => (
+            "The mail service stopped responding",
+            "No answer arrived within the wait limit. Try Refresh Inbox again.".to_owned(),
+        ),
+        GraphFailure::Refused { status, code } => {
+            let said = match code {
+                Some(code) => format!(
+                    "The mail service said: status {status}, code {}.",
+                    inert_text(code)
+                ),
+                None => format!("The mail service said: status {status}."),
+            };
+            match status {
+                401 => (
+                    "The mail service rejected the sign-in",
+                    format!("{said}\n{SIGN_IN_HINT}"),
+                ),
+                _ => ("The mail service refused the request", said),
+            }
+        }
+        GraphFailure::InvalidReply => (
+            "The mail service answered in an unexpected form",
+            "Try Refresh Inbox again.".to_owned(),
+        ),
+    };
+    MailStatus {
+        title: title.to_owned(),
+        explanation,
+    }
+}
+
 /// A rejected sign-in points to the sign-in only when the server blamed the
 /// credentials or gave no code; another code, such as a temporary
 /// UNAVAILABLE, says nothing about the credential.
-fn credential_may_be_wrong(failure: &ServerFailure) -> bool {
-    if failure.failure != ImapFailure::Failed(ImapStep::SignIn) {
+fn credential_may_be_wrong(error: &ImapError) -> bool {
+    if error.failure != ImapFailure::Failed(ImapStep::SignIn) {
         return false;
     }
-    match failure
+    match error
         .server_reply
         .as_ref()
         .and_then(|reply| reply.code.as_deref())

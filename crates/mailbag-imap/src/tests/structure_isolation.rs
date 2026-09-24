@@ -19,7 +19,7 @@ fn text_is_received_after_the_last_isolated_structure_fails() {
             ..FixtureSetup::default()
         });
         let mut reader = open_reader(&fixture);
-        let rows = expect_success(run(reader.fetch_rows(RowItems::Standard))).rows;
+        let rows = expect_success(run(reader.fetch_rows(RowItems::Standard, 100))).rows;
         let uids: Vec<_> = rows.iter().map(|row| row.uid).collect();
         let structures = expect_success(run(reader.fetch_structures(&uids)));
         assert_eq!(structures[&20], None);
@@ -83,7 +83,7 @@ fn unreadable_structures_keep_their_rows_and_the_others_are_read() {
         });
         let mut reader = open_reader(&fixture);
         let (rows, structures) = run(async {
-            let rows = expect_success(reader.fetch_rows(RowItems::Standard).await).rows;
+            let rows = expect_success(reader.fetch_rows(RowItems::Standard, 100).await).rows;
             let uids: Vec<u32> = rows.iter().map(|row| row.uid).collect();
             (rows, expect_success(reader.fetch_structures(&uids).await))
         });

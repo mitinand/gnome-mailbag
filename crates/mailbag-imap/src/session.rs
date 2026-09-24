@@ -70,6 +70,9 @@ impl From<&StatusResponse> for ServerReply {
 /// text; no field keeps it for the record's sake (specs/003-logging FR-017).
 #[derive(Default)]
 pub(crate) struct ServerNotices {
+    /// The unilateral responses of the current connection, read from here
+    /// only: the fork's own copy of the channel is never drained.
+    responses: Option<async_channel::Receiver<UnsolicitedResponse>>,
     /// ALERT texts, which RFC 3501 requires to reach the user.
     alerts: Vec<String>,
     /// The BYE with which the server closed the connection, for example
@@ -78,13 +81,18 @@ pub(crate) struct ServerNotices {
 }
 
 impl ServerNotices {
-    /// Keeps the ALERT and BYE texts among waiting unilateral responses.
-    pub(crate) fn collect(
-        &mut self,
-        sign_in_name: &str,
-        mut next_response: impl FnMut() -> Option<UnsolicitedResponse>,
-    ) {
-        while let Some(response) = next_response() {
+    /// Follows a new connection's unilateral responses; a reconnection
+    /// replaces the previous connection's channel.
+    pub(crate) fn follow(&mut self, responses: async_channel::Receiver<UnsolicitedResponse>) {
+        self.responses = Some(responses);
+    }
+
+    /// Keeps the ALERT and BYE texts among the waiting unilateral responses.
+    pub(crate) fn collect(&mut self, sign_in_name: &str) {
+        let Some(responses) = self.responses.clone() else {
+            return;
+        };
+        while let Ok(response) = responses.try_recv() {
             if let UnsolicitedResponse::Other(data) = response {
                 self.keep(sign_in_name, data.parsed());
             }
@@ -143,6 +151,7 @@ impl ServerNotices {
     /// The error for a failed step, with what the server said about it. Every
     /// failed step passes here, so the server's text is logged here as well.
     pub(crate) fn error(&mut self, sign_in_name: &str, failure: StepFailure) -> ImapError {
+        self.collect(sign_in_name);
         let server_reply = failure.server_reply.or_else(|| self.bye.take());
         if let Some(reply) = &server_reply {
             tracing::debug!(
@@ -173,6 +182,7 @@ pub(crate) async fn open_inbox(
         Encryption::ImplicitTls => {
             let tls = transport::start_tls(&connection, &identity, account.encryption).await?;
             let mut client = Client::new(GioStream::new(tls));
+            notices.follow(client.unsolicited_responses().clone());
             read_greeting(&mut client, &account.login, notices).await?;
             client
         }
@@ -180,7 +190,9 @@ pub(crate) async fn open_inbox(
             upgrade_plaintext(&connection).await?;
             let tls = transport::start_tls(&connection, &identity, account.encryption).await?;
             // The server sends no second greeting after STARTTLS.
-            Client::new(GioStream::new(tls))
+            let client = Client::new(GioStream::new(tls));
+            notices.follow(client.unsolicited_responses().clone());
+            client
         }
     };
     let mut session = sign_in(client, account, notices).await?;
@@ -193,12 +205,9 @@ pub(crate) async fn open_inbox(
     }
     // Both commands answer with an untagged list, which belongs to the record
     // before the Inbox is opened.
-    let waiting = &session.unsolicited_responses;
-    notices.collect(&account.login, || waiting.try_recv().ok());
+    notices.collect(&account.login);
     let examined = session.examine("INBOX").await;
-    notices.collect(&account.login, || {
-        session.unsolicited_responses.try_recv().ok()
-    });
+    notices.collect(&account.login);
     let mailbox = examined.map_err(|error| command_failure(ImapStep::OpenInbox, &error))?;
     tracing::info!(messages = mailbox.exists, "Inbox opened");
     tracing::debug!(uid_validity = mailbox.uid_validity, "Inbox state");
@@ -282,9 +291,7 @@ async fn sign_in(
     notices: &mut ServerNotices,
 ) -> Result<Session<GioStream>, StepFailure> {
     let capabilities = client.capabilities().await;
-    notices.collect(&account.login, || {
-        client.unsolicited_responses().try_recv().ok()
-    });
+    notices.collect(&account.login);
     let capabilities = capabilities.map_err(|error| command_failure(ImapStep::SignIn, &error))?;
     tracing::info!(
         capabilities = capability_names(capabilities.iter()),
@@ -317,18 +324,13 @@ async fn sign_in(
     };
     match signed_in {
         Ok(session) => {
-            notices.collect(&account.login, || {
-                session.unsolicited_responses.try_recv().ok()
-            });
+            notices.collect(&account.login);
             tracing::info!(method, "signed in");
             Ok(session)
         }
-        Err((error, client)) => {
-            notices.collect(&account.login, || {
-                client.unsolicited_responses().try_recv().ok()
-            });
-            Err(command_failure(ImapStep::SignIn, &error))
-        }
+        // What the server said before refusing waits in the channel the
+        // notices follow; the error collects it.
+        Err((error, _client)) => Err(command_failure(ImapStep::SignIn, &error)),
     }
 }
 

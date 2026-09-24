@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
-use super::{ImapAccess, ImapAccessError, ImapAccessRequest, ImapCredential, ImapEncryption};
+use super::{ImapAccess, ImapCredential, ImapEncryption};
 use crate::client::tests::{
     RecordedUpdates, dispatch_for, run_in_context, start_test_client, wait_until,
 };
-use crate::{AccountId, GoaAdapter, test_bus::TestBus, test_goa::*};
+use crate::{AccessError, AccessRequest, AccountId, GoaAdapter, test_bus::TestBus, test_goa::*};
 use gio::prelude::*;
 use glib::Variant;
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
-type AccessResults = Rc<RefCell<Vec<Result<ImapAccess, ImapAccessError>>>>;
+type AccessResults = Rc<RefCell<Vec<Result<ImapAccess, AccessError>>>>;
 
 /// Starts observation and waits for its first read, so its connection exists.
 fn start_observing(bus: &TestBus) -> (GoaAdapter, RecordedUpdates) {
@@ -18,7 +18,7 @@ fn start_observing(bus: &TestBus) -> (GoaAdapter, RecordedUpdates) {
     (client, updates)
 }
 
-fn request_access(client: &GoaAdapter, account_id: &str) -> (ImapAccessRequest, AccessResults) {
+fn request_access(client: &GoaAdapter, account_id: &str) -> (AccessRequest, AccessResults) {
     let results = AccessResults::default();
     let recorded = results.clone();
     let context = glib::MainContext::ref_thread_default();
@@ -34,7 +34,7 @@ fn request_access(client: &GoaAdapter, account_id: &str) -> (ImapAccessRequest, 
 }
 
 /// Waits for the completion, then checks that no second one follows.
-fn completed_access(results: &AccessResults) -> Result<ImapAccess, ImapAccessError> {
+fn completed_access(results: &AccessResults) -> Result<ImapAccess, AccessError> {
     wait_until(|| !results.borrow().is_empty());
     dispatch_for(Duration::from_millis(50));
     assert_eq!(results.borrow().len(), 1, "exactly one completion");
@@ -45,7 +45,7 @@ fn successful_access(results: &AccessResults) -> ImapAccess {
     completed_access(results).unwrap_or_else(|error| panic!("access failed: {error:?}"))
 }
 
-fn failed_access(results: &AccessResults) -> ImapAccessError {
+fn failed_access(results: &AccessResults) -> AccessError {
     match completed_access(results) {
         Ok(_) => panic!("access unexpectedly succeeded"),
         Err(error) => error,
@@ -148,7 +148,7 @@ fn both_encryption_flags_off_are_refused_before_the_password() {
         );
         let (client, _updates) = start_observing(&bus);
         let (_request, results) = request_access(&client, "refused");
-        assert_eq!(failed_access(&results), ImapAccessError::NoEncryption);
+        assert_eq!(failed_access(&results), AccessError::NoEncryption);
         assert!(goa.password_requests().is_empty());
 
         let (_request, results) = request_access(&client, "accepted");
@@ -173,7 +173,7 @@ fn absent_account_and_missing_mail_interface_fail_as_settings() {
             );
             let (client, _updates) = start_observing(&bus);
             let (_request, results) = request_access(&client, "one");
-            assert_eq!(failed_access(&results), ImapAccessError::Settings);
+            assert_eq!(failed_access(&results), AccessError::Settings);
             assert!(goa.password_requests().is_empty());
         });
     }
@@ -182,17 +182,17 @@ fn absent_account_and_missing_mail_interface_fail_as_settings() {
 #[test]
 fn service_errors_and_hangs_are_reported_for_their_step() {
     for (settings_reply, password_reply, expected) in [
-        (ReplyBehavior::AccessDenied, None, ImapAccessError::Settings),
-        (ReplyBehavior::Hang, None, ImapAccessError::Timeout),
+        (ReplyBehavior::AccessDenied, None, AccessError::Settings),
+        (ReplyBehavior::Hang, None, AccessError::Timeout),
         (
             ReplyBehavior::Value(make_account_reply(vec![make_account("one")])),
             Some(ReplyBehavior::AccessDenied),
-            ImapAccessError::Password,
+            AccessError::Password,
         ),
         (
             ReplyBehavior::Value(make_account_reply(vec![make_account("one")])),
             Some(ReplyBehavior::Hang),
-            ImapAccessError::Timeout,
+            AccessError::Timeout,
         ),
     ] {
         run_in_context(|| {
@@ -231,14 +231,14 @@ fn cancelling_or_dropping_the_request_completes_once_as_cancelled() {
         let (request, results) = request_access(&client, "one");
         wait_until(|| !goa.password_requests().is_empty());
         request.cancel();
-        assert_eq!(failed_access(&results), ImapAccessError::Cancelled);
+        assert_eq!(failed_access(&results), AccessError::Cancelled);
 
         goa.set_reply(ReplyBehavior::Hang);
         let reads_before = goa.read_count();
         let (request, results) = request_access(&client, "one");
         wait_until(|| goa.read_count() > reads_before);
         drop(request);
-        assert_eq!(failed_access(&results), ImapAccessError::Cancelled);
+        assert_eq!(failed_access(&results), AccessError::Cancelled);
     });
 }
 
@@ -254,7 +254,7 @@ fn access_requests_neither_refresh_nor_change_observed_accounts() {
         let observed = updates.completed();
 
         let (_request, results) = request_access(&client, "removed");
-        assert_eq!(failed_access(&results), ImapAccessError::Settings);
+        assert_eq!(failed_access(&results), AccessError::Settings);
         let (_request, results) = request_access(&client, "one");
         successful_access(&results);
 
@@ -328,8 +328,8 @@ fn the_exported_interface_chooses_the_credential() {
 #[test]
 fn a_refused_or_held_access_token_is_reported_like_a_password() {
     for (token_reply, expected) in [
-        (ReplyBehavior::AccessDenied, ImapAccessError::AccessToken),
-        (ReplyBehavior::Hang, ImapAccessError::Timeout),
+        (ReplyBehavior::AccessDenied, AccessError::AccessToken),
+        (ReplyBehavior::Hang, AccessError::Timeout),
     ] {
         run_in_context(|| {
             let bus = TestBus::new();
@@ -358,8 +358,42 @@ fn an_object_with_neither_credential_interface_fails_before_asking_for_one() {
         );
         let (client, _updates) = start_observing(&bus);
         let (_request, results) = request_access(&client, "one");
-        assert_eq!(failed_access(&results), ImapAccessError::Settings);
+        assert_eq!(failed_access(&results), AccessError::Settings);
         assert!(goa.password_requests().is_empty());
         assert!(goa.access_token_requests().is_empty());
+    });
+}
+
+#[test]
+fn without_the_observer_connection_the_request_fails_later_as_settings() {
+    run_in_context(|| {
+        let bus = TestBus::new();
+        let _goa = FakeGoaService::new(
+            &bus.address,
+            ReplyBehavior::Value(make_account_reply(vec![make_account("one")])),
+        );
+        // The observer has not connected yet: nothing has been dispatched.
+        let (client, _updates) = start_test_client(&bus);
+        let (_request, results) = request_access(&client, "one");
+        assert!(
+            results.borrow().is_empty(),
+            "the answer never arrives inside the call"
+        );
+        assert_eq!(failed_access(&results), AccessError::Settings);
+    });
+}
+
+#[test]
+fn a_request_without_connection_cancelled_before_its_turn_is_cancelled() {
+    run_in_context(|| {
+        let bus = TestBus::new();
+        let _goa = FakeGoaService::new(
+            &bus.address,
+            ReplyBehavior::Value(make_account_reply(vec![make_account("one")])),
+        );
+        let (client, _updates) = start_test_client(&bus);
+        let (request, results) = request_access(&client, "one");
+        request.cancel();
+        assert_eq!(failed_access(&results), AccessError::Cancelled);
     });
 }

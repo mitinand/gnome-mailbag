@@ -18,7 +18,7 @@ jobs:
       RUSTUP_HOME: /opt/mailbag-rustup
     steps:
       - name: Install Fedora tools
-        run: dnf install -y git gcc gtk4-devel libadwaita-devel pkgconf-pkg-config desktop-file-utils appstream dbus-daemon curl openssl python3 tar xz zstd
+        run: dnf install -y git gcc gtk4-devel libadwaita-devel libsoup3-devel pkgconf-pkg-config desktop-file-utils appstream dbus-daemon curl openssl python3 tar xz zstd
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Trust this container checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"

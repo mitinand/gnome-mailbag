@@ -3,6 +3,7 @@
 
 use crate::{
     AccountCheckError, AccountCheckResult, AccountDetails, AccountId, AccountUpdate,
+    access_calls::read_account_objects,
     accounts::{
         GOA_ACCOUNT_PATH_PREFIX, GOA_BUS_NAME, GOA_ROOT_PATH, OBJECT_MANAGER_INTERFACE,
         map_glib_error, parse_accounts,
@@ -71,7 +72,7 @@ pub struct GoaAdapter(pub(crate) Rc<AccountObserver>);
 
 pub(crate) struct AccountObserver {
     on_update: Box<dyn Fn(&AccountUpdate)>,
-    update: RefCell<Rc<AccountUpdate>>,
+    update: RefCell<AccountUpdate>,
     pub(crate) connection: RefCell<Option<gio::DBusConnection>>,
     subscriptions: RefCell<Vec<gio::SignalSubscription>>,
     read_cancellable: RefCell<Option<gio::Cancellable>>,
@@ -96,10 +97,7 @@ impl GoaAdapter {
         if self.0.stopped.get() {
             return;
         }
-        let was_pending = {
-            let mut update = self.0.update.borrow_mut();
-            std::mem::replace(&mut Rc::make_mut(&mut update).retry_pending, true)
-        };
+        let was_pending = std::mem::replace(&mut self.0.update.borrow_mut().retry_pending, true);
         self.0.request_read();
         if !was_pending {
             self.0.publish_update();
@@ -130,7 +128,7 @@ impl AccountObserver {
     fn new(on_update: impl Fn(&AccountUpdate) + 'static) -> Self {
         Self {
             on_update: Box::new(on_update),
-            update: RefCell::new(Rc::new(AccountUpdate::default())),
+            update: RefCell::new(AccountUpdate::default()),
             connection: RefCell::new(None),
             subscriptions: RefCell::new(Vec::new()),
             read_cancellable: RefCell::new(None),
@@ -199,26 +197,15 @@ impl AccountObserver {
         cancellable: &gio::Cancellable,
     ) {
         let weak = Rc::downgrade(self);
-        connection.call(
-            Some(GOA_BUS_NAME),
-            GOA_ROOT_PATH,
-            OBJECT_MANAGER_INTERFACE,
-            "GetManagedObjects",
-            None,
-            Some(glib::VariantTy::new("(a{oa{sa{sv}}})").unwrap()),
-            gio::DBusCallFlags::NONE,
-            self.timeout_msec,
-            Some(cancellable),
-            move |reply| {
-                if let Some(observer) = weak.upgrade().filter(|observer| !observer.stopped.get()) {
-                    observer.finish_read(
-                        reply
-                            .map_err(|error| map_glib_error("read accounts", error))
-                            .and_then(|reply| parse_accounts(&reply)),
-                    );
-                }
-            },
-        );
+        read_account_objects(connection, self.timeout_msec, cancellable, move |reply| {
+            if let Some(observer) = weak.upgrade().filter(|observer| !observer.stopped.get()) {
+                observer.finish_read(
+                    reply
+                        .map_err(|error| map_glib_error("read accounts", error))
+                        .and_then(|reply| parse_accounts(&reply)),
+                );
+            }
+        });
     }
 
     fn subscribe_to_changes(self: &Rc<Self>, connection: &gio::DBusConnection) {
@@ -255,7 +242,6 @@ impl AccountObserver {
         self.read_cancellable.borrow_mut().take();
         {
             let mut update = self.update.borrow_mut();
-            let update = Rc::make_mut(&mut update);
             match result {
                 Ok(accounts) => {
                     tracing::info!(accounts = accounts.len(), "account list read");
@@ -282,6 +268,8 @@ impl AccountObserver {
         self.publish_update();
     }
 
+    /// The callback gets a copy, so it may ask this observer for another
+    /// read or a refresh without finding the update borrowed.
     fn publish_update(&self) {
         let update = self.update.borrow().clone();
         (self.on_update)(&update);

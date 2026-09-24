@@ -13,6 +13,8 @@ test-support = ["gio/v2_60"]
 
 [dependencies]
 async-imap = { version = "=0.11.3", default-features = false, features = ["runtime-futures"] }
+# The channel of the fork's unilateral responses, which ServerNotices follows.
+async-channel = "2"
 # futures-io traits for the GIO stream bridge and FETCH response streams.
 futures-util = { version = "0.3", features = ["io"] }
 # v2_70: the negotiated TLS version for the record (specs/003-logging/research.md §7).

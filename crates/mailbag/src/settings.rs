@@ -6,12 +6,14 @@ use std::{cell::Cell, collections::BTreeMap, future::Future, rc::Rc};
 #[cfg(test)]
 mod tests;
 
+/// Why Settings did not open Online Accounts. Two outcomes, because the user
+/// can do two things: open the panel from Settings themselves, or check that
+/// Mailbag may talk to Settings at all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LaunchError {
+    /// Settings did not answer, answered late or answered wrongly.
     Unavailable,
     AccessDenied,
-    Timeout,
-    InvalidReply,
 }
 impl LaunchError {
     pub fn message(self) -> &'static str {
@@ -22,10 +24,6 @@ impl LaunchError {
             Self::AccessDenied => {
                 "Mailbag was denied access to Settings. Open Online Accounts from Settings."
             }
-            Self::Timeout => "Settings did not respond in time. Try opening Online Accounts again.",
-            Self::InvalidReply => {
-                "Settings could not open Online Accounts. Open the panel from Settings or try again."
-            }
         }
     }
     fn from_error(error: &glib::Error) -> Self {
@@ -33,15 +31,6 @@ impl LaunchError {
             || error.matches(gio::IOErrorEnum::PermissionDenied)
         {
             Self::AccessDenied
-        } else if error.matches(gio::DBusError::Timeout)
-            || error.matches(gio::DBusError::NoReply)
-            || error.matches(gio::IOErrorEnum::TimedOut)
-        {
-            Self::Timeout
-        } else if error.matches(gio::DBusError::InvalidArgs)
-            || error.matches(gio::IOErrorEnum::InvalidArgument)
-        {
-            Self::InvalidReply
         } else {
             Self::Unavailable
         }
