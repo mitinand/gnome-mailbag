@@ -208,6 +208,21 @@ fn flowed_text_becomes_whole_paragraphs_again() {
     assert!(text.contains("-- \nПодпись"), "{text:?}");
 }
 
+/// The sender ended the paragraph before the signature with a soft break, which
+/// RFC 3676 tells senders not to do; the separator still stands on its own.
+#[test]
+fn a_signature_separator_after_a_soft_break_stays_a_line_of_its_own() {
+    let header = b"Content-Type: text/plain; charset=utf-8; format=flowed\r\n";
+    assert_eq!(
+        decode_text_part(header, b"hello \r\n-- \r\nname\r\n").unwrap(),
+        "hello \n-- \nname\n"
+    );
+    assert_eq!(
+        decode_text_part(header, b">hello \r\n>-- \r\n>name\r\n").unwrap(),
+        "> hello \n> -- \n> name\n"
+    );
+}
+
 #[test]
 fn a_flowed_message_with_delsp_joins_words_without_a_space() {
     let sample = load_sample("19-flowed-delsp.eml");

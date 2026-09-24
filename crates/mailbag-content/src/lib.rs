@@ -320,8 +320,9 @@ fn flowed_join(part: &mail_parser::MessagePart<'_>) -> Option<bool> {
 
 /// Joins the soft line breaks of RFC 3676: a line ending in a space continues
 /// in the next line of the same quoting depth. The `-- ` signature separator
-/// ends a paragraph, and one space the sender put in front of a line to
-/// protect it is not part of the text.
+/// is a line of its own, which neither joins the paragraph before it nor
+/// continues into the next line, and one space the sender put in front of a
+/// line to protect it is not part of the text.
 fn unflow_text(text: &str, delete_space: bool) -> String {
     let mut lines: Vec<String> = Vec::new();
     // The quoting depth of the paragraph still waiting for its next line.
@@ -334,12 +335,13 @@ fn unflow_text(text: &str, delete_space: bool) -> String {
             .strip_prefix(' ')
             .unwrap_or(quoted_text)
             .to_owned();
-        let ends_paragraph = content == "-- " || !content.ends_with(' ');
+        let is_separator = content == "-- ";
+        let ends_paragraph = is_separator || !content.ends_with(' ');
         if !ends_paragraph && delete_space {
             content.pop();
         }
         match open_paragraph {
-            Some(open) if open == depth => lines
+            Some(open) if open == depth && !is_separator => lines
                 .last_mut()
                 .expect("an open paragraph has its line")
                 .push_str(&content),
