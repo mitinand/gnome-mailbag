@@ -160,7 +160,7 @@ fn batch_with_two_messages(account_id: &AccountId) -> ReceivedBatch {
                 },
                 internal_date: Some(1_699_000_000),
                 seen: true,
-                content: ReceivedContent::Explained(ContentExplanation::UnreadableStructure),
+                content: ReceivedContent::StructureUnreadable,
                 gmail: None,
             },
         ],
@@ -655,7 +655,14 @@ fn a_message_without_text_explains_why_in_the_reader() {
     assert!(charset.contains("x-weird"), "{charset}");
     let html_only = explain_content(&ContentExplanation::NoPlainText { has_html: true });
     assert!(html_only.contains("HTML"), "{html_only}");
-    let not_returned = explain_content(&ContentExplanation::TextNotReturned);
+    let not_returned = reader_body_text(&ReceivedMessage {
+        identity: MessageIdentity::ImapUid(1),
+        fields: DisplayFields::default(),
+        internal_date: None,
+        seen: false,
+        content: ReceivedContent::TextNotReturned,
+        gmail: None,
+    });
     assert!(not_returned.contains("Refresh Inbox"), "{not_returned}");
 }
 

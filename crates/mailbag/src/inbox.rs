@@ -9,7 +9,6 @@
 mod tests;
 
 use goa_adapter::AccountId;
-use mailbag_content::ContentExplanation;
 use mailbag_graph::GraphFailure;
 use mailbag_providers::{
     CancelsLoadOnDrop, IncompleteList, LoadFailure, LoadResult, ReceivedBatch, ReceivedContent,
@@ -157,26 +156,30 @@ impl InboxController {
 
 /// How an accepted load ended, with warnings for what the reader cannot show.
 fn log_received_batch(account: &str, batch: &ReceivedBatch) {
-    let explanations = || {
+    // Content the reader does not show by design, and content that could not
+    // be read, counted once over the batch.
+    let (unsupported, unreadable) =
         batch
             .messages
             .iter()
-            .filter_map(|message| match &message.content {
-                ReceivedContent::Explained(explanation) => Some(explanation),
-                ReceivedContent::Text(_) => None,
-            })
-    };
+            .fold(
+                (0, 0),
+                |(unsupported, unreadable), message| match &message.content {
+                    ReceivedContent::Text(_) => (unsupported, unreadable),
+                    ReceivedContent::Explained(explanation) if explanation.is_by_design() => {
+                        (unsupported + 1, unreadable)
+                    }
+                    ReceivedContent::Explained(_)
+                    | ReceivedContent::StructureUnreadable
+                    | ReceivedContent::TextNotReturned => (unsupported, unreadable + 1),
+                },
+            );
     tracing::info!(
         account,
         messages = batch.messages.len(),
-        unsupported = explanations()
-            .filter(|explanation| is_unsupported(explanation))
-            .count(),
+        unsupported,
         "Inbox load finished"
     );
-    let unreadable = explanations()
-        .filter(|explanation| !is_unsupported(explanation))
-        .count();
     if unreadable > 0 {
         tracing::warn!(
             account,
@@ -196,17 +199,6 @@ fn log_received_batch(account: &str, batch: &ReceivedBatch) {
         ),
         None => {}
     }
-}
-
-/// Content this version does not show by design, as opposed to content that
-/// could not be read.
-fn is_unsupported(explanation: &ContentExplanation) -> bool {
-    matches!(
-        explanation,
-        ContentExplanation::NoPlainText { .. }
-            | ContentExplanation::Encrypted
-            | ContentExplanation::SecuredWithSMime
-    )
 }
 
 /// The load's single error line: the failure the UI explains, the mail

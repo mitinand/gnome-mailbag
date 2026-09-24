@@ -10,8 +10,7 @@ use crate::batch::{
 };
 use goa_adapter::{AccountId, ImapAccess, ImapCredential, ImapEncryption};
 use mailbag_content::{
-    ContentExplanation, MimePart, TextSelection, decode_display_fields, decode_text_part,
-    join_message_text, select_text_parts,
+    MimePart, TextSelection, decode_display_fields, decode_message_text, select_text_parts,
 };
 use mailbag_imap::{
     Credential, Encryption, ImapAccount, ImapError, ImapFailure, InboxReader, MessageList,
@@ -71,7 +70,7 @@ pub(crate) async fn load_batch_from_rows(
         .fetch_text(requests, |uid, text| {
             let _message = tracing::debug_span!("message", uid).entered();
             // A message absent here disappeared from the Inbox during the load.
-            if let Some(content) = decode_message_text(&text) {
+            if let Some(content) = received_text(&text) {
                 texts.insert(uid, content);
             }
         })
@@ -82,7 +81,7 @@ pub(crate) async fn load_batch_from_rows(
         .filter_map(|row| {
             let content = match structures.get(&row.uid)? {
                 // The server could not describe this message.
-                None => ReceivedContent::Explained(ContentExplanation::UnreadableStructure),
+                None => ReceivedContent::StructureUnreadable,
                 Some(_) => match selections.get(&row.uid)? {
                     TextSelection::Explained(explanation) => {
                         ReceivedContent::Explained(explanation.clone())
@@ -139,25 +138,20 @@ fn text_parts(root: &MessagePart, sections: &[Vec<u32>]) -> TextParts {
     }
 }
 
-/// Decodes one message's received text, or explains why there is none.
-/// `None` means the message disappeared from the Inbox.
-fn decode_message_text(text: &MessageText) -> Option<ReceivedContent> {
-    let parts = match text {
-        MessageText::Received(parts) => parts,
-        MessageText::NotReturned => {
-            return Some(ReceivedContent::Explained(
-                ContentExplanation::TextNotReturned,
-            ));
+/// One message's received text, or why there is none. `None` means the
+/// message disappeared from the Inbox.
+fn received_text(text: &MessageText) -> Option<ReceivedContent> {
+    Some(match text {
+        MessageText::Received(parts) => {
+            let parts = parts
+                .iter()
+                .map(|part| (part.header.as_slice(), part.body.as_slice()));
+            match decode_message_text(parts) {
+                Ok(text) => ReceivedContent::Text(text),
+                Err(explanation) => ReceivedContent::Explained(explanation),
+            }
         }
+        MessageText::NotReturned => ReceivedContent::TextNotReturned,
         MessageText::Disappeared => return None,
-    };
-    let decoded: Result<Vec<String>, ContentExplanation> = parts
-        .iter()
-        .map(|part| decode_text_part(&part.header, &part.body))
-        .collect();
-    Some(match decoded {
-        Ok(texts) => ReceivedContent::Text(join_message_text(&texts)),
-        // One unreadable part leaves no complete text to show.
-        Err(explanation) => ReceivedContent::Explained(explanation),
     })
 }

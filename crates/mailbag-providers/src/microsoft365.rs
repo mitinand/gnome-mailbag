@@ -10,7 +10,7 @@ use crate::batch::{
     BATCH_SIZE, IncompleteList, MessageIdentity, ReceivedBatch, ReceivedContent, ReceivedMessage,
 };
 use goa_adapter::GraphAccess;
-use mailbag_content::{ContentExplanation, DisplayFields, display_names};
+use mailbag_content::{DisplayFields, display_names};
 use mailbag_graph::{GraphError, GraphMessage, Mailbox, list_inbox_messages};
 
 pub(crate) async fn load_microsoft365_inbox(
@@ -48,7 +48,7 @@ fn received_message(message: GraphMessage) -> ReceivedMessage {
         seen: message.is_read,
         content: match message.body_text {
             Some(text) => ReceivedContent::Text(text),
-            None => ReceivedContent::Explained(ContentExplanation::TextNotReturned),
+            None => ReceivedContent::TextNotReturned,
         },
         gmail: None,
     }

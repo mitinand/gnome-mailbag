@@ -5,7 +5,7 @@ use super::*;
 use crate::test_record::CapturedRecord;
 use crate::worker::{LoadKind, MailWorker, report_outcome};
 use goa_adapter::{AccountId, GraphAccess, ImapAccess, ImapCredential, ImapEncryption};
-use mailbag_content::{ContentExplanation, DisplayFields};
+use mailbag_content::DisplayFields;
 use mailbag_graph::{GraphFailure, test_server as graph_service};
 use mailbag_imap::{
     GmailRow,
@@ -132,7 +132,7 @@ fn a_message_the_server_cannot_describe_keeps_its_row() {
         contents[0],
         (
             &MessageIdentity::ImapUid(20),
-            &ReceivedContent::Explained(ContentExplanation::UnreadableStructure)
+            &ReceivedContent::StructureUnreadable
         )
     );
     assert_eq!(text_of(contents[1].1), "readable");
@@ -245,7 +245,7 @@ fn text_the_server_does_not_return_keeps_its_row_with_an_explanation() {
         contents[0],
         (
             &MessageIdentity::ImapUid(20),
-            &ReceivedContent::Explained(ContentExplanation::TextNotReturned)
+            &ReceivedContent::TextNotReturned
         )
     );
     assert_eq!(text_of(contents[1].1), "Text 1");
@@ -678,7 +678,7 @@ fn a_microsoft_365_load_publishes_the_services_messages_and_text() {
                 &fields(3, Some("Recipient")),
                 received(3),
                 true,
-                &ReceivedContent::Explained(ContentExplanation::TextNotReturned),
+                &ReceivedContent::TextNotReturned,
             ),
         ]
     );

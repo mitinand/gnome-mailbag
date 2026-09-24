@@ -21,14 +21,10 @@ impl Sample {
         let TextSelection::Parts(parts) = selection else {
             panic!("the sample has no text parts: {selection:?}");
         };
-        let decoded: Result<Vec<String>, ContentExplanation> = parts
-            .iter()
-            .map(|part| {
-                let (header, body) = &self.sections[&section_name(part)];
-                decode_text_part(header, body)
-            })
-            .collect();
-        Ok(join_message_text(&decoded?))
+        decode_message_text(parts.iter().map(|part| {
+            let (header, body) = &self.sections[&section_name(part)];
+            (header.as_slice(), body.as_slice())
+        }))
     }
 }
 

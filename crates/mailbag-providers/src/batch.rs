@@ -59,7 +59,12 @@ pub enum MessageIdentity {
 #[derive(Clone, PartialEq, Eq)]
 pub enum ReceivedContent {
     Text(String),
+    /// Why the content rules found no text to show.
     Explained(ContentExplanation),
+    /// The server could not describe the message, so nothing was read.
+    StructureUnreadable,
+    /// The server or the service did not return the message's text.
+    TextNotReturned,
 }
 
 /// Why a refresh delivered no mail, at the step where it stopped.
@@ -127,6 +132,8 @@ impl fmt::Debug for ReceivedContent {
         match self {
             Self::Text(text) => write!(formatter, "Text({} characters)", text.chars().count()),
             Self::Explained(explanation) => write!(formatter, "Explained({explanation:?})"),
+            Self::StructureUnreadable => write!(formatter, "StructureUnreadable"),
+            Self::TextNotReturned => write!(formatter, "TextNotReturned"),
         }
     }
 }

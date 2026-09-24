@@ -4,6 +4,7 @@
 use super::*;
 use crate::logging::{LogLevel, capture::start_record};
 use goa_adapter::AccessError;
+use mailbag_content::ContentExplanation;
 use mailbag_content::DisplayFields;
 use mailbag_graph::{GraphError, GraphFailure};
 use mailbag_imap::{ImapError, ImapFailure, ImapStep, ServerReply};

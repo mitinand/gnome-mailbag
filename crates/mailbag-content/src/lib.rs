@@ -77,10 +77,17 @@ pub enum ContentExplanation {
     UnknownEncoding(String),
     /// The MIME entity itself could not be read.
     Undecodable,
-    /// The server's description of the message could not be read.
-    UnreadableStructure,
-    /// The server did not return this message's text.
-    TextNotReturned,
+}
+
+impl ContentExplanation {
+    /// Content this version does not show by design, as opposed to content
+    /// that could not be read.
+    pub fn is_by_design(&self) -> bool {
+        matches!(
+            self,
+            Self::NoPlainText { .. } | Self::Encrypted | Self::SecuredWithSMime
+        )
+    }
 }
 
 /// Chooses the plain-text parts to read, without reading any payload.
@@ -374,9 +381,17 @@ fn is_known_charset(charset: &str) -> bool {
     ) || charset_decoder(charset.as_bytes()).is_some()
 }
 
-/// Joins the decoded parts of one message into its text.
-pub fn join_message_text(parts: &[String]) -> String {
-    parts.join("\n\n")
+/// Decodes the selected parts of one message, each from its MIME header and
+/// its still-encoded body, and joins them into the message's text. One
+/// unreadable part leaves no complete text to show.
+pub fn decode_message_text<'a>(
+    parts: impl IntoIterator<Item = (&'a [u8], &'a [u8])>,
+) -> Result<String, ContentExplanation> {
+    let decoded: Vec<String> = parts
+        .into_iter()
+        .map(|(mime_header, body)| decode_text_part(mime_header, body))
+        .collect::<Result<_, _>>()?;
+    Ok(decoded.join("\n\n"))
 }
 
 /// Subject, sender and recipients for the list and the reader.
