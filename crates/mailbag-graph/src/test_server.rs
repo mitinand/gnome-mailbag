@@ -6,13 +6,12 @@
 //! HTTP on loopback and records the path, query and headers of every request.
 //! Its messages and addresses are synthetic.
 
-use crate::INBOX_PATH;
+use crate::{INBOX_PATH, service_thread::ServiceThread};
 use soup::prelude::*;
 use std::{
     io::Read,
     net::TcpListener,
-    sync::{Arc, Mutex, mpsc},
-    thread,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -141,8 +140,8 @@ pub struct ReceivedRequest {
 pub struct ScriptedService {
     url: String,
     received: Arc<Mutex<Vec<ReceivedRequest>>>,
-    main_loop: glib::MainLoop,
-    thread: Option<thread::JoinHandle<()>>,
+    /// Stopped when the service is dropped.
+    _service: ServiceThread,
 }
 
 impl ScriptedService {
@@ -151,44 +150,36 @@ impl ScriptedService {
     pub fn start(answer: ScriptedAnswer) -> Self {
         let received = Arc::new(Mutex::new(Vec::new()));
         let service_received = received.clone();
-        let (ready, started) = mpsc::channel();
-        let thread = thread::spawn(move || {
-            let context = glib::MainContext::new();
-            context
-                .with_thread_default(|| {
-                    let server: soup::Server = glib::Object::builder().build();
-                    server.add_handler(None, move |_, request, path, _| {
-                        service_received
-                            .lock()
-                            .unwrap()
-                            .push(received_request(request, path));
-                        if path == INBOX_PATH {
-                            request.set_status(answer.status, None);
-                            request.set_response(
-                                Some("application/json"),
-                                soup::MemoryUse::Copy,
-                                &answer.body,
-                            );
-                        } else {
-                            request.set_status(404, None);
-                        }
-                    });
-                    server
-                        .listen_local(0, soup::ServerListenOptions::IPV4_ONLY)
-                        .expect("listen on loopback");
-                    let port = server.uris()[0].port();
-                    let main_loop = glib::MainLoop::new(Some(&context), false);
-                    ready.send((port, main_loop.clone())).unwrap();
-                    main_loop.run();
-                })
-                .unwrap();
-        });
-        let (port, main_loop) = started.recv().unwrap();
+        let (service, port) = ServiceThread::start(move |_, _| {
+            let server: soup::Server = glib::Object::builder().build();
+            server.add_handler(None, move |_, request, path, _| {
+                service_received
+                    .lock()
+                    .unwrap()
+                    .push(received_request(request, path));
+                if path == INBOX_PATH {
+                    request.set_status(answer.status, None);
+                    request.set_response(
+                        Some("application/json"),
+                        soup::MemoryUse::Copy,
+                        &answer.body,
+                    );
+                } else {
+                    request.set_status(404, None);
+                }
+            });
+            server
+                .listen_local(0, soup::ServerListenOptions::IPV4_ONLY)
+                .expect("listen on loopback");
+            let port = server.uris()[0].port();
+            // The server lives as long as its thread's loop.
+            Ok::<_, ()>((port, Box::new(move || drop(server)) as Box<dyn FnOnce()>))
+        })
+        .expect("the scripted service starts");
         Self {
             url: format!("http://127.0.0.1:{port}"),
             received,
-            main_loop,
-            thread: Some(thread),
+            _service: service,
         }
     }
 
@@ -206,14 +197,6 @@ impl ScriptedService {
         StalledService {
             listener: TcpListener::bind("127.0.0.1:0").expect("listen on loopback"),
         }
-    }
-}
-
-impl Drop for ScriptedService {
-    fn drop(&mut self) {
-        let main_loop = self.main_loop.clone();
-        self.main_loop.context().invoke(move || main_loop.quit());
-        self.thread.take().unwrap().join().unwrap();
     }
 }
 

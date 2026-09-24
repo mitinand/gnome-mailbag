@@ -15,6 +15,7 @@ use std::fmt;
 pub(crate) const BATCH_SIZE: u32 = 100;
 
 /// One account's Inbox as a single load received it.
+#[derive(Debug)]
 pub struct ReceivedBatch {
     pub account_id: AccountId,
     /// The Inbox version these UIDs belong to.
@@ -26,7 +27,7 @@ pub struct ReceivedBatch {
 }
 
 /// Why a batch holds fewer messages than the Inbox offered.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IncompleteList {
     /// The server refused to finish the message list; this is what it said.
     ServerRefused(ServerReply),
@@ -68,7 +69,7 @@ pub enum ReceivedContent {
 }
 
 /// Why a refresh delivered no mail, at the step where it stopped.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LoadFailure {
     /// Online Accounts did not give the settings or the credential.
     OnlineAccounts(AccessError),
@@ -95,18 +96,6 @@ pub enum LoadResult {
 pub trait CancelsLoadOnDrop {}
 
 // Received mail is shown to the user, never written to diagnostics.
-impl fmt::Debug for ReceivedBatch {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("ReceivedBatch")
-            .field("account_id", &self.account_id)
-            .field("uid_validity", &self.uid_validity)
-            .field("incomplete", &self.incomplete)
-            .field("messages", &self.messages)
-            .finish()
-    }
-}
-
 impl fmt::Debug for ReceivedMessage {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -118,15 +107,6 @@ impl fmt::Debug for ReceivedMessage {
     }
 }
 
-impl fmt::Debug for IncompleteList {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ServerRefused(reply) => write!(formatter, "ServerRefused({:?})", reply.code),
-            Self::MoreAvailable => write!(formatter, "MoreAvailable"),
-        }
-    }
-}
-
 impl fmt::Debug for ReceivedContent {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -134,17 +114,6 @@ impl fmt::Debug for ReceivedContent {
             Self::Explained(explanation) => write!(formatter, "Explained({explanation:?})"),
             Self::StructureUnreadable => write!(formatter, "StructureUnreadable"),
             Self::TextNotReturned => write!(formatter, "TextNotReturned"),
-        }
-    }
-}
-
-impl fmt::Debug for LoadFailure {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::OnlineAccounts(error) => write!(formatter, "OnlineAccounts({error:?})"),
-            Self::Imap(error) => write!(formatter, "Imap({error:?})"),
-            Self::MicrosoftGraph(error) => write!(formatter, "MicrosoftGraph({error:?})"),
-            Self::WorkerStopped => write!(formatter, "WorkerStopped"),
         }
     }
 }

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use crate::service_thread::ServiceThread;
 use gio::prelude::*;
 use glib::{Variant, variant::ObjectPath};
 use std::{
@@ -9,9 +10,7 @@ use std::{
     sync::{
         Arc, Condvar, Mutex,
         atomic::{AtomicUsize, Ordering},
-        mpsc,
     },
-    thread,
     time::Duration,
 };
 
@@ -191,8 +190,8 @@ pub struct FakeGoaService {
     access_token_reply: Arc<Mutex<ReplyBehavior>>,
     access_token_requests: Arc<Mutex<Vec<AccessTokenRequest>>>,
     held_replies: Arc<HeldReplies>,
-    main_loop: glib::MainLoop,
-    thread: Option<thread::JoinHandle<()>>,
+    /// Stopped when the fixture is dropped.
+    _service: ServiceThread,
 }
 impl FakeGoaService {
     pub fn read_count(&self) -> usize {
@@ -281,10 +280,7 @@ impl FakeGoaService {
         let address = address.to_owned();
         let read_count = Arc::new(AtomicUsize::new(0));
         let handler_read_count = read_count.clone();
-        let (ready, receiver) = mpsc::sync_channel(1);
-        let thread = thread::spawn(move || {
-            let context = glib::MainContext::new();
-            context.with_thread_default(|| {
+        let (service, connection) = ServiceThread::start(move |context, main_loop| {
                 let connection = gio::DBusConnection::for_address_sync(&address,
                     gio::DBusConnectionFlags::AUTHENTICATION_CLIENT | gio::DBusConnectionFlags::MESSAGE_BUS_CONNECTION,
                     None::<&gio::DBusAuthObserver>, None::<&gio::Cancellable>).unwrap();
@@ -315,22 +311,20 @@ impl FakeGoaService {
                     }).build().unwrap());
                 }
                 connection.call_sync(Some("org.freedesktop.DBus"), "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", Some(&(GOA_BUS_NAME, 3u32).to_variant()), None, gio::DBusCallFlags::NONE, 1000, None::<&gio::Cancellable>).unwrap();
-                let main_loop = glib::MainLoop::new(Some(&context), false);
                 let stop_loop = main_loop.clone();
                 let deadline = context.spawn_local(async move { glib::timeout_future(Duration::from_secs(10)).await; stop_loop.quit(); });
-                ready.send((main_loop.clone(), connection.clone())).unwrap();
-                main_loop.run();
-                deadline.abort();
-                for registration in registrations {
-                    connection.unregister_object(registration).unwrap();
-                }
-                held_invocations.borrow_mut().clear();
-                connection.close_sync(None::<&gio::Cancellable>).unwrap();
-            }).unwrap();
-        });
-        let (main_loop, connection) = receiver
-            .recv_timeout(Duration::from_secs(3))
-            .expect("GOA fixture startup deadline");
+                let stopped_connection = connection.clone();
+                let after_loop = move || {
+                    deadline.abort();
+                    for registration in registrations {
+                        stopped_connection.unregister_object(registration).unwrap();
+                    }
+                    held_invocations.borrow_mut().clear();
+                    stopped_connection.close_sync(None::<&gio::Cancellable>).unwrap();
+                };
+                Ok::<_, String>((connection, Box::new(after_loop) as Box<dyn FnOnce()>))
+        })
+        .expect("the fake GOA starts");
         Self {
             connection,
             reply,
@@ -340,15 +334,7 @@ impl FakeGoaService {
             access_token_requests,
             held_replies,
             read_count,
-            main_loop,
-            thread: Some(thread),
+            _service: service,
         }
-    }
-}
-impl Drop for FakeGoaService {
-    fn drop(&mut self) {
-        let main_loop = self.main_loop.clone();
-        self.main_loop.context().invoke(move || main_loop.quit());
-        self.thread.take().unwrap().join().unwrap();
     }
 }

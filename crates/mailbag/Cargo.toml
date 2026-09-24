@@ -9,9 +9,6 @@ publish = false
 
 [dependencies]
 adw = { workspace = true, features = ["gtk_v4_10"] }
-# Runtime-independent channels between GTK's context and the mail worker.
-async-channel = "2"
-futures-util = "0.3"
 goa-adapter = { path = "../goa-adapter" }
 mailbag-content = { path = "../mailbag-content" }
 # The failure kinds of the Microsoft 365 load, which the window words.

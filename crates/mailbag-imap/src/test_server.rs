@@ -6,7 +6,7 @@
 //! records command names, UIDs, section names and how often credentials
 //! arrived, never the credentials or message text.
 
-use crate::{Credential, Encryption, ImapAccount};
+use crate::{Credential, Encryption, ImapAccount, service_thread::ServiceThread};
 use futures_util::io::{AsyncReadExt, AsyncWriteExt};
 use gio::prelude::*;
 use std::{
@@ -16,8 +16,7 @@ use std::{
     path::PathBuf,
     process::Command,
     rc::Rc,
-    sync::{Arc, Mutex, Once, atomic, mpsc},
-    thread,
+    sync::{Arc, Mutex, Once, atomic},
     time::Duration,
 };
 
@@ -443,8 +442,8 @@ pub struct ImapFixture {
     port: u16,
     encryption: Encryption,
     log: Arc<Mutex<FixtureLog>>,
-    main_loop: glib::MainLoop,
-    thread: Option<thread::JoinHandle<()>>,
+    /// Stopped when the fixture is dropped.
+    _service: ServiceThread,
 }
 
 impl ImapFixture {
@@ -459,54 +458,38 @@ impl ImapFixture {
         let encryption = setup.encryption;
         let log = Arc::new(Mutex::new(FixtureLog::default()));
         let server_log = log.clone();
-        let (ready, started) = mpsc::channel();
-        let thread = thread::spawn(move || {
-            let context = glib::MainContext::new();
-            context
-                .with_thread_default(|| {
-                    let listener = gio::SocketListener::new();
-                    let address = gio::InetSocketAddress::new(
-                        &gio::InetAddress::new_loopback(gio::SocketFamily::Ipv4),
-                        port,
-                    );
-                    let bound = listener
-                        .add_address(
-                            &address,
-                            gio::SocketType::Stream,
-                            gio::SocketProtocol::Tcp,
-                            None::<&glib::Object>,
-                        )
-                        .map_err(|error| error.to_string());
-                    let port = match bound {
-                        Ok(bound) => bound.downcast::<gio::InetSocketAddress>().unwrap().port(),
-                        Err(error) => {
-                            ready.send(Err(error)).unwrap();
-                            return;
-                        }
-                    };
-                    let main_loop = glib::MainLoop::new(Some(&context), false);
-                    ready.send(Ok((port, main_loop.clone()))).unwrap();
-                    let server = Rc::new(Server {
-                        setup,
-                        log: server_log,
-                        fault_pending: Cell::new(true),
-                    });
-                    context.spawn_local(async move {
-                        while let Ok((connection, _)) = listener.accept_future().await {
-                            glib::spawn_future_local(server.clone().serve(connection));
-                        }
-                    });
-                    main_loop.run();
-                })
-                .unwrap();
-        });
-        let (port, main_loop) = started.recv().unwrap()?;
+        let (service, port) = ServiceThread::start(move |context, _| {
+            let listener = gio::SocketListener::new();
+            let address = gio::InetSocketAddress::new(
+                &gio::InetAddress::new_loopback(gio::SocketFamily::Ipv4),
+                port,
+            );
+            let bound = listener
+                .add_address(
+                    &address,
+                    gio::SocketType::Stream,
+                    gio::SocketProtocol::Tcp,
+                    None::<&glib::Object>,
+                )
+                .map_err(|error| error.to_string())?;
+            let port = bound.downcast::<gio::InetSocketAddress>().unwrap().port();
+            let server = Rc::new(Server {
+                setup,
+                log: server_log,
+                fault_pending: Cell::new(true),
+            });
+            context.spawn_local(async move {
+                while let Ok((connection, _)) = listener.accept_future().await {
+                    glib::spawn_future_local(server.clone().serve(connection));
+                }
+            });
+            Ok::<_, String>((port, Box::new(|| {}) as Box<dyn FnOnce()>))
+        })?;
         Ok(Self {
             port,
             encryption,
             log,
-            main_loop,
-            thread: Some(thread),
+            _service: service,
         })
     }
 
@@ -539,14 +522,6 @@ impl ImapFixture {
 
     pub fn log(&self) -> FixtureLog {
         self.log.lock().unwrap().clone()
-    }
-}
-
-impl Drop for ImapFixture {
-    fn drop(&mut self) {
-        let main_loop = self.main_loop.clone();
-        self.main_loop.context().invoke(move || main_loop.quit());
-        self.thread.take().unwrap().join().unwrap();
     }
 }
 

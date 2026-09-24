@@ -32,6 +32,9 @@ pub struct WindowUi {
     loading_spinner_box: gtk::Box,
 }
 
+/// Where a rejected sign-in sends the user, for every provider.
+const SIGN_IN_HINT: &str = "Check this account's sign-in in Online Accounts.";
+
 /// What the status page says about the selected account's mail.
 struct MailStatus {
     title: String,
@@ -335,7 +338,7 @@ fn imap_failure_status(error: &ImapError) -> MailStatus {
         explanation.push(format!("The mail server said: {}", inert_text(&reply.text)));
     }
     if credential_may_be_wrong(error) {
-        explanation.push("Check this account's sign-in in Online Accounts.".to_owned());
+        explanation.push(SIGN_IN_HINT.to_owned());
     }
     explanation.extend(
         error
@@ -373,7 +376,7 @@ fn graph_failure_status(error: &GraphError) -> MailStatus {
             match status {
                 401 => (
                     "The mail service rejected the sign-in",
-                    format!("{said}\nCheck this account's sign-in in Online Accounts."),
+                    format!("{said}\n{SIGN_IN_HINT}"),
                 ),
                 _ => ("The mail service refused the request", said),
             }

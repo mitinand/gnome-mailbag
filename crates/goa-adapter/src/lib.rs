@@ -17,6 +17,9 @@ pub use graph_access::GraphAccess;
 pub use imap_access::{ImapAccess, ImapCredential, ImapEncryption};
 
 #[cfg(test)]
+#[path = "../../../tests/support/service_thread.rs"]
+mod service_thread;
+#[cfg(test)]
 #[path = "../../../tests/support/bus.rs"]
 mod test_bus;
 #[cfg(test)]

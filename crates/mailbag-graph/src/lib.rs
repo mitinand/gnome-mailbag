@@ -10,6 +10,9 @@
 
 mod reply;
 #[cfg(any(test, feature = "test-support"))]
+#[path = "../../../tests/support/service_thread.rs"]
+mod service_thread;
+#[cfg(any(test, feature = "test-support"))]
 pub mod test_server;
 #[cfg(test)]
 mod tests;

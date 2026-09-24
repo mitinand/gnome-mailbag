@@ -8,8 +8,12 @@
 //! notion of a mail provider and never decodes message content. Its futures
 //! must run on one thread with a running GLib main context.
 
+mod fetch_responses;
 mod part_tree;
 mod reader;
+#[cfg(any(test, feature = "test-support"))]
+#[path = "../../../tests/support/service_thread.rs"]
+mod service_thread;
 mod session;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_server;

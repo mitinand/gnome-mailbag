@@ -678,8 +678,6 @@ dependencies = [
 name = "mailbag"
 version = "0.1.0-dev"
 dependencies = [
- "async-channel 2.5.0",
- "futures-util",
  "goa-adapter",
  "libadwaita",
  "mailbag-content",
@@ -714,6 +712,7 @@ dependencies = [
 name = "mailbag-imap"
 version = "0.1.0-dev"
 dependencies = [
+ "async-channel 2.5.0",
  "async-imap",
  "futures-util",
  "gio",

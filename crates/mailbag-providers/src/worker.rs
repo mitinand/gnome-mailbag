@@ -65,7 +65,7 @@ impl MailWorker {
             outcome: sender,
         };
         // The worker's queue is unbounded, so sending cannot block GTK.
-        let accepted = self.worker().try_send(request).is_ok();
+        let accepted = self.queue().try_send(request).is_ok();
         glib::MainContext::ref_thread_default()
             .spawn_local(report_outcome(accepted.then_some(outcome), on_finished));
         LoadHandle { _cancel: cancel }
@@ -73,7 +73,7 @@ impl MailWorker {
 
     /// The running worker's queue, starting its thread when there is none or
     /// when the last one stopped, which closed its queue.
-    fn worker(&self) -> async_channel::Sender<LoadRequest> {
+    fn queue(&self) -> async_channel::Sender<LoadRequest> {
         let mut loads = self.loads.borrow_mut();
         if let Some(running) = loads.as_ref().filter(|loads| !loads.is_closed()) {
             return running.clone();

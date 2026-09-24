@@ -103,7 +103,7 @@ where
 }
 
 /// Versions, build kind and level, laid out like every other line
-/// (specs/003-logging/contracts/record.md "First line"). A failed write is ignored.
+/// (specs/003-logging/spec.md FR-015). A failed write is ignored.
 fn write_first_line(level: LogLevel, library_versions: &str, output: &mut impl io::Write) {
     let mut line = String::new();
     let _ = LocalTime.format_time(&mut Writer::new(&mut line));
