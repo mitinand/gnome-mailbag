@@ -9,11 +9,10 @@ mod tests;
 
 use crate::account_ui::AccountUi;
 use crate::accounts::AccountPage;
-use crate::accounts::mail_provider;
 use crate::inbox::{AccountInbox, InboxController};
 use crate::mail_ui::{MailUi, inert_text, show_inert_text};
 use adw::{gio, gtk, prelude::*};
-use goa_adapter::{AccessError, AccountId, AccountProvider, AccountUpdate};
+use goa_adapter::{AccessError, AccountId, AccountUpdate};
 use mailbag_graph::{GraphError, GraphFailure};
 use mailbag_imap::{ImapError, ImapFailure, ImapStep};
 use mailbag_providers::{IncompleteList, LoadFailure, LoadResult, LoadsInbox, MailProvider};
@@ -165,8 +164,10 @@ impl WindowUi {
     /// The account Refresh Inbox would load, with the sequence it needs.
     fn refreshable_account(&self) -> Option<(AccountId, MailProvider)> {
         let accounts = self.accounts.borrow();
-        let provider = mail_provider(accounts.selected_provider()?)?;
-        Some((accounts.selected_id().cloned()?, provider))
+        Some((
+            accounts.selected_id().cloned()?,
+            accounts.selected_provider()?,
+        ))
     }
 
     fn render(&self) {
@@ -185,7 +186,7 @@ impl WindowUi {
         let shows_account_page = accounts.page() != AccountPage::SelectedAccount;
         let mail_status = match inbox {
             _ if shows_account_page => None,
-            None => Some(nothing_loaded_status(accounts.selected_provider())),
+            None => Some(nothing_loaded_status()),
             Some(AccountInbox::Loading) => Some(MailStatus::titled("Loading Inbox")),
             Some(AccountInbox::Failed(failure)) => Some(failure_status(failure)),
             Some(AccountInbox::Received(batch)) => batch
@@ -199,8 +200,14 @@ impl WindowUi {
             true => "messages",
             false => "empty",
         });
-        if let Some(status) = &mail_status {
-            // The account page left its own title and description empty.
+        // The status page has one writer: the account page's text, or the
+        // mail status with its plain-text explanation below the buttons.
+        if shows_account_page {
+            let (title, description) = accounts.page_text();
+            self.status.set_title(title);
+            self.status
+                .set_description((!description.is_empty()).then_some(description));
+        } else if let Some(status) = &mail_status {
             self.status.set_title(&status.title);
             self.status.set_description(None);
         }
@@ -210,12 +217,8 @@ impl WindowUi {
         show_inert_text(&self.mail_explanation, &explanation);
         self.mail_explanation.set_visible(!explanation.is_empty());
         self.loading_spinner_box.set_visible(inboxes.is_loading());
-        self.refresh_inbox.set_enabled(
-            !inboxes.is_loading()
-                && accounts
-                    .selected_provider()
-                    .is_some_and(|provider| mail_provider(provider).is_some()),
-        );
+        self.refresh_inbox
+            .set_enabled(!inboxes.is_loading() && accounts.selected_provider().is_some());
     }
 }
 
@@ -257,13 +260,10 @@ fn incomplete_list_notice(account: Option<String>, incomplete: &IncompleteList) 
 
 /// Nothing has been loaded for this account in this run, which never means an
 /// empty Inbox.
-fn nothing_loaded_status(provider: Option<AccountProvider>) -> MailStatus {
+fn nothing_loaded_status() -> MailStatus {
     MailStatus::explained(
         "No mail loaded",
-        match provider.and_then(mail_provider) {
-            Some(_) => "Choose Refresh Inbox in the main menu to load this account's Inbox.",
-            None => "Mailbag cannot load mail for this account yet.",
-        },
+        "Choose Refresh Inbox in the main menu to load this account's Inbox.",
     )
 }
 

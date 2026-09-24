@@ -164,26 +164,11 @@ fn further_messages_on_offer_are_noticed_without_claiming_a_failure() {
 }
 
 #[test]
-fn an_account_without_mail_never_claims_an_empty_inbox() {
-    // The loadable providers get the hint; the others are told plainly that
-    // Mailbag cannot load their mail yet.
-    for provider in [
-        AccountProvider::ImapSmtp,
-        AccountProvider::Google,
-        AccountProvider::Microsoft365,
-    ] {
-        let status = nothing_loaded_status(Some(provider));
-        assert_eq!(status.title, "No mail loaded");
-        assert!(
-            status.explanation.contains("Refresh Inbox"),
-            "{provider:?}: {}",
-            status.explanation
-        );
-    }
-    let status = nothing_loaded_status(Some(AccountProvider::Other));
+fn an_account_without_a_load_points_to_refresh_inbox() {
+    let status = nothing_loaded_status();
     assert_eq!(status.title, "No mail loaded");
     assert!(
-        !status.explanation.contains("Refresh Inbox"),
+        status.explanation.contains("Refresh Inbox"),
         "{}",
         status.explanation
     );
@@ -193,6 +178,7 @@ fn an_account_without_mail_never_claims_an_empty_inbox() {
 #[test]
 fn generic_imap_google_and_microsoft_365_accounts_can_be_loaded() {
     use crate::accounts::mail_provider;
+    use goa_adapter::AccountProvider;
     assert_eq!(
         mail_provider(AccountProvider::ImapSmtp),
         Some(MailProvider::GenericImap)
