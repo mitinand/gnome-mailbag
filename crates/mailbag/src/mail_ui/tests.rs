@@ -4,7 +4,7 @@
 use super::*;
 use crate::window_ui::WindowUi;
 use goa_adapter::{
-    AccessError, AccountCheckError, AccountCheckResult, AccountDetails, AccountId, AccountProvider,
+    AccountCheckError, AccountCheckResult, AccountDetails, AccountId, AccountProvider,
     AccountUpdate, ErrorCause,
 };
 use mailbag_imap::{ImapError, ImapFailure, ImapStep, ServerReply};
@@ -30,9 +30,6 @@ struct StartedLoad {
 struct ScriptedLoader {
     started_loads: RefCell<Vec<StartedLoad>>,
     cancelled_loads: Rc<Cell<usize>>,
-    /// Set to report a result before start_load returns, as Online Accounts
-    /// does when it has no bus connection.
-    result_at_once: RefCell<Option<LoadResult>>,
 }
 
 struct CountedStep(Rc<Cell<usize>>);
@@ -52,15 +49,11 @@ impl LoadsInbox for ScriptedLoader {
         provider: MailProvider,
         report: Box<dyn FnOnce(LoadResult)>,
     ) -> Box<dyn CancelsLoadOnDrop> {
-        let at_once = self.result_at_once.borrow_mut().take();
-        match at_once {
-            Some(result) => report(result),
-            None => self.started_loads.borrow_mut().push(StartedLoad {
-                account_id: account_id.clone(),
-                provider,
-                report,
-            }),
-        }
+        self.started_loads.borrow_mut().push(StartedLoad {
+            account_id: account_id.clone(),
+            provider,
+            report,
+        });
         Box::new(CountedStep(self.cancelled_loads.clone()))
     }
 }
@@ -581,17 +574,6 @@ fn mail_ui_transitions() {
         explanation.contains("quota is nearly full"),
         "{explanation}"
     );
-    assert!(refresh.is_enabled());
-
-    // A settings failure Online Accounts reports at once still ends the load.
-    *loader.result_at_once.borrow_mut() = Some(LoadResult::Failed(LoadFailure::OnlineAccounts(
-        AccessError::Settings,
-    )));
-    refresh.activate(None);
-    dispatch_pending();
-    assert_eq!(loader.running_loads(), 0);
-    assert_eq!(widgets.status_title(), "Account settings unavailable");
-    assert!(!widgets.shows_load_feedback());
     assert!(refresh.is_enabled());
 
     // A repeated refresh that switches accounts keeps loading for its own one.

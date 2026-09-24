@@ -70,8 +70,8 @@ fn received_uids(inbox: Option<&AccountInbox>) -> Vec<u32> {
 /// Starts a load that has reached the mail worker.
 fn start_load(controller: &mut InboxController, account_id: &AccountId) -> Rc<Cell<usize>> {
     let cancellations = Rc::new(Cell::new(0));
-    assert!(controller.begin_load(account_id));
-    controller.hold_cancellation(account_id, counted_step(&cancellations));
+    assert!(!controller.is_loading());
+    controller.begin_load(account_id, counted_step(&cancellations));
     cancellations
 }
 
@@ -105,13 +105,14 @@ fn refresh_inbox_is_unavailable_while_a_load_runs() {
     let loading = account("loading-account");
     let other = account("other-account");
     let cancellations = start_load(&mut controller, &loading);
-    assert!(!controller.begin_load(&loading));
-    assert!(!controller.begin_load(&other));
+    assert!(controller.is_loading());
     assert!(controller.inbox_of(&other).is_none());
     assert_eq!(cancellations.get(), 0);
 
     controller.finish_load(&loading, LoadResult::Received(batch_of(&loading, &[10])));
-    assert!(controller.begin_load(&other));
+    assert!(!controller.is_loading());
+    start_load(&mut controller, &other);
+    assert!(controller.is_loading());
 }
 
 #[test]
@@ -149,7 +150,7 @@ fn a_confirmed_exclusion_discards_the_mail_and_cancels_its_load() {
     let mut controller = InboxController::default();
     let excluded = account("excluded-account");
     let kept = account("kept-account");
-    controller.begin_load(&kept);
+    start_load(&mut controller, &kept);
     assert!(controller.finish_load(&kept, LoadResult::Received(batch_of(&kept, &[10]))));
     let cancellations = start_load(&mut controller, &excluded);
 
@@ -204,7 +205,7 @@ fn discarding_received_mail_of_an_account_no_longer_shown_is_recorded() {
         ),
         (&failed, LoadResult::Failed(sign_in_failure())),
     ] {
-        assert!(controller.begin_load(account_id));
+        start_load(&mut controller, account_id);
         controller.finish_load(account_id, result);
     }
     let before_discarding = record.text().lines().count();

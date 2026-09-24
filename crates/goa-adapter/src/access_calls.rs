@@ -120,3 +120,20 @@ pub(crate) fn find_account_object(
         })
         .ok_or(AccessError::Settings)
 }
+
+/// Without the observer's bus connection there is no account list to select
+/// from. The failure is reported on the context's next turn, like every other
+/// answer, so a caller never sees its completion run inside its own call; a
+/// request cancelled before that turn completes as Cancelled.
+pub(crate) fn report_without_connection<T: 'static>(
+    cancellable: gio::Cancellable,
+    on_complete: Box<dyn FnOnce(Result<T, AccessError>)>,
+) {
+    glib::MainContext::ref_thread_default().spawn_local(async move {
+        let error = match cancellable.is_cancelled() {
+            true => AccessError::Cancelled,
+            false => AccessError::Settings,
+        };
+        on_complete(Err(error));
+    });
+}

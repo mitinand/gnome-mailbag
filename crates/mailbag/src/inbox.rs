@@ -49,36 +49,18 @@ impl InboxController {
         self.running_load.is_some()
     }
 
-    /// Refresh Inbox: clears the account's mail and enters Loading. Returns
-    /// false while another load runs, because Refresh is not queued.
-    pub fn begin_load(&mut self, account_id: &AccountId) -> bool {
-        if self.running_load.is_some() {
-            return false;
-        }
+    /// Refresh Inbox: clears the account's mail, enters Loading and keeps what
+    /// cancels the load just started. The caller checks `is_loading` first,
+    /// because Refresh is not queued.
+    pub fn begin_load(&mut self, account_id: &AccountId, cancellation: Box<dyn CancelsLoadOnDrop>) {
+        debug_assert!(self.running_load.is_none(), "one load at a time");
         self.inboxes
             .insert(account_id.clone(), AccountInbox::Loading);
         tracing::info!(account = account_id.as_str(), "Inbox load started");
         self.running_load = Some(RunningLoad {
             account_id: account_id.clone(),
-            cancellation: None,
+            cancellation: Some(cancellation),
         });
-        true
-    }
-
-    /// Keeps what cancels the load `begin_load` started. A load that already
-    /// reported its result, such as a settings failure Online Accounts
-    /// answered at once, cancels the handle here instead.
-    pub fn hold_cancellation(
-        &mut self,
-        account_id: &AccountId,
-        cancellation: Box<dyn CancelsLoadOnDrop>,
-    ) {
-        match self.running_load.as_mut() {
-            Some(running) if running.account_id == *account_id => {
-                running.cancellation = Some(cancellation);
-            }
-            _ => drop(cancellation),
-        }
     }
 
     /// Stores how the load ended under the account it was started for, and

@@ -363,3 +363,37 @@ fn an_object_with_neither_credential_interface_fails_before_asking_for_one() {
         assert!(goa.access_token_requests().is_empty());
     });
 }
+
+#[test]
+fn without_the_observer_connection_the_request_fails_later_as_settings() {
+    run_in_context(|| {
+        let bus = TestBus::new();
+        let _goa = FakeGoaService::new(
+            &bus.address,
+            ReplyBehavior::Value(make_account_reply(vec![make_account("one")])),
+        );
+        // The observer has not connected yet: nothing has been dispatched.
+        let (client, _updates) = start_test_client(&bus);
+        let (_request, results) = request_access(&client, "one");
+        assert!(
+            results.borrow().is_empty(),
+            "the answer never arrives inside the call"
+        );
+        assert_eq!(failed_access(&results), AccessError::Settings);
+    });
+}
+
+#[test]
+fn a_request_without_connection_cancelled_before_its_turn_is_cancelled() {
+    run_in_context(|| {
+        let bus = TestBus::new();
+        let _goa = FakeGoaService::new(
+            &bus.address,
+            ReplyBehavior::Value(make_account_reply(vec![make_account("one")])),
+        );
+        let (client, _updates) = start_test_client(&bus);
+        let (request, results) = request_access(&client, "one");
+        request.cancel();
+        assert_eq!(failed_access(&results), AccessError::Cancelled);
+    });
+}

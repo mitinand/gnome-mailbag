@@ -77,15 +77,12 @@ impl LoadsInbox for MailLoader {
         provider: MailProvider,
         report: Box<dyn FnOnce(LoadResult)>,
     ) -> Box<dyn CancelsLoadOnDrop> {
-        let step = Rc::new(RefCell::new(LoadStep::RequestingAccess(None)));
-        let transfer_step = step.clone();
+        let transfer = Rc::new(RefCell::new(None));
+        let started_transfer = transfer.clone();
         let worker = self.worker.clone();
         let start_transfer = move |access: Result<LoadKind, AccessError>| match access {
             Ok(kind) => {
-                let transfer = worker.load_inbox(kind, report);
-                *transfer_step.borrow_mut() = LoadStep::Transferring {
-                    _transfer: transfer,
-                };
+                *started_transfer.borrow_mut() = Some(worker.load_inbox(kind, report));
             }
             // The request was cancelled by an exclusion or by quitting.
             Err(AccessError::Cancelled) => report(LoadResult::Cancelled),
@@ -114,12 +111,10 @@ impl LoadsInbox for MailLoader {
                     })
             }
         };
-        // Online Accounts answers later, except for the settings failure it
-        // reports at once, which has already used the step above.
-        if let LoadStep::RequestingAccess(pending) = &mut *step.borrow_mut() {
-            *pending = Some(request);
-        }
-        Box::new(LoadCancellation(step))
+        Box::new(LoadCancellation {
+            _access: request,
+            transfer,
+        })
     }
 }
 
@@ -142,27 +137,23 @@ fn request_imap_load(
     })
 }
 
-/// How far a load has come. Dropping a step cancels it.
-enum LoadStep {
-    /// None only between starting the request and holding it.
-    RequestingAccess(Option<AccessRequest>),
-    /// Dropping the handle cancels the transfer and closes its connection.
-    Transferring {
-        _transfer: LoadHandle,
-    },
-    Cancelled,
+/// Cancels its load when dropped, at whichever step it has reached: the
+/// Online Accounts request, or the transfer once the request answered.
+struct LoadCancellation {
+    /// Dropping it cancels a pending request; after the answer it is inert.
+    _access: AccessRequest,
+    /// The transfer, once Online Accounts answered. Dropping the handle cancels
+    /// the transfer and closes its connection.
+    transfer: Rc<RefCell<Option<LoadHandle>>>,
 }
-
-/// Cancels its load when dropped, at whichever step the load has reached.
-struct LoadCancellation(Rc<RefCell<LoadStep>>);
 
 impl CancelsLoadOnDrop for LoadCancellation {}
 
 impl Drop for LoadCancellation {
     fn drop(&mut self) {
-        // The step is dropped after the cell is free, so that the step's own
-        // completion callback can still use it.
-        let step = std::mem::replace(&mut *self.0.borrow_mut(), LoadStep::Cancelled);
-        drop(step);
+        // Taken out of the cell first: the transfer's outcome arrives later on
+        // this context, never inside this borrow.
+        let transfer = self.transfer.borrow_mut().take();
+        drop(transfer);
     }
 }

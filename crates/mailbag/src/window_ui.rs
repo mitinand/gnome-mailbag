@@ -125,13 +125,12 @@ impl WindowUi {
         let Some((account_id, provider)) = self.refreshable_account() else {
             return;
         };
-        if !self.inboxes.borrow_mut().begin_load(&account_id) {
+        if self.inboxes.borrow().is_loading() {
             return;
         }
-        // The cleared list and the spinner appear before the load starts.
-        self.render();
         let window = Rc::downgrade(self);
         let loaded_account = account_id.clone();
+        // The result arrives later on this context, never inside start_load.
         let cancellation = self.loader.start_load(
             &account_id,
             provider,
@@ -143,7 +142,8 @@ impl WindowUi {
         );
         self.inboxes
             .borrow_mut()
-            .hold_cancellation(&account_id, cancellation);
+            .begin_load(&account_id, cancellation);
+        self.render();
     }
 
     fn finish_load(&self, account_id: &AccountId, result: LoadResult) {

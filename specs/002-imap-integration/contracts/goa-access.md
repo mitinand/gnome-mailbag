@@ -23,7 +23,8 @@ caller knows its load has ended. Dropping the request cancels it.
 Only owned Rust data crosses to the mail worker. Proxies and GOA object paths
 stay on the adapter's context. The request uses the observer's existing bus
 connection; without one there is no account list to select from, and the
-request fails as Settings. D-Bus calls are asynchronous with GIO's finite call
+request fails as Settings, reported on the context's next turn like every
+other answer (never inside the call). D-Bus calls are asynchronous with GIO's finite call
 timeout, without another timer or retry loop. A D-Bus timeout at either step is
 Timeout: for example, GetPassword waits while the keyring asks to be unlocked.
 Any other D-Bus error is the failure of its step. The load owns the request;

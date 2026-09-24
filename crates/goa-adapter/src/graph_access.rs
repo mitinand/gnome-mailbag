@@ -9,7 +9,7 @@ use crate::{
     AccountId, GoaAdapter,
     access_calls::{
         AccessError, AccessRequest, access_error, find_account_object, read_access_token,
-        read_account_objects,
+        read_account_objects, report_without_connection,
     },
     accounts::OAUTH2_BASED_INTERFACE,
 };
@@ -26,9 +26,9 @@ impl GoaAdapter {
     /// Reads the current access token of one Microsoft 365 account for a load.
     ///
     /// Call on the adapter's GLib context; `on_complete` runs on it exactly
-    /// once, also after `cancel()` or dropping the request. Without the
-    /// observer's bus connection there is no account list, and the request
-    /// completes at once with Settings. Observed accounts never change.
+    /// once and never inside this call, also after `cancel()` or dropping the
+    /// request. Without the observer's bus connection there is no account
+    /// list, and the request fails as Settings. Observed accounts never change.
     pub fn request_graph_access(
         &self,
         account_id: &AccountId,
@@ -44,7 +44,7 @@ impl GoaAdapter {
         let connection = self.0.connection.borrow().clone();
         match connection {
             Some(connection) => attempt.read_objects(connection),
-            None => (attempt.on_complete)(Err(AccessError::Settings)),
+            None => report_without_connection(attempt.cancellable, attempt.on_complete),
         }
         AccessRequest(cancellable)
     }
