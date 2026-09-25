@@ -68,7 +68,7 @@ impl LoadFailure {
             Self::OnlineAccounts(error) => declare_access_failure(*error),
             Self::Imap(error) => declare_imap_failure(error),
             Self::MicrosoftGraph(error) => declare_graph_failure(error),
-            Self::WorkerStopped => declare_worker_stopped(),
+            Self::WorkerStopped(_) => declare_worker_stopped(),
         };
         declared.details = self.technical_details();
         declared
@@ -87,7 +87,7 @@ impl LoadFailure {
                 ..
             }) => "Refused".to_owned(),
             Self::MicrosoftGraph(error) => format!("{:?}", error.failure),
-            Self::WorkerStopped => "WorkerStopped".to_owned(),
+            Self::WorkerStopped(_) => "WorkerStopped".to_owned(),
         }
     }
 
@@ -126,6 +126,9 @@ impl LoadFailure {
                 _ => "Server code",
             };
             lines.push(format!("{label}: {code}"));
+        }
+        if let Self::WorkerStopped(Some(panic)) = self {
+            lines.push(format!("Panic: {panic}"));
         }
         lines.join("\n")
     }

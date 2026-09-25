@@ -143,10 +143,17 @@ fn a_cancelled_request_still_has_an_ordinary_declaration() {
 
 #[test]
 fn a_stopped_worker_offers_retry_and_asks_for_a_report() {
-    let declared = LoadFailure::WorkerStopped.declare();
+    let declared = LoadFailure::WorkerStopped(None).declare();
     assert_eq!(declared.action, Some(FailureAction::Retry));
     assert!(declared.advice.is_some());
     assert_eq!(declared.details, "Failure: WorkerStopped");
+    // A caught panic adds its message and place for the report.
+    let panicked = LoadFailure::WorkerStopped(Some("boom at x.rs:1".to_owned())).declare();
+    assert_eq!(panicked.action, Some(FailureAction::Retry));
+    assert_eq!(
+        panicked.details,
+        "Failure: WorkerStopped\nPanic: boom at x.rs:1"
+    );
 }
 
 #[test]

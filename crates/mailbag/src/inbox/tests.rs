@@ -308,7 +308,7 @@ fn each_failed_load_is_one_error_line_naming_its_cause() {
             }),
             r#"cause=Refused status=401 code="InvalidAuthenticationToken""#,
         ),
-        (LoadFailure::WorkerStopped, "cause=WorkerStopped"),
+        (LoadFailure::WorkerStopped(None), "cause=WorkerStopped"),
     ];
     for (failure, fields) in failures {
         let record = start_record(LogLevel::Debug);
