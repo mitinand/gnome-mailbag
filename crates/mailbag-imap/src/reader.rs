@@ -3,13 +3,13 @@
 
 use crate::{
     ImapAccount, ImapError, ImapFailure, ImapStep, MessageList, MessagePart, MessageText,
-    OpenOptions, RowItems, TextParts, TextRequest,
+    OpenOptions, RowItems, ServerReply, TextParts, TextRequest,
     fetch_responses::{
         FetchEnd, FetchResponses, collect_fetches, collect_rows, keep_rows_without_structure,
         keep_structures, message_text, section_paths, uid_set,
     },
     session::{
-        self, InboxSession, ServerNotices, StepFailure, command_failure, server_text_for_log,
+        self, InboxSession, ServerNotices, StepFailure, command_failure, replace_sign_in_name,
     },
     transport,
 };
@@ -119,9 +119,13 @@ impl InboxReader {
                 failure: ImapFailure::Failed(ImapStep::FetchMessages),
                 server_reply: Some(server_reply),
             })),
+            // The failing branches replace the sign-in name in `error`.
             FetchEnd::Rejected(server_reply) => Ok(MessageList {
                 rows,
-                refusal: Some(server_reply),
+                refusal: Some(ServerReply {
+                    text: replace_sign_in_name(&self.account.login, &server_reply.text),
+                    ..server_reply
+                }),
             }),
             // Messages deleted since EXAMINE are missing; that is not an empty Inbox.
             FetchEnd::Completed if rows.is_empty() => {
@@ -319,7 +323,7 @@ impl InboxReader {
         if let FetchEnd::Rejected(reply) = &responses.end {
             tracing::debug!(
                 code = reply.code.as_deref(),
-                server_text = server_text_for_log(&self.account.login, &reply.text),
+                server_text = replace_sign_in_name(&self.account.login, &reply.text),
                 "the server refused the command"
             );
         }

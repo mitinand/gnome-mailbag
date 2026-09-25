@@ -134,8 +134,11 @@ the record describes their mailbox. These limits hold for Mailbag's own lines.
   mailbox.
 - **FR-011 — Server text at debug**: Before the text of a status reply or of an
   alert becomes a field, every occurrence of the account's sign-in name in it
-  MUST be replaced with `<login>`, whatever the name's length; the reply itself
-  travels on to the UI unchanged. Debug may also carry the TLS library's text
+  MUST be replaced with `<login>`, whatever the name's length. The name is
+  replaced once, where the IMAP failure is built: in the server's reply, in its
+  alerts and in the refusal that travels with a short list. The record, the
+  page and the failure dialog show that one text (amended by
+  [006](../006-error-handling/spec.md)). Debug may also carry the TLS library's text
   for a failed handshake, which holds no server data. No other server data may
   be recorded: replies that carry message data carry headers and bodies.
 - **FR-012 — Libraries**: A library's own log output MUST stay off unless this
@@ -241,4 +244,7 @@ the record describes their mailbox. These limits hold for Mailbag's own lines.
   [research §10](research.md#10-what-the-record-deliberately-does-not-do)
   excludes: saving a message as a fixture; a log viewer or a synchronization
   activity panel, so the approved UI layout does not change.
+- 006 amends FR-011 on 2026-09-25: the sign-in name is replaced where the
+  IMAP failure is built, so the UI shows the same masked text as the record
+  ([006 error handling](../006-error-handling/spec.md)).
 - The [constitution](../../.specify/memory/constitution.md) governs this feature.

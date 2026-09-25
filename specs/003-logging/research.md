@@ -228,9 +228,13 @@ the server's sentence; a damaged sentence is the accepted price, a name left
 in the record is not.
 
 The debug line with server text is written in `mailbag-imap`, where the name
-and the reply are both at hand. The reply travels to the load and the UI
-unchanged, as today; no sanitized copy crosses the crate boundary. The load
-still writes the one error line, with the response code and without the text.
+and the reply are both at hand. The name is replaced once, where the failure
+is built: the reply, the alerts and the refusal of a short list enter
+`ImapError` and `MessageList` already masked, and the debug lines log that
+text. There is no separate copy for the record; the one copy is the masked
+one, and the UI shows it too (amended by
+[006](../006-error-handling/research.md#3-replacing-the-sign-in-name-at-the-source) on 2026-09-25). The load still
+writes the one error line, with the response code and without the text.
 
 This changed a 002 design rule; the amended wording is in
 [002 IMAP reading](../002-imap-integration/contracts/imap-reading.md) and
