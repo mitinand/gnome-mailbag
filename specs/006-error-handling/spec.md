@@ -3,9 +3,10 @@
 **Feature**: `006-error-handling`
 **Created**: 2026-09-24
 **Status**: Implemented on `claude/errors` and accepted live by the
-maintainer 2026-09-25 (plan.md, "Post-implementation"). The decisions taken
-at sizing, at the specification challenge and on the prototype are recorded
-under Clarifications.
+maintainer 2026-09-25 (plan.md, "Post-implementation"); where the wording
+is written in code corrected 2026-09-26 (research §1). The decisions taken
+at sizing, at the specification challenge and on the prototype are
+recorded under Clarifications.
 **Input**: One lasting model for how Mailbag reports failures, from the
 component that meets them to what the user sees. Today each failure is
 presented the way its feature happened to choose: a status page for a failed
@@ -20,8 +21,8 @@ user can do, and what a person can copy into an issue report.
 **Scope**: This is the complete error-handling specification for Mailbag, not
 a first layer. Like the [logging specification](../003-logging/spec.md), it
 holds principles, channels, properties and rules, never a list of failures:
-which failures exist, their properties and their wording live in the code that
-defines each failure and are reviewed there (FR-012). Its rules already hold
+which failures exist, their properties and their wording live in code and
+are reviewed there (FR-012). Its rules already hold
 for the target application, with local storage and background
 synchronization; what waits for a layer that does not exist yet is marked
 deferred in FR-013 and gets no plan decisions, tasks or code until that layer
@@ -271,17 +272,15 @@ from the approved forms, and decided:
 
 **What a failure declares**
 
-- **FR-001 — Properties, declared once by the feature that owns the
-  failure**: Every failure that reaches the user MUST be declared once, in
-  the code of the feature that owns it, with: a *title* that names what
-  failed, short enough for a banner's one line at the list pane's narrowest
-  width; an *explanation* of what happened; at most one *action*;
-  *advice* or none; *remote text* or none: what the server, the service or
-  the system said in words, each text with its source; *details* or none.
-  A channel shows these properties and nothing else about the failure. A
-  component reports its failure with these properties; it never chooses a
-  channel, shows a widget or writes wording of its own into one. There is
-  no failure without a declaration: a value the code does not tell apart,
+- **FR-001 — Properties, declared once**: Every failure that reaches the
+  user MUST be declared once, with: a *title* that names what failed, short
+  enough for a banner's one line at the list pane's narrowest width; an
+  *explanation* of what happened; at most one *action*; *advice* or none;
+  *remote text* or none: what the server, the service or the system said in
+  words, each text with its source; *details* or none. A channel shows these
+  properties and nothing else about the failure, so the same failure reads
+  the same wherever it is shown. There is no failure without a declaration:
+  a value the code does not tell apart,
   such as a status, a server code or the platform's text, falls into the
   general declaration of its step, which names the step, offers Retry and
   carries the value in the technical lines; where a failure is an
@@ -425,8 +424,8 @@ from the approved forms, and decided:
   Online Accounts (settings, password, token, timeout), decoding a message
   (character set, encoding, encryption, S/MIME), and Mailbag itself (a mail
   worker that stopped, Settings that did not open). Every later feature
-  declares its failures under these rules, in its own code; no specification
-  keeps a list of failures or of their wording. The account problems that 001
+  declares its failures under these rules; no specification keeps a list of
+  failures or of their wording. The account problems that 001
   shows at the row and on the account page keep 001's rules, its two buttons
   included; they are the one exception. The wording table and the "incomplete
   list in a toast" rule of the 002 UI contract are superseded by this feature.
@@ -491,9 +490,9 @@ from the approved forms, and decided:
   The sizing named "scope and lifetime" as the inputs of the channel rule;
   the challenge showed that the failure's carrier already fixes both, so
   declaring them would be a second way to say the same thing.
-- "Repeating helps" is expressed by the Retry action. The background
-  synchronization layer (016) that must decide whether to try again on its
-  own reads the action, or adds a property then, in its own specification.
+- "Repeating helps" is expressed by the Retry action. Whether background
+  synchronization (016) tries again on its own is decided in its
+  specification.
 - The layout in `crates/mailbag/resources/ui/` changes in five places,
   approved on the prototype 2026-09-24 and amended in review 2026-09-25: a
   banner above the message list (`mailbag.ui`); a failure page of its own

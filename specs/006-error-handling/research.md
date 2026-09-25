@@ -5,24 +5,51 @@ checked (a source or an experiment), inferred, or unknown.
 
 ## 1. Where the declarations live
 
-**Decision**: in `mailbag-providers`, next to the load sequences, as
-`declare` methods on `LoadFailure`, `IncompleteList` and `ReceivedContent`.
-The Settings launch failure, a type of the `mailbag` crate, keeps its one
-sentence there: the toast shows nothing more.
+**Decision** (corrected 2026-09-26): the wording and the action are written
+in `mailbag`, in `failure_declarations.rs`, one exhaustive function per
+failure value (`declare_load_failure`, `declare_short_list`,
+`declare_content`). The lower layer keeps what only it knows: the typed
+value, the remote texts built with the sign-in name replaced, the technical
+details (`technical_details()`), the record's values (`cause_name`,
+`status`, `server_code`) and the facts read from a protocol's codes
+(`LoadFailure::credentials_rejected`, `server_temporarily_unavailable`).
+The Settings launch failure, a type of `mailbag`, keeps its one sentence.
+
+**Why the first decision was wrong**: it put the declarations in
+`mailbag-providers`, reading "the code of the feature that owns the
+failure" as "the crate where the loads meet". No other owner could declare
+there: the store (007) lies below providers, a synchronization engine will
+lie above it and would make providers depend on it, and the window's own
+failures (a stored Inbox that cannot be read) belong to the window. The
+wording would also have to be translated in a lower layer. The rejected
+alternative "in the window" was rejected for two reasons that do not hold:
+a synchronization layer decides whether to try again from the typed
+failure, not from wording or a button; and the window already depends on
+the protocol crates and receives `LoadFailure` today. The phrase is gone from
+the specification, which describes what the user sees; where the wording
+is written is this decision.
 
 **Checked** (`Cargo.toml` of every crate): `goa-adapter`, `mailbag-imap`,
 `mailbag-graph` and `mailbag-content` depend on nothing in the workspace;
-`mailbag-providers` depends on all four; `mailbag` on all five. A type
-declared in providers is therefore invisible to the protocol crates, and
-"declared in the code of the feature that owns it" (spec FR-001) means the
-providers crate for every failure that comes through a load: the loads are
-where 002, 004 and 005 already meet.
+`mailbag-providers` depends on all four; `mailbag` on all five. Every layer
+that runs an operation for the user is `mailbag-providers` or above it, so
+its failure value reaches `mailbag` without a new dependency.
 
-**Alternatives**: in the window, where the wording is today: keeps the
-protocol types in front of the widgets and the wording out of reach of a
-background synchronization layer (016), which will need the action to
-decide whether to try again; a new crate below the protocol crates for the declaration
-type: nothing else would live in it yet.
+**Alternatives**:
+- A new leaf crate for the declaration's type and wording, below every
+  owner: every owner could declare, but every owner would write wording and
+  need translation, and lower crates without the operation's context (the
+  IMAP crate does not know that a password came from Online Accounts) would
+  be invited to write advice they cannot know.
+- The declarations in providers, the rule narrowed to "the layer that runs
+  the operation declares": no new crate, but the wording stays in a lower
+  layer and splits across providers, the window and later the engine, each
+  translated.
+- A shared failure type with a short list of kinds in a domain crate, which
+  every layer converts its errors into: the application would stop matching
+  protocol types, but to keep today's texts the list must tell apart about
+  thirty cases, a copy of the existing enumerations with conversions; or it
+  stays coarse and the texts change. Deferred to §5.
 
 ## 2. The failure dialog and the status pages
 
@@ -101,6 +128,16 @@ learns `WorkerStopped` without a reason (`worker.rs`, `report_outcome`).
 backtrace without debug information; a backtrace is therefore optional and
 not planned.
 
+**Checked** (2026-09-26, a prototype outside the repository with
+`std::thread` and `gio::spawn_blocking`): the hook's slot holds the panic
+only on the thread that panicked; the code that waits for the result on
+another thread reads nothing there. A panic in work sent to GIO's thread
+pool is therefore caught inside that work, where `catch_unwind` and the
+slot give the message and the place, and the pool keeps serving. The code
+that sends work to a thread catches its panics there; a
+helper for work outside the mail worker comes with the first such work
+(007).
+
 **Alternatives**: joining the thread to read the panic payload (the thread
 is long-lived); a fresh thread per load (a thread per load for the sake of
 a rare bug); nothing, as today (the report then says only "stopped").
@@ -116,3 +153,20 @@ a rare bug); nothing, as today (the report then says only "stopped").
 - The stale-mail banner over stored messages: waits for 007 (spec US2,
   FR-013); until then a refresh starts from an empty list.
 - The application version in the technical lines: the About dialog shows it.
+- A shared domain crate with one failure type and a short list of kinds
+  (§1): it is needed when failures of several lower crates must be told
+  apart the same way, for example when a synchronization engine hands the
+  application outcomes that do not depend on the provider, or when two
+  lower crates need the same types (007's content outcome, shared by the
+  store and providers, is the first candidate). The classification of
+  failures goes into that crate then, never into one of its producers;
+  the typed facts providers gives today
+  (`credentials_rejected`, `server_temporarily_unavailable`) are where it
+  starts.
+- Server text as a type that can only be built with the sign-in name
+  replaced, so that the compiler refuses unmasked text in a failure:
+  today the name is replaced where IMAP failures are built, in one place
+  plus the refusal of a short list, and tests check both (§3). Revisit at
+  the next global refactor, or as soon as a second place builds IMAP
+  failures from server replies, such as new commands of a synchronization
+  engine.

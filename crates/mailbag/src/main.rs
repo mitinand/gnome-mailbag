@@ -6,6 +6,7 @@ use std::{io::Write, ops::ControlFlow};
 
 mod account_ui;
 mod accounts;
+mod failure_declarations;
 mod failure_dialog;
 mod inbox;
 mod logging;

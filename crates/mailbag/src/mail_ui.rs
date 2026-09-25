@@ -9,10 +9,11 @@
 #[cfg(test)]
 mod tests;
 
+use crate::failure_declarations::{DeclaredFailure, declare_content};
 use crate::failure_dialog::{show_action_button, status_description};
 use adw::{gio, glib, gtk, prelude::*};
 use mailbag_content::DisplayFields;
-use mailbag_providers::{DeclaredFailure, ReceivedBatch, ReceivedContent};
+use mailbag_providers::{ReceivedBatch, ReceivedContent};
 use std::{cell::RefCell, rc::Rc};
 
 /// How much text a GTK label shows, in UTF-8 bytes. Longer text is cut at a
@@ -187,7 +188,7 @@ impl MailUi {
         if let ReceivedContent::Text(text) = &message.content {
             show_inert_text(&self.reader_body, &inert_text(text));
         }
-        self.show_body_or_failure(message.content.declare().as_ref());
+        self.show_body_or_failure(declare_content(&message.content).as_ref());
         self.singleton_slot.set_visible(true);
         self.reader_stack.set_visible_child_name("message");
         self.mail_split.set_show_content(true);

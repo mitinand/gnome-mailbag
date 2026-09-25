@@ -4,7 +4,8 @@
 **Created**: 2026-09-25 · **Branch**: `claude/errors` · **Status**: Documents
 approved 2026-09-25; portions 1–4 implemented, the simplify review applied
 (option A) and acceptance done live 2026-09-25 (plan.md,
-"Post-implementation").
+"Post-implementation"). Portion 5, where the wording lives, planned
+2026-09-26 on `claude/failure-ownership`.
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -32,6 +33,7 @@ test pins wording except the privacy invariants and the general arms.
 | 3. Channels, forms and the failure dialog | T008–T016 | feat: show every failure through its channel and the failure dialog | Error handling |
 | 4. Panic on the worker | T017–T019 | feat(providers): turn a panic on the mail worker into a failed load | Error handling |
 | Polish | T020–T022 | (per review) | Error handling |
+| 5. Where the wording lives | T023–T027 | refactor(errors): write failure wording in the application | Failure wording in the application |
 
 ## Phase 1: documents and review
 
@@ -142,3 +144,50 @@ The stale-mail banner over stored messages (spec US2, FR-013a, feature
 panic on the main thread; the host and the sign-in method in the technical
 lines; a separate declaration for status 429; Online Accounts'
 EnsureCredentials; a crash file; a backtrace with the panic.
+
+## Phase 7: where the wording lives (portion 5)
+
+**Purpose:** the wording and the action of every failure are written in
+the application, the provider layer keeps the typed value, the technical
+details and the protocol facts (research §1; plan, "Correction
+2026-09-26"). No user-visible change.
+**Independent check:** the moved declaration tests, the new provider tests
+and the window's GTK test, each unchanged in what it asserts.
+
+- [X] T023 STOP: present the amended spec (FR-001 and FR-012 without the
+  design rule "in the code of the feature that owns it", the Scope line and
+  the "Repeating helps" assumption), contract, research §1, §4, §5, plan and
+  this phase, and wait for the maintainer's approval before any code change.
+- [X] T024 In crates/mailbag-providers/src/failure.rs keep `cause_name`,
+  `status`, `server_code`; make `LoadFailure::technical_details` public;
+  add `IncompleteList::technical_details` (the refusal's `Server code:`
+  line); add `LoadFailure::credentials_rejected` (the rule of
+  `credential_may_be_wrong` plus Graph status 401) and
+  `LoadFailure::server_temporarily_unavailable` (IMAP `UNAVAILABLE`).
+  Remove the declaration types, the headings, the advice constant and
+  every `declare*` function, and the re-export of the three types from
+  crates/mailbag-providers/src/lib.rs.
+- [X] T025 Create crates/mailbag/src/failure_declarations.rs with
+  `DeclaredFailure`, `FailureAction` (Retry documented as "runs the failed
+  operation again; the window chooses it from the carrier"), `RemoteText`,
+  the four headings and the sign-in advice, and
+  `declare_load_failure`, `declare_short_list`, `declare_content` with the
+  functions moved from providers unchanged in wording, using the provider
+  facts instead of reading IMAP codes or the Graph status; register the
+  module in crates/mailbag/src/main.rs; switch the calls in
+  crates/mailbag/src/window_ui.rs (4), crates/mailbag/src/mail_ui.rs (1)
+  and the imports of crates/mailbag/src/failure_dialog.rs; add to
+  `show_action_button` that Retry's operation is Refresh Inbox because
+  every carrier today is a load.
+- [X] T026 Tests: move crates/mailbag-providers/src/failure/tests.rs into
+  crates/mailbag/src/failure_declarations/tests.rs, keeping their
+  assertions; keep in providers the technical-details test and add one for
+  `credentials_rejected` (AUTHENTICATIONFAILED, no code, UNAVAILABLE, Graph
+  401 and 500) and `server_temporarily_unavailable`; switch `.declare()`
+  calls in crates/mailbag/src/mail_ui/tests.rs and
+  crates/mailbag/src/failure_dialog/tests.rs.
+- [X] T027 STOP: run ./scripts/check.sh, git diff --check and each GTK test
+  on its own (`cargo test -p mailbag <name> -- --ignored --exact`); compare
+  the size with plan.md's correction table; run the simplify review on the
+  branch diff in a fresh subagent and bring scope-adding findings to the
+  maintainer; report and suggest the commit.

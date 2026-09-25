@@ -8,12 +8,13 @@
 #[cfg(test)]
 mod tests;
 
+use crate::failure_declarations::{DeclaredFailure, FailureAction};
 use crate::mail_ui::{cut_unbroken_runs, inert_text, show_inert_text};
 use adw::{glib, gtk, prelude::*};
-use mailbag_providers::{DeclaredFailure, FailureAction};
 
 /// Gives a form's action button the declared action, or hides it. The one
-/// place that turns an action into a label and an action name.
+/// place that turns an action into a label and an action name. Retry runs
+/// Refresh Inbox because every failure shown today is a load's.
 pub fn show_action_button(button: &gtk::Button, action: Option<FailureAction>) {
     let Some(action) = action else {
         button.set_visible(false);

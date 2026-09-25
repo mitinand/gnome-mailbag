@@ -24,7 +24,6 @@ pub use batch::{
     CancelsLoadOnDrop, IncompleteList, LoadFailure, LoadResult, MessageIdentity, ReceivedBatch,
     ReceivedContent, ReceivedMessage,
 };
-pub use failure::{DeclaredFailure, FailureAction, RemoteText};
 
 use goa_adapter::{AccessError, AccessRequest, AccountId, GoaAdapter, ImapAccess};
 use std::{cell::RefCell, rc::Rc};
