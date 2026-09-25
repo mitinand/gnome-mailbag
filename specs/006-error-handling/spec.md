@@ -42,10 +42,10 @@ what happened and what to do next, one action button when something can be
 done (Retry when repeating may succeed, Online Accounts when a setting or a
 credential is the cause) and a Details button. When nothing the user does
 would change the outcome, no action button is offered; Details stays.
-**Independent Test**: drive each failure the scripted mail server, the
-scripted mail service and the Online Accounts test double can produce
-through the window and check, by what carries the failure and its declared
-action, which channel shows it and which buttons it offers.
+**Independent Test**: drive each failure value the providers can report
+through the window with the scripted loader and check, by what carries the
+failure and its declared action, which channel shows it and which buttons
+it offers.
 
 **Acceptance Scenarios**:
 
@@ -96,9 +96,9 @@ stay in the list, and a banner (a bar with one line of text and at most one
 button, above the list) says that messages are missing for as long as those
 rows are on screen. Today the notice is a toast (a short pop-up that
 disappears by itself), after which the list looks complete. **Independent
-Test**: a scripted server that refuses part of the list and a scripted
-service that offers a further page; check the banner after the load and its
-absence after the next complete load.
+Test**: a load whose list the server refused to finish and one whose
+service offered a further page, through the scripted loader; check the
+banner after the load and its absence after the next complete load.
 
 **Acceptance Scenarios**:
 
@@ -400,9 +400,11 @@ from the approved forms, and decided:
   says so. Text from a server or a message is inert: never markup, never
   interpreted, cut at the display limit and with NUL replaced, as
   [002](../002-imap-integration/contracts/ui.md) rules. All application
-  wording is English; translation is a matter of release readiness. When
-  it comes, the title, the explanation, the advice, the block headings and
-  the button labels are translated; the remote side's texts are never
+  wording is English; translation waits for release readiness and for the
+  approved amendment the constitution requires (Public Repository
+  Language). When it comes, the title, the explanation, the advice, the
+  block headings and the button labels are translated; the remote side's
+  texts are never
   translated; the technical details stay in English, as identifiers that
   match the record's error line and read the same in every report.
 - **FR-010 — Cancellation is not a failure**: A load or request that ended
@@ -459,10 +461,11 @@ from the approved forms, and decided:
 
 - **SC-001**: For every failure value the providers can report, a test of
   its declaration finds the action, the advice, the remote texts and the
-  technical details FR-001–FR-005 require; for every carrier (a failed
-  load, a short list, a message's content, a Settings launch) a test
-  through the window finds the channel FR-006 assigns to it, with the
-  buttons the declaration names (FR-012).
+  technical details FR-001–FR-005 require; for a failed load, a short
+  list and a message's content a test through the window finds the
+  channel FR-006 assigns to it, with the buttons the declaration names
+  (FR-012); for a Settings launch the launcher's test finds the failure
+  reported once, and the toast shows that one line.
 - **SC-002**: After a load whose list is short, the banner is on screen with
   the rows; after the next complete load of the same account it is gone;
   after switching accounts and back it is there again (FR-006, FR-008).
@@ -488,17 +491,19 @@ from the approved forms, and decided:
   The sizing named "scope and lifetime" as the inputs of the channel rule;
   the challenge showed that the failure's carrier already fixes both, so
   declaring them would be a second way to say the same thing.
-- "Repeating helps" is expressed by the Retry action. A later scheduling
-  layer (007) that must decide whether to try again on its own reads the
-  action, or adds a property then, in its own specification.
-- The layout in `crates/mailbag/resources/ui/` changes in four places,
-  approved on the prototype 2026-09-24: a banner above the message list
-  (`mailbag.ui`); the action and Details buttons as the children of the
-  list's status page (`mailbag.ui`), replacing the buttons and the
-  explanation label that 001 and 002 build in code; a status page with its
-  action button in the reader's body slot (`message-content.ui`); and two
-  new forms, the failure dialog and its block. No other widget is built in
-  code.
+- "Repeating helps" is expressed by the Retry action. The background
+  synchronization layer (016) that must decide whether to try again on its
+  own reads the action, or adds a property then, in its own specification.
+- The layout in `crates/mailbag/resources/ui/` changes in five places,
+  approved on the prototype 2026-09-24 and amended in review 2026-09-25: a
+  banner above the message list (`mailbag.ui`); a failure page of its own
+  in the list stack, with the warning icon and its action and Details
+  buttons as its child (`mailbag.ui`); 001's two account-page buttons,
+  Retry Check and Online Accounts, declared as the account page's child
+  (`mailbag.ui`), replacing the buttons and the explanation label that 001
+  and 002 build in code; a status page with its action button in the
+  reader's body slot (`message-content.ui`); and two new forms, the failure
+  dialog and its block. No other widget is built in code.
 - 002 is amended by FR-012: its wording table and its toast rule for an
   incomplete list are superseded, the wording moves into the code that
   declares each failure, the reader's explanation in place of the text

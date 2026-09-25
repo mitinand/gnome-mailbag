@@ -34,6 +34,6 @@
 - Validated 2026-09-24 by the author. Widget names (status page, banner,
   toast, dialog) are the vocabulary of the approved layout, not
   implementation; the one path named (the layout directory) marks the
-  approved layout change. Success criteria name the scripted servers and
-  the Online Accounts test double as instruments, not as design.
+  approved layout change. Success criteria speak of failure values; the
+  scripted servers are instruments of the provider tests.
 - Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`

@@ -50,7 +50,7 @@ pub struct RemoteText {
 | A failed load | `LoadFailure::declare() -> DeclaredFailure` | The list's status page; Details opens the dialog |
 | A short list | `IncompleteList::declare() -> DeclaredFailure` | The banner above the list; its button opens the dialog |
 | A message's content | `ReceivedContent::declare() -> Option<DeclaredFailure>` (`None` for text) | The reader's status page in the body's place; no dialog |
-| A Settings launch | `LaunchError::message()` (in `mailbag`): one sentence, no `DeclaredFailure`, since the toast shows nothing more | A toast |
+| A Settings launch | `LaunchError::message()` (in `mailbag`): one line, title and advice, no `DeclaredFailure`, since the toast shows nothing more | A toast |
 | A panic on the worker | `LoadFailure::WorkerStopped(Option<String>)`, the panic's message and place, declared as a failed load | As a failed load; the panic as one technical line |
 
 `LoadFailure::OnlineAccounts(AccessError::Cancelled)` never reaches a
@@ -72,7 +72,8 @@ advice, each remote text under its source, the technical lines under
 "Technical details", in that order, separated by blank lines, skipping
 what is empty.
 
-The toast shows `LaunchError::message()`, one sentence, and nothing of
+The toast shows `LaunchError::message()`, one line, title and advice, and
+nothing of
 this table.
 
 ## Invariants

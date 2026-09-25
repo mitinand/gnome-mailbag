@@ -13,7 +13,7 @@ reading the code. Reassess with the maintainer before exceeding about 1.5
 times an estimate; at every review pause the size so far is compared with
 this table.
 
-| Item | Budget | This plan |
+| Item | Budget | This plan (estimate; the measured size is under Post-implementation) |
 |---|---|---|
 | New modules and production lines | ≤ ~350 new, ~200 moved | `mailbag-providers/src/failure.rs` ~190 (of which ~110 are wording moved from the window); `mailbag/src/failure_dialog.rs` ~90; `mailbag-providers/src/worker.rs` +35; `mailbag-imap` +6; `mailbag/src/window_ui.rs` +70 −210; `mail_ui.rs` +30 −45; `account_ui.rs` +20 −40; `settings.rs` a reworded sentence. New ≈ 330, moved ≈ 200, removed ≈ 300 (old wording, widgets built in code). Four forms, ~200 lines of XML, copied from the prototype |
 | Call sites or existing files touched | — | 12 Rust files: `mailbag-imap` `session.rs`, `reader.rs`; `mailbag-providers` `lib.rs`, `batch.rs`, `worker.rs`, new `failure.rs`; `mailbag` `window_ui.rs`, `mail_ui.rs`, `account_ui.rs`, `settings.rs`, `main.rs` (one action registered), `inbox.rs` (the record line calls the shared cause accessors), new `failure_dialog.rs`. Forms: `mailbag.ui`, `message-content.ui`, new `failure-dialog.ui`, `failure-block.ui` |
@@ -48,9 +48,9 @@ line names its cost.
 |---|---|---|
 | `<login>` at the source | `ServerNotices::error` replaces the sign-in name in the reply text and in the alerts before they enter `ImapError`; `fetch_rows` does the same for the refusal that travels with a short list. `server_text_for_log` is the function used, renamed for its new role; the debug lines log the already-masked text. 003 FR-011 and research §6 amended | ~6 lines, 2 tests |
 | The declaration | `failure.rs` in providers: `DeclaredFailure`, `FailureAction { Retry, OnlineAccounts }`, `RemoteText { source, text }`; `LoadFailure::declare`, `IncompleteList::declare`, `ReceivedContent::declare` (`None` for text). The wording of `window_ui.rs` (status titles, reasons, sign-in hint) and of `mail_ui.rs` (content explanations) moves here, rewritten impersonally; the "credential may be wrong" rule moves with it. `LoadFailure::cause_name`, `status` and `server_code` give the failure value, status and code exactly as the record's error line names them; they move out of `inbox.rs`, which now calls them, so the record and the declaration have one owner (constitution IV). [Contract](contracts/failure-declaration.md) | ~200 lines (~125 moved), 11 tests |
-| The channels | `window_ui.rs`: a failed load shows the list's failure page, declared in `mailbag.ui` with the warning icon, its action button and its Details button, and sets its title, escaped description (explanation and advice) and action (label and action name); a short list reveals the banner with the title; `mail_ui.rs`: a content problem shows the reader's status page in the body's place; `settings.rs`: `LaunchError::message` stays the toast's one sentence, reworded impersonally; no declaration, since the toast shows nothing more. `account_ui.rs` drives 001's page with the same form buttons instead of building them. 002 UI contract and 005 research §5 amended | ~140 lines (+ forms), 6 tests |
+| The channels | `window_ui.rs`: a failed load shows the list's failure page, declared in `mailbag.ui` with the warning icon, its action button and its Details button, and sets its title, escaped description (explanation and advice) and action (label and action name); a short list reveals the banner with the title; `mail_ui.rs`: a content problem shows the reader's status page in the body's place; `settings.rs`: `LaunchError::message` stays the toast's one line, title and advice, reworded impersonally; no declaration, since the toast shows nothing more. `account_ui.rs` drives 001's page with the same form buttons instead of building them. 002 UI contract and 005 research §5 amended | ~140 lines (+ forms), 6 tests |
 | The failure dialog | `failure_dialog.rs`: builds `failure-dialog.ui`, fills the paragraphs, appends one `failure-block.ui` per remote text and one for the technical details, binds the action button to the action's name and closes on it, binds the copy button to the report text (title, paragraphs, blocks, in order) on the clipboard | ~90 lines, 3 tests |
-| Panic on the worker | `worker.rs`: a panic hook installed once when the worker thread starts stores one string, the panic's message and its place (`message at file:line`), in a thread-local slot; `run_load` wraps the load in `catch_unwind`, ignores the payload and turns a caught panic into `LoadFailure::WorkerStopped(Some(panic))`; the worker loop continues. `declare` puts the string into one technical-details line, `Panic: …`. The hook calls the previous hook, so the panic still reaches the error stream | ~35 lines, 2 tests |
+| Panic on the worker | `worker.rs`: a panic hook installed once when the worker thread starts stores one string, the panic's message and its place (`message at file:line`), in a thread-local slot; `load_catching_panics` wraps the load in `catch_unwind`, ignores the payload and turns a caught panic into `LoadFailure::WorkerStopped(Some(panic))`; the worker loop continues. `declare` puts the string into one technical-details line, `Panic: …`. The hook calls the previous hook, so the panic still reaches the error stream | ~35 lines, 2 tests |
 
 Not built: a crash file or a report at the next start; a call to Online
 Accounts' EnsureCredentials; the host and the sign-in method in the
@@ -68,7 +68,7 @@ The entry points and their steps, as the code will read.
 - `LoadFailure::declare(&self) -> DeclaredFailure`: one arm per source —
   `declare_access_failure(AccessError)`, `declare_imap_failure(&ImapError)`,
   `declare_graph_failure(&GraphError)`,
-  `declare_worker_stopped(Option<&str>)`.
+  `declare_worker_stopped()`; the `Panic:` line comes from `technical_details`.
 - `declare_imap_failure`: title and explanation by step and outcome
   (`failed_step_title`, `failed_step_explanation`, `waiting_step_explanation`);
   action: `OnlineAccounts` when the sign-in was rejected with
@@ -109,8 +109,8 @@ The entry points and their steps, as the code will read.
 **`mailbag-providers/src/worker.rs`**
 
 - `run_worker`: `install_panic_hook()` once, then the loop as today.
-- `run_load`: `catch_unwind(AssertUnwindSafe(load))`; on `Err`,
-  `LoadFailure::WorkerStopped(take_panic_record())`.
+- `load_catching_panics`: `catch_unwind(AssertUnwindSafe(load))`; on `Err`,
+  `LoadFailure::WorkerStopped(LAST_PANIC.take())`.
 
 **`mailbag/src/window_ui.rs`**
 
@@ -126,8 +126,11 @@ The entry points and their steps, as the code will read.
 
 **`mailbag/src/failure_dialog.rs`**
 
-- `present(parent, &DeclaredFailure)`: `build_from_form`, `fill_paragraphs`,
-  `append_blocks`, `bind_action`, `bind_copy`.
+- `present(parent, &DeclaredFailure)`: builds the form, `show_paragraph` for
+  the explanation and the advice, `append_blocks`, `show_action_button`,
+  connects the close and the copy handlers, presents.
+- `status_description(&DeclaredFailure) -> String`: the escaped explanation
+  and advice for the window's and the reader's status pages.
 - `report_text(&DeclaredFailure) -> String`: what the copy button copies.
 - `show_action_button(&gtk::Button, Option<FailureAction>)`: gives a form's
   action button its label and action name, or hides it (`Retry` → "Retry", `app.refresh-inbox`;
@@ -139,8 +142,8 @@ The entry points and their steps, as the code will read.
 
 **`mailbag/src/mail_ui.rs`**
 
-- `open_message`: `content.declare()`; `Some` shows the reader's status
-  page in the body's place, `None` shows the text.
+- `open_message`: `content.declare()`, then `show_body_or_failure`: `Some`
+  shows the reader's status page in the body's place, `None` the text.
 
 **`mailbag/src/account_ui.rs`**
 
@@ -277,6 +280,8 @@ the repository; only the files above are.
 | specs/003-logging/spec.md FR-011; research.md §6 | The sign-in name is replaced once, where the failure is built; the reply no longer travels to the UI unchanged; no separate copy for the record | 1 |
 | specs/002-imap-integration/contracts/ui.md | The wording table and the toast rule for an incomplete list are superseded by 006; the reader's explanation in place of the text becomes a status page; the status page's explanation goes into the escaped description | 3 |
 | specs/005-microsoft-graph-integration/research.md §5 | The service's message may appear in the failure dialog as a remote text | 3 |
+| specs/002-imap-integration/data-model.md; contracts/imap-reading.md | Server text, with the sign-in name replaced where the failure is built, is for the failure dialog and the debug lines | 3 |
+| AGENTS.md | "UI wording" (the impersonal voice, the Workbench demos) and the forms-only layout rule | before 1 |
 
 ## Post-implementation
 
@@ -298,4 +303,17 @@ by the maintainer, following [quickstart.md](quickstart.md).
 Not verified live: `<login>` in a server's text, because the real
 server's rejection did not repeat the sign-in name (the IMAP tests with
 the scripted server cover it); the Retry Check progress state on the
-account page's own button.
+account page's own button; the banner's button by keyboard and its text by
+screen reader (SC-005), because the banner cannot be provoked live (step
+4). The Settings toast has no test through the window: `settings/tests.rs`
+checks that the launcher reports each error once, and the toast shows the
+constant `LaunchError::message` (SC-001, amended 2026-09-25).
+
+Size against the table above, measured on the branch after the review
+fixes and the final refactor: production +945 −473 lines, net
++472, against ~350 new and ~200 moved (reassessed with the
+maintainer after portion 2, who accepted about 420); `failure.rs` 463
+lines against ~190, `failure_dialog.rs` 140 against ~90, `worker.rs` +71
+−17 against +35; 13 Rust files, not 12; four new types, `PageAction`
+added to the three; tests +567 −342 lines, the window channels in
+one graphical test; forms +207.

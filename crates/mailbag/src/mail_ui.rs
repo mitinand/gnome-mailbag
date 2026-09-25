@@ -187,7 +187,7 @@ impl MailUi {
         if let ReceivedContent::Text(text) = &message.content {
             show_inert_text(&self.reader_body, &inert_text(text));
         }
-        self.show_content_failure(message.content.declare().as_ref());
+        self.show_body_or_failure(message.content.declare().as_ref());
         self.singleton_slot.set_visible(true);
         self.reader_stack.set_visible_child_name("message");
         self.mail_split.set_show_content(true);
@@ -195,7 +195,7 @@ impl MailUi {
 
     /// Shows why the message has no text in the body's place, or the body
     /// when it has one.
-    fn show_content_failure(&self, failure: Option<&DeclaredFailure>) {
+    fn show_body_or_failure(&self, failure: Option<&DeclaredFailure>) {
         self.body_slot.set_visible(failure.is_none());
         self.content_status.set_visible(failure.is_some());
         let Some(failure) = failure else {

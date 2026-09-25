@@ -194,8 +194,9 @@ impl WindowUi {
         // without touching the mail received for the account.
         let shows_account_page = accounts.page() != AccountPage::SelectedAccount;
         // The list's pages and the banner have one writer: this function. Each
-        // state shows one page and fills it whole, so no failure outlives its
-        // cause.
+        // state shows one page and fills it whole, and only a short list on
+        // screen reveals the banner, so no failure outlives its cause.
+        self.list_banner.set_revealed(false);
         match inbox {
             _ if shows_account_page => self.show_account_page(&accounts),
             None => self.show_mail_status(
@@ -204,18 +205,16 @@ impl WindowUi {
             ),
             Some(AccountInbox::Loading) => self.show_mail_status("Loading Inbox", None),
             Some(AccountInbox::Failed(failure)) => self.show_failed_load(&failure.declare()),
-            Some(AccountInbox::Received(batch)) if batch.messages.is_empty() => {
-                self.show_mail_status("Inbox is empty", None)
+            Some(AccountInbox::Received(batch)) => {
+                if batch.messages.is_empty() {
+                    self.show_mail_status("Inbox is empty", None);
+                } else {
+                    self.list_stack.set_visible_child_name("messages");
+                }
+                if let Some(incomplete) = &batch.incomplete {
+                    self.show_short_list(&incomplete.declare());
+                }
             }
-            Some(AccountInbox::Received(_)) => self.list_stack.set_visible_child_name("messages"),
-        }
-        let short_list = match inbox {
-            Some(AccountInbox::Received(batch)) if !shows_account_page => batch.incomplete.as_ref(),
-            _ => None,
-        };
-        match short_list {
-            Some(incomplete) => self.show_short_list(&incomplete.declare()),
-            None => self.list_banner.set_revealed(false),
         }
         self.loading_spinner_box.set_visible(inboxes.is_loading());
         self.refresh_inbox

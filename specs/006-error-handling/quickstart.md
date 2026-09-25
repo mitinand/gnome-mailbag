@@ -1,8 +1,9 @@
 # Error Handling: Acceptance
 
 Applies after portion 4. Automated checks run with `scripts/check.sh`;
-they cover every declaration and every channel (SC-001 to SC-004,
-SC-006). The steps below need the installed build and the
+they cover every declaration and the channels of a failed load, a short
+list and a message's content (SC-001 to SC-004, SC-006); the Settings
+toast has no window test (plan.md, "Post-implementation"). The steps below need the installed build and the
 maintainer's accounts in GNOME Online Accounts; they cover what tests
 cannot: the real widgets, the keyboard and the screen reader (SC-005).
 

@@ -667,11 +667,16 @@ fn mail_ui_transitions() {
             .any(|button| button.is_visible()
                 && button.label().as_deref() == Some("Online Accounts"))
     );
-    // A closed dialog is released with its widgets.
+    // A closed dialog is released with its widgets; the accessibility layer
+    // lets go of it a few milliseconds after the window does.
     let closed_dialog = dialog.downgrade();
     dialog.force_close();
     drop((dialog, labels));
-    dispatch_pending();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while closed_dialog.upgrade().is_some() && Instant::now() < deadline {
+        dispatch_pending();
+        std::thread::sleep(Duration::from_millis(1));
+    }
     assert!(closed_dialog.upgrade().is_none());
 
     // A failure nothing the user does can change offers no action, only

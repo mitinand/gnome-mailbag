@@ -142,7 +142,7 @@ fn run_worker(requests: &async_channel::Receiver<LoadRequest>) {
 
 /// Runs one provider's load until it finishes or the caller cancels it.
 async fn run_load(kind: LoadKind, cancelled: &async_channel::Receiver<()>) -> LoadResult {
-    let mut load = Box::pin(guarded_load(kind));
+    let mut load = Box::pin(load_catching_panics(kind));
     match future::select(&mut load, pin!(cancelled.recv())).await {
         Either::Left((outcome, _)) => outcome,
         Either::Right(_) => {
@@ -157,7 +157,7 @@ async fn run_load(kind: LoadKind, cancelled: &async_channel::Receiver<()>) -> Lo
 /// Runs the provider's load sequence. A panic inside it ends this load as a
 /// failure that carries the panic's message and place, and the worker goes
 /// on with the next load (specs/006-error-handling FR-014).
-async fn guarded_load(kind: LoadKind) -> LoadResult {
+async fn load_catching_panics(kind: LoadKind) -> LoadResult {
     // The kind is read once, here, to choose the sequence; no sequence asks
     // about the provider again (004 plan, decision D1).
     let load = async move {

@@ -20,8 +20,8 @@ where 002, 004 and 005 already meet.
 
 **Alternatives**: in the window, where the wording is today: keeps the
 protocol types in front of the widgets and the wording out of reach of a
-later scheduling layer (007), which will need the action to decide whether
-to try again; a new crate below the protocol crates for the declaration
+background synchronization layer (016), which will need the action to
+decide whether to try again; a new crate below the protocol crates for the declaration
 type: nothing else would live in it yet.
 
 ## 2. The failure dialog and the status pages
@@ -34,7 +34,8 @@ paragraphs, 24 between the paragraphs and the blocks, 24 between blocks,
 24 to the action; in a block 6 between heading and card, 12 inside the
 card; 24 from the sides. The status pages put the explanation and the
 advice into `description`, escaped, and keep only the buttons as their
-child.
+child. The banner follows Workbench's Banner demo and the status pages its
+Status Page demo, as the dialog follows its Dialog demo.
 
 **Checked**: libadwaita's stylesheet, extracted from the installed 1.9
 library with `gresource`: preferences pages use 24 between groups and 6
@@ -76,7 +77,7 @@ challenge's decision 1.
 
 **Decision**: a panic hook installed once when the worker thread starts
 stores one string, the panic's message and its place, in a thread-local
-slot and calls the previous hook; `run_load` wraps the load future in
+slot and calls the previous hook; `load_catching_panics` wraps the load future in
 `futures_util::FutureExt::catch_unwind` (with `AssertUnwindSafe`), leaves
 the payload unread (the hook already has the message) and turns `Err` into
 `LoadFailure::WorkerStopped(Some(panic))`. The worker loop goes on; no

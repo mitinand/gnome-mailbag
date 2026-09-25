@@ -290,6 +290,7 @@ fn declare_access_failure(error: AccessError) -> DeclaredFailure {
         advice,
         action: Some(action),
         remote_texts: Vec::new(),
+        // Filled by `declare` from the record's values.
         details: String::new(),
     }
 }
@@ -346,6 +347,7 @@ fn declare_imap_failure(error: &ImapError) -> DeclaredFailure {
         advice,
         action,
         remote_texts: alerts.chain(reply).collect(),
+        // Filled by `declare` from the record's values.
         details: String::new(),
     }
 }
@@ -443,6 +445,7 @@ fn declare_graph_failure(error: &GraphError) -> DeclaredFailure {
                 text: text.clone(),
             })
             .collect(),
+        // Filled by `declare` from the record's values.
         details: String::new(),
     }
 }
@@ -454,6 +457,7 @@ fn declare_worker_stopped() -> DeclaredFailure {
         advice: Some("If this happens again, report it with the technical details."),
         action: Some(FailureAction::Retry),
         remote_texts: Vec::new(),
+        // Filled by `declare` from the record's values.
         details: String::new(),
     }
 }
