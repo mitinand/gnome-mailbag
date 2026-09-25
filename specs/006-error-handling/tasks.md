@@ -154,11 +154,11 @@ details and the protocol facts (research §1; plan, "Correction
 **Independent check:** the moved declaration tests, the new provider tests
 and the window's GTK test, each unchanged in what it asserts.
 
-- [ ] T023 STOP: present the amended spec (FR-001 and FR-012 without the
+- [X] T023 STOP: present the amended spec (FR-001 and FR-012 without the
   design rule "in the code of the feature that owns it", the Scope line and
   the "Repeating helps" assumption), contract, research §1, §4, §5, plan and
   this phase, and wait for the maintainer's approval before any code change.
-- [ ] T024 In crates/mailbag-providers/src/failure.rs keep `cause_name`,
+- [X] T024 In crates/mailbag-providers/src/failure.rs keep `cause_name`,
   `status`, `server_code`; make `LoadFailure::technical_details` public;
   add `IncompleteList::technical_details` (the refusal's `Server code:`
   line); add `LoadFailure::credentials_rejected` (the rule of
@@ -167,7 +167,7 @@ and the window's GTK test, each unchanged in what it asserts.
   Remove the declaration types, the headings, the advice constant and
   every `declare*` function, and the re-export of the three types from
   crates/mailbag-providers/src/lib.rs.
-- [ ] T025 Create crates/mailbag/src/failure_declarations.rs with
+- [X] T025 Create crates/mailbag/src/failure_declarations.rs with
   `DeclaredFailure`, `FailureAction` (Retry documented as "runs the failed
   operation again; the window chooses it from the carrier"), `RemoteText`,
   the four headings and the sign-in advice, and
@@ -179,14 +179,14 @@ and the window's GTK test, each unchanged in what it asserts.
   and the imports of crates/mailbag/src/failure_dialog.rs; add to
   `show_action_button` that Retry's operation is Refresh Inbox because
   every carrier today is a load.
-- [ ] T026 Tests: move crates/mailbag-providers/src/failure/tests.rs into
+- [X] T026 Tests: move crates/mailbag-providers/src/failure/tests.rs into
   crates/mailbag/src/failure_declarations/tests.rs, keeping their
   assertions; keep in providers the technical-details test and add one for
   `credentials_rejected` (AUTHENTICATIONFAILED, no code, UNAVAILABLE, Graph
   401 and 500) and `server_temporarily_unavailable`; switch `.declare()`
   calls in crates/mailbag/src/mail_ui/tests.rs and
   crates/mailbag/src/failure_dialog/tests.rs.
-- [ ] T027 STOP: run ./scripts/check.sh, git diff --check and each GTK test
+- [X] T027 STOP: run ./scripts/check.sh, git diff --check and each GTK test
   on its own (`cargo test -p mailbag <name> -- --ignored --exact`); compare
   the size with plan.md's correction table; run the simplify review on the
   branch diff in a fresh subagent and bring scope-adding findings to the

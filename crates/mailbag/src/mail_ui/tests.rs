@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::*;
+use crate::failure_declarations::{declare_content, declare_load_failure, declare_short_list};
 use crate::window_ui::WindowUi;
 use goa_adapter::{
     AccountCheckError, AccountCheckResult, AccountDetails, AccountId, AccountProvider,
@@ -506,9 +507,8 @@ fn mail_ui_transitions() {
     rows[1].emit_by_name::<()>("activate", &[]);
     dispatch_pending();
     assert_eq!(widgets.reader_page(), "message");
-    let content_failure = ReceivedContent::StructureUnreadable
-        .declare()
-        .expect("no text to show");
+    let content_failure =
+        declare_content(&ReceivedContent::StructureUnreadable).expect("no text to show");
     let content_status = widgets.content_status().expect("the reader's status page");
     assert_eq!(content_status.title(), content_failure.title);
     assert!(!widgets.reader_body_label().is_visible());
@@ -543,7 +543,7 @@ fn mail_ui_transitions() {
     dispatch_pending();
     assert_eq!(widgets.rows().len(), 1);
     assert_eq!(widgets.list_page(), "messages");
-    let short_list_title = Some(refusal.declare().title.to_owned());
+    let short_list_title = Some(declare_short_list(&refusal).title.to_owned());
     assert_eq!(widgets.banner_title(), short_list_title);
     widgets.select_account(1);
     dispatch_pending();
@@ -554,7 +554,7 @@ fn mail_ui_transitions() {
     assert_eq!(widgets.rows().len(), 1);
     widgets.banner().emit_by_name::<()>("button-clicked", &[]);
     let dialog = window.visible_dialog().expect("the failure dialog");
-    assert_eq!(dialog.title(), refusal.declare().title);
+    assert_eq!(dialog.title(), declare_short_list(&refusal).title);
     dialog.force_close();
 
     // A message the sender never wrapped opens without freezing the window,
@@ -607,7 +607,7 @@ fn mail_ui_transitions() {
 
     // A failed load takes the list's place with its declaration; the
     // server's words stay in the failure dialog.
-    let rejected = rejected_sign_in().declare();
+    let rejected = declare_load_failure(&rejected_sign_in());
     loader.report(LoadResult::Failed(rejected_sign_in()));
     dispatch_pending();
     assert_eq!(widgets.list_page(), "failed");

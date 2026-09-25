@@ -307,6 +307,13 @@ Portion 5 moves the wording out of the provider layer (research §1). Budget app
 | Tests | ≤ 30 new | ~15 new (the protocol facts), ~165 moved |
 | User-visible behaviour | unchanged | texts, channels and buttons as before |
 
+Result, 2026-09-26: production +451 −398 lines (53 new against ≤ 50, the
+two protocol facts and `IncompleteList::technical_details` with their
+comments); tests +247 −165 (82 new against ≤ 30), accepted by the
+maintainer: the test helpers repeat in the two crates' tests now that the
+rules live in both, and the protocol facts are tested directly where they
+live, their edge cases included. Every string literal is unchanged.
+
 Not in this portion: a shared domain crate and a failure classification
 (research §5), server text as a masked type (research §5), choosing
 Retry's operation by carrier and a panic helper for work outside the mail
