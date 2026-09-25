@@ -167,6 +167,11 @@ the explanation and the debug line; the window adds the 004 sign-in sentence
 for status 401 only. The error line at error level carries status and code
 (003 FR-011: the text at debug). No retry anywhere.
 
+**Amended by [006](../006-error-handling/spec.md) on 2026-09-25**: the
+service's message may appear in the failure dialog as a remote text, under
+"Message from the mail service", never in the explanation; the explanation
+and the sign-in advice come from the failure's declaration.
+
 ## 6. Evidence for later features (no code here)
 
 Recorded from the probe so that storage, folders and error presentation start

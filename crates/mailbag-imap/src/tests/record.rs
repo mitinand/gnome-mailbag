@@ -6,10 +6,10 @@
 //! (specs/003-logging).
 
 use super::test_record::CapturedRecord;
-use super::{expect_failure, run};
+use super::{expect_failure, expect_success, plain_messages, run};
 use crate::{
-    Credential, Encryption, ImapAccount, ImapFailure, ImapStep, InboxReader, OpenOptions,
-    session::server_text_for_log,
+    Credential, Encryption, ImapAccount, ImapFailure, ImapStep, InboxReader, OpenOptions, RowItems,
+    session::replace_sign_in_name,
     test_server::{FixtureSetup, ImapFixture, TEST_LOGIN, TEST_PASSWORD},
 };
 
@@ -38,7 +38,7 @@ fn the_sign_in_name_is_replaced_in_any_case_and_length() {
         ("ab", "about ab", "<login>out <login>"),
     ];
     for (sign_in_name, server_text, logged_text) in replaced {
-        assert_eq!(server_text_for_log(sign_in_name, server_text), logged_text);
+        assert_eq!(replace_sign_in_name(sign_in_name, server_text), logged_text);
     }
 }
 
@@ -92,4 +92,39 @@ fn a_refused_sign_in_is_logged_with_a_short_sign_in_name_replaced() {
         record.lines_at("ERROR").is_empty(),
         "the load writes the error line"
     );
+}
+
+/// The error carries the server's texts as the record shows them, so every
+/// channel shows the same masked text; `in` also occurs inside `<login>`,
+/// which a second replacement would break.
+#[test]
+fn a_refused_sign_in_carries_its_texts_with_the_sign_in_name_replaced_once() {
+    let fixture = ImapFixture::start(FixtureSetup {
+        credentials: Some(("in".to_owned(), TEST_PASSWORD.to_owned())),
+        notice_before_sign_in: Some("* OK [ALERT] Password for in expired".to_owned()),
+        rejection: "{tag} NO [AUTHENTICATIONFAILED] in may not sign in as in\r\n".to_owned(),
+        ..FixtureSetup::default()
+    });
+    let mut account = fixture.account_with_password("wrong password");
+    account.login = "in".to_owned();
+    let error = expect_failure(run(InboxReader::open(account, OpenOptions::default())));
+    let reply = error.server_reply.expect("the rejection is kept");
+    assert_eq!(reply.text, "<login> may not sign <login> as <login>");
+    assert_eq!(error.alerts, ["Password for <login> expired"]);
+}
+
+#[test]
+fn the_refusal_of_a_short_list_carries_the_sign_in_name_replaced() {
+    let fixture = ImapFixture::start(FixtureSetup {
+        credentials: Some(("some".to_owned(), TEST_PASSWORD.to_owned())),
+        messages: plain_messages(3),
+        unfetchable_uids: vec![20],
+        ..FixtureSetup::default()
+    });
+    let mut account = fixture.account();
+    account.login = "some".to_owned();
+    let mut reader = expect_success(run(InboxReader::open(account, OpenOptions::default())));
+    let listed = expect_success(run(reader.fetch_rows(RowItems::Standard, 100)));
+    let refusal = listed.refusal.expect("the list is short");
+    assert_eq!(refusal.text, "<login> messages could not be FETCHed");
 }

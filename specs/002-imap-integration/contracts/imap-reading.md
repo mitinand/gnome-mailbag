@@ -297,7 +297,8 @@ during the session, for example at a server's connection limit. Keep its
 RFC 5530 response code, such as `AUTHENTICATIONFAILED` or `UNAVAILABLE`, when the
 server sent one. The fork keeps the code and text of NO and BAD in its error;
 imap-proto does not parse RFC 5530 codes, so the fork reads them from the start
-of the text. This is inert server text for the failure explanation only.
+of the text. This is inert server text for the failure dialog only (amended by
+[006](../../006-error-handling/spec.md) on 2026-09-25).
 
 Do not build a notification service, history, sync popover or extra error for
 dependent steps that never ran. Map errors to safe step/cause information.

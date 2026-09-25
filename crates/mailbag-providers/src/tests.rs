@@ -39,14 +39,16 @@ fn load_inbox(fixture: &ImapFixture) -> LoadResult {
 
 /// Runs one load sequence to its end, as the window would.
 fn load_with_kind(kind: LoadKind) -> LoadResult {
-    run_on_context(async {
-        let worker = MailWorker::new();
-        let (sender, outcomes) = async_channel::bounded(1);
-        let _handle = worker.load_inbox(kind, move |outcome| {
-            sender.try_send(outcome).ok();
-        });
-        outcomes.recv().await.expect("the load reports its outcome")
-    })
+    run_on_context(finish_load(&MailWorker::new(), kind))
+}
+
+/// Runs one load on `worker` and waits for its outcome.
+async fn finish_load(worker: &MailWorker, kind: LoadKind) -> LoadResult {
+    let (sender, outcomes) = async_channel::bounded(1);
+    let _handle = worker.load_inbox(kind, move |outcome| {
+        sender.try_send(outcome).ok();
+    });
+    outcomes.recv().await.expect("the load reports its outcome")
 }
 fn run_on_context<T>(future: impl Future<Output = T>) -> T {
     let context = glib::MainContext::new();
@@ -263,11 +265,34 @@ fn a_stopped_worker_ends_the_load_with_a_visible_failure() {
             assert!(
                 matches!(
                     outcome,
-                    Some(LoadResult::Failed(LoadFailure::WorkerStopped))
+                    Some(LoadResult::Failed(LoadFailure::WorkerStopped(None)))
                 ),
                 "{outcome:?}"
             );
         }
+    });
+}
+
+#[test]
+fn a_panic_ends_its_load_with_the_place_and_the_worker_serves_the_next() {
+    let fixture = ImapFixture::start(FixtureSetup {
+        messages: plain_messages(1),
+        ..FixtureSetup::default()
+    });
+    run_on_context(async {
+        let worker = MailWorker::new();
+        match finish_load(&worker, LoadKind::PanicsForTest).await {
+            LoadResult::Failed(LoadFailure::WorkerStopped(Some(panic))) => {
+                assert!(panic.contains("a load panicked on purpose"), "{panic}");
+                assert!(panic.contains("worker.rs:"), "{panic}");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        // The same thread keeps its queue and loads the next Inbox.
+        let loads = worker.loads.borrow().clone().expect("the worker started");
+        assert!(!loads.is_closed());
+        let next = finish_load(&worker, LoadKind::GenericImap(account_access(&fixture))).await;
+        assert_eq!(published_batch(next).messages.len(), 1);
     });
 }
 

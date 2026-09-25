@@ -14,22 +14,24 @@ use async_imap::{
 };
 use std::{borrow::Cow, collections::HashMap, io};
 
-/// Server text for a debug line: every occurrence of the sign-in name, in any
-/// ASCII letter case and whatever its length, is replaced with `<login>`
+/// Server text with every occurrence of the sign-in name, in any ASCII letter
+/// case and whatever its length, replaced with `<login>`
 /// (specs/003-logging/research.md §6). The rest of the text is kept as sent.
-pub(crate) fn server_text_for_log(sign_in_name: &str, text: &str) -> String {
+/// It serves the error and the record alike: a text is replaced once, where
+/// it enters an error or a debug line, never twice.
+pub(crate) fn replace_sign_in_name(sign_in_name: &str, text: &str) -> String {
     let lowercase_text = text.to_ascii_lowercase();
     let lowercase_name = sign_in_name.to_ascii_lowercase();
-    let mut logged_text = String::with_capacity(text.len());
+    let mut replaced_text = String::with_capacity(text.len());
     let mut copied = 0;
     // ASCII lowercasing keeps every byte position, so matches index `text`.
     for (start, _) in lowercase_text.match_indices(&lowercase_name) {
-        logged_text.push_str(&text[copied..start]);
-        logged_text.push_str("<login>");
+        replaced_text.push_str(&text[copied..start]);
+        replaced_text.push_str("<login>");
         copied = start + lowercase_name.len();
     }
-    logged_text.push_str(&text[copied..]);
-    logged_text
+    replaced_text.push_str(&text[copied..]);
+    replaced_text
 }
 
 /// A signed-in session with the Inbox open read-only.
@@ -132,7 +134,7 @@ impl ServerNotices {
             // arrived belongs to info, its text to debug (FR-010, FR-011).
             if tracing::enabled!(tracing::Level::DEBUG) {
                 tracing::debug!(
-                    alert = server_text_for_log(sign_in_name, text),
+                    alert = replace_sign_in_name(sign_in_name, text),
                     "the server sent an alert"
                 );
             } else {
@@ -149,21 +151,27 @@ impl ServerNotices {
     }
 
     /// The error for a failed step, with what the server said about it. Every
-    /// failed step passes here, so the server's text is logged here as well.
+    /// failed step passes here, so the sign-in name is replaced in the
+    /// server's texts here, and the reply is logged here as well.
     pub(crate) fn error(&mut self, sign_in_name: &str, failure: StepFailure) -> ImapError {
         self.collect(sign_in_name);
-        let server_reply = failure.server_reply.or_else(|| self.bye.take());
-        if let Some(reply) = &server_reply {
+        let mut server_reply = failure.server_reply.or_else(|| self.bye.take());
+        if let Some(reply) = &mut server_reply {
+            reply.text = replace_sign_in_name(sign_in_name, &reply.text);
             tracing::debug!(
                 code = reply.code.as_deref(),
-                server_text = server_text_for_log(sign_in_name, &reply.text),
+                server_text = reply.text,
                 "the server's reply to the failed step"
             );
+        }
+        let mut alerts = std::mem::take(&mut self.alerts);
+        for alert in &mut alerts {
+            *alert = replace_sign_in_name(sign_in_name, alert);
         }
         ImapError {
             failure: failure.failure,
             server_reply,
-            alerts: std::mem::take(&mut self.alerts),
+            alerts,
         }
     }
 }
@@ -357,7 +365,7 @@ async fn offer_readable_names(
         Ok(()) => tracing::debug!("the server accepted UTF-8 names"),
         Err(Error::No(status) | Error::Bad(status)) => tracing::debug!(
             code = status.code.as_deref(),
-            server_text = server_text_for_log(sign_in_name, &status.text),
+            server_text = replace_sign_in_name(sign_in_name, &status.text),
             "the server refused UTF-8 names"
         ),
         // A broken connection, not a refusal: the Inbox cannot follow.
@@ -393,7 +401,7 @@ async fn identify_client(
         Ok(()) => {}
         Err(Error::No(status) | Error::Bad(status)) => tracing::debug!(
             code = status.code.as_deref(),
-            server_text = server_text_for_log(sign_in_name, &status.text),
+            server_text = replace_sign_in_name(sign_in_name, &status.text),
             "the server refused the identification"
         ),
         Err(error) => return Err(command_failure(ImapStep::OpenInbox, &error)),

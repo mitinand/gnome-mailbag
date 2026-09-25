@@ -77,8 +77,10 @@ pub enum LoadFailure {
     Imap(ImapError),
     /// The Microsoft Graph request failed or was refused.
     MicrosoftGraph(GraphError),
-    /// The mail worker stopped without a result.
-    WorkerStopped,
+    /// The mail worker stopped the load without a result: a panic, with its
+    /// message and place as `message at file:line`, or `None` when the worker
+    /// vanished without one.
+    WorkerStopped(Option<String>),
 }
 
 /// How one load ended.

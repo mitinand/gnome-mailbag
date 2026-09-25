@@ -16,7 +16,7 @@ the combined page decision.
 | ReceivedContent | Complete decoded plain text or a message-specific explanation: no supported plain text, encrypted content, unusable or unreadable structure, text the server did not return or unsupported encoding. Invalid bytes alone do not replace the body with an error, but content the transfer encoding did not deliver — a payload the parser could not decode, or a base64 body that ends mid-group — is an explanation rather than partial text. |
 | OpenedMessage | UID in the selected account's batch, or none. Cleared by a refresh and by selecting another account. No body-fetch or server-revalidation state. |
 | ActiveLoad | AccountId and cancellation handle; at most one. Lives until its connection has closed. No byte counter, progress clock or application watchdog. |
-| LoadFailure | Safe failing step/cause, the server's reason (the text of its NO, BAD or BYE and any RFC 5530 response code) and any ALERT text received for that attempt. Server text is for plain-text UI presentation and, with the sign-in name replaced, for debug lines (003). |
+| LoadFailure | Safe failing step/cause, the server's reason (the text of its NO, BAD or BYE and any RFC 5530 response code) and any ALERT text received for that attempt. Server text, with the sign-in name replaced where the failure is built, is for the failure dialog and for debug lines (003; amended by [006](../006-error-handling/spec.md) on 2026-09-25). |
 
 UID identifies a message within an Inbox version; UIDVALIDITY identifies that
 version. Sort rows by descending UID, which follows Inbox addition order, rather

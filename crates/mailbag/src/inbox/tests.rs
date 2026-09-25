@@ -152,7 +152,7 @@ fn a_confirmed_exclusion_discards_the_mail_and_cancels_its_load() {
     let excluded = account("excluded-account");
     let kept = account("kept-account");
     start_load(&mut controller, &kept);
-    assert!(controller.finish_load(&kept, LoadResult::Received(batch_of(&kept, &[10]))));
+    controller.finish_load(&kept, LoadResult::Received(batch_of(&kept, &[10])));
     let cancellations = start_load(&mut controller, &excluded);
 
     controller.discard_excluded(|account_id| *account_id == kept);
@@ -162,9 +162,8 @@ fn a_confirmed_exclusion_discards_the_mail_and_cancels_its_load() {
     // The load ends only once its connection is closed.
     assert!(controller.is_loading());
 
-    // A result that arrives after the exclusion restores nothing, so the
-    // window says nothing about it.
-    assert!(!controller.finish_load(&excluded, LoadResult::Received(batch_of(&excluded, &[40]))));
+    // A result that arrives after the exclusion restores nothing.
+    controller.finish_load(&excluded, LoadResult::Received(batch_of(&excluded, &[40])));
     assert!(controller.inbox_of(&excluded).is_none());
     assert!(!controller.is_loading());
 }
@@ -308,7 +307,7 @@ fn each_failed_load_is_one_error_line_naming_its_cause() {
             }),
             r#"cause=Refused status=401 code="InvalidAuthenticationToken""#,
         ),
-        (LoadFailure::WorkerStopped, "cause=WorkerStopped"),
+        (LoadFailure::WorkerStopped(None), "cause=WorkerStopped"),
     ];
     for (failure, fields) in failures {
         let record = start_record(LogLevel::Debug);

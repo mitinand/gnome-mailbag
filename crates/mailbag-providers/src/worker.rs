@@ -8,9 +8,24 @@ use crate::{
     LoadFailure, LoadResult, gmail::load_gmail_inbox, imap::load_imap_inbox,
     microsoft365::load_microsoft365_inbox,
 };
-use futures_util::future::{self, Either};
+use futures_util::{
+    FutureExt,
+    future::{self, Either},
+};
 use goa_adapter::{GraphAccess, ImapAccess};
-use std::{cell::RefCell, pin::pin, thread};
+use std::{
+    cell::{Cell, RefCell},
+    panic::{self, AssertUnwindSafe},
+    pin::pin,
+    sync::Once,
+    thread,
+};
+
+thread_local! {
+    /// The last panic on this thread as `message at file:line`, written by the
+    /// panic hook and taken by the load the panic stopped.
+    static LAST_PANIC: Cell<Option<String>> = const { Cell::new(None) };
+}
 
 /// The mail worker. It runs one load at a time for the selected account and
 /// keeps GTK's context free of mail access. Its thread starts with the first
@@ -30,6 +45,9 @@ pub(crate) enum LoadKind {
         access: GraphAccess,
         service_url: String,
     },
+    /// Panics inside the load, as a hostile message could make a parser do.
+    #[cfg(test)]
+    PanicsForTest,
 }
 
 pub(crate) struct LoadRequest {
@@ -91,9 +109,10 @@ impl MailWorker {
     }
 }
 
-/// Reports how the load ended. A worker that stopped, for example because its
-/// thread panicked on hostile input, leaves no outcome behind; the window
-/// still hears that the load is over.
+/// Reports how the load ended. A panic inside a load ends only that load; a
+/// worker thread that stopped anyway, for example on a panic while dropping a
+/// cancelled load, leaves no outcome behind, and the window still hears that
+/// the load is over.
 pub(crate) async fn report_outcome(
     outcome: Option<async_channel::Receiver<LoadResult>>,
     on_finished: impl FnOnce(LoadResult),
@@ -102,11 +121,12 @@ pub(crate) async fn report_outcome(
         Some(outcome) => outcome.recv().await.ok(),
         None => None,
     };
-    on_finished(reported.unwrap_or(LoadResult::Failed(LoadFailure::WorkerStopped)));
+    on_finished(reported.unwrap_or(LoadResult::Failed(LoadFailure::WorkerStopped(None))));
 }
 
 /// Runs loads until the last worker handle is dropped.
 fn run_worker(requests: &async_channel::Receiver<LoadRequest>) {
+    install_panic_hook();
     let context = glib::MainContext::new();
     context
         .with_thread_default(|| {
@@ -122,9 +142,25 @@ fn run_worker(requests: &async_channel::Receiver<LoadRequest>) {
 
 /// Runs one provider's load until it finishes or the caller cancels it.
 async fn run_load(kind: LoadKind, cancelled: &async_channel::Receiver<()>) -> LoadResult {
+    let mut load = Box::pin(load_catching_panics(kind));
+    match future::select(&mut load, pin!(cancelled.recv())).await {
+        Either::Left((outcome, _)) => outcome,
+        Either::Right(_) => {
+            // Dropping the unfinished load closes its connection, before the
+            // outcome tells the window that the load has ended.
+            drop(load);
+            LoadResult::Cancelled
+        }
+    }
+}
+
+/// Runs the provider's load sequence. A panic inside it ends this load as a
+/// failure that carries the panic's message and place, and the worker goes
+/// on with the next load (specs/006-error-handling FR-014).
+async fn load_catching_panics(kind: LoadKind) -> LoadResult {
     // The kind is read once, here, to choose the sequence; no sequence asks
     // about the provider again (004 plan, decision D1).
-    let mut load = Box::pin(async move {
+    let load = async move {
         match kind {
             LoadKind::GenericImap(access) => {
                 load_imap_inbox(access).await.map_err(LoadFailure::Imap)
@@ -136,16 +172,34 @@ async fn run_load(kind: LoadKind, cancelled: &async_channel::Receiver<()>) -> Lo
             } => load_microsoft365_inbox(access, &service_url)
                 .await
                 .map_err(LoadFailure::MicrosoftGraph),
+            #[cfg(test)]
+            LoadKind::PanicsForTest => panic!("a load panicked on purpose"),
         }
-    });
-    match future::select(&mut load, pin!(cancelled.recv())).await {
-        Either::Left((Ok(batch), _)) => LoadResult::Received(batch),
-        Either::Left((Err(failure), _)) => LoadResult::Failed(failure),
-        Either::Right(_) => {
-            // Dropping the unfinished load closes its connection, before the
-            // outcome tells the window that the load has ended.
-            drop(load);
-            LoadResult::Cancelled
-        }
+    };
+    // No state outlives a load, so nothing the panic interrupted is used
+    // again. The payload is not read: the hook already kept the message.
+    match AssertUnwindSafe(load).catch_unwind().await {
+        Ok(Ok(batch)) => LoadResult::Received(batch),
+        Ok(Err(failure)) => LoadResult::Failed(failure),
+        Err(_) => LoadResult::Failed(LoadFailure::WorkerStopped(LAST_PANIC.take())),
     }
+}
+
+/// Keeps each panic's message and place on the thread where it happens, then
+/// lets the previous hook report it to the error stream as before. The hook
+/// serves the whole process, so it is installed once.
+fn install_panic_hook() {
+    static INSTALLED: Once = Once::new();
+    INSTALLED.call_once(|| {
+        let previous_hook = panic::take_hook();
+        panic::set_hook(Box::new(move |info| {
+            let message = info.payload_as_str().unwrap_or("panic");
+            let panic = match info.location() {
+                Some(place) => format!("{message} at {}:{}", place.file(), place.line()),
+                None => message.to_owned(),
+            };
+            LAST_PANIC.set(Some(panic));
+            previous_hook(info);
+        }));
+    });
 }

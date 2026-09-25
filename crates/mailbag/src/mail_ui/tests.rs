@@ -7,10 +7,11 @@ use goa_adapter::{
     AccountCheckError, AccountCheckResult, AccountDetails, AccountId, AccountProvider,
     AccountUpdate, ErrorCause,
 };
+use mailbag_content::ContentExplanation;
 use mailbag_imap::{ImapError, ImapFailure, ImapStep, ServerReply};
 use mailbag_providers::{
     CancelsLoadOnDrop, IncompleteList, LoadFailure, LoadResult, LoadsInbox, MailProvider,
-    MessageIdentity,
+    MessageIdentity, ReceivedMessage,
 };
 use std::{
     cell::Cell,
@@ -168,11 +169,18 @@ fn batch_with_two_messages(account_id: &AccountId) -> ReceivedBatch {
 }
 
 /// One message the sender never wrapped and one of ordinary lines, both at
-/// the 64 KiB display boundary.
+/// the 64 KiB display boundary, and one whose character set name is as long.
 fn unwrapped_and_ordinary_batch(account_id: &AccountId) -> ReceivedBatch {
     let bodies = [
-        ("Never wrapped", "я".repeat(32_768)),
-        ("Ordinary lines", "яяяяяяяя ".repeat(3_856)),
+        ("Never wrapped", ReceivedContent::Text("я".repeat(32_768))),
+        (
+            "Ordinary lines",
+            ReceivedContent::Text("яяяяяяяя ".repeat(3_856)),
+        ),
+        (
+            "Unknown character set",
+            ReceivedContent::Explained(ContentExplanation::UnknownCharset("x".repeat(65_536))),
+        ),
     ];
     ReceivedBatch {
         account_id: account_id.clone(),
@@ -189,7 +197,7 @@ fn unwrapped_and_ordinary_batch(account_id: &AccountId) -> ReceivedBatch {
                 },
                 internal_date: Some(1_700_000_000),
                 seen: true,
-                content: ReceivedContent::Text(body),
+                content: body,
                 gmail: None,
             })
             .collect(),
@@ -231,49 +239,58 @@ impl WindowWidgets {
         self.builder.object(name).expect("stack")
     }
 
+    /// The account page, which also shows the states of mail that are not
+    /// failures.
     fn status_title(&self) -> String {
-        self.builder
-            .object::<adw::StatusPage>("account_status")
-            .expect("account_status")
-            .title()
-            .to_string()
+        self.status_page("account_status").title().to_string()
     }
 
-    /// The window adds its plain-text mail explanation above the account
-    /// buttons of the status page.
-    fn mail_explanation(&self) -> Option<String> {
-        let actions = self
+    fn status_description(&self) -> String {
+        description_of(&self.status_page("account_status"))
+    }
+
+    fn failure_title(&self) -> String {
+        self.status_page("failure_status").title().to_string()
+    }
+
+    fn failure_description(&self) -> String {
+        description_of(&self.status_page("failure_status"))
+    }
+
+    fn status_page(&self, name: &str) -> adw::StatusPage {
+        self.builder.object(name).expect("status page")
+    }
+
+    /// A button of a status page, as `(label, action name)` when shown.
+    fn status_button(&self, name: &str) -> Option<(String, String)> {
+        let button: gtk::Button = self.builder.object(name).expect("status button");
+        button.is_visible().then(|| {
+            (
+                button.label().unwrap_or_default().to_string(),
+                button.action_name().unwrap_or_default().to_string(),
+            )
+        })
+    }
+
+    fn banner(&self) -> adw::Banner {
+        self.builder.object("list_banner").expect("list_banner")
+    }
+
+    /// The banner's title while it is revealed.
+    fn banner_title(&self) -> Option<String> {
+        let banner = self.banner();
+        banner.is_revealed().then(|| banner.title().to_string())
+    }
+
+    /// The reader's status page, shown in the body's place.
+    fn content_status(&self) -> Option<adw::StatusPage> {
+        let slot: gtk::Box = self
             .builder
-            .object::<adw::StatusPage>("account_status")
-            .expect("account_status")
-            .child()
-            .expect("status page actions");
-        let label = actions
-            .first_child()
-            .expect("mail explanation")
-            .downcast::<gtk::Label>()
-            .expect("mail explanation label");
-        label.is_visible().then(|| label.text().to_string())
-    }
-
-    /// Toasts the window has shown: everything the toast overlay holds
-    /// besides the window content.
-    fn toast_texts(&self) -> Vec<String> {
-        let overlay: adw::ToastOverlay = self.builder.object("toasts").expect("toasts");
-        let content = overlay.child();
-        let mut texts = Vec::new();
-        let mut child = overlay.first_child();
-        while let Some(current) = child {
-            if Some(&current) != content.as_ref() {
-                texts.extend(
-                    descendants::<gtk::Label>(&current)
-                        .into_iter()
-                        .map(|label| label.text().to_string()),
-                );
-            }
-            child = current.next_sibling();
-        }
-        texts
+            .object("singleton_slot")
+            .expect("singleton_slot");
+        descendants::<adw::StatusPage>(&slot.upcast())
+            .into_iter()
+            .find(|status| status.is_visible())
     }
 
     fn shows_load_feedback(&self) -> bool {
@@ -353,6 +370,13 @@ impl WindowWidgets {
     }
 }
 
+fn description_of(status: &adw::StatusPage) -> String {
+    status
+        .description()
+        .map(|description| description.to_string())
+        .unwrap_or_default()
+}
+
 fn row_texts(row: &gtk::ListBoxRow) -> String {
     descendants::<gtk::Label>(&row.clone().upcast())
         .into_iter()
@@ -411,7 +435,8 @@ fn mail_ui_transitions() {
     dispatch_pending();
     assert_eq!(widgets.list_page(), "empty");
     assert_eq!(widgets.status_title(), "Select an account");
-    assert_eq!(widgets.mail_explanation(), None);
+    assert_eq!(widgets.status_button("status_retry_check"), None);
+    assert_eq!(widgets.status_button("status_online_accounts"), None);
     assert_eq!(widgets.list_title(), ("Mailbag".to_owned(), String::new()));
     assert!(!refresh.is_enabled());
 
@@ -422,11 +447,9 @@ fn mail_ui_transitions() {
     assert_eq!(loader.running_loads(), 0);
     assert_eq!(widgets.status_title(), "No mail loaded");
     assert!(
-        widgets
-            .mail_explanation()
-            .is_some_and(|text| text.contains("Refresh Inbox")),
-        "{:?}",
-        widgets.mail_explanation()
+        widgets.status_description().contains("Refresh Inbox"),
+        "{}",
+        widgets.status_description()
     );
     assert_eq!(
         widgets.list_title(),
@@ -440,11 +463,7 @@ fn mail_ui_transitions() {
     dispatch_pending();
     assert!(refresh.is_enabled());
     assert_eq!(widgets.status_title(), "No mail loaded");
-    assert!(
-        widgets
-            .mail_explanation()
-            .is_some_and(|text| text.contains("Refresh Inbox"))
-    );
+    assert!(widgets.status_description().contains("Refresh Inbox"));
     // Refreshing it asks for the Gmail sequence, not the Generic IMAP one.
     refresh.activate(None);
     dispatch_pending();
@@ -482,18 +501,25 @@ fn mail_ui_transitions() {
     assert!(shows_unread_dot(&rows[0]));
     assert!(!shows_unread_dot(&rows[1]));
 
-    // Opening a message shows received content and sends no request.
+    // Opening a message shows received content and sends no request. A
+    // message without text shows why in the body's place; its row stays.
     rows[1].emit_by_name::<()>("activate", &[]);
     dispatch_pending();
     assert_eq!(widgets.reader_page(), "message");
-    assert!(
-        widgets.reader_body().contains("could not be read"),
-        "{}",
-        widgets.reader_body()
-    );
+    let content_failure = ReceivedContent::StructureUnreadable
+        .declare()
+        .expect("no text to show");
+    let content_status = widgets.content_status().expect("the reader's status page");
+    assert_eq!(content_status.title(), content_failure.title);
+    assert!(!widgets.reader_body_label().is_visible());
     assert_eq!(widgets.reader_subject(), "First subject");
     assert!(widgets.reader_body().contains("First sender"));
     assert_eq!(loader.running_loads(), 0);
+    rows[0].emit_by_name::<()>("activate", &[]);
+    dispatch_pending();
+    assert!(widgets.content_status().is_none());
+    assert!(widgets.reader_body_label().is_visible());
+    assert_eq!(widgets.reader_body_label().text(), "Second body");
 
     // An account update that leaves this account's mail alone keeps the rows
     // and the open message.
@@ -502,29 +528,34 @@ fn mail_ui_transitions() {
     assert_eq!(widgets.rows().len(), 2);
     assert_eq!(widgets.reader_page(), "message");
 
-    // A list the server refused to finish keeps its rows and says why once.
+    // A list the server refused to finish keeps its rows under the banner,
+    // which stays while that list is on screen.
     refresh.activate(None);
     dispatch_pending();
     let mut short_batch = batch_with_two_messages(&generic);
     short_batch.messages.pop();
-    short_batch.incomplete = Some(IncompleteList::ServerRefused(ServerReply {
+    let refusal = IncompleteList::ServerRefused(ServerReply {
         code: None,
         text: "Some messages could not be FETCHed".to_owned(),
-    }));
+    });
+    short_batch.incomplete = Some(refusal.clone());
     loader.report(LoadResult::Received(short_batch));
     dispatch_pending();
     assert_eq!(widgets.rows().len(), 1);
     assert_eq!(widgets.list_page(), "messages");
-    let notice = widgets
-        .toast_texts()
-        .into_iter()
-        .find(|text| text.contains("could not be loaded"))
-        .expect("a toast naming the refusal");
-    assert!(notice.contains("Generic"), "{notice}");
-    assert!(
-        notice.contains("Some messages could not be FETCHed"),
-        "{notice}"
-    );
+    let short_list_title = Some(refusal.declare().title.to_owned());
+    assert_eq!(widgets.banner_title(), short_list_title);
+    widgets.select_account(1);
+    dispatch_pending();
+    assert_eq!(widgets.banner_title(), None);
+    widgets.select_account(0);
+    dispatch_pending();
+    assert_eq!(widgets.banner_title(), short_list_title);
+    assert_eq!(widgets.rows().len(), 1);
+    widgets.banner().emit_by_name::<()>("button-clicked", &[]);
+    let dialog = window.visible_dialog().expect("the failure dialog");
+    assert_eq!(dialog.title(), refusal.declare().title);
+    dialog.force_close();
 
     // A message the sender never wrapped opens without freezing the window,
     // and ordinary text keeps word wrapping.
@@ -532,6 +563,8 @@ fn mail_ui_transitions() {
     dispatch_pending();
     loader.report(LoadResult::Received(unwrapped_and_ordinary_batch(&generic)));
     dispatch_pending();
+    // The next complete load leaves no banner behind.
+    assert_eq!(widgets.banner_title(), None);
     let long_rows = widgets.rows();
     long_rows[0].emit_by_name::<()>("activate", &[]);
     // The wrapping is checked before the layout runs, because word wrapping
@@ -555,6 +588,16 @@ fn mail_ui_transitions() {
         ordinary < Duration::from_secs(5),
         "opening took {ordinary:?}"
     );
+    // A name from the message in the reader's status page is laid out as
+    // fast: that page wraps its description by word.
+    long_rows[2].emit_by_name::<()>("activate", &[]);
+    let started = Instant::now();
+    dispatch_pending();
+    let content_status = widgets.content_status().expect("the reader's status page");
+    content_status.measure(gtk::Orientation::Horizontal, -1);
+    content_status.measure(gtk::Orientation::Vertical, 800);
+    let named = started.elapsed();
+    assert!(named < Duration::from_secs(5), "opening took {named:?}");
 
     // A refresh clears the list and the reader before loading again.
     refresh.activate(None);
@@ -562,32 +605,105 @@ fn mail_ui_transitions() {
     assert!(widgets.rows().is_empty());
     assert_eq!(widgets.reader_page(), "unselected");
 
-    // A failed load explains its step, with the server's own text.
+    // A failed load takes the list's place with its declaration; the
+    // server's words stay in the failure dialog.
+    let rejected = rejected_sign_in().declare();
     loader.report(LoadResult::Failed(rejected_sign_in()));
     dispatch_pending();
-    assert_eq!(widgets.list_page(), "empty");
-    assert_eq!(widgets.status_title(), "The mail server rejected sign-in");
-    let explanation = widgets.mail_explanation().expect("failure explanation");
-    assert!(explanation.contains("Invalid credentials"), "{explanation}");
-    assert!(explanation.contains("Online Accounts"), "{explanation}");
+    assert_eq!(widgets.list_page(), "failed");
+    assert_eq!(widgets.failure_title(), rejected.title);
+    // The page reads its description as markup, so the text arrives escaped.
+    let description = widgets.failure_description();
+    for paragraph in [
+        rejected.explanation.as_str(),
+        rejected.advice.expect("sign-in advice"),
+    ] {
+        let escaped = glib::markup_escape_text(paragraph);
+        assert!(description.contains(escaped.as_str()), "{description}");
+    }
     assert!(
-        explanation.contains("quota is nearly full"),
-        "{explanation}"
+        !description.contains("Invalid credentials"),
+        "{description}"
     );
+    assert_eq!(
+        widgets.status_button("failure_action"),
+        Some(("Online Accounts".to_owned(), "app.accounts".to_owned()))
+    );
+    assert!(widgets.status_button("failure_details").is_some());
     assert!(refresh.is_enabled());
+    click(&widgets, "failure_details");
+    // The dialog shows the paragraphs, one block per remote text and the
+    // technical details, in the spec's order, and the action.
+    let dialog = window.visible_dialog().expect("the failure dialog");
+    assert_eq!(dialog.title(), rejected.title);
+    let labels = descendants::<gtk::Label>(&dialog.clone().upcast());
+    let shown_texts: Vec<String> = labels
+        .iter()
+        .filter(|label| label.is_visible())
+        .map(|label| label.text().to_string())
+        .collect();
+    assert!(
+        shown_texts.contains(&rejected.explanation),
+        "{shown_texts:?}"
+    );
+    let advice = rejected.advice.expect("sign-in advice").to_owned();
+    assert!(shown_texts.contains(&advice), "{shown_texts:?}");
+    let headings: Vec<String> = labels
+        .iter()
+        .filter(|label| label.has_css_class("heading"))
+        .map(|label| label.text().to_string())
+        .collect();
+    assert_eq!(
+        headings,
+        [
+            "Alert from the mail server",
+            "Reply from the mail server",
+            "Technical details"
+        ]
+    );
+    assert!(
+        descendants::<gtk::Button>(&dialog.clone().upcast())
+            .iter()
+            .any(|button| button.is_visible()
+                && button.label().as_deref() == Some("Online Accounts"))
+    );
+    // A closed dialog is released with its widgets; the accessibility layer
+    // lets go of it a few milliseconds after the window does.
+    let closed_dialog = dialog.downgrade();
+    dialog.force_close();
+    drop((dialog, labels));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while closed_dialog.upgrade().is_some() && Instant::now() < deadline {
+        dispatch_pending();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(closed_dialog.upgrade().is_none());
+
+    // A failure nothing the user does can change offers no action, only
+    // Details.
+    refresh.activate(None);
+    dispatch_pending();
+    assert_eq!(widgets.list_page(), "empty");
+    loader.report(LoadResult::Failed(LoadFailure::Imap(
+        ImapFailure::NoSignInMethod.into(),
+    )));
+    dispatch_pending();
+    assert_eq!(widgets.status_button("failure_action"), None);
+    assert!(widgets.status_button("failure_details").is_some());
 
     // A repeated refresh that switches accounts keeps loading for its own one.
     refresh.activate(None);
     dispatch_pending();
     widgets.select_account(1);
     dispatch_pending();
-    assert_eq!(widgets.status_title(), "The mail server rejected sign-in");
+    assert_eq!(widgets.list_page(), "failed");
+    assert_eq!(widgets.failure_title(), rejected.title);
     assert!(widgets.shows_load_feedback());
     // The load continues for the account it was started for.
     assert_eq!(loader.loading_account().as_ref(), Some(&generic));
     loader.report(LoadResult::Received(batch_with_two_messages(&generic)));
     dispatch_pending();
-    assert_eq!(widgets.list_page(), "empty");
+    assert_eq!(widgets.list_page(), "failed");
     assert!(widgets.rows().is_empty());
     widgets.select_account(0);
     dispatch_pending();
@@ -602,7 +718,10 @@ fn mail_ui_transitions() {
     dispatch_pending();
     assert_eq!(widgets.list_page(), "empty");
     assert_eq!(widgets.status_title(), "Unable to get accounts");
-    assert_eq!(widgets.mail_explanation(), None);
+    assert_eq!(
+        widgets.status_button("status_retry_check"),
+        Some(("Retry Check".to_owned(), "app.retry-accounts".to_owned()))
+    );
     ui.apply_account_update(&imap_and_google_accounts());
     dispatch_pending();
     assert_eq!(widgets.list_page(), "messages");
@@ -625,7 +744,27 @@ fn mail_ui_transitions() {
     dispatch_pending();
     assert!(widgets.rows().is_empty());
     assert!(!widgets.shows_load_feedback());
+
+    // Without mail accounts the page points to Online Accounts.
+    ui.apply_account_update(&AccountUpdate {
+        last_check: AccountCheckResult::Complete,
+        ..Default::default()
+    });
+    dispatch_pending();
+    assert_eq!(
+        widgets.status_button("status_online_accounts"),
+        Some(("Online Accounts".to_owned(), "app.accounts".to_owned()))
+    );
     window.destroy();
+}
+
+fn click(widgets: &WindowWidgets, button: &str) {
+    widgets
+        .builder
+        .object::<gtk::Button>(button)
+        .expect("button")
+        .emit_clicked();
+    dispatch_pending();
 }
 
 #[test]
@@ -650,20 +789,11 @@ fn a_nul_byte_never_reaches_a_gtk_label() {
 }
 
 #[test]
-fn a_message_without_text_explains_why_in_the_reader() {
-    let charset = explain_content(&ContentExplanation::UnknownCharset("x-weird".to_owned()));
-    assert!(charset.contains("x-weird"), "{charset}");
-    let html_only = explain_content(&ContentExplanation::NoPlainText { has_html: true });
-    assert!(html_only.contains("HTML"), "{html_only}");
-    let not_returned = reader_body_text(&ReceivedMessage {
-        identity: MessageIdentity::ImapUid(1),
-        fields: DisplayFields::default(),
-        internal_date: None,
-        seen: false,
-        content: ReceivedContent::TextNotReturned,
-        gmail: None,
-    });
-    assert!(not_returned.contains("Refresh Inbox"), "{not_returned}");
+fn a_description_keeps_its_words_and_cuts_only_a_run_too_long_to_wrap_by_word() {
+    let sentence = format!("Unknown character set: {}", "x".repeat(65_536));
+    let described = cut_unbroken_runs(&sentence);
+    assert!(described.starts_with("Unknown character set: x"));
+    assert_eq!(longest_unbroken_run(&described), LONGEST_WORD_WRAPPED_RUN);
 }
 
 #[test]
