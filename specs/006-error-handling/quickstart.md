@@ -8,8 +8,10 @@ cannot: the real widgets, the keyboard and the screen reader (SC-005).
 
 ## A failed load (US1)
 
-1. In Online Accounts, change the password of a Generic IMAP account to a
-   wrong one. Start Mailbag, select the account, refresh. Expect the status
+1. Make a Generic IMAP account's stored password wrong: Online Accounts
+   checks the sign-in when an account is added and offers no password
+   change, so revoke the account's app password at the provider. Start
+   Mailbag, select the account, refresh. Expect the status
    page with the warning icon, a short title such as "Sign-in rejected", a
    plain explanation, the advice to check the sign-in in Online Accounts, the
    buttons Online Accounts and Details. No password or address anywhere on the
@@ -20,7 +22,8 @@ cannot: the real widgets, the keyboard and the screen reader (SC-005).
    "Technical details" with `Failure: Failed(SignIn)` and the server code,
    the Online Accounts button. Press the copy button, paste into a text
    editor: the same text in the same order.
-3. Restore the password. Turn the network off, refresh. Expect a short
+3. Restore the account (a new app password needs the account added
+   again). Turn the network off, refresh. Expect a short
    title such as "Server unreachable" with Retry and Details; the dialog
    shows the technical details. Turn the network on, press Retry: the list
    loads.
@@ -28,8 +31,8 @@ cannot: the real widgets, the keyboard and the screen reader (SC-005).
 ## A short list and a content problem (US3, US5)
 
 4. With the scripted server only (tests): a refused list shows the banner
-   "Some messages are missing" with Details; a page cut short by the Graph
-   service shows "Only the newest 100 loaded". Live, the banner cannot be
+   "Some messages not loaded" with Details; a page cut short by the Graph
+   service shows "Not all messages loaded". Live, the banner cannot be
    provoked on demand; the tests are the evidence.
 5. Open an encrypted message and one with an unknown character set (the
    002 fixtures, or real ones in the Inbox). Expect the envelope, then the

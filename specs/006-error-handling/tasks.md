@@ -99,7 +99,7 @@ panic on the worker.
 ## Phase 6: polish
 
 - [X] T020 Run the simplify review on the branch diff in a fresh session; bring scope-adding findings to the maintainer with the cost of each; apply what is accepted as one more commit if any.
-- [ ] T021 Run quickstart.md on the installed build with the maintainer (steps 1–3, 5–8; the wrong password and the accounts are the maintainer's); record in plan.md, under a "Post-implementation" section, what was verified live and what only by tests (steps 4 and 9 by tests).
+- [X] T021 Run quickstart.md on the installed build with the maintainer (steps 1–3, 5–8; the wrong password and the accounts are the maintainer's); record in plan.md, under a "Post-implementation" section, what was verified live and what only by tests (steps 4 and 9 by tests).
 - [ ] T022 STOP: final report with the whole-feature size against plan.md's table, the PR description, the list of amended documents (002, 003, 005, AGENTS.md), and the state of every deferred item.
 
 ## Dependencies

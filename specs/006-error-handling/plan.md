@@ -275,3 +275,25 @@ the repository; only the files above are.
 | specs/003-logging/spec.md FR-011; research.md §6 | The sign-in name is replaced once, where the failure is built; the reply no longer travels to the UI unchanged; no separate copy for the record | 1 |
 | specs/002-imap-integration/contracts/ui.md | The wording table and the toast rule for an incomplete list are superseded by 006; the reader's explanation in place of the text becomes a status page; the status page's explanation goes into the escaped description | 3 |
 | specs/005-microsoft-graph-integration/research.md §5 | The service's message may appear in the failure dialog as a remote text | 3 |
+
+## Post-implementation
+
+Acceptance on 2026-09-25 with the installed Flatpak build of the branch,
+by the maintainer, following [quickstart.md](quickstart.md).
+
+| Step | How | Result |
+|---|---|---|
+| 1. Rejected sign-in | Live. Online Accounts cannot store a wrong password (it checks the sign-in when an account is added and offers no password change), so the account's app password was revoked at the provider | The failure page, the Online Accounts button and Details, as declared |
+| 2. The failure dialog and copy | Live, on the rejected sign-in and on an unreachable server | Blocks in the spec's order; the copied text matches |
+| 3. Unreachable server, Retry | Live, network off, then on | "Server unreachable" with Retry and Details; Retry loads the list |
+| 4. Short list banner | Tests only (the scripted server and service) | — |
+| 5. Content problem in the reader | Live | The reader's status page under the envelope; rows kept |
+| 6. Keyboard | Live | As described |
+| 7. Screen reader | Live, Orca | As described |
+| 8. The record | Live, `--log-level=debug` | One error line per failed load (`cause=Failed(SignIn) code="AUTHENTICATIONFAILED"`, `cause=Failed(Connect)`); the server's reply at debug; no address, password or token in the file |
+| 9. Panic on the worker | Tests only (a load that panics on purpose) | — |
+
+Not verified live: `<login>` in a server's text, because the real
+server's rejection did not repeat the sign-in name (the IMAP tests with
+the scripted server cover it); the Retry Check progress state on the
+account page's own button.
