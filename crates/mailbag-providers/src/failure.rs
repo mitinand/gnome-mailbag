@@ -317,7 +317,12 @@ fn declare_imap_failure(error: &ImapError) -> DeclaredFailure {
         ),
     };
     let (action, advice) = match error.failure {
-        _ if credential_may_be_wrong(error) => {
+        // A rejected sign-in points to the sign-in only when the server blamed
+        // the credentials or gave no code; another code, such as a temporary
+        // UNAVAILABLE, says nothing about the credential.
+        ImapFailure::Failed(ImapStep::SignIn)
+            if server_code.is_none_or(|code| code.eq_ignore_ascii_case("AUTHENTICATIONFAILED")) =>
+        {
             (Some(FailureAction::OnlineAccounts), Some(CHECK_SIGN_IN))
         }
         // Repeating meets the same certificate or the same server offer.
@@ -342,23 +347,6 @@ fn declare_imap_failure(error: &ImapError) -> DeclaredFailure {
         action,
         remote_texts: alerts.chain(reply).collect(),
         details: String::new(),
-    }
-}
-
-/// A rejected sign-in points to the sign-in only when the server blamed the
-/// credentials or gave no code; another code, such as a temporary
-/// UNAVAILABLE, says nothing about the credential.
-fn credential_may_be_wrong(error: &ImapError) -> bool {
-    if error.failure != ImapFailure::Failed(ImapStep::SignIn) {
-        return false;
-    }
-    match error
-        .server_reply
-        .as_ref()
-        .and_then(|reply| reply.code.as_deref())
-    {
-        None => true,
-        Some(code) => code.eq_ignore_ascii_case("AUTHENTICATIONFAILED"),
     }
 }
 

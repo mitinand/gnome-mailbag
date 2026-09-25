@@ -25,8 +25,9 @@ pub struct WindowUi {
     list_stack: gtk::Stack,
     /// The account page and the states of mail that are not failures.
     status: adw::StatusPage,
-    /// The account page's one action.
-    status_action: gtk::Button,
+    /// The account page's buttons; at most one is shown.
+    status_retry_check: gtk::Button,
+    status_online_accounts: gtk::Button,
     /// A load that delivered no mail, in the list's place.
     failure_status: adw::StatusPage,
     failure_action: gtk::Button,
@@ -60,9 +61,12 @@ impl WindowUi {
             status: builder
                 .object("account_status")
                 .expect("mailbag.ui: account_status"),
-            status_action: builder
-                .object("status_action")
-                .expect("mailbag.ui: status_action"),
+            status_retry_check: builder
+                .object("status_retry_check")
+                .expect("mailbag.ui: status_retry_check"),
+            status_online_accounts: builder
+                .object("status_online_accounts")
+                .expect("mailbag.ui: status_online_accounts"),
             failure_status: builder
                 .object("failure_status")
                 .expect("mailbag.ui: failure_status"),
@@ -225,21 +229,12 @@ impl WindowUi {
         self.status.set_title(title);
         self.status
             .set_description((!description.is_empty()).then_some(description));
-        match accounts.page_action() {
-            Some(PageAction::RetryCheck) => {
-                self.status_action
-                    .set_action_name(Some("app.retry-accounts"));
-                show_check_progress(&self.status_action, accounts.retry_pending());
-                self.status_action.set_visible(true);
-            }
-            Some(PageAction::OnlineAccounts) => {
-                self.status_action.set_label("Online Accounts");
-                self.status_action.set_action_name(Some("app.accounts"));
-                self.status_action.set_sensitive(true);
-                self.status_action.set_visible(true);
-            }
-            None => self.status_action.set_visible(false),
-        }
+        let action = accounts.page_action();
+        self.status_retry_check
+            .set_visible(action == Some(PageAction::RetryCheck));
+        show_check_progress(&self.status_retry_check, accounts.retry_pending());
+        self.status_online_accounts
+            .set_visible(action == Some(PageAction::OnlineAccounts));
     }
 
     /// A state of the selected account's mail that is not a failure.
@@ -247,7 +242,8 @@ impl WindowUi {
         self.list_stack.set_visible_child_name("empty");
         self.status.set_title(title);
         self.status.set_description(description);
-        self.status_action.set_visible(false);
+        self.status_retry_check.set_visible(false);
+        self.status_online_accounts.set_visible(false);
     }
 
     /// A load that delivered no mail: the failure page takes the list's
@@ -264,7 +260,6 @@ impl WindowUi {
     /// The rows on screen are fewer than the Inbox offered.
     fn show_short_list(&self, failure: &DeclaredFailure) {
         self.list_banner.set_title(failure.title);
-        self.list_banner.set_button_label(Some("Details"));
         self.list_banner.set_revealed(true);
     }
 

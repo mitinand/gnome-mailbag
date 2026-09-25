@@ -208,7 +208,6 @@ impl MailUi {
     }
 
     fn close_reader(&self) {
-        self.show_content_failure(None);
         self.messages.unselect_all();
         self.singleton_slot.set_visible(false);
         self.reader_stack.set_visible_child_name("unselected");

@@ -84,7 +84,7 @@ this table.
 - A declaration is built when a channel needs it, from the failure value;
   nothing is stored beyond the failure value the window already keeps.
 - The action names: `Retry` is the window's `app.refresh-inbox`,
-  `OnlineAccounts` is `app.accounts`; `failure_dialog::action_button` in
+  `OnlineAccounts` is `app.accounts`; `failure_dialog::show_action_button` in
   `mailbag` is the one place that maps them to a label and an action name.
   A declaration never names a widget or an action string.
 - `LoadFailure::cause_name`, `status` and `server_code` are the one source

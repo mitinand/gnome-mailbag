@@ -427,7 +427,8 @@ fn mail_ui_transitions() {
     dispatch_pending();
     assert_eq!(widgets.list_page(), "empty");
     assert_eq!(widgets.status_title(), "Select an account");
-    assert_eq!(widgets.status_button("status_action"), None);
+    assert_eq!(widgets.status_button("status_retry_check"), None);
+    assert_eq!(widgets.status_button("status_online_accounts"), None);
     assert_eq!(widgets.list_title(), ("Mailbag".to_owned(), String::new()));
     assert!(!refresh.is_enabled());
 
@@ -606,25 +607,31 @@ fn mail_ui_transitions() {
         !description.contains("Invalid credentials"),
         "{description}"
     );
-    let (label, action_name) =
-        crate::failure_dialog::action_button(rejected.action.expect("an action"));
     assert_eq!(
         widgets.status_button("failure_action"),
-        Some((label.to_owned(), action_name.to_owned()))
+        Some(("Online Accounts".to_owned(), "app.accounts".to_owned()))
     );
     assert!(widgets.status_button("failure_details").is_some());
     assert!(refresh.is_enabled());
     click(&widgets, "failure_details");
-    let dialog = window.visible_dialog().expect("the failure dialog");
-    assert_eq!(dialog.title(), rejected.title);
-    dialog.force_close();
     // The dialog shows the paragraphs, one block per remote text and the
     // technical details, in the spec's order, and the action.
-    let built = crate::failure_dialog::build(&rejected);
-    assert_eq!(built.explanation.text(), rejected.explanation);
-    assert!(built.advice.is_visible());
-    let headings: Vec<String> = descendants::<gtk::Label>(&built.blocks.clone().upcast())
-        .into_iter()
+    let dialog = window.visible_dialog().expect("the failure dialog");
+    assert_eq!(dialog.title(), rejected.title);
+    let labels = descendants::<gtk::Label>(&dialog.clone().upcast());
+    let shown_texts: Vec<String> = labels
+        .iter()
+        .filter(|label| label.is_visible())
+        .map(|label| label.text().to_string())
+        .collect();
+    assert!(
+        shown_texts.contains(&rejected.explanation),
+        "{shown_texts:?}"
+    );
+    let advice = rejected.advice.expect("sign-in advice").to_owned();
+    assert!(shown_texts.contains(&advice), "{shown_texts:?}");
+    let headings: Vec<String> = labels
+        .iter()
         .filter(|label| label.has_css_class("heading"))
         .map(|label| label.text().to_string())
         .collect();
@@ -636,7 +643,13 @@ fn mail_ui_transitions() {
             "Technical details"
         ]
     );
-    assert_eq!(built.action.label().as_deref(), Some(label));
+    assert!(
+        descendants::<gtk::Button>(&dialog.clone().upcast())
+            .iter()
+            .any(|button| button.is_visible()
+                && button.label().as_deref() == Some("Online Accounts"))
+    );
+    dialog.force_close();
 
     // A failure nothing the user does can change offers no action, only
     // Details.
@@ -678,7 +691,7 @@ fn mail_ui_transitions() {
     assert_eq!(widgets.list_page(), "empty");
     assert_eq!(widgets.status_title(), "Unable to get accounts");
     assert_eq!(
-        widgets.status_button("status_action"),
+        widgets.status_button("status_retry_check"),
         Some(("Retry Check".to_owned(), "app.retry-accounts".to_owned()))
     );
     ui.apply_account_update(&imap_and_google_accounts());
@@ -711,7 +724,7 @@ fn mail_ui_transitions() {
     });
     dispatch_pending();
     assert_eq!(
-        widgets.status_button("status_action"),
+        widgets.status_button("status_online_accounts"),
         Some(("Online Accounts".to_owned(), "app.accounts".to_owned()))
     );
     window.destroy();

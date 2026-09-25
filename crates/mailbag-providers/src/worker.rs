@@ -109,9 +109,10 @@ impl MailWorker {
     }
 }
 
-/// Reports how the load ended. A worker that stopped, for example because its
-/// thread panicked on hostile input, leaves no outcome behind; the window
-/// still hears that the load is over.
+/// Reports how the load ended. A panic inside a load ends only that load; a
+/// worker thread that stopped anyway, for example on a panic while dropping a
+/// cancelled load, leaves no outcome behind, and the window still hears that
+/// the load is over.
 pub(crate) async fn report_outcome(
     outcome: Option<async_channel::Receiver<LoadResult>>,
     on_finished: impl FnOnce(LoadResult),

@@ -12,36 +12,19 @@ use crate::mail_ui::{inert_text, show_inert_text};
 use adw::{glib, gtk, prelude::*};
 use mailbag_providers::{DeclaredFailure, FailureAction};
 
-/// The widgets of one failure dialog, filled from a declaration.
-pub(crate) struct FailureDialogWidgets {
-    pub(crate) dialog: adw::Dialog,
-    pub(crate) explanation: gtk::Label,
-    pub(crate) advice: gtk::Label,
-    /// One block per remote text, then the technical details.
-    pub(crate) blocks: gtk::Box,
-    pub(crate) action: gtk::Button,
-    pub(crate) copy_button: gtk::Button,
-}
-
-/// The label and the action name of a failure's action button; the one place
-/// that turns an action into a button.
-pub fn action_button(action: FailureAction) -> (&'static str, &'static str) {
-    match action {
-        FailureAction::Retry => ("Retry", "app.refresh-inbox"),
-        FailureAction::OnlineAccounts => ("Online Accounts", "app.accounts"),
-    }
-}
-
-/// Gives a form's action button the declared action, or hides it.
+/// Gives a form's action button the declared action, or hides it. The one
+/// place that turns an action into a label and an action name.
 pub fn show_action_button(button: &gtk::Button, action: Option<FailureAction>) {
     let Some(action) = action else {
         button.set_visible(false);
         return;
     };
-    let (label, action_name) = action_button(action);
+    let (label, action_name) = match action {
+        FailureAction::Retry => ("Retry", "app.refresh-inbox"),
+        FailureAction::OnlineAccounts => ("Online Accounts", "app.accounts"),
+    };
     button.set_label(label);
     button.set_action_name(Some(action_name));
-    button.set_sensitive(true);
     button.set_visible(true);
 }
 
@@ -55,60 +38,43 @@ pub fn status_description(failure: &DeclaredFailure) -> String {
     glib::markup_escape_text(&inert_text(&paragraphs.join("\n\n"))).to_string()
 }
 
-/// Opens the failure dialog over the window that holds `parent`.
+/// Opens the failure dialog over the window that holds `parent`, filled from
+/// its form in the order the spec gives: explanation, advice, remote texts,
+/// technical details, action.
 pub fn present(parent: &impl IsA<gtk::Widget>, failure: &DeclaredFailure) {
-    let widgets = build(failure);
+    let builder = gtk::Builder::from_string(include_str!("../resources/ui/failure-dialog.ui"));
+    let dialog: adw::Dialog = builder
+        .object("failure_dialog")
+        .expect("failure-dialog.ui: failure_dialog");
+    let explanation: gtk::Label = builder
+        .object("dialog_explanation")
+        .expect("failure-dialog.ui: dialog_explanation");
+    let advice: gtk::Label = builder
+        .object("dialog_advice")
+        .expect("failure-dialog.ui: dialog_advice");
+    let blocks: gtk::Box = builder
+        .object("dialog_blocks")
+        .expect("failure-dialog.ui: dialog_blocks");
+    let action: gtk::Button = builder
+        .object("dialog_action")
+        .expect("failure-dialog.ui: dialog_action");
+    let copy_button: gtk::Button = builder
+        .object("copy_button")
+        .expect("failure-dialog.ui: copy_button");
+
+    dialog.set_title(failure.title);
+    show_paragraph(&explanation, &failure.explanation);
+    show_paragraph(&advice, failure.advice.unwrap_or_default());
+    append_blocks(&blocks, failure);
+    show_action_button(&action, failure.action);
+    let closing = dialog.clone();
+    action.connect_clicked(move |_| {
+        closing.close();
+    });
     let clipboard = parent.clipboard();
     let copied_text = report_text(failure);
-    widgets
-        .copy_button
-        .connect_clicked(move |_| clipboard.set_text(&copied_text));
-    widgets.dialog.present(Some(parent));
-}
-
-/// Builds the dialog from its form and fills it in the order the spec gives:
-/// explanation, advice, remote texts, technical details, action.
-pub(crate) fn build(failure: &DeclaredFailure) -> FailureDialogWidgets {
-    let builder = gtk::Builder::from_string(include_str!("../resources/ui/failure-dialog.ui"));
-    let widgets = FailureDialogWidgets {
-        dialog: builder
-            .object("failure_dialog")
-            .expect("failure-dialog.ui: failure_dialog"),
-        explanation: builder
-            .object("dialog_explanation")
-            .expect("failure-dialog.ui: dialog_explanation"),
-        advice: builder
-            .object("dialog_advice")
-            .expect("failure-dialog.ui: dialog_advice"),
-        blocks: builder
-            .object("dialog_blocks")
-            .expect("failure-dialog.ui: dialog_blocks"),
-        action: builder
-            .object("dialog_action")
-            .expect("failure-dialog.ui: dialog_action"),
-        copy_button: builder
-            .object("copy_button")
-            .expect("failure-dialog.ui: copy_button"),
-    };
-    widgets.dialog.set_title(failure.title);
-    show_paragraph(&widgets.explanation, &failure.explanation);
-    show_paragraph(&widgets.advice, failure.advice.unwrap_or_default());
-    for remote_text in &failure.remote_texts {
-        widgets
-            .blocks
-            .append(&build_block(remote_text.source, &remote_text.text));
-    }
-    if !failure.details.is_empty() {
-        widgets
-            .blocks
-            .append(&build_block("Technical details", &failure.details));
-    }
-    show_action_button(&widgets.action, failure.action);
-    let dialog = widgets.dialog.clone();
-    widgets.action.connect_clicked(move |_| {
-        dialog.close();
-    });
-    widgets
+    copy_button.connect_clicked(move |_| clipboard.set_text(&copied_text));
+    dialog.present(Some(parent));
 }
 
 /// What the copy button puts on the clipboard: the dialog's text in its
@@ -135,6 +101,16 @@ pub fn report_text(failure: &DeclaredFailure) -> String {
 fn show_paragraph(label: &gtk::Label, text: &str) {
     show_inert_text(label, &inert_text(text));
     label.set_visible(!text.is_empty());
+}
+
+/// One block per remote text, then the technical details.
+fn append_blocks(blocks: &gtk::Box, failure: &DeclaredFailure) {
+    for remote_text in &failure.remote_texts {
+        blocks.append(&build_block(remote_text.source, &remote_text.text));
+    }
+    if !failure.details.is_empty() {
+        blocks.append(&build_block("Technical details", &failure.details));
+    }
 }
 
 /// One block of the dialog from its form: a heading and selectable text.

@@ -127,8 +127,8 @@ The entry points and their steps, as the code will read.
 - `present(parent, &DeclaredFailure)`: `build_from_form`, `fill_paragraphs`,
   `append_blocks`, `bind_action`, `bind_copy`.
 - `report_text(&DeclaredFailure) -> String`: what the copy button copies.
-- `action_button(FailureAction) -> (&'static str, &'static str)`: the label
-  and the action name (`Retry` → "Retry", `app.refresh-inbox`;
+- `show_action_button(&gtk::Button, Option<FailureAction>)`: gives a form's
+  action button its label and action name, or hides it (`Retry` → "Retry", `app.refresh-inbox`;
   `OnlineAccounts` → "Online Accounts", `app.accounts`), the one place
   that turns an action into a button; the window, the reader and the
   dialog call it. `main.rs` registers `retry-accounts` as an application
@@ -142,8 +142,10 @@ The entry points and their steps, as the code will read.
 
 **`mailbag/src/account_ui.rs`**
 
-- `page_action`: which of the form's buttons 001's pages need; the window
-  sets `status_action` from it, with the Retry Check progress state.
+- `page_action`: which of the form's two buttons 001's pages need
+  (`status_retry_check`, `status_online_accounts`, each with its action
+  name in the form); the window shows that one, with the Retry Check
+  progress state.
 
 ## Optional mechanisms
 

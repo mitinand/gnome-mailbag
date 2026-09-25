@@ -62,26 +62,25 @@ impl InboxController {
     }
 
     /// Stores how the load ended under the account it was started for, and
-    /// leaves Loading so Refresh Inbox becomes available again. Returns
-    /// whether the account keeps the result.
-    pub fn finish_load(&mut self, account_id: &AccountId, result: LoadResult) -> bool {
+    /// leaves Loading so Refresh Inbox becomes available again.
+    pub fn finish_load(&mut self, account_id: &AccountId, result: LoadResult) {
         if self
             .running_load
             .take_if(|running| running.account_id == *account_id)
             .is_none()
         {
-            return false;
+            return;
         }
         let account = account_id.as_str();
         let inbox = match result {
             // The cancellation was recorded where it was requested.
-            LoadResult::Cancelled => return false,
+            LoadResult::Cancelled => return,
             _ if !self.awaits_result(account_id) => {
                 tracing::info!(
                     account,
                     "Inbox load result discarded: the account is no longer shown"
                 );
-                return false;
+                return;
             }
             LoadResult::Received(batch) => {
                 log_received_batch(account, &batch);
@@ -93,7 +92,6 @@ impl InboxController {
             }
         };
         self.inboxes.insert(account_id.clone(), inbox);
-        true
     }
 
     /// Discards the mail of accounts Online Accounts no longer shows and

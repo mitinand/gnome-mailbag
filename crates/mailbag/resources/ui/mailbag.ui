@@ -229,6 +229,7 @@
                             </child>
                             <child>
                               <object class="AdwBanner" id="list_banner">
+                                <property name="button-label" translatable="yes">Details</property>
                                 <property name="revealed">false</property>
                                 <property name="use-markup">false</property>
                               </object>
@@ -263,13 +264,30 @@
                                         <property name="icon-name">mail-unread-symbolic</property>
                                         <property name="title" translatable="yes">No messages</property>
                                         <property name="child">
-                                          <object class="GtkButton" id="status_action">
+                                          <object class="GtkBox" id="status_buttons">
                                             <property name="halign">center</property>
-                                            <property name="visible">false</property>
-                                            <style>
-                                              <class name="pill"/>
-                                              <class name="suggested-action"/>
-                                            </style>
+                                            <child>
+                                              <object class="GtkButton" id="status_retry_check">
+                                                <property name="action-name">app.retry-accounts</property>
+                                                <property name="label" translatable="yes">Retry Check</property>
+                                                <property name="visible">false</property>
+                                                <style>
+                                                  <class name="pill"/>
+                                                  <class name="suggested-action"/>
+                                                </style>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkButton" id="status_online_accounts">
+                                                <property name="action-name">app.accounts</property>
+                                                <property name="label" translatable="yes">Online Accounts</property>
+                                                <property name="visible">false</property>
+                                                <style>
+                                                  <class name="pill"/>
+                                                  <class name="suggested-action"/>
+                                                </style>
+                                              </object>
+                                            </child>
                                           </object>
                                         </property>
                                       </object>

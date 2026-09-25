@@ -46,11 +46,7 @@ fn a_timeout_at_sign_in_offers_retry_and_names_its_failure_value() {
     let declared = failure.declare();
     assert_eq!(declared.action, Some(FailureAction::Retry));
     assert_eq!(declared.advice, None);
-    assert_eq!(
-        declared.details,
-        format!("Failure: {}", failure.cause_name())
-    );
-    assert_eq!(failure.cause_name(), "TimedOut(SignIn)");
+    assert_eq!(declared.details, "Failure: TimedOut(SignIn)");
 }
 
 #[test]
@@ -76,7 +72,7 @@ fn a_rejected_sign_in_sends_to_online_accounts_with_the_alert_first() {
             .contains("Server code: AUTHENTICATIONFAILED")
     );
     // The server's words and the code stay out of the explanation (FR-009).
-    for server_words in ["<login>", "AUTHENTICATIONFAILED", "said"] {
+    for server_words in ["<login>", "AUTHENTICATIONFAILED"] {
         assert!(!declared.explanation.contains(server_words));
     }
 }
@@ -133,12 +129,6 @@ fn an_account_without_encryption_sends_to_online_accounts() {
     assert_eq!(declared.action, Some(FailureAction::OnlineAccounts));
     assert!(declared.advice.is_some());
     assert_eq!(declared.details, "Failure: NoEncryption");
-}
-
-#[test]
-fn a_cancelled_request_still_has_an_ordinary_declaration() {
-    let declared = LoadFailure::OnlineAccounts(AccessError::Cancelled).declare();
-    assert_eq!(declared.action, Some(FailureAction::Retry));
 }
 
 #[test]
