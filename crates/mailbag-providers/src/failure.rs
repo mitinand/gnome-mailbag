@@ -325,10 +325,10 @@ fn declare_imap_failure(error: &ImapError) -> DeclaredFailure {
         {
             (Some(FailureAction::OnlineAccounts), Some(CHECK_SIGN_IN))
         }
-        // Repeating meets the same certificate or the same server offer.
-        ImapFailure::Failed(ImapStep::SecureConnection) | ImapFailure::NoSignInMethod => {
-            (None, None)
-        }
+        // Repeating meets the same server offer. A failed secure connection
+        // gets Retry: a refused certificate and a handshake cut short arrive
+        // as the same failure.
+        ImapFailure::NoSignInMethod => (None, None),
         _ => (Some(FailureAction::Retry), None),
     };
     // An alert is what RFC 3501 requires the user to see, so it comes first.

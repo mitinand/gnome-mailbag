@@ -72,10 +72,11 @@ The entry points and their steps, as the code will read.
 - `declare_imap_failure`: title and explanation by step and outcome
   (`failed_step_title`, `failed_step_explanation`, `waiting_step_explanation`);
   action: `OnlineAccounts` when the sign-in was rejected with
-  `AUTHENTICATIONFAILED` or without a code (`credential_may_be_wrong`, moved
-  from the window), `Retry` for a timeout, a lost connection, a refused
-  command or `UNAVAILABLE`, none for a failed secure connection or a missing
-  sign-in method; advice with the `OnlineAccounts` action; remote texts:
+  `AUTHENTICATIONFAILED` or without a code (the rule moved from the window),
+  none for a missing sign-in method, `Retry` for everything else, a failed
+  secure connection included: a refused certificate and a handshake cut
+  short arrive as the same failure (corrected after the PR review,
+  2026-09-25); advice with the `OnlineAccounts` action; remote texts:
   the alerts ("Alert from the mail server") then the reply ("Reply from the
   mail server"); technical details: `Failure`, `Server code`.
 - `declare_graph_failure`: by kind and status: 401 is a rejected sign-in with

@@ -40,3 +40,22 @@ fn the_report_leaves_out_what_the_failure_does_not_have() {
         format!("{}\n\n{}", failure.title, failure.explanation)
     );
 }
+
+#[test]
+fn a_long_remote_text_leaves_the_later_blocks_in_the_report() {
+    let failure = LoadFailure::Imap(ImapError {
+        failure: ImapFailure::Failed(ImapStep::OpenInbox),
+        server_reply: Some(ServerReply {
+            code: None,
+            text: "a".repeat(70_000),
+        }),
+        alerts: Vec::new(),
+    })
+    .declare();
+    let report = report_text(&failure);
+    assert!(
+        report.ends_with("Technical details:\nFailure: Failed(OpenInbox)"),
+        "{}",
+        &report[report.len() - 80..]
+    );
+}

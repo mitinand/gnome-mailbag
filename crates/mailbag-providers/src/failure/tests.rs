@@ -89,14 +89,16 @@ fn a_temporary_outage_and_an_unknown_code_offer_retry_with_the_code_in_the_detai
 }
 
 #[test]
-fn nothing_the_user_does_helps_a_failed_secure_connection_or_a_missing_sign_in_method() {
-    for failure in [
-        ImapFailure::Failed(ImapStep::SecureConnection),
-        ImapFailure::NoSignInMethod,
-    ] {
-        let declared = LoadFailure::Imap(failure.into()).declare();
-        assert_eq!(declared.action, None, "{failure:?}");
-    }
+fn nothing_the_user_does_helps_a_missing_sign_in_method() {
+    let declared = LoadFailure::Imap(ImapFailure::NoSignInMethod.into()).declare();
+    assert_eq!(declared.action, None);
+}
+
+#[test]
+fn a_failed_secure_connection_offers_retry_since_a_cut_handshake_looks_the_same() {
+    let failure = ImapFailure::Failed(ImapStep::SecureConnection);
+    let declared = LoadFailure::Imap(failure.into()).declare();
+    assert_eq!(declared.action, Some(FailureAction::Retry));
 }
 
 #[test]

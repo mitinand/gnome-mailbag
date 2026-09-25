@@ -8,7 +8,7 @@
 #[cfg(test)]
 mod tests;
 
-use crate::mail_ui::{inert_text, show_inert_text};
+use crate::mail_ui::{cut_unbroken_runs, inert_text, show_inert_text};
 use adw::{glib, gtk, prelude::*};
 use mailbag_providers::{DeclaredFailure, FailureAction};
 
@@ -35,7 +35,8 @@ pub fn status_description(failure: &DeclaredFailure) -> String {
         .into_iter()
         .chain(failure.advice)
         .collect();
-    glib::markup_escape_text(&inert_text(&paragraphs.join("\n\n"))).to_string()
+    let description = cut_unbroken_runs(&inert_text(&paragraphs.join("\n\n")));
+    glib::markup_escape_text(&description).to_string()
 }
 
 /// Opens the failure dialog over the window that holds `parent`, filled from
@@ -67,9 +68,12 @@ pub fn present(parent: &impl IsA<gtk::Widget>, failure: &DeclaredFailure) {
     show_paragraph(&advice, failure.advice.unwrap_or_default());
     append_blocks(&blocks, failure);
     show_action_button(&action, failure.action);
-    let closing = dialog.clone();
+    // Weak, because the dialog owns the button that owns this handler.
+    let closing = dialog.downgrade();
     action.connect_clicked(move |_| {
-        closing.close();
+        if let Some(dialog) = closing.upgrade() {
+            dialog.close();
+        }
     });
     let clipboard = parent.clipboard();
     let copied_text = report_text(failure);
@@ -95,7 +99,13 @@ pub fn report_text(failure: &DeclaredFailure) -> String {
         parts.push(format!("Technical details:\n{}", failure.details));
     }
     parts.retain(|part| !part.is_empty());
-    inert_text(&parts.join("\n\n"))
+    // Each part is bounded as its block is in the dialog, so a long server
+    // text never pushes the later blocks out of the report.
+    parts
+        .iter()
+        .map(|part| inert_text(part))
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 fn show_paragraph(label: &gtk::Label, text: &str) {

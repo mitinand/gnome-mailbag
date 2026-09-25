@@ -7,6 +7,7 @@ use goa_adapter::{
     AccountCheckError, AccountCheckResult, AccountDetails, AccountId, AccountProvider,
     AccountUpdate, ErrorCause,
 };
+use mailbag_content::ContentExplanation;
 use mailbag_imap::{ImapError, ImapFailure, ImapStep, ServerReply};
 use mailbag_providers::{
     CancelsLoadOnDrop, IncompleteList, LoadFailure, LoadResult, LoadsInbox, MailProvider,
@@ -168,11 +169,18 @@ fn batch_with_two_messages(account_id: &AccountId) -> ReceivedBatch {
 }
 
 /// One message the sender never wrapped and one of ordinary lines, both at
-/// the 64 KiB display boundary.
+/// the 64 KiB display boundary, and one whose character set name is as long.
 fn unwrapped_and_ordinary_batch(account_id: &AccountId) -> ReceivedBatch {
     let bodies = [
-        ("Never wrapped", "я".repeat(32_768)),
-        ("Ordinary lines", "яяяяяяяя ".repeat(3_856)),
+        ("Never wrapped", ReceivedContent::Text("я".repeat(32_768))),
+        (
+            "Ordinary lines",
+            ReceivedContent::Text("яяяяяяяя ".repeat(3_856)),
+        ),
+        (
+            "Unknown character set",
+            ReceivedContent::Explained(ContentExplanation::UnknownCharset("x".repeat(65_536))),
+        ),
     ];
     ReceivedBatch {
         account_id: account_id.clone(),
@@ -189,7 +197,7 @@ fn unwrapped_and_ordinary_batch(account_id: &AccountId) -> ReceivedBatch {
                 },
                 internal_date: Some(1_700_000_000),
                 seen: true,
-                content: ReceivedContent::Text(body),
+                content: body,
                 gmail: None,
             })
             .collect(),
@@ -580,6 +588,16 @@ fn mail_ui_transitions() {
         ordinary < Duration::from_secs(5),
         "opening took {ordinary:?}"
     );
+    // A name from the message in the reader's status page is laid out as
+    // fast: that page wraps its description by word.
+    long_rows[2].emit_by_name::<()>("activate", &[]);
+    let started = Instant::now();
+    dispatch_pending();
+    let content_status = widgets.content_status().expect("the reader's status page");
+    content_status.measure(gtk::Orientation::Horizontal, -1);
+    content_status.measure(gtk::Orientation::Vertical, 800);
+    let named = started.elapsed();
+    assert!(named < Duration::from_secs(5), "opening took {named:?}");
 
     // A refresh clears the list and the reader before loading again.
     refresh.activate(None);
@@ -649,7 +667,12 @@ fn mail_ui_transitions() {
             .any(|button| button.is_visible()
                 && button.label().as_deref() == Some("Online Accounts"))
     );
+    // A closed dialog is released with its widgets.
+    let closed_dialog = dialog.downgrade();
     dialog.force_close();
+    drop((dialog, labels));
+    dispatch_pending();
+    assert!(closed_dialog.upgrade().is_none());
 
     // A failure nothing the user does can change offers no action, only
     // Details.
@@ -758,6 +781,14 @@ fn long_text_is_cut_at_a_character_boundary_without_an_explanation() {
 #[test]
 fn a_nul_byte_never_reaches_a_gtk_label() {
     assert_eq!(inert_text("before\0after"), "before\u{FFFD}after");
+}
+
+#[test]
+fn a_description_keeps_its_words_and_cuts_only_a_run_too_long_to_wrap_by_word() {
+    let sentence = format!("Unknown character set: {}", "x".repeat(65_536));
+    let described = cut_unbroken_runs(&sentence);
+    assert!(described.starts_with("Unknown character set: x"));
+    assert_eq!(longest_unbroken_run(&described), LONGEST_WORD_WRAPPED_RUN);
 }
 
 #[test]

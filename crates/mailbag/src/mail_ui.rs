@@ -384,6 +384,23 @@ fn longest_unbroken_run(text: &str) -> usize {
     longest
 }
 
+/// Text for a label whose wrapping cannot be chosen, such as a status page's
+/// description, which wraps by word: every run with no place to break a line
+/// keeps its first `LONGEST_WORD_WRAPPED_RUN` characters, so a name the sender
+/// chose cannot freeze the window.
+pub fn cut_unbroken_runs(text: &str) -> String {
+    let mut current = 0;
+    text.chars()
+        .filter(|character| {
+            current = match character.is_whitespace() {
+                true => 0,
+                false => current + 1,
+            };
+            current <= LONGEST_WORD_WRAPPED_RUN
+        })
+        .collect()
+}
+
 /// Prepares text that came from a message or a mail server for a GTK label:
 /// at most the first 64 KiB, cut at a character boundary and without an
 /// explanation, and no NUL, which GTK's string APIs cannot carry.
