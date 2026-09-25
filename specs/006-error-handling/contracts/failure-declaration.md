@@ -1,10 +1,34 @@
 # Contract: The Failure Declaration
 
-Shared by `mailbag-providers`, which declares, and `mailbag`, which shows.
-The rules behind each field are in the [specification](../spec.md)
-(FR-001 to FR-005, FR-009); this contract fixes the shape and the names.
+Between the layers that meet failures and the application, which declares
+and shows them ([research §1](../research.md#1-where-the-declarations-live)).
+A lower layer hands over a typed failure value; `mailbag` writes the
+wording, chooses the action and the channel. The rules behind each field
+are in the [specification](../spec.md) (FR-001 to FR-005, FR-009); this
+contract fixes what each side provides and the declaration's shape.
+
+## What a lower layer provides
+
+Today one lower layer reaches the window, `mailbag-providers`, with three
+failure values: `LoadFailure`, `IncompleteList` and `ReceivedContent`. For
+each it provides:
+
+| What | Where | Why it stays below |
+|---|---|---|
+| The typed value itself | `LoadFailure`, `IncompleteList`, `ReceivedContent` in `batch.rs` | The layer's own terms: step, outcome, status |
+| The remote side's texts | the fields of the protocol errors inside the value (`ImapError::alerts`, `server_reply`; `GraphError::reason`) | Built where the failure is built, the sign-in name already replaced (research §3) |
+| Technical details | `LoadFailure::technical_details()`, `IncompleteList::technical_details()`: one `Label: value` line per identifier, in English | They name the layer's own values, the same as the record's error line |
+| The record's values | `LoadFailure::cause_name`, `status`, `server_code` | One source for the error line (003 FR-004) and the details |
+| Protocol facts | `LoadFailure::credentials_rejected()`: the server or the service rejected the sign-in because of the credentials, as far as its code tells (IMAP `AUTHENTICATIONFAILED` or no code at sign-in; Graph status 401); `LoadFailure::server_temporarily_unavailable()`: IMAP `UNAVAILABLE` | Interpreting a protocol's codes belongs to the layer that speaks it |
+
+A lower layer never writes wording for the user, never names an action or
+a widget. A later layer (the store, a synchronization engine) provides the
+same kinds of things for its own values.
 
 ## The type
+
+Private to `mailbag`: built by `failure_declarations.rs`, shown by the
+window, the reader and `failure_dialog.rs`.
 
 ```rust
 pub struct DeclaredFailure {
@@ -28,7 +52,8 @@ pub struct DeclaredFailure {
 }
 
 pub enum FailureAction {
-    /// Runs the failed operation again: the window's refresh action.
+    /// Runs the failed operation again; the window chooses the operation
+    /// from what carries the failure.
     Retry,
     /// Opens the system's Online Accounts settings.
     OnlineAccounts,
@@ -45,11 +70,14 @@ pub struct RemoteText {
 
 ## Who declares
 
-| Carrier | Method | Channel in the window |
+All in `mailbag/src/failure_declarations.rs`, one exhaustive `match` per
+value, so a new variant without a declaration does not compile.
+
+| Carrier | Function | Channel in the window |
 |---|---|---|
-| A failed load | `LoadFailure::declare() -> DeclaredFailure` | The list's status page; Details opens the dialog |
-| A short list | `IncompleteList::declare() -> DeclaredFailure` | The banner above the list; its button opens the dialog |
-| A message's content | `ReceivedContent::declare() -> Option<DeclaredFailure>` (`None` for text) | The reader's status page in the body's place; no dialog |
+| A failed load | `declare_load_failure(&LoadFailure) -> DeclaredFailure` | The list's failure page; Details opens the dialog |
+| A short list | `declare_short_list(&IncompleteList) -> DeclaredFailure` | The banner above the list; its button opens the dialog |
+| A message's content | `declare_content(&ReceivedContent) -> Option<DeclaredFailure>` (`None` for text) | The reader's status page in the body's place; no dialog |
 | A Settings launch | `LaunchError::message()` (in `mailbag`): one line, title and advice, no `DeclaredFailure`, since the toast shows nothing more | A toast |
 | A panic on the worker | `LoadFailure::WorkerStopped(Option<String>)`, the panic's message and place, declared as a failed load | As a failed load; the panic as one technical line |
 
@@ -83,20 +111,27 @@ this table.
   Server text arrives already masked (`<login>`); a declaration never
   formats a message's headers or body into any field.
 - A declaration is built when a channel needs it, from the failure value;
-  nothing is stored beyond the failure value the window already keeps.
-- The action names: `Retry` is the window's `app.refresh-inbox`,
-  `OnlineAccounts` is `app.accounts`; `failure_dialog::show_action_button` in
-  `mailbag` is the one place that maps them to a label and an action name.
-  A declaration never names a widget or an action string.
-- `LoadFailure::cause_name`, `status` and `server_code` are the one source
-  of the failure value, status and code for the record's error line (003
-  FR-004) and for the technical details alike.
-- Wording lives in the declaring code and follows FR-009 and AGENTS.md
-  ("UI wording"); no document lists it.
+  nothing is stored beyond the failure value the window already keeps. A
+  failure that happens with no window open needs no wording until a window
+  shows it.
+- The action names: `Retry` runs the failed operation, which the window
+  chooses from the carrier; every carrier today is a load, so it is
+  `app.refresh-inbox`. `OnlineAccounts` is `app.accounts`.
+  `failure_dialog::show_action_button` in `mailbag` is the one place that
+  maps them to a label and an action name. A declaration never names a
+  widget or an action string.
+- The technical details and the record's error line come from the same
+  lower-layer values (`cause_name`, `status`, `server_code`); the
+  declaration copies the details as the lower layer wrote them.
+- Wording lives in `failure_declarations.rs` and follows FR-009 and
+  AGENTS.md ("UI wording"); no document lists it. The texts' headings are
+  wording; the technical details are not and stay in English.
 
 ## The panic string
 
 `WorkerStopped` carries `Option<String>`: `<message> at <file>:<line>`, as
 the panic hook received them. A panic in Mailbag's code has fixed text; a
 library's panic may carry part of the text it was handling (FR-014).
-Declared as the technical lines `Failure: WorkerStopped` and `Panic: …`.
+Its technical lines `Failure: WorkerStopped` and `Panic: …` come from
+`LoadFailure::technical_details()`. The panic is read on the thread where it
+happened, by the code that sent the work there (research §4).

@@ -3,7 +3,9 @@
 **Branch**: `claude/errors` | **Feature**: `006-error-handling`
 **Date**: 2026-09-24 | **Spec**: [spec.md](spec.md)
 **Status**: Implemented on `claude/errors` and accepted live 2026-09-25;
-challenged and analyzed on 2026-09-25, findings applied.
+challenged and analyzed on 2026-09-25, findings applied. Where the wording
+lives corrected on `claude/failure-ownership` (section "Correction
+2026-09-26", portion 5).
 The specification's decisions are settled and are not reopened here.
 
 ## Size
@@ -63,48 +65,58 @@ errors in the technical details (same); a separate declaration for status
 
 The entry points and their steps, as the code will read.
 
-**`mailbag-providers/src/failure.rs`**
+**`mailbag-providers/src/failure.rs`** (after portion 5: what only the
+provider layer knows)
 
-- `LoadFailure::declare(&self) -> DeclaredFailure`: one arm per source —
-  `declare_access_failure(AccessError)`, `declare_imap_failure(&ImapError)`,
-  `declare_graph_failure(&GraphError)`,
-  `declare_worker_stopped()`; the `Panic:` line comes from `technical_details`.
-- `declare_imap_failure`: title and explanation by step and outcome
-  (`failed_step_title`, `failed_step_explanation`, `waiting_step_explanation`);
-  action: `OnlineAccounts` when the sign-in was rejected with
-  `AUTHENTICATIONFAILED` or without a code (the rule moved from the window),
-  none for a missing sign-in method, `Retry` for everything else, a failed
-  secure connection included: a refused certificate and a handshake cut
-  short arrive as the same failure (corrected after the PR review,
-  2026-09-25); advice with the `OnlineAccounts` action; remote texts:
-  the alerts ("Alert from the mail server") then the reply ("Reply from the
-  mail server"); technical details: `Failure`, `Server code`.
-- `declare_graph_failure`: by kind and status: 401 is a rejected sign-in with
-  `OnlineAccounts`, any other status the general "Request failed" with
-  `Retry`; a connection failure, a timeout or an invalid reply with `Retry`;
-  remote texts: the service's message ("Message from the mail service") or the
-  platform's text ("From the system"); technical details: `Failure`, `Status`,
-  `Service code`.
-- `declare_access_failure`: one title, explanation and action per
-  `AccessError` variant; `Cancelled` never reaches a channel (FR-010) but
-  gets an ordinary declaration with `Retry`, never a panic.
 - `LoadFailure::cause_name(&self) -> String`, `status(&self) -> Option<u32>`,
   `server_code(&self) -> Option<&str>`: the failure value (`Failed(SignIn)`,
   `Refused`, `WorkerStopped`, `Timeout`), the status and the code exactly as
-  `inbox.rs::log_load_failure` names them today; that function calls them
-  from now on, and `declare` builds `Failure:`, `Status:` and `Server
-  code:`/`Service code:` from the same three.
+  `inbox.rs::log_load_failure` names them.
+- `LoadFailure::technical_details(&self) -> String`: `Failure:`, `Status:`,
+  `Server code:`/`Service code:` and `Panic:` from the same values;
+  `IncompleteList::technical_details(&self) -> String`: the refusal's
+  `Server code:` line or nothing.
+- `LoadFailure::credentials_rejected(&self) -> bool`: the IMAP sign-in was
+  rejected with `AUTHENTICATIONFAILED` or without a code, or the mail
+  service answered 401; `LoadFailure::server_temporarily_unavailable(&self)
+  -> bool`: the IMAP server's code is `UNAVAILABLE`.
+
+**`mailbag/src/failure_declarations.rs`** (portion 5; before it, the same
+functions were methods in `mailbag-providers/src/failure.rs`)
+
+- `declare_load_failure(&LoadFailure) -> DeclaredFailure`: one arm per
+  source — `declare_access_failure(AccessError)`,
+  `declare_imap_failure(&ImapError)`, `declare_graph_failure(&GraphError)`,
+  `declare_worker_stopped()` — then the details from
+  `LoadFailure::technical_details()`.
+- `declare_imap_failure`: title and explanation by step and outcome
+  (`failed_step_title`, `failed_step_explanation`, `waiting_step_explanation`),
+  "Server unavailable" when `server_temporarily_unavailable`; action:
+  `OnlineAccounts` with advice when `credentials_rejected`, none for a
+  missing sign-in method, `Retry` for everything else, a failed secure
+  connection included: a refused certificate and a handshake cut short
+  arrive as the same failure (corrected after the PR review, 2026-09-25);
+  remote texts: the alerts ("Alert from the mail server") then the reply
+  ("Reply from the mail server").
+- `declare_graph_failure`: `credentials_rejected` (status 401) is a
+  rejected sign-in with `OnlineAccounts`, any other status the general
+  "Request failed" with `Retry`; a connection failure, a timeout or an
+  invalid reply with `Retry`; remote texts: the service's message ("Message
+  from the mail service") or the platform's text ("From the system").
+- `declare_access_failure`: one title, explanation and action per
+  `AccessError` variant; `Cancelled` never reaches a channel (FR-010) but
+  gets an ordinary declaration with `Retry`, never a panic.
 - General arms, one test each: a service status the code does not tell
-  apart (500), an IMAP server code other than the two distinguished
-  (AUTHENTICATIONFAILED, UNAVAILABLE), a reply the code cannot read. Every
-  `match` over a failure enumeration is exhaustive, so a variant without a
-  declaration does not compile.
-- `IncompleteList::declare`: `ServerRefused` with `Retry`, the reply as a
-  remote text and the code as a technical-details line; `MoreAvailable` with no
-  action and no lines.
-- `ReceivedContent::declare(&self) -> Option<DeclaredFailure>`: `None` for
-  text; one declaration per `ContentExplanation`, `StructureUnreadable` and
-  `TextNotReturned` (the last with `Retry`).
+  apart (500), an IMAP server code other than the two distinguished, a
+  reply the code cannot read. Every `match` over a failure enumeration is
+  exhaustive, so a variant without a declaration does not compile.
+- `declare_short_list(&IncompleteList) -> DeclaredFailure`: `ServerRefused`
+  with `Retry`, the reply as a remote text and
+  `IncompleteList::technical_details()`; `MoreAvailable` with no action and
+  no lines.
+- `declare_content(&ReceivedContent) -> Option<DeclaredFailure>`: `None`
+  for text; one declaration per `ContentExplanation`, `StructureUnreadable`
+  and `TextNotReturned` (the last with `Retry`).
 
 **`mailbag-providers/src/worker.rs`**
 
@@ -142,7 +154,7 @@ The entry points and their steps, as the code will read.
 
 **`mailbag/src/mail_ui.rs`**
 
-- `open_message`: `content.declare()`, then `show_body_or_failure`: `Some`
+- `open_message`: `declare_content(&content)`, then `show_body_or_failure`: `Some`
   shows the reader's status page in the body's place, `None` the text.
 
 **`mailbag/src/account_ui.rs`**
@@ -197,6 +209,15 @@ for the maintainer's review and compare the size with the table above.
 
 After portion 4: the simplify review on the branch diff, then the
 quickstart's manual checks on the installed build.
+
+5. **Where the wording lives** (correction, 2026-09-26). The declarations
+   and their tests move from `mailbag-providers/src/failure.rs` to
+   `mailbag/src/failure_declarations.rs`; providers keeps and publishes the
+   technical details, the record's values and the two protocol facts. No
+   user-visible change. Tests: the declaration tests, moved; the details
+   and the protocol facts in providers; the window's GTK test unchanged
+   apart from calls. Suggested commit: "Write failure wording in the
+   application".
 
 ## Technical Context
 
@@ -255,7 +276,8 @@ No data model: nothing is persisted.
 
 ```text
 crates/mailbag-imap/src/session.rs, reader.rs      masking at the source
-crates/mailbag-providers/src/failure.rs            the declarations (new)
+crates/mailbag-providers/src/failure.rs            technical details, record values, protocol facts
+crates/mailbag/src/failure_declarations.rs         the declarations: wording and action (portion 5)
 crates/mailbag-providers/src/batch.rs, lib.rs      WorkerStopped payload
 crates/mailbag-providers/src/worker.rs             panic capture
 crates/mailbag/src/failure_dialog.rs               the dialog (new)
@@ -272,6 +294,23 @@ crates/mailbag/resources/ui/failure-block.ui       new form
 
 The forms come from the prototype's `ui/` directory, which is not part of
 the repository; only the files above are.
+
+## Correction 2026-09-26
+
+Portion 5 moves the wording out of the provider layer (research §1). Budget approved by the maintainer on 2026-09-26:
+
+| Item | Budget | Estimate |
+|---|---|---|
+| Production lines | ≤ 50 new, ≤ 400 moved | ~40 new (the module's entry functions, two protocol facts, calls), ~370 moved (types, headings, advice, every declaration) |
+| Files touched | — | providers `failure.rs`, `lib.rs`; mailbag new `failure_declarations.rs`, `window_ui.rs`, `mail_ui.rs`, `failure_dialog.rs`, `main.rs` |
+| Threads, timers, types, crates, dependencies | 0 | 0; the three declaration types move |
+| Tests | ≤ 30 new | ~15 new (the protocol facts), ~165 moved |
+| User-visible behaviour | unchanged | texts, channels and buttons as before |
+
+Not in this portion: a shared domain crate and a failure classification
+(research §5), server text as a masked type (research §5), choosing
+Retry's operation by carrier and a panic helper for work outside the mail
+worker (both with 007), notifications about failures (016).
 
 ## Documents amended before implementing
 
