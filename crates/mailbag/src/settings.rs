@@ -22,7 +22,7 @@ impl LaunchError {
                 "Could not open Online Accounts. Open Settings and choose Online Accounts, or try again."
             }
             Self::AccessDenied => {
-                "Mailbag was denied access to Settings. Open Online Accounts from Settings."
+                "Access to Settings was denied. Open Online Accounts from Settings."
             }
         }
     }

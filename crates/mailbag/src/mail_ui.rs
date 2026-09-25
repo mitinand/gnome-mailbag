@@ -9,9 +9,10 @@
 #[cfg(test)]
 mod tests;
 
+use crate::failure_dialog::{show_action_button, status_description};
 use adw::{gio, glib, gtk, prelude::*};
-use mailbag_content::{ContentExplanation, DisplayFields};
-use mailbag_providers::{ReceivedBatch, ReceivedContent, ReceivedMessage};
+use mailbag_content::DisplayFields;
+use mailbag_providers::{DeclaredFailure, ReceivedBatch, ReceivedContent};
 use std::{cell::RefCell, rc::Rc};
 
 /// How much text a GTK label shows, in UTF-8 bytes. Longer text is cut at a
@@ -44,6 +45,11 @@ pub struct MailUi {
     reader_to: gtk::Label,
     reader_date: gtk::Label,
     reader_body: gtk::Label,
+    /// Holds the body; hidden while a content problem takes its place.
+    body_slot: gtk::Box,
+    /// Why this message shows no text, in the body's place.
+    content_status: adw::StatusPage,
+    content_action: gtk::Button,
     sender_avatar: adw::Avatar,
     /// The batch the rows were built from, to rebuild them only when the
     /// shown account or its mail changed.
@@ -85,6 +91,9 @@ impl MailUi {
             reader_to: reader.to,
             reader_date: reader.date,
             reader_body: reader.body,
+            body_slot: reader.body_slot,
+            content_status: reader.content_status,
+            content_action: reader.content_action,
             sender_avatar: reader.avatar,
             shown_batch: RefCell::new(None),
         });
@@ -175,13 +184,31 @@ impl MailUi {
         }
         self.reader_date
             .set_text(&received_date_text(message.internal_date, "%c"));
-        show_inert_text(&self.reader_body, &reader_body_text(message));
+        if let ReceivedContent::Text(text) = &message.content {
+            show_inert_text(&self.reader_body, &inert_text(text));
+        }
+        self.show_content_failure(message.content.declare().as_ref());
         self.singleton_slot.set_visible(true);
         self.reader_stack.set_visible_child_name("message");
         self.mail_split.set_show_content(true);
     }
 
+    /// Shows why the message has no text in the body's place, or the body
+    /// when it has one.
+    fn show_content_failure(&self, failure: Option<&DeclaredFailure>) {
+        self.body_slot.set_visible(failure.is_none());
+        self.content_status.set_visible(failure.is_some());
+        let Some(failure) = failure else {
+            return;
+        };
+        self.content_status.set_title(failure.title);
+        self.content_status
+            .set_description(Some(&status_description(failure)));
+        show_action_button(&self.content_action, failure.action);
+    }
+
     fn close_reader(&self) {
+        self.show_content_failure(None);
         self.messages.unselect_all();
         self.singleton_slot.set_visible(false);
         self.reader_stack.set_visible_child_name("unselected");
@@ -195,6 +222,9 @@ struct ReaderWidgets {
     to: gtk::Label,
     date: gtk::Label,
     body: gtk::Label,
+    body_slot: gtk::Box,
+    content_status: adw::StatusPage,
+    content_action: gtk::Button,
     avatar: adw::Avatar,
 }
 
@@ -256,6 +286,15 @@ fn build_reader(window: &gtk::Builder) -> ReaderWidgets {
         body: content
             .object("reader_body")
             .expect("message-content.ui: reader_body"),
+        body_slot: content
+            .object("body_slot")
+            .expect("message-content.ui: body_slot"),
+        content_status: content
+            .object("content_status")
+            .expect("message-content.ui: content_status"),
+        content_action: content
+            .object("content_action")
+            .expect("message-content.ui: content_action"),
         avatar: envelope.object("avatar").expect("envelope.ui: avatar"),
     }
 }
@@ -318,51 +357,6 @@ fn received_date_text(internal_date: Option<i64>, format: &str) -> String {
         .format(format)
         .map(|text| text.to_string())
         .unwrap_or_default()
-}
-
-/// The message's text, or the explanation that takes its place.
-fn reader_body_text(message: &ReceivedMessage) -> String {
-    match &message.content {
-        ReceivedContent::Text(text) => inert_text(text),
-        ReceivedContent::Explained(explanation) => explain_content(explanation),
-        ReceivedContent::StructureUnreadable => {
-            "The mail server could not describe this message, so its content could not be read."
-                .to_owned()
-        }
-        ReceivedContent::TextNotReturned => {
-            "The mail server did not return this message's text. Try Refresh Inbox again."
-                .to_owned()
-        }
-    }
-}
-
-/// Why this message shows no text. The reader says it in place of the body;
-/// the message keeps its row.
-fn explain_content(explanation: &ContentExplanation) -> String {
-    match explanation {
-        ContentExplanation::NoPlainText { has_html: true } => {
-            "This message has only an HTML version, which Mailbag does not show yet.".to_owned()
-        }
-        ContentExplanation::NoPlainText { has_html: false } => {
-            "This message has no text to show.".to_owned()
-        }
-        ContentExplanation::Encrypted => {
-            "This message is encrypted. Mailbag cannot decrypt it.".to_owned()
-        }
-        ContentExplanation::SecuredWithSMime => {
-            "This message is secured with S/MIME. Mailbag cannot read it.".to_owned()
-        }
-        // The sender chose the name, so it is shown as inert text.
-        ContentExplanation::UnknownCharset(charset) => format!(
-            "This message uses a character set Mailbag does not know: {}",
-            inert_text(charset)
-        ),
-        ContentExplanation::UnknownEncoding(encoding) => format!(
-            "This message uses a transfer encoding Mailbag does not know: {}",
-            inert_text(encoding)
-        ),
-        ContentExplanation::Undecodable => "This message's text could not be read.".to_owned(),
-    }
 }
 
 /// Shows text from a message or a mail server in a wrapping label, choosing

@@ -47,7 +47,7 @@ line names its cost.
 |---|---|---|
 | `<login>` at the source | `ServerNotices::error` replaces the sign-in name in the reply text and in the alerts before they enter `ImapError`; `fetch_rows` does the same for the refusal that travels with a short list. `server_text_for_log` is the function used, renamed for its new role; the debug lines log the already-masked text. 003 FR-011 and research §6 amended | ~6 lines, 2 tests |
 | The declaration | `failure.rs` in providers: `DeclaredFailure`, `FailureAction { Retry, OnlineAccounts }`, `RemoteText { source, text }`; `LoadFailure::declare`, `IncompleteList::declare`, `ReceivedContent::declare` (`None` for text). The wording of `window_ui.rs` (status titles, reasons, sign-in hint) and of `mail_ui.rs` (content explanations) moves here, rewritten impersonally; the "credential may be wrong" rule moves with it. `LoadFailure::cause_name`, `status` and `server_code` give the failure value, status and code exactly as the record's error line names them; they move out of `inbox.rs`, which now calls them, so the record and the declaration have one owner (constitution IV). [Contract](contracts/failure-declaration.md) | ~200 lines (~125 moved), 11 tests |
-| The channels | `window_ui.rs`: a failed load sets the status page's icon, title, escaped description (explanation and advice), the action button (label and action name) and the Details button, all declared in `mailbag.ui`; a short list reveals the banner with the title; `mail_ui.rs`: a content problem shows the reader's status page in the body's place; `settings.rs`: `LaunchError::message` stays the toast's one sentence, reworded impersonally; no declaration, since the toast shows nothing more. `account_ui.rs` drives 001's page with the same form buttons instead of building them. 002 UI contract and 005 research §5 amended | ~140 lines (+ forms), 6 tests |
+| The channels | `window_ui.rs`: a failed load shows the list's failure page, declared in `mailbag.ui` with the warning icon, its action button and its Details button, and sets its title, escaped description (explanation and advice) and action (label and action name); a short list reveals the banner with the title; `mail_ui.rs`: a content problem shows the reader's status page in the body's place; `settings.rs`: `LaunchError::message` stays the toast's one sentence, reworded impersonally; no declaration, since the toast shows nothing more. `account_ui.rs` drives 001's page with the same form buttons instead of building them. 002 UI contract and 005 research §5 amended | ~140 lines (+ forms), 6 tests |
 | The failure dialog | `failure_dialog.rs`: builds `failure-dialog.ui`, fills the paragraphs, appends one `failure-block.ui` per remote text and one for the technical details, binds the action button to the action's name and closes on it, binds the copy button to the report text (title, paragraphs, blocks, in order) on the clipboard | ~90 lines, 3 tests |
 | Panic on the worker | `worker.rs`: a panic hook installed once when the worker thread starts stores one string, the panic's message and its place (`message at file:line`), in a thread-local slot; `run_load` wraps the load in `catch_unwind`, ignores the payload and turns a caught panic into `LoadFailure::WorkerStopped(Some(panic))`; the worker loop continues. `declare` puts the string into one technical-details line, `Panic: …`. The hook calls the previous hook, so the panic still reaches the error stream | ~35 lines, 2 tests |
 
@@ -114,12 +114,11 @@ The entry points and their steps, as the code will read.
 
 - `render`: as today, but a failed load calls `show_failed_load(&declared)`
   and a received batch with `incomplete` calls `show_short_list(&declared)`;
-  every other state gives the status page its mail icon back and hides the
-  banner, so neither outlives its cause (FR-008); the wording functions are
-  gone.
-- `show_failed_load`: warning icon, title, description, action button,
-  Details button (always shown: a failed load always has technical details)
-  on the form's widgets.
+  every other state shows another page of the list and hides the banner, so
+  neither outlives its cause (FR-008); the wording functions are gone.
+- `show_failed_load`: the failure page (`failure_status`, its icon in the
+  form) with title, description and action button; its Details button is
+  always there: a failed load always has technical details.
 - `show_short_list`: banner title and button, revealed.
 - `open_failure_dialog(&declared)`: from the Details button and the banner.
 
@@ -143,8 +142,8 @@ The entry points and their steps, as the code will read.
 
 **`mailbag/src/account_ui.rs`**
 
-- `show_page_buttons`: sets the form's `status_action` label, action and
-  visibility for 001's pages; the Retry Check progress state stays.
+- `page_action`: which of the form's buttons 001's pages need; the window
+  sets `status_action` from it, with the Retry Check progress state.
 
 ## Optional mechanisms
 

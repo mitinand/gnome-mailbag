@@ -228,7 +228,11 @@ from the approved forms, and decided:
   011. The reader's banner stays for 011's remote images. A message's
   failure therefore has a title again.
 - A status page that shows a failure carries the warning icon instead of
-  the mail icon, on the list and in the reader alike; its explanation and
+  the mail icon, on the list and in the reader alike. On the list it is a
+  page of its own beside the account page, declared in the form with the
+  warning icon, its action button and its Details button, so no icon or
+  button is switched between an account page and a failure (decided on
+  2026-09-25, as the reader's page already was); its explanation and
   advice go into its description, escaped, so that the icon-title-text
   spacing equals the reader's empty page. This amends the 002 rule that put
   the explanation into a separate plain-text label.

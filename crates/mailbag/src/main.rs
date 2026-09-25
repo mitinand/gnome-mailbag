@@ -6,6 +6,7 @@ use std::{io::Write, ops::ControlFlow};
 
 mod account_ui;
 mod accounts;
+mod failure_dialog;
 mod inbox;
 mod logging;
 mod mail_ui;
@@ -204,10 +205,12 @@ fn connect_account_updates(builder: &gtk::Builder, window: &adw::Window) {
     let app = window.application().expect("application window");
     register_action(&app, "accounts", None, move || action_launcher.open());
     app.add_action(window_ui.refresh_action());
+    app.add_action(window_ui.accounts().borrow().retry_check_action());
     let held_window = std::cell::RefCell::new(Some(window_ui));
     window.connect_destroy(move |_| {
         app.remove_action("accounts");
         app.remove_action("refresh-inbox");
+        app.remove_action("retry-accounts");
         if let Some(ui) = held_window.borrow_mut().take() {
             // The worker closes its connection on its own thread.
             ui.cancel_loads();

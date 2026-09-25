@@ -37,18 +37,15 @@ observation, never a mail refresh.
   replace the box, open `sync_popover` or implement `app.sync-status`. Keep
   Synchronization Status unavailable in this feature.
 - A failed load is shown on its account's status page, without a toast. A load
-  that returned an incomplete list keeps the rows it delivered and reports the
-  server's reason in a toast, the one toast this feature adds: silence would
-  show an incomplete list as a complete Inbox. No persistent synchronization error
-  panel, progress percentages, notification history or successful-load notice.
-  Cancellation is silent.
-- A toast disappears, so afterwards the list looks complete again. This is a
-  known limitation of this stage: a lasting notice above the list belongs to the
-  error-handling work, together with the other error kinds and the actions
-  offered for them.
+  that returned an incomplete list keeps the rows it delivered; the banner
+  above the list says so while that list is on screen (superseded by [006](../../006-error-handling/spec.md) on
+  2026-09-25: the toast and its disappearance are gone). No persistent
+  synchronization error panel, progress percentages, notification history or
+  successful-load notice. Cancellation is silent.
 
-ALERT handling is deliberately small: include any ALERT text received during
-the failed attempt in that failure's explanation. Use plain-text setters. An ALERT on an otherwise successful attempt does
+ALERT handling is deliberately small: an ALERT text received during the failed
+attempt is the first block of the failure dialog, not part of the explanation
+(superseded by [006](../../006-error-handling/spec.md) on 2026-09-25). Use plain-text setters. An ALERT on an otherwise successful attempt does
 not create a notification, fail the load or establish a separate UI subsystem.
 See the limited protocol-support decision in [research](../research.md#6-ui-and-account-ownership).
 
@@ -72,8 +69,9 @@ See the limited protocol-support decision in [research](../research.md#6-ui-and-
 
 Opening selects the received UID and uses existing mail_split navigation.
 Refresh clears the list, selection and reader before loading. Text
-selection/copy is local. A message without readable text shows its content
-explanation in reader_body instead of a body, as inert plain text.
+selection/copy is local. A message without readable text shows a status page
+in the body's place with the declared title and explanation (superseded by
+[006](../../006-error-handling/spec.md) on 2026-09-25).
 
 Keep GtkLabel. Body, header and ALERT text are cut at the 64 KiB presentation
 boundary at a character boundary, without an explanation or marker. This bounds
@@ -88,6 +86,12 @@ freezes the window, and a subject like that demands a window wider than any
 screen. Ordinary mail, which senders wrap near 72 columns, keeps word wrapping.
 
 ## Failure wording
+
+Superseded by [006](../../006-error-handling/spec.md) on 2026-09-25: the wording lives in the failure
+declarations of `mailbag-providers`, the table below and the three paragraphs
+after it are kept as history only. The status page shows the explanation in
+its escaped description, not in a separate plain-text label; the server's
+text belongs to the failure dialog.
 
 | Failed step | Meaning to communicate |
 |---|---|

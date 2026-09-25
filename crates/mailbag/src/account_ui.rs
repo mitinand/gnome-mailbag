@@ -11,6 +11,13 @@ use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 #[cfg(test)]
 mod tests;
 
+/// What the account page's button does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PageAction {
+    RetryCheck,
+    OnlineAccounts,
+}
+
 struct AccountWidgets {
     id: AccountId,
     root: gtk::Box,
@@ -29,11 +36,6 @@ pub struct AccountUi {
     store: gio::ListStore,
     selection: gtk::SingleSelection,
     tree: gtk::ListView,
-    /// Where the status page keeps its buttons and the window's mail
-    /// explanation. The page's title and description belong to the window.
-    status_actions: gtk::Box,
-    retry: gtk::Button,
-    online_accounts: gtk::Button,
     mail_split: adw::NavigationSplitView,
     folders_split: adw::OverlaySplitView,
     retry_check: gio::SimpleAction,
@@ -44,7 +46,6 @@ pub struct AccountUi {
 impl AccountUi {
     pub fn new(builder: &gtk::Builder) -> Rc<RefCell<Self>> {
         let tree: gtk::ListView = builder.object("folder_tree").expect("folder_tree");
-        let status: adw::StatusPage = builder.object("account_status").expect("account_status");
         let mail_split = builder.object("mail_split").expect("mail_split");
         let folders_split = builder.object("folders_split").expect("folders_split");
         let toasts = builder.object("toasts").expect("toasts");
@@ -54,19 +55,15 @@ impl AccountUi {
         selection.set_can_unselect(true);
         tree.set_model(Some(&selection));
         tree.set_factory(Some(&create_row_factory()));
-        let status_buttons = create_status_buttons(&status);
         let ui = Rc::new(RefCell::new(Self {
             accounts: AccountList::default(),
             rows: BTreeMap::new(),
             store,
             selection,
             tree: tree.clone(),
-            status_actions: status_buttons.actions,
-            retry: status_buttons.retry,
-            online_accounts: status_buttons.online_accounts,
             mail_split,
             folders_split,
-            retry_check: status_buttons.retry_check,
+            retry_check: gio::SimpleAction::new("retry-accounts", None),
             toasts,
             on_selection_changed: RefCell::new(None),
         }));
@@ -86,7 +83,6 @@ impl AccountUi {
                 let id = item.borrow::<AccountWidgets>().id.clone();
                 ui.accounts.select_account(id);
                 ui.selection.set_selected(position);
-                ui.show_page_buttons();
                 ui.mail_split.set_show_content(false);
                 if ui.folders_split.is_collapsed() {
                     ui.folders_split.set_show_sidebar(false);
@@ -97,8 +93,12 @@ impl AccountUi {
             ui.borrow().notify_selection_changed();
         });
         ui.borrow().mail_split.set_show_content(false);
-        ui.borrow().show_page_buttons();
         ui
+    }
+
+    /// Retry Check, for the application to publish as `app.retry-accounts`.
+    pub fn retry_check_action(&self) -> &gio::SimpleAction {
+        &self.retry_check
     }
 
     pub fn connect_retry_check(&self, retry_check: impl Fn() + 'static) {
@@ -160,6 +160,26 @@ impl AccountUi {
         }
     }
 
+    /// The button the account page offers beside its text.
+    pub fn page_action(&self) -> Option<PageAction> {
+        match self.accounts.page() {
+            AccountPage::ReadFailed(_) | AccountPage::MailUnavailable => {
+                Some(PageAction::RetryCheck)
+            }
+            AccountPage::NoAccounts | AccountPage::NoEligibleAccounts => {
+                Some(PageAction::OnlineAccounts)
+            }
+            AccountPage::Loading | AccountPage::SelectAccount | AccountPage::SelectedAccount => {
+                None
+            }
+        }
+    }
+
+    /// Whether a Retry Check is running, so its buttons show progress.
+    pub fn retry_pending(&self) -> bool {
+        self.accounts.retry_pending()
+    }
+
     /// The disambiguated row label, for the mail list title.
     pub fn label_of(&self, id: &AccountId) -> Option<String> {
         Some(self.accounts.visible_accounts().get(id)?.label.clone())
@@ -167,11 +187,6 @@ impl AccountUi {
 
     pub fn shows_account(&self, id: &AccountId) -> bool {
         self.accounts.visible_accounts().contains_key(id)
-    }
-
-    /// The status page area where the window adds its mail explanation.
-    pub fn status_actions(&self) -> &gtk::Box {
-        &self.status_actions
     }
 
     fn notify_selection_changed(&self) {
@@ -215,7 +230,6 @@ impl AccountUi {
             .and_then(|id| self.store.find(&self.rows[id]));
         self.selection
             .set_selected(selected_position.unwrap_or(gtk::INVALID_LIST_POSITION));
-        self.show_page_buttons();
         if removed_focus {
             focus_widget(&self.tree);
         }
@@ -235,21 +249,6 @@ impl AccountUi {
     pub fn show_toast(&self, title: &str) {
         self.toasts
             .add_toast(adw::Toast::builder().title(title).use_markup(false).build());
-    }
-
-    /// The buttons of the account page follow the page; the text is the
-    /// window's, written in one place with the mail status.
-    fn show_page_buttons(&self) {
-        let page = self.accounts.page();
-        self.retry.set_visible(matches!(
-            page,
-            AccountPage::ReadFailed(_) | AccountPage::MailUnavailable
-        ));
-        show_check_progress(&self.retry, self.accounts.retry_pending());
-        self.online_accounts.set_visible(matches!(
-            page,
-            AccountPage::NoAccounts | AccountPage::NoEligibleAccounts
-        ));
     }
 }
 
@@ -279,34 +278,6 @@ fn create_row_factory() -> gtk::SignalListItemFactory {
         item.set_child(None::<&gtk::Widget>);
     });
     factory
-}
-
-/// Buttons of the account status page and the action their Retry activates.
-struct StatusButtons {
-    actions: gtk::Box,
-    retry: gtk::Button,
-    online_accounts: gtk::Button,
-    retry_check: gio::SimpleAction,
-}
-
-fn create_status_buttons(status: &adw::StatusPage) -> StatusButtons {
-    let retry = gtk::Button::with_label("Retry Check");
-    let online_accounts = gtk::Button::with_label("Online Accounts");
-    online_accounts.set_action_name(Some("app.accounts"));
-    let actions = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    actions.set_halign(gtk::Align::Center);
-    actions.append(&retry);
-    actions.append(&online_accounts);
-    status.set_child(Some(&actions));
-    let retry_check = gio::SimpleAction::new("retry-accounts", None);
-    let retry_callback = retry_check.clone();
-    retry.connect_clicked(move |_| retry_callback.activate(None));
-    StatusButtons {
-        actions,
-        retry,
-        online_accounts,
-        retry_check,
-    }
 }
 
 impl AccountWidgets {
@@ -389,7 +360,8 @@ impl AccountWidgets {
     }
 }
 
-fn show_check_progress(button: &gtk::Button, pending: bool) {
+/// A Retry Check button, insensitive and saying so while a check runs.
+pub fn show_check_progress(button: &gtk::Button, pending: bool) {
     button.set_sensitive(!pending);
     button.set_label(if pending {
         "Checking…"
