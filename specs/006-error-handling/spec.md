@@ -400,7 +400,11 @@ from the approved forms, and decided:
   says so. Text from a server or a message is inert: never markup, never
   interpreted, cut at the display limit and with NUL replaced, as
   [002](../002-imap-integration/contracts/ui.md) rules. All application
-  wording is English; translation is a matter of release readiness.
+  wording is English; translation is a matter of release readiness. When
+  it comes, the title, the explanation, the advice, the block headings and
+  the button labels are translated; the remote side's texts are never
+  translated; the technical details stay in English, as identifiers that
+  match the record's error line and read the same in every report.
 - **FR-010 — Cancellation is not a failure**: A load or request that ended
   because the user or Mailbag stopped it declares nothing and shows nothing.
 
