@@ -1,8 +1,10 @@
 # Tasks: Error Handling
 
 **Feature**: `006-error-handling`
-**Created**: 2026-09-25 · **Branch**: `claude/errors` · **Status**: Draft,
-awaiting the consistency analysis and the maintainer's approval.
+**Created**: 2026-09-25 · **Branch**: `claude/errors` · **Status**: Documents
+approved 2026-09-25; portions 1–4 implemented, the simplify review applied
+(option A) and acceptance done live 2026-09-25 (plan.md,
+"Post-implementation").
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -100,7 +102,7 @@ panic on the worker.
 
 - [X] T020 Run the simplify review on the branch diff in a fresh session; bring scope-adding findings to the maintainer with the cost of each; apply what is accepted as one more commit if any.
 - [X] T021 Run quickstart.md on the installed build with the maintainer (steps 1–3, 5–8; the wrong password and the accounts are the maintainer's); record in plan.md, under a "Post-implementation" section, what was verified live and what only by tests (steps 4 and 9 by tests).
-- [ ] T022 STOP: final report with the whole-feature size against plan.md's table, the PR description, the list of amended documents (002, 003, 005, AGENTS.md), and the state of every deferred item.
+- [X] T022 STOP: final report with the whole-feature size against plan.md's table, the PR description, the list of amended documents (002, 003, 005, AGENTS.md), and the state of every deferred item.
 
 ## Dependencies
 

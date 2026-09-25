@@ -2,8 +2,10 @@
 
 **Feature**: `006-error-handling`
 **Created**: 2026-09-24
-**Status**: Draft. The decisions taken at sizing, at the specification
-challenge and on the prototype are recorded under Clarifications.
+**Status**: Implemented on `claude/errors` and accepted live by the
+maintainer 2026-09-25 (plan.md, "Post-implementation"). The decisions taken
+at sizing, at the specification challenge and on the prototype are recorded
+under Clarifications.
 **Input**: One lasting model for how Mailbag reports failures, from the
 component that meets them to what the user sees. Today each failure is
 presented the way its feature happened to choose: a status page for a failed

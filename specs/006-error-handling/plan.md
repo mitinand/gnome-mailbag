@@ -2,7 +2,8 @@
 
 **Branch**: `claude/errors` | **Feature**: `006-error-handling`
 **Date**: 2026-09-24 | **Spec**: [spec.md](spec.md)
-**Status**: Draft; challenged and analyzed on 2026-09-25, findings applied.
+**Status**: Implemented on `claude/errors` and accepted live 2026-09-25;
+challenged and analyzed on 2026-09-25, findings applied.
 The specification's decisions are settled and are not reopened here.
 
 ## Size
