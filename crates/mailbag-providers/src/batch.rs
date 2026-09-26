@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! What one load delivered, and how it ended. The batch and the result cross
-//! from the mail worker to whatever shows the mail; a failure crosses as the
-//! domain's `Failure`.
+//! What one load delivered, and how it ended. The batch stays in this crate:
+//! the mail worker stores it, and only the result crosses to whatever shows
+//! the mail, which reads the store (specs/007-mail-storage FR-001); a failure
+//! crosses as the domain's `Failure`.
 
 use goa_adapter::AccessError;
-
 use mailbag_domain::{AccountId, DisplayFields, Failure, IncompleteList, ReceivedContent};
 use mailbag_graph::GraphError;
 use mailbag_imap::{GmailRow, ImapError};
@@ -18,31 +18,29 @@ pub(crate) const BATCH_SIZE: u32 = 100;
 
 /// One account's Inbox as a single load received it.
 #[derive(Debug)]
-pub struct ReceivedBatch {
-    pub account_id: AccountId,
-    /// The Inbox version these UIDs belong to.
-    pub uid_validity: Option<u32>,
+pub(crate) struct ReceivedBatch {
+    pub(crate) account_id: AccountId,
     /// Newest first, at most `BATCH_SIZE`.
-    pub messages: Vec<ReceivedMessage>,
+    pub(crate) messages: Vec<ReceivedMessage>,
     /// Why messages are missing from this batch. `None` when it is complete.
-    pub incomplete: Option<IncompleteList>,
+    pub(crate) incomplete: Option<IncompleteList>,
 }
 
 /// One message of a batch. Raw MIME is released once it is decoded.
-pub struct ReceivedMessage {
-    pub identity: MessageIdentity,
-    pub fields: DisplayFields,
+pub(crate) struct ReceivedMessage {
+    pub(crate) identity: MessageIdentity,
+    pub(crate) fields: DisplayFields,
     /// INTERNALDATE as seconds since the Unix epoch.
-    pub internal_date: Option<i64>,
-    pub seen: bool,
-    pub content: ReceivedContent,
+    pub(crate) internal_date: Option<i64>,
+    pub(crate) seen: bool,
+    pub(crate) content: ReceivedContent,
     /// Gmail's own identifier and labels; `None` for every other provider.
-    pub gmail: Option<GmailRow>,
+    pub(crate) gmail: Option<GmailRow>,
 }
 
 /// How the message's provider identifies it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MessageIdentity {
+pub(crate) enum MessageIdentity {
     /// The IMAP UID, valid with the batch's `uid_validity`.
     ImapUid(u32),
     /// Microsoft Graph's identifier, which survives moves between folders.
@@ -69,7 +67,11 @@ pub(crate) enum LoadFailure {
 /// How one load ended.
 #[derive(Debug)]
 pub enum LoadResult {
-    Received(ReceivedBatch),
+    /// The load's messages are the account's stored Inbox now; `incomplete`
+    /// says why messages the Inbox offered are missing.
+    Stored {
+        incomplete: Option<IncompleteList>,
+    },
     Failed(Failure),
     /// Cancelled by a confirmed exclusion or by quitting; the connection is
     /// closed, so the next refresh may start.

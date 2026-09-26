@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The window's channels are tested through the scripted loader in
-//! `mail_ui/tests.rs`, which owns the one graphical test.
+//! `mail_ui/tests.rs`, which owns the window's graphical tests.
 
 use super::*;
 
@@ -24,4 +24,20 @@ fn generic_imap_google_and_microsoft_365_accounts_can_be_loaded() {
         Some(MailProvider::Microsoft365)
     );
     assert_eq!(mail_provider(AccountProvider::Other), None);
+}
+
+/// Two reads started in turn whose answers arrive in the reverse order: the
+/// older answer is dropped, whichever account it was for
+/// (specs/007-mail-storage/research.md §6).
+#[test]
+fn an_older_reads_answer_never_replaces_a_newer_ones() {
+    let account = |name| AccountId::try_from(name).expect("synthetic account id");
+    let mut shown = ShownInbox::default();
+    let first = shown.start_read(&account("first"));
+    let second = shown.start_read(&account("second"));
+    assert!(shown.finish_read(second, Ok(None)));
+    let failure = Failure::stopped(None);
+    assert!(!shown.finish_read(first, Err(failure)));
+    assert_eq!(shown.account, Some(account("second")));
+    assert!(matches!(shown.stored, StoredInbox::Read(None)));
 }

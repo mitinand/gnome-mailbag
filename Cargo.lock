@@ -706,6 +706,7 @@ dependencies = [
  "mailbag-content",
  "mailbag-domain",
  "mailbag-providers",
+ "mailbag-store",
  "tracing",
  "tracing-subscriber",
 ]
@@ -761,6 +762,7 @@ dependencies = [
  "mailbag-domain",
  "mailbag-graph",
  "mailbag-imap",
+ "mailbag-store",
  "tracing",
  "tracing-subscriber",
 ]

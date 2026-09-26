@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The copied report. The dialog's widgets are checked in the window's
-//! graphical test (`mail_ui/tests.rs`), the one GTK test of this crate.
+//! graphical tests (`mail_ui/tests.rs`).
 
 use super::*;
 use crate::failure_declarations::{declare_failure, declare_short_list};

@@ -11,6 +11,7 @@ mod gmail;
 mod imap;
 mod imap_batch;
 mod microsoft365;
+mod store_load;
 mod worker;
 
 #[cfg(test)]
@@ -20,12 +21,13 @@ mod test_record;
 #[cfg(test)]
 mod tests;
 
-pub use batch::{CancelsLoadOnDrop, LoadResult, MessageIdentity, ReceivedBatch, ReceivedMessage};
+pub use batch::{CancelsLoadOnDrop, LoadResult};
 
 use batch::LoadFailure;
 use goa_adapter::{AccessError, AccessRequest, GoaAdapter, ImapAccess};
 use mailbag_domain::AccountId;
-use std::{cell::RefCell, rc::Rc};
+use mailbag_store::Store;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 use worker::{LoadHandle, LoadKind, MailWorker};
 
 /// Which load sequence an account needs. The window turns the account's
@@ -55,17 +57,18 @@ pub trait LoadsInbox {
 }
 
 /// Loads an Inbox with the account's Online Accounts settings and credential,
-/// and the mail worker that speaks to the server.
+/// and the mail worker that speaks to the server and writes what it received
+/// into the store.
 pub struct MailLoader {
     accounts: GoaAdapter,
     worker: Rc<MailWorker>,
 }
 
 impl MailLoader {
-    pub fn new(accounts: GoaAdapter) -> Self {
+    pub fn new(accounts: GoaAdapter, store: Arc<Store>) -> Self {
         Self {
             accounts,
-            worker: Rc::new(MailWorker::new()),
+            worker: Rc::new(MailWorker::new(store)),
         }
     }
 }

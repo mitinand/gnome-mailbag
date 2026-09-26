@@ -163,6 +163,7 @@ value, so a new variant without a declaration does not compile.
 | Carrier | Function | Channel in the window |
 |---|---|---|
 | A failed operation | `declare_failure(&Failure) -> DeclaredFailure` | The list's failure page; Details opens the dialog |
+| A stored Inbox that cannot be read (added by [007](../../007-mail-storage/research.md#10-retrys-operation-for-a-failure-the-window-reads-itself)) | `declare_failure(&Failure)` | The list's failure page, whose Retry reads the stored Inbox again |
 | A short list | `declare_short_list(&IncompleteList) -> DeclaredFailure` | The banner above the list; its button opens the dialog |
 | A message's content | `declare_content(&ReceivedContent) -> Option<DeclaredFailure>` (`None` for text) | The reader's status page in the body's place; no dialog |
 | A Settings launch | `LaunchError::message()` (in `mailbag`): one line, title and advice, no `DeclaredFailure`, since the toast shows nothing more | A toast |
@@ -202,10 +203,12 @@ nothing of this table.
 - `mailbag` depends on no protocol crate; `failure_declarations.rs` matches
   domain types only.
 - The action names: `Retry` runs the failed operation, which the window
-  chooses from the carrier; every carrier in this feature is a load, so it
-  is `app.refresh-inbox`. `OnlineAccounts` is `app.accounts`.
-  `failure_dialog::show_action_button` in `mailbag` is the one place that
-  maps them to a label and an action name. A declaration never names a
+  chooses from the carrier as a `RetriedOperation`: a load's failure, a
+  short list and a message's content refresh the Inbox,
+  `app.refresh-inbox`; a stored Inbox that cannot be read is read again,
+  `app.read-stored-inbox` (amended by 007 on 2026-09-26). `OnlineAccounts`
+  is `app.accounts`. `failure_dialog::show_action_button` in `mailbag` is
+  the one place that maps them to a label and an action name. A declaration never names a
   widget or an action string.
 - The technical details and the record's error line name the same kind
   and the same status and codes; the declaration copies the details as the

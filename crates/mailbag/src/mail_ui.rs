@@ -1,20 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Shows one account's received mail in the approved list and reader.
+//! Shows one account's stored mail in the approved list and reader.
 //!
-//! Opening a message uses the text the load already received; it sends no
-//! request and changes nothing on the server.
+//! Opening a message uses the text read with the list; it sends no request
+//! and changes nothing on the server.
 
 #[cfg(test)]
 mod tests;
 
 use crate::failure_declarations::{DeclaredFailure, declare_content};
-use crate::failure_dialog::{show_action_button, status_description};
+use crate::failure_dialog::{RetriedOperation, show_action_button, status_description};
 use adw::{gio, glib, gtk, prelude::*};
-
-use mailbag_domain::{DisplayFields, ReceivedContent};
-use mailbag_providers::ReceivedBatch;
+use mailbag_domain::{DisplayFields, Message, ReceivedContent};
 use std::{cell::RefCell, rc::Rc};
 
 /// How much text a GTK label shows, in UTF-8 bytes. Longer text is cut at a
@@ -53,14 +51,14 @@ pub struct MailUi {
     content_status: adw::StatusPage,
     content_action: gtk::Button,
     sender_avatar: adw::Avatar,
-    /// The batch the rows were built from, to rebuild them only when the
-    /// shown account or its mail changed.
-    shown_batch: RefCell<Option<Rc<ReceivedBatch>>>,
+    /// The stored Inbox the rows were built from, to rebuild them only when
+    /// the shown account or its mail changed.
+    shown_inbox: RefCell<Option<Rc<[Message]>>>,
 }
 
-/// One row's message: the batch it belongs to and its place in it.
+/// One row's message: the stored Inbox it belongs to and its place in it.
 struct ListedMessage {
-    batch: Rc<ReceivedBatch>,
+    inbox: Rc<[Message]>,
     position: usize,
 }
 
@@ -97,7 +95,7 @@ impl MailUi {
             content_status: reader.content_status,
             content_action: reader.content_action,
             sender_avatar: reader.avatar,
-            shown_batch: RefCell::new(None),
+            shown_inbox: RefCell::new(None),
         });
         let weak = Rc::downgrade(&mail);
         messages.connect_row_activated(move |_, row| {
@@ -109,36 +107,36 @@ impl MailUi {
         mail
     }
 
-    /// Shows the rows of a received batch, keeping the open message when the
-    /// same batch is shown again.
-    pub fn show_batch(&self, batch: &Rc<ReceivedBatch>) {
+    /// Shows the rows of a stored Inbox, keeping the open message when the
+    /// same read's Inbox is shown again.
+    pub fn show_inbox(&self, inbox: &Rc<[Message]>) {
         let already_shown = self
-            .shown_batch
+            .shown_inbox
             .borrow()
             .as_ref()
-            .is_some_and(|shown| Rc::ptr_eq(shown, batch));
+            .is_some_and(|shown| Rc::ptr_eq(shown, inbox));
         if already_shown {
             return;
         }
         self.rows.remove_all();
-        for position in 0..batch.messages.len() {
+        for position in 0..inbox.len() {
             self.rows.append(&glib::BoxedAnyObject::new(ListedMessage {
-                batch: batch.clone(),
+                inbox: inbox.clone(),
                 position,
             }));
         }
-        *self.shown_batch.borrow_mut() = Some(batch.clone());
+        *self.shown_inbox.borrow_mut() = Some(inbox.clone());
         self.close_reader();
     }
 
-    /// Empties the list and the reader, as a refresh and an account without
-    /// mail do.
+    /// Empties the list and the reader, as an account without stored mail
+    /// does.
     pub fn clear(&self) {
-        if self.shown_batch.borrow().is_none() {
+        if self.shown_inbox.borrow().is_none() {
             return;
         }
         self.rows.remove_all();
-        *self.shown_batch.borrow_mut() = None;
+        *self.shown_inbox.borrow_mut() = None;
         self.close_reader();
     }
 
@@ -158,7 +156,7 @@ impl MailUi {
         }
     }
 
-    /// Opens the row's message from the received batch.
+    /// Opens the row's message from the stored Inbox on screen.
     fn open_message(&self, row_position: i32) {
         let Some(listed) = self.rows.item(row_position as u32) else {
             return;
@@ -167,12 +165,8 @@ impl MailUi {
             .downcast::<glib::BoxedAnyObject>()
             .expect("message row item");
         let listed = listed.borrow::<ListedMessage>();
-        let message = &listed.batch.messages[listed.position];
-        tracing::debug!(
-            account = listed.batch.account_id.as_str(),
-            identity = ?message.identity,
-            "message opened"
-        );
+        let message = &listed.inbox[listed.position];
+        tracing::debug!(identity = message.identity.as_str(), "message opened");
         show_inert_text(&self.reader_subject, &subject_text(&message.fields));
         self.reader_sender.set_text(&sender_text(&message.fields));
         self.sender_avatar
@@ -185,7 +179,7 @@ impl MailUi {
             None => self.reader_to.set_visible(false),
         }
         self.reader_date
-            .set_text(&received_date_text(message.internal_date, "%c"));
+            .set_text(&received_date_text(message.received, "%c"));
         if let ReceivedContent::Text(text) = &message.content {
             show_inert_text(&self.reader_body, &inert_text(text));
         }
@@ -206,7 +200,11 @@ impl MailUi {
         self.content_status.set_title(failure.title);
         self.content_status
             .set_description(Some(&status_description(failure)));
-        show_action_button(&self.content_action, failure.action);
+        show_action_button(
+            &self.content_action,
+            failure.action,
+            RetriedOperation::RefreshInbox,
+        );
     }
 
     fn close_reader(&self) {
@@ -306,12 +304,12 @@ fn build_message_row(listed: &glib::Object) -> gtk::ListBoxRow {
         .downcast_ref::<glib::BoxedAnyObject>()
         .expect("message row item");
     let listed = listed.borrow::<ListedMessage>();
-    let message = &listed.batch.messages[listed.position];
+    let message = &listed.inbox[listed.position];
     let builder = gtk::Builder::from_string(include_str!("../resources/ui/message-row.ui"));
     let row: gtk::ListBoxRow = builder.object("row").expect("message-row.ui: row");
     label(&builder, "sender").set_text(&sender_text(&message.fields));
     label(&builder, "subject").set_text(&subject_text(&message.fields));
-    label(&builder, "time").set_text(&received_date_text(message.internal_date, "%x"));
+    label(&builder, "time").set_text(&received_date_text(message.received, "%x"));
     // Previews and conversations are outside this feature.
     label(&builder, "preview").set_visible(false);
     builder
@@ -347,10 +345,10 @@ fn subject_text(fields: &DisplayFields) -> String {
 }
 
 /// The received date in local presentation, or nothing when the server sent
-/// no usable INTERNALDATE.
-fn received_date_text(internal_date: Option<i64>, format: &str) -> String {
+/// no usable date.
+fn received_date_text(received_unix: Option<i64>, format: &str) -> String {
     let Some(received) =
-        internal_date.and_then(|seconds| glib::DateTime::from_unix_local(seconds).ok())
+        received_unix.and_then(|seconds| glib::DateTime::from_unix_local(seconds).ok())
     else {
         return String::new();
     };

@@ -108,7 +108,6 @@ pub(crate) async fn load_batch_from_rows(
     }
     Ok(ReceivedBatch {
         account_id,
-        uid_validity: reader.uid_validity(),
         messages,
         incomplete: listed.refusal.map(|refusal| IncompleteList::ServerRefused {
             reply: refusal.text,

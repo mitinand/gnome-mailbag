@@ -3,32 +3,15 @@
 
 use super::*;
 use crate::logging::{LogLevel, capture::start_record};
-
-use mailbag_domain::{ContentExplanation, DisplayFields, FailureKind};
-use mailbag_providers::{MessageIdentity, ReceivedMessage};
-use std::cell::Cell;
+use mailbag_domain::FailureKind;
+use std::{cell::Cell, rc::Rc};
 
 fn account(name: &str) -> AccountId {
     AccountId::try_from(name).expect("synthetic account id")
 }
 
-fn batch_of(account_id: &AccountId, uids: &[u32]) -> ReceivedBatch {
-    ReceivedBatch {
-        account_id: account_id.clone(),
-        uid_validity: Some(1),
-        incomplete: None,
-        messages: uids
-            .iter()
-            .map(|uid| ReceivedMessage {
-                identity: MessageIdentity::ImapUid(*uid),
-                fields: DisplayFields::default(),
-                internal_date: None,
-                seen: false,
-                content: ReceivedContent::Text("Text".to_owned()),
-                gmail: None,
-            })
-            .collect(),
-    }
+fn stored() -> LoadResult {
+    LoadResult::Stored { incomplete: None }
 }
 
 fn sign_in_failure() -> Failure {
@@ -55,18 +38,8 @@ fn counted_step(cancellations: &Rc<Cell<usize>>) -> Box<dyn CancelsLoadOnDrop> {
     Box::new(CountedStep(cancellations.clone()))
 }
 
-fn received_uids(inbox: Option<&AccountInbox>) -> Vec<u32> {
-    match inbox {
-        Some(AccountInbox::Received(batch)) => batch
-            .messages
-            .iter()
-            .map(|message| match &message.identity {
-                MessageIdentity::ImapUid(uid) => *uid,
-                other => panic!("not an IMAP message: {other:?}"),
-            })
-            .collect(),
-        other => panic!("the account shows no batch: {other:?}"),
-    }
+fn is_stored(outcome: Option<&RefreshOutcome>) -> bool {
+    matches!(outcome, Some(RefreshOutcome::Stored(None)))
 }
 
 /// Starts a load that has reached the mail worker.
@@ -78,27 +51,27 @@ fn start_load(controller: &mut InboxController, account_id: &AccountId) -> Rc<Ce
 }
 
 #[test]
-fn an_account_without_a_refresh_has_no_mail_and_no_load() {
+fn an_account_without_a_refresh_has_no_outcome_and_no_load() {
     let controller = InboxController::default();
-    assert!(controller.inbox_of(&account("never-refreshed")).is_none());
+    assert!(controller.outcome_of(&account("never-refreshed")).is_none());
     assert!(!controller.is_loading());
 }
 
 #[test]
-fn refreshing_clears_the_account_and_runs_one_load() {
+fn a_refresh_keeps_the_previous_outcome_until_its_load_ends() {
     let mut controller = InboxController::default();
     let id = account("generic-imap");
     start_load(&mut controller, &id);
-    controller.finish_load(&id, LoadResult::Received(batch_of(&id, &[20, 10])));
-    assert_eq!(received_uids(controller.inbox_of(&id)), [20, 10]);
-    assert!(!controller.is_loading());
-
+    controller.finish_load(&id, LoadResult::Failed(sign_in_failure()));
     start_load(&mut controller, &id);
+    assert!(controller.is_loading_account(&id));
     assert!(matches!(
-        controller.inbox_of(&id),
-        Some(AccountInbox::Loading)
+        controller.outcome_of(&id),
+        Some(RefreshOutcome::Failed(_))
     ));
-    assert!(controller.is_loading());
+    controller.finish_load(&id, stored());
+    assert!(is_stored(controller.outcome_of(&id)));
+    assert!(!controller.is_loading());
 }
 
 #[test]
@@ -108,10 +81,10 @@ fn refresh_inbox_is_unavailable_while_a_load_runs() {
     let other = account("other-account");
     let cancellations = start_load(&mut controller, &loading);
     assert!(controller.is_loading());
-    assert!(controller.inbox_of(&other).is_none());
+    assert!(!controller.is_loading_account(&other));
     assert_eq!(cancellations.get(), 0);
 
-    controller.finish_load(&loading, LoadResult::Received(batch_of(&loading, &[10])));
+    controller.finish_load(&loading, stored());
     assert!(!controller.is_loading());
     start_load(&mut controller, &other);
     assert!(controller.is_loading());
@@ -123,64 +96,48 @@ fn a_result_reaches_only_the_account_its_load_started_for() {
     let loading = account("loading-account");
     let selected = account("selected-account");
     start_load(&mut controller, &loading);
-    controller.finish_load(&selected, LoadResult::Received(batch_of(&selected, &[30])));
-    assert!(controller.inbox_of(&selected).is_none());
+    controller.finish_load(&selected, stored());
+    assert!(controller.outcome_of(&selected).is_none());
     assert!(controller.is_loading());
 
-    controller.finish_load(&loading, LoadResult::Received(batch_of(&loading, &[10])));
-    assert_eq!(received_uids(controller.inbox_of(&loading)), [10]);
+    controller.finish_load(&loading, stored());
+    assert!(is_stored(controller.outcome_of(&loading)));
     assert!(!controller.is_loading());
 }
 
 #[test]
-fn a_failed_load_leaves_the_account_without_mail() {
-    let mut controller = InboxController::default();
-    let id = account("generic-imap");
-    start_load(&mut controller, &id);
-    controller.finish_load(&id, LoadResult::Received(batch_of(&id, &[10])));
-    start_load(&mut controller, &id);
-    controller.finish_load(&id, LoadResult::Failed(sign_in_failure()));
-    assert!(matches!(
-        controller.inbox_of(&id),
-        Some(AccountInbox::Failed(Failure {
-            kind: FailureKind::ServerRejectedSignIn,
-            ..
-        }))
-    ));
-    assert!(!controller.is_loading());
-}
-
-#[test]
-fn a_confirmed_exclusion_discards_the_mail_and_cancels_its_load() {
+fn a_confirmed_exclusion_forgets_the_outcome_and_cancels_its_load() {
     let mut controller = InboxController::default();
     let excluded = account("excluded-account");
     let kept = account("kept-account");
     start_load(&mut controller, &kept);
-    controller.finish_load(&kept, LoadResult::Received(batch_of(&kept, &[10])));
+    controller.finish_load(&kept, stored());
+    start_load(&mut controller, &excluded);
+    controller.finish_load(&excluded, LoadResult::Failed(sign_in_failure()));
     let cancellations = start_load(&mut controller, &excluded);
 
     controller.discard_excluded(|account_id| *account_id == kept);
     assert_eq!(cancellations.get(), 1);
-    assert!(controller.inbox_of(&excluded).is_none());
-    assert_eq!(received_uids(controller.inbox_of(&kept)), [10]);
+    assert!(controller.outcome_of(&excluded).is_none());
+    assert!(is_stored(controller.outcome_of(&kept)));
     // The load ends only once its connection is closed.
     assert!(controller.is_loading());
 
-    // A result that arrives after the exclusion restores nothing.
-    controller.finish_load(&excluded, LoadResult::Received(batch_of(&excluded, &[40])));
-    assert!(controller.inbox_of(&excluded).is_none());
+    // A result that arrives after the exclusion records nothing.
+    controller.finish_load(&excluded, stored());
+    assert!(controller.outcome_of(&excluded).is_none());
     assert!(!controller.is_loading());
 }
 
 #[test]
-fn a_cancelled_load_ends_without_showing_a_failure() {
+fn a_cancelled_load_ends_without_an_outcome() {
     let mut controller = InboxController::default();
     let id = account("generic-imap");
     let cancellations = start_load(&mut controller, &id);
     controller.discard_excluded(|_| false);
     controller.finish_load(&id, LoadResult::Cancelled);
     assert_eq!(cancellations.get(), 1);
-    assert!(controller.inbox_of(&id).is_none());
+    assert!(controller.outcome_of(&id).is_none());
     assert!(!controller.is_loading());
 }
 
@@ -192,86 +149,6 @@ fn quitting_cancels_the_running_load() {
     controller.cancel_load();
     assert_eq!(cancellations.get(), 1);
     assert!(!controller.is_loading());
-}
-
-#[test]
-fn discarding_received_mail_of_an_account_no_longer_shown_is_recorded() {
-    let record = start_record(LogLevel::Info);
-    let shown = account("record_discard_shown");
-    let excluded = account("record_discard_excluded");
-    let failed = account("record_discard_failed");
-    let mut controller = InboxController::default();
-    for (account_id, result) in [
-        (&shown, LoadResult::Received(batch_of(&shown, &[10]))),
-        (
-            &excluded,
-            LoadResult::Received(batch_of(&excluded, &[10, 20])),
-        ),
-        (&failed, LoadResult::Failed(sign_in_failure())),
-    ] {
-        start_load(&mut controller, account_id);
-        controller.finish_load(account_id, result);
-    }
-    let before_discarding = record.text().lines().count();
-    controller.discard_excluded(|account_id| *account_id == shown);
-    let text = record.text();
-    let lines: Vec<&str> = text.lines().skip(before_discarding).collect();
-    assert_eq!(lines.len(), 1, "only a received batch holds mail: {text}");
-    let account = r#"account="record_discard_excluded""#;
-    assert!(
-        lines[0].contains(" INFO ") && lines[0].contains(account),
-        "{text}"
-    );
-    assert!(lines[0].contains("messages=2"), "{text}");
-}
-
-fn message_with(uid: u32, content: ReceivedContent) -> ReceivedMessage {
-    ReceivedMessage {
-        identity: MessageIdentity::ImapUid(uid),
-        fields: DisplayFields::default(),
-        internal_date: None,
-        seen: false,
-        content,
-        gmail: None,
-    }
-}
-
-#[test]
-fn unreadable_content_and_a_refused_list_each_warn_without_server_text() {
-    let record = start_record(LogLevel::Debug);
-    let loaded = account("account_1726920000_0");
-    let mut controller = InboxController::default();
-    start_load(&mut controller, &loaded);
-    let batch = ReceivedBatch {
-        account_id: loaded.clone(),
-        uid_validity: Some(1),
-        incomplete: Some(IncompleteList::ServerRefused {
-            reply: "private refusal text".to_owned(),
-            code: Some("LIMIT".to_owned()),
-        }),
-        messages: vec![
-            message_with(30, ReceivedContent::Text("Text".to_owned())),
-            // Not supported by design, so counted at info and not warned about.
-            message_with(
-                20,
-                ReceivedContent::Explained(ContentExplanation::NoPlainText { has_html: true }),
-            ),
-            message_with(
-                10,
-                ReceivedContent::Explained(ContentExplanation::UnknownCharset("x".to_owned())),
-            ),
-        ],
-    };
-    controller.finish_load(&loaded, LoadResult::Received(batch));
-    let text = record.text();
-    let warnings: Vec<&str> = text
-        .lines()
-        .filter(|line| line.contains(" WARN "))
-        .collect();
-    assert_eq!(warnings.len(), 2, "{text}");
-    assert!(warnings[0].contains("messages=1"), "{}", warnings[0]);
-    assert!(warnings[1].contains(r#"code="LIMIT""#), "{}", warnings[1]);
-    assert!(!text.contains("private refusal text"), "{text}");
 }
 
 #[test]
@@ -314,16 +191,14 @@ fn a_cancelled_load_is_one_info_line_whatever_follows() {
 
 #[test]
 fn a_late_result_for_an_excluded_account_writes_no_outcome() {
-    for late_result in [
-        LoadResult::Received(batch_of(&account("account_1726920000_4"), &[10])),
-        LoadResult::Failed(sign_in_failure()),
-    ] {
+    for late_result in [stored(), LoadResult::Failed(sign_in_failure())] {
         let record = start_record(LogLevel::Debug);
         let excluded = account("account_1726920000_4");
         let mut controller = InboxController::default();
         start_load(&mut controller, &excluded);
         controller.discard_excluded(|_| false);
         controller.finish_load(&excluded, late_result);
+        assert!(controller.outcome_of(&excluded).is_none());
         let text = record.text();
         for outcome in ["finished", " WARN ", " ERROR "] {
             assert!(

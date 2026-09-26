@@ -17,6 +17,7 @@ mailbag-content = { path = "../mailbag-content" }
 mailbag-domain = { path = "../mailbag-domain" }
 mailbag-graph = { path = "../mailbag-graph" }
 mailbag-imap = { path = "../mailbag-imap" }
+mailbag-store = { path = "../mailbag-store" }
 tracing.workspace = true
 
 [dev-dependencies]

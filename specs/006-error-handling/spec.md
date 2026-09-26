@@ -77,6 +77,7 @@ opens the failure dialog with the explanation, the advice, the action and
 the technical text. This is the common case once messages are stored
 locally; until local storage exists (007) a refresh starts from an empty
 list, so the story is deferred with FR-013 and gets no tasks before then.
+(Built by [007](../007-mail-storage/spec.md) on 2026-09-26.)
 **Independent Test**: a stored Inbox and a scripted server that rejects the
 sign-in; check the rows, the banner and its dialog, then a successful
 refresh.
@@ -432,7 +433,7 @@ from the approved forms, and decided:
   included; they are the one exception. The wording table and the "incomplete
   list in a toast" rule of the 002 UI contract are superseded by this feature.
 - **FR-013 — Deferred, with the layer each waits for**: (a) *Local storage
-  (007)*: an account failure while the account's stored mail is on screen is
+  (007, built on 2026-09-26)*: an account failure while the account's stored mail is on screen is
   shown as the banner above that mail with the failure's title, so that
   stale mail is told apart from an incomplete list; the store's own
   failures (it cannot be opened, the disk is full) declare their scope under

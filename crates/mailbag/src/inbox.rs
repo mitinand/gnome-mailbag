@@ -1,31 +1,32 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The mail each account received in this run, and the one load that fills it.
-//! The batch itself and the load belong to `mailbag-providers`, which also
-//! records a failed load; this module keeps what the window shows and writes
-//! the record of a received batch.
+//! How each account's latest refresh in this run ended, and the one load that
+//! may be running. The mail itself is in the store, which a load writes and
+//! the window reads (specs/007-mail-storage FR-001); a refresh's outcome stays
+//! in memory (specs/006-error-handling FR-007).
 
 #[cfg(test)]
 mod tests;
 
-use mailbag_domain::{AccountId, Failure, IncompleteList, ReceivedContent};
-use mailbag_providers::{CancelsLoadOnDrop, LoadResult, ReceivedBatch};
-use std::{collections::BTreeMap, rc::Rc};
+use mailbag_domain::{AccountId, Failure, IncompleteList};
+use mailbag_providers::{CancelsLoadOnDrop, LoadResult};
+use std::collections::BTreeMap;
 
-/// What one account shows for its mail. No entry means that nothing has been
-/// loaded for it in this run.
+/// How an account's latest refresh in this run ended. No entry means that no
+/// refresh of it ended in this run.
 #[derive(Debug)]
-pub enum AccountInbox {
-    Loading,
-    Received(Rc<ReceivedBatch>),
+pub enum RefreshOutcome {
+    /// The load's messages are stored; `Some` says why some are missing.
+    Stored(Option<IncompleteList>),
     Failed(Failure),
 }
 
-/// Each account's received mail and the single load that may be running.
+/// Each account's latest refresh outcome and the single load that may be
+/// running.
 #[derive(Default)]
 pub struct InboxController {
-    inboxes: BTreeMap<AccountId, AccountInbox>,
+    outcomes: BTreeMap<AccountId, RefreshOutcome>,
     running_load: Option<RunningLoad>,
 }
 
@@ -36,8 +37,8 @@ struct RunningLoad {
 }
 
 impl InboxController {
-    pub fn inbox_of(&self, account_id: &AccountId) -> Option<&AccountInbox> {
-        self.inboxes.get(account_id)
+    pub fn outcome_of(&self, account_id: &AccountId) -> Option<&RefreshOutcome> {
+        self.outcomes.get(account_id)
     }
 
     /// While a load runs, Refresh Inbox stays unavailable and the sidebar
@@ -46,13 +47,19 @@ impl InboxController {
         self.running_load.is_some()
     }
 
-    /// Refresh Inbox: clears the account's mail, enters Loading and keeps what
-    /// cancels the load just started. The caller checks `is_loading` first,
-    /// because Refresh is not queued.
+    /// Whether the running load is this account's.
+    pub fn is_loading_account(&self, account_id: &AccountId) -> bool {
+        self.running_load
+            .as_ref()
+            .is_some_and(|running| running.account_id == *account_id)
+    }
+
+    /// Refresh Inbox: keeps what cancels the load just started. The latest
+    /// outcome stays until the load ends, so a banner stays over the stored
+    /// rows meanwhile. The caller checks `is_loading` first, because Refresh
+    /// is not queued.
     pub fn begin_load(&mut self, account_id: &AccountId, cancellation: Box<dyn CancelsLoadOnDrop>) {
         debug_assert!(self.running_load.is_none(), "one load at a time");
-        self.inboxes
-            .insert(account_id.clone(), AccountInbox::Loading);
         tracing::info!(account = account_id.as_str(), "Inbox load started");
         self.running_load = Some(RunningLoad {
             account_id: account_id.clone(),
@@ -60,54 +67,36 @@ impl InboxController {
         });
     }
 
-    /// Stores how the load ended under the account it was started for, and
-    /// leaves Loading so Refresh Inbox becomes available again.
+    /// Records how the load ended under the account it was started for, and
+    /// leaves loading so Refresh Inbox becomes available again. The result of
+    /// a load cancelled by an exclusion is not recorded.
     pub fn finish_load(&mut self, account_id: &AccountId, result: LoadResult) {
-        if self
+        let Some(running) = self
             .running_load
             .take_if(|running| running.account_id == *account_id)
-            .is_none()
-        {
+        else {
             return;
-        }
-        let account = account_id.as_str();
-        let inbox = match result {
+        };
+        let outcome = match result {
             // The cancellation was recorded where it was requested.
             LoadResult::Cancelled => return,
-            _ if !self.awaits_result(account_id) => {
+            _ if running.cancellation.is_none() => {
                 tracing::info!(
-                    account,
+                    account = account_id.as_str(),
                     "Inbox load result discarded: the account is no longer shown"
                 );
                 return;
             }
-            LoadResult::Received(batch) => {
-                log_received_batch(account, &batch);
-                AccountInbox::Received(Rc::new(batch))
-            }
-            LoadResult::Failed(failure) => AccountInbox::Failed(failure),
+            LoadResult::Stored { incomplete } => RefreshOutcome::Stored(incomplete),
+            LoadResult::Failed(failure) => RefreshOutcome::Failed(failure),
         };
-        self.inboxes.insert(account_id.clone(), inbox);
+        self.outcomes.insert(account_id.clone(), outcome);
     }
 
-    /// Discards the mail of accounts Online Accounts no longer shows and
+    /// Forgets the outcomes of accounts Online Accounts no longer shows and
     /// cancels a load running for one of them.
     pub fn discard_excluded(&mut self, is_visible: impl Fn(&AccountId) -> bool) {
-        self.inboxes.retain(|account_id, inbox| {
-            let visible = is_visible(account_id);
-            // Only a received batch holds mail; a failed or running load holds none.
-            if !visible
-                && let AccountInbox::Received(batch) = inbox
-                && !batch.messages.is_empty()
-            {
-                tracing::info!(
-                    account = account_id.as_str(),
-                    messages = batch.messages.len(),
-                    "mail of an account no longer shown was discarded"
-                );
-            }
-            visible
-        });
+        self.outcomes.retain(|account_id, _| is_visible(account_id));
         if let Some(running) = self
             .running_load
             .as_mut()
@@ -138,58 +127,5 @@ impl InboxController {
                 "Inbox load cancelled"
             );
         }
-    }
-
-    /// A result reaches the account only while its mail is still loading, so
-    /// mail discarded by a confirmed exclusion stays discarded.
-    fn awaits_result(&self, account_id: &AccountId) -> bool {
-        matches!(self.inboxes.get(account_id), Some(AccountInbox::Loading))
-    }
-}
-
-/// How an accepted load ended, with warnings for what the reader cannot show.
-fn log_received_batch(account: &str, batch: &ReceivedBatch) {
-    // Content the reader does not show by design, and content that could not
-    // be read, counted once over the batch.
-    let (unsupported, unreadable) =
-        batch
-            .messages
-            .iter()
-            .fold(
-                (0, 0),
-                |(unsupported, unreadable), message| match &message.content {
-                    ReceivedContent::Text(_) => (unsupported, unreadable),
-                    ReceivedContent::Explained(explanation) if explanation.is_by_design() => {
-                        (unsupported + 1, unreadable)
-                    }
-                    ReceivedContent::Explained(_)
-                    | ReceivedContent::StructureUnreadable
-                    | ReceivedContent::TextNotReturned => (unsupported, unreadable + 1),
-                },
-            );
-    tracing::info!(
-        account,
-        messages = batch.messages.len(),
-        unsupported,
-        "Inbox load finished"
-    );
-    if unreadable > 0 {
-        tracing::warn!(
-            account,
-            messages = unreadable,
-            "some messages have content that could not be read"
-        );
-    }
-    match &batch.incomplete {
-        Some(IncompleteList::ServerRefused { code, .. }) => tracing::warn!(
-            account,
-            code = code.as_deref(),
-            "the server refused to finish the message list"
-        ),
-        Some(IncompleteList::MoreAvailable) => tracing::warn!(
-            account,
-            "the mail service offered more messages than one request holds"
-        ),
-        None => {}
     }
 }

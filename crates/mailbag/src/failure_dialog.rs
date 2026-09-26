@@ -12,17 +12,33 @@ use crate::failure_declarations::{DeclaredFailure, FailureAction, remote_heading
 use crate::mail_ui::{cut_unbroken_runs, inert_text, show_inert_text};
 use adw::{glib, gtk, prelude::*};
 
+/// The operation Retry runs: the one that failed, which the window knows from
+/// what shows the failure (specs/007-mail-storage/research.md §10).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RetriedOperation {
+    /// A load, a short list or a message's content: Refresh Inbox.
+    RefreshInbox,
+    /// A stored Inbox that could not be read: read it again.
+    ReadStoredInbox,
+}
+
 /// Gives a form's action button the declared action, or hides it. The one
-/// place that turns an action into a label and an action name. Retry runs
-/// Refresh Inbox because every failure shown today is a load's.
-pub fn show_action_button(button: &gtk::Button, action: Option<FailureAction>) {
+/// place that turns an action into a label and an action name.
+pub fn show_action_button(
+    button: &gtk::Button,
+    action: Option<FailureAction>,
+    retried: RetriedOperation,
+) {
     let Some(action) = action else {
         button.set_visible(false);
         return;
     };
-    let (label, action_name) = match action {
-        FailureAction::Retry => ("Retry", "app.refresh-inbox"),
-        FailureAction::OnlineAccounts => ("Online Accounts", "app.accounts"),
+    let (label, action_name) = match (action, retried) {
+        (FailureAction::Retry, RetriedOperation::RefreshInbox) => ("Retry", "app.refresh-inbox"),
+        (FailureAction::Retry, RetriedOperation::ReadStoredInbox) => {
+            ("Retry", "app.read-stored-inbox")
+        }
+        (FailureAction::OnlineAccounts, _) => ("Online Accounts", "app.accounts"),
     };
     button.set_label(label);
     button.set_action_name(Some(action_name));
@@ -42,8 +58,12 @@ pub fn status_description(failure: &DeclaredFailure) -> String {
 
 /// Opens the failure dialog over the window that holds `parent`, filled from
 /// its form in the order the spec gives: explanation, advice, remote texts,
-/// technical details, action.
-pub fn present(parent: &impl IsA<gtk::Widget>, failure: &DeclaredFailure) {
+/// technical details, action; Retry runs `retried`.
+pub fn present(
+    parent: &impl IsA<gtk::Widget>,
+    failure: &DeclaredFailure,
+    retried: RetriedOperation,
+) {
     let builder = gtk::Builder::from_string(include_str!("../resources/ui/failure-dialog.ui"));
     let dialog: adw::Dialog = builder
         .object("failure_dialog")
@@ -68,7 +88,7 @@ pub fn present(parent: &impl IsA<gtk::Widget>, failure: &DeclaredFailure) {
     show_paragraph(&explanation, &failure.explanation);
     show_paragraph(&advice, failure.advice.unwrap_or_default());
     append_blocks(&blocks, failure);
-    show_action_button(&action, failure.action);
+    show_action_button(&action, failure.action, retried);
     // Weak, because the dialog owns the button that owns this handler.
     let closing = dialog.downgrade();
     action.connect_clicked(move |_| {

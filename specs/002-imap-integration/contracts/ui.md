@@ -68,7 +68,8 @@ See the limited protocol-support decision in [research](../research.md#6-ui-and-
 | reader_stack | Use unselected/message. Do not enter offline/body-loading prototype pages. |
 
 Opening selects the received UID and uses existing mail_split navigation.
-Refresh clears the list, selection and reader before loading. Text
+Refresh keeps the stored rows while it loads; a completed load replaces them
+and closes the reader (replaced by [007](../../007-mail-storage/spec.md) FR-005 on 2026-09-26). Text
 selection/copy is local. A message without readable text shows a status page
 in the body's place with the declared title and explanation (superseded by
 [006](../../006-error-handling/spec.md) on 2026-09-25).

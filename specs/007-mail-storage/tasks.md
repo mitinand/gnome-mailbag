@@ -136,7 +136,7 @@ application does not use the store yet.
   `sqlite-devel` to scripts/setup.sh, `sqlite-devel` to
   .github/workflows/check.yml and to the prerequisites in README.md; confirm
   `cargo deny check licenses sources` passes with deny.toml unchanged.
-- [ ] T012 STOP: run ./scripts/check.sh and git diff --check; compare the
+- [X] T012 STOP: run ./scripts/check.sh and git diff --check; compare the
   size with plan.md's table (domain ~45 new, store ~365); review
   constitution I/II; report, suggest the commit and wait before portion 2.
 
@@ -146,7 +146,7 @@ Goal: the window shows only stored mail (US1, US2), a failed refresh keeps
 it under the banner (US3), and a store that cannot be read is a failure page
 whose Retry reads it again (US5).
 
-- [ ] T013 Amend the documents first: specs/002-imap-integration/spec.md
+- [X] T013 Amend the documents first: specs/002-imap-integration/spec.md
   (FR-006's stage rule, FR-008's "MAY discard", FR-009's empty list after a
   failed refresh, SC-004's stage part and the Clarification "What does a
   refresh keep?" marked as amended by 007), data-model.md ("In-Memory
@@ -155,7 +155,7 @@ whose Retry reads it again (US5).
   built by 007); specs/006-error-handling/contracts/failure-declaration.md
   (the carrier "a stored Inbox that cannot be read" with Retry reading it
   again; Retry's operation chosen by carrier, `RetriedOperation`).
-- [ ] T014 [US1] [US2] In crates/mailbag-providers: make `ReceivedBatch`,
+- [X] T014 [US1] [US2] In crates/mailbag-providers: make `ReceivedBatch`,
   `ReceivedMessage` and `MessageIdentity` private to the crate; replace
   `LoadResult::Received(batch)` with `LoadResult::Stored { incomplete:
   Option<IncompleteList> }`; `MailLoader::new(accounts, store: Arc<Store>)`
@@ -170,7 +170,7 @@ whose Retry reads it again (US5).
   failure → the load's error line through `log_load_failure(account, kind,
   None, None, 0)`, the one function that writes it (006 T029), then
   `Failed(failure)`.
-- [ ] T015 [US1] [US2] Tests in crates/mailbag-providers/src/tests.rs: the
+- [X] T015 [US1] [US2] Tests in crates/mailbag-providers/src/tests.rs: the
   sequence tests call `load_imap_inbox`, `load_gmail_inbox` and
   `load_microsoft365_inbox` directly and keep their assertions on the batch;
   worker tests: for each of the three providers, a load from its scripted
@@ -181,7 +181,7 @@ whose Retry reads it again (US5).
   cancelled before its write stores nothing; a panic during the write ends
   as `Stopped` and the worker serves the next load; move the record tests of
   `log_received_batch` from crates/mailbag/src/inbox/tests.rs.
-- [ ] T016 [US1] [US2] [US3] [US5] In crates/mailbag: failure_dialog.rs gets
+- [X] T016 [US1] [US2] [US3] [US5] In crates/mailbag: failure_dialog.rs gets
   `RetriedOperation { RefreshInbox, ReadStoredInbox }` for
   `show_action_button` and `present`; inbox.rs replaces `AccountInbox` with
   `RefreshOutcome { Stored(Option<IncompleteList>), Failed(Failure) }` per
@@ -198,7 +198,7 @@ whose Retry reads it again (US5).
   `Arc::new(Store::at(glib::user_data_dir().join("mailbag").join("mail.sqlite")))`
   for `MailLoader` and `WindowUi` and publishes and removes
   `read-stored-inbox` with the window, like `refresh-inbox`.
-- [ ] T017 [US1] [US2] [US3] [US5] Tests: the `ScriptedLoader` of
+- [X] T017 [US1] [US2] [US3] [US5] Tests: the `ScriptedLoader` of
   crates/mailbag/src/mail_ui/tests.rs writes its messages into the window's
   store (in memory, or a temporary file where a restart is simulated) and
   reports `Stored` or `Failed`; rewrite crates/mailbag/src/inbox/tests.rs for

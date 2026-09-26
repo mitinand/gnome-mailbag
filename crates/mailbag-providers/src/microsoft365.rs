@@ -22,7 +22,6 @@ pub(crate) async fn load_microsoft365_inbox(
     let cut_short = page.more_available && page.messages.len() < BATCH_SIZE as usize;
     Ok(ReceivedBatch {
         account_id: access.account_id,
-        uid_validity: None,
         messages: page.messages.into_iter().map(received_message).collect(),
         incomplete: cut_short.then_some(IncompleteList::MoreAvailable),
     })

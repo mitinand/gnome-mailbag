@@ -74,7 +74,9 @@ not establish the final synchronization or storage design.
   selection never loads.
 - Q: What does a refresh keep? → A: Nothing. It clears the account's list and
   reader, loads a new batch and shows it. A failed load leaves the list empty
-  and names the failing step.
+  and names the failing step. (Amended by [007](../007-mail-storage/spec.md) on 2026-09-26: the
+  stored rows stay during a refresh and after a failed one, under the banner
+  that names the failure; 007 FR-005.)
 - Q: What happens to received mail when the account is removed, Mail is disabled
   or the account service fails? → A: It may be discarded; a later refresh loads
   it again. A load that finishes after removal or Mail disablement cannot
@@ -235,17 +237,22 @@ has no network failure or server-identity reconciliation of its own.
   fields and received text or content explanations) in memory until that
   account's next refresh, its discarding or exit. It MUST NOT create an
   application-managed disk store or temporary files for account connection
-  details, lists or bodies. A new run MUST obtain mail again.
+  details, lists or bodies. A new run MUST obtain mail again. (The stage rule
+  is amended by [007](../007-mail-storage/spec.md) on 2026-09-26: mail is kept in the local store and
+  shown from it; the password rule stands.)
 - **FR-007 — Correct view**: A load's result MUST be stored only for the account
   it was started for, and the list MUST show only the selected account's batch.
   The reader MUST show the selected entry's received content.
 - **FR-008 — Account changes**: When GOA confirms that an account was removed or
   its Mail was disabled, Mailbag MUST discard that account's received mail, and a
   load still running for it MUST NOT restore it. Mailbag MAY also discard
-  received mail when the account service fails. Retry Check remains an account
+  received mail when the account service fails. (Amended by [007](../007-mail-storage/spec.md) on
+  2026-09-26: a failed read and a service that fails or restarts delete
+  nothing; 007 FR-008.) Retry Check remains an account
   observation action, separate from Refresh Inbox.
 - **FR-009 — Failures and bounded work**: A failed load MUST report the actual
-  failing step and permit a subsequent manual attempt. Failure to obtain a
+  failing step and permit a subsequent manual attempt. (A failed refresh no
+  longer empties the list; amended by [007](../007-mail-storage/spec.md) on 2026-09-26, 007 FR-005.) Failure to obtain a
   password from GOA MUST NOT be described as the mail server rejecting sign-in.
   Stop work that depends on the failed step; do not present cascading errors for
   steps that could not run. Unsupported or undecodable content belongs to its
@@ -319,7 +326,8 @@ has no network failure or server-identity reconciliation of its own.
   personal mail in diagnostics. **This stage only:** Inspection finds zero
   application-created files containing mail, including temporary files, and after
   quitting and restarting without network access, no previous mail is restored
-  (FR-006, FR-009).
+  (FR-006, FR-009). (The stage part is amended by [007](../007-mail-storage/spec.md) on 2026-09-26:
+  the store keeps mail across restarts; 007 SC-001.)
 - **SC-005**: Across account switching during a load and confirmed exclusion,
   zero results appear for the wrong account or restore excluded mail (FR-007–008).
 - **SC-006**: Accessibility established by F01 does not regress. The new

@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The mail worker: a thread with its own GLib context that runs one load at
-//! a time. It touches no widget.
+//! a time and writes what it received into the store. It touches no widget.
 
 use crate::{
     LoadFailure, LoadResult, gmail::load_gmail_inbox, imap::load_imap_inbox,
-    microsoft365::load_microsoft365_inbox,
+    microsoft365::load_microsoft365_inbox, store_load::store_batch,
 };
 use futures_util::{
     FutureExt,
@@ -14,14 +14,15 @@ use futures_util::{
 };
 use goa_adapter::{GraphAccess, ImapAccess};
 use mailbag_domain::{AccountId, install_panic_hook, take_panic};
-use std::{cell::RefCell, panic::AssertUnwindSafe, pin::pin, thread};
+use mailbag_store::Store;
+use std::{cell::RefCell, panic::AssertUnwindSafe, pin::pin, sync::Arc, thread};
 
 /// The mail worker. It runs one load at a time for the selected account and
-/// keeps GTK's context free of mail access. Its thread starts with the first
-/// load, and again if it ever stops.
-#[derive(Default)]
+/// keeps GTK's context free of mail access and of the store's writes. Its
+/// thread starts with the first load, and again if it ever stops.
 pub(crate) struct MailWorker {
     pub(crate) loads: RefCell<Option<async_channel::Sender<LoadRequest>>>,
+    store: Arc<Store>,
 }
 
 /// Which load sequence to run, with the access it needs. The access and the
@@ -64,8 +65,11 @@ pub(crate) struct LoadHandle {
 }
 
 impl MailWorker {
-    pub(crate) fn new() -> Self {
-        Self::default()
+    pub(crate) fn new(store: Arc<Store>) -> Self {
+        Self {
+            loads: RefCell::new(None),
+            store,
+        }
     }
 
     /// Loads the Inbox of the account the access data names. `on_finished`
@@ -105,9 +109,12 @@ impl MailWorker {
         // The application's subscriber is global; a test's belongs to the
         // thread that starts the worker (specs/003-logging/research.md §8).
         let record = tracing::dispatcher::get_default(Clone::clone);
+        let store = self.store.clone();
         thread::Builder::new()
             .name("mailbag-mail".to_owned())
-            .spawn(move || tracing::dispatcher::with_default(&record, || run_worker(&requests)))
+            .spawn(move || {
+                tracing::dispatcher::with_default(&record, || run_worker(&requests, &store))
+            })
             .expect("start the mail worker thread");
         *loads = Some(sender.clone());
         sender
@@ -131,14 +138,14 @@ pub(crate) async fn report_outcome(
 }
 
 /// Runs loads until the last worker handle is dropped.
-fn run_worker(requests: &async_channel::Receiver<LoadRequest>) {
+fn run_worker(requests: &async_channel::Receiver<LoadRequest>, store: &Store) {
     install_panic_hook();
     let context = glib::MainContext::new();
     context
         .with_thread_default(|| {
             context.block_on(async {
                 while let Ok(request) = requests.recv().await {
-                    let outcome = run_load(request.kind, &request.cancelled).await;
+                    let outcome = run_load(request.kind, store, &request.cancelled).await;
                     request.outcome.try_send(outcome).ok();
                 }
             });
@@ -146,9 +153,14 @@ fn run_worker(requests: &async_channel::Receiver<LoadRequest>) {
         .expect("the mail worker owns its GLib context");
 }
 
-/// Runs one provider's load until it finishes or the caller cancels it.
-async fn run_load(kind: LoadKind, cancelled: &async_channel::Receiver<()>) -> LoadResult {
-    let mut load = Box::pin(load_catching_panics(kind));
+/// Runs one provider's load and its write until they finish or the caller
+/// cancels the load.
+async fn run_load(
+    kind: LoadKind,
+    store: &Store,
+    cancelled: &async_channel::Receiver<()>,
+) -> LoadResult {
+    let mut load = Box::pin(load_catching_panics(kind, store, cancelled));
     match future::select(&mut load, pin!(cancelled.recv())).await {
         Either::Left((outcome, _)) => outcome,
         Either::Right(_) => {
@@ -160,33 +172,42 @@ async fn run_load(kind: LoadKind, cancelled: &async_channel::Receiver<()>) -> Lo
     }
 }
 
-/// Runs the provider's load sequence. A panic inside it ends this load as a
-/// failure that carries the panic's message and place, and the worker goes
-/// on with the next load (specs/006-error-handling FR-014).
-async fn load_catching_panics(kind: LoadKind) -> LoadResult {
+/// Runs the provider's load sequence, then stores what it received. A panic
+/// inside either ends this load as a failure that carries the panic's message
+/// and place, and the worker goes on with the next load
+/// (specs/006-error-handling FR-014).
+async fn load_catching_panics(
+    kind: LoadKind,
+    store: &Store,
+    cancelled: &async_channel::Receiver<()>,
+) -> LoadResult {
     let account_id = kind.account_id().clone();
     // The kind is read once, here, to choose the sequence; no sequence asks
     // about the provider again (004 plan, decision D1).
     let load = async move {
-        match kind {
+        let batch = match kind {
             LoadKind::GenericImap(access) => {
-                load_imap_inbox(access).await.map_err(LoadFailure::Imap)
+                load_imap_inbox(access).await.map_err(LoadFailure::Imap)?
             }
-            LoadKind::Gmail(access) => load_gmail_inbox(access).await.map_err(LoadFailure::Imap),
+            LoadKind::Gmail(access) => load_gmail_inbox(access).await.map_err(LoadFailure::Imap)?,
             LoadKind::Microsoft365 {
                 access,
                 service_url,
             } => load_microsoft365_inbox(access, &service_url)
                 .await
-                .map_err(LoadFailure::MicrosoftGraph),
+                .map_err(LoadFailure::MicrosoftGraph)?,
             #[cfg(test)]
             LoadKind::PanicsForTest(_) => panic!("a load panicked on purpose"),
-        }
+        };
+        // A load cancelled while it waited for the store writes nothing
+        // (specs/007-mail-storage/research.md §6).
+        Ok::<_, LoadFailure>(store_batch(store, batch, || cancelled.is_closed()))
     };
-    // No state outlives a load, so nothing the panic interrupted is used
-    // again. The payload is not read: the hook already kept the message.
+    // A panic in the store rolled its transaction back, and no other state
+    // outlives a load, so nothing the panic interrupted is used again. The
+    // payload is not read: the hook already kept the message.
     match AssertUnwindSafe(load).catch_unwind().await {
-        Ok(Ok(batch)) => LoadResult::Received(batch),
+        Ok(Ok(outcome)) => outcome,
         Ok(Err(failure)) => failure.give_up(&account_id),
         Err(_) => LoadFailure::WorkerStopped(take_panic()).give_up(&account_id),
     }

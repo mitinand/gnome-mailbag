@@ -13,6 +13,7 @@ goa-adapter = { path = "../goa-adapter" }
 mailbag-content = { path = "../mailbag-content" }
 mailbag-domain = { path = "../mailbag-domain" }
 mailbag-providers = { path = "../mailbag-providers" }
+mailbag-store = { path = "../mailbag-store" }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
