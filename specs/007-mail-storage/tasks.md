@@ -213,7 +213,7 @@ whose Retry reads it again (US5).
   that cannot be read shows the failure page with Retry bound to
   `app.read-stored-inbox`, and a refresh shows the refresh's own outcome
   instead; a read's answer that arrives after a newer read's is dropped.
-- [ ] T018 STOP: run ./scripts/check.sh, git diff --check and each GTK test
+- [X] T018 STOP: run ./scripts/check.sh, git diff --check and each GTK test
   on its own (`cargo test -p mailbag <name> -- --ignored --exact`); compare
   the size with plan.md's table; report, suggest the commit and wait before
   portion 3.
@@ -223,7 +223,7 @@ whose Retry reads it again (US5).
 Goal: an account's stored mail is deleted on a complete answer without it
 or with its Mail off, and a late result cannot bring it back (US4).
 
-- [ ] T019 [US4] In crates/mailbag/src/window_ui.rs `apply_account_update`,
+- [X] T019 [US4] In crates/mailbag/src/window_ui.rs `apply_account_update`,
   after the exclusion's cancellation and only when `last_check` is
   complete, call `delete_removed_accounts`: the accounts of the answer that
   are present with Mail on (from `AccountUpdate::accounts`, not from
@@ -231,7 +231,7 @@ or with its Mail off, and a late result cannot bring it back (US4).
   `Arc<Mutex<BTreeSet<AccountId>>>`, and `keep_accounts` reads it under the
   store's lock, through `gio::spawn_blocking` inside `catch_panic`; one info line per deleted account, one error line
   when the deletion fails (it happens again at the next complete answer).
-- [ ] T020 [US4] Tests: a complete answer without an account, or with its
+- [X] T020 [US4] Tests: a complete answer without an account, or with its
   Mail off, leaves none of its stored mail; a failed read and a not yet
   checked answer delete nothing; an account missing from the first complete
   answer after a restart loses its mail; two deletions run in the reverse

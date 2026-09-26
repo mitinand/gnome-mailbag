@@ -20,13 +20,23 @@ use goa_adapter::AccountUpdate;
 use mailbag_domain::{AccountId, Failure, Message, catch_panic};
 use mailbag_providers::{LoadResult, LoadsInbox, MailProvider};
 use mailbag_store::Store;
-use std::{cell::RefCell, rc::Rc, sync::Arc};
+use std::{
+    cell::RefCell,
+    collections::BTreeSet,
+    rc::Rc,
+    sync::{Arc, Mutex, PoisonError},
+};
 
 pub struct WindowUi {
     accounts: Rc<RefCell<AccountUi>>,
     inboxes: RefCell<InboxController>,
     store: Arc<Store>,
     shown_inbox: RefCell<ShownInbox>,
+    /// The accounts the latest complete Online Accounts answer lists with
+    /// Mail on, which keep their stored mail. A deletion reads them under the
+    /// store's lock, so the one that runs last applies the newest answer
+    /// (research §6).
+    accounts_with_mail: Arc<Mutex<BTreeSet<AccountId>>>,
     mail: Rc<MailUi>,
     loader: Box<dyn LoadsInbox>,
     list_stack: gtk::Stack,
@@ -105,6 +115,7 @@ impl WindowUi {
             inboxes: RefCell::new(InboxController::default()),
             store,
             shown_inbox: RefCell::new(ShownInbox::default()),
+            accounts_with_mail: Arc::default(),
             mail: MailUi::new(builder),
             loader,
             list_stack: builder
@@ -188,8 +199,11 @@ impl WindowUi {
         &self.read_stored_inbox
     }
 
-    /// Applies an account update, forgets the refresh outcomes of accounts
-    /// Online Accounts no longer shows and cancels a load running for one.
+    /// Applies an account update: forgets the refresh outcomes of accounts
+    /// Online Accounts no longer shows, cancels a load running for one, and
+    /// on a complete answer deletes the stored mail of accounts gone or with
+    /// Mail off. The load is cancelled first, so its write finds itself
+    /// cancelled whichever takes the store's lock first (research §6).
     pub fn apply_account_update(&self, update: &AccountUpdate) {
         self.accounts.borrow_mut().apply_update(update);
         let accounts = self.accounts.borrow();
@@ -197,7 +211,54 @@ impl WindowUi {
             .borrow_mut()
             .discard_excluded(|account_id| accounts.shows_account(account_id));
         drop(accounts);
+        if update.last_check.is_complete() {
+            self.delete_removed_accounts(update);
+        }
         self.render();
+    }
+
+    /// Deletes, on GIO's thread pool, the stored mail of every account the
+    /// complete answer does not list with Mail on (FR-008). An account whose
+    /// Mail service is missing is not shown but keeps its mail. A failed
+    /// deletion happens again at the next complete answer.
+    fn delete_removed_accounts(&self, update: &AccountUpdate) {
+        let accounts_with_mail = update
+            .accounts
+            .iter()
+            .filter(|(_, details)| details.mail_enabled)
+            .map(|(account_id, _)| account_id.clone())
+            .collect();
+        *self
+            .accounts_with_mail
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = accounts_with_mail;
+        let store = self.store.clone();
+        let latest_accounts = self.accounts_with_mail.clone();
+        glib::spawn_future_local(async move {
+            let deleted = run_on_pool(move || {
+                store.keep_accounts(|| {
+                    latest_accounts
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .clone()
+                })
+            })
+            .await;
+            match deleted {
+                Ok(accounts) => {
+                    for account_id in accounts {
+                        tracing::info!(
+                            account = account_id.as_str(),
+                            "stored mail of a removed account deleted"
+                        );
+                    }
+                }
+                Err(failure) => tracing::error!(
+                    cause = ?failure.kind,
+                    "stored mail of removed accounts not deleted"
+                ),
+            }
+        });
     }
 
     /// Quit: cancels a running load without waiting for its worker.
@@ -257,15 +318,7 @@ impl WindowUi {
         let window = Rc::downgrade(self);
         glib::spawn_future_local(async move {
             let read_account = account_id.clone();
-            let answer =
-                gio::spawn_blocking(move || catch_panic(|| store.read_inbox(&read_account))).await;
-            let answer = match answer {
-                Ok(Ok(found)) => found,
-                Ok(Err(panic)) => Err(Failure::stopped(Some(panic))),
-                // The work catches its own panics, so the pool's guard is not
-                // reached.
-                Err(_) => Err(Failure::stopped(None)),
-            };
+            let answer = run_on_pool(move || store.read_inbox(&read_account)).await;
             if let Err(failure) = &answer {
                 tracing::error!(
                     account = account_id.as_str(),
@@ -434,6 +487,20 @@ impl WindowUi {
     #[cfg(test)]
     pub fn reads_stored_inbox(&self) -> bool {
         matches!(self.shown_inbox.borrow().stored, StoredInbox::Reading)
+    }
+}
+
+/// Runs store work on GIO's thread pool, off GTK's thread; a panic inside it
+/// ends it as a failure of kind `Stopped` with the panic's message and place
+/// (specs/007-mail-storage/research.md §9).
+async fn run_on_pool<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, Failure> + Send + 'static,
+) -> Result<T, Failure> {
+    match gio::spawn_blocking(move || catch_panic(work)).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(panic)) => Err(Failure::stopped(Some(panic))),
+        // The work catches its own panics, so the pool's guard is not reached.
+        Err(_) => Err(Failure::stopped(None)),
     }
 }
 

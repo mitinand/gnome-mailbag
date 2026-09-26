@@ -12,7 +12,7 @@ use mailbag_domain::{
     AccountId, ContentExplanation, Failure, FailureKind, IncompleteList, RemoteSource, RemoteText,
 };
 use mailbag_providers::{CancelsLoadOnDrop, LoadResult, LoadsInbox, MailProvider};
-use mailbag_store::Store;
+use mailbag_store::{InboxWrite, Store};
 use std::{
     cell::Cell,
     path::PathBuf,
@@ -25,6 +25,8 @@ struct StartedLoad {
     account_id: AccountId,
     provider: MailProvider,
     report: Box<dyn FnOnce(LoadResult)>,
+    /// Set when the window drops the load's step, which cancels it.
+    cancelled: Rc<Cell<bool>>,
 }
 
 /// Reports the load results the test chooses, so the window is exercised
@@ -36,13 +38,19 @@ struct ScriptedLoader {
     store: Arc<Store>,
 }
 
-struct CountedStep(Rc<Cell<usize>>);
+/// A running load's step: dropping it counts a cancellation and marks the
+/// load cancelled.
+struct CountedStep {
+    cancellations: Rc<Cell<usize>>,
+    cancelled: Rc<Cell<bool>>,
+}
 
 impl CancelsLoadOnDrop for CountedStep {}
 
 impl Drop for CountedStep {
     fn drop(&mut self) {
-        self.0.set(self.0.get() + 1);
+        self.cancellations.set(self.cancellations.get() + 1);
+        self.cancelled.set(true);
     }
 }
 
@@ -53,12 +61,17 @@ impl LoadsInbox for ScriptedLoader {
         provider: MailProvider,
         report: Box<dyn FnOnce(LoadResult)>,
     ) -> Box<dyn CancelsLoadOnDrop> {
+        let cancelled = Rc::new(Cell::new(false));
         self.started_loads.borrow_mut().push(StartedLoad {
             account_id: account_id.clone(),
             provider,
             report,
+            cancelled: cancelled.clone(),
         });
-        Box::new(CountedStep(self.cancelled_loads.clone()))
+        Box::new(CountedStep {
+            cancellations: self.cancelled_loads.clone(),
+            cancelled,
+        })
     }
 }
 
@@ -116,14 +129,23 @@ impl ScriptedLoader {
         (started.report)(result);
     }
 
-    /// Ends the running load as a completed one: its messages become the
-    /// account's stored Inbox.
+    /// Ends the running load as a completed one, as the worker does: its
+    /// messages become the account's stored Inbox, unless the load was
+    /// cancelled before the store took them.
     fn report_stored(&self, messages: &[Message], incomplete: Option<IncompleteList>) {
-        let account_id = self.loading_account().expect("a load is running");
-        self.store
-            .replace_inbox(&account_id, messages, || false)
+        let started = self
+            .started_loads
+            .borrow_mut()
+            .pop()
+            .expect("a load is running");
+        let write = self
+            .store
+            .replace_inbox(&started.account_id, messages, || started.cancelled.get())
             .expect("the test store takes the load");
-        self.report(LoadResult::Stored { incomplete });
+        (started.report)(match write {
+            InboxWrite::Stored => LoadResult::Stored { incomplete },
+            InboxWrite::LoadCancelled => LoadResult::Cancelled,
+        });
     }
 }
 
@@ -918,6 +940,125 @@ fn a_store_that_cannot_be_read() {
         Some(("Online Accounts".to_owned(), "app.accounts".to_owned()))
     );
     window.destroy();
+}
+
+/// A complete Online Accounts answer that no longer lists an account, or
+/// lists it with Mail off, deletes that account's stored mail; nothing else
+/// deletes it, and a load that ends after the exclusion stores nothing (US4,
+/// FR-008).
+#[test]
+#[ignore = "requires a graphical GTK session"]
+fn stored_mail_leaves_with_its_account() {
+    adw::init().expect("GTK display");
+    let store = Arc::new(Store::in_memory());
+    let (generic, google) = (account("synthetic-generic"), account("synthetic-google"));
+    for account_id in [&generic, &google] {
+        store
+            .replace_inbox(account_id, &two_messages(), || false)
+            .unwrap();
+    }
+    let has_stored_inbox = |account_id: &AccountId| {
+        store
+            .read_inbox(account_id)
+            .expect("the store reads")
+            .is_some()
+    };
+    let only_generic =
+        || accounts_update(&[("synthetic-generic", AccountProvider::ImapSmtp, "Generic")]);
+    let with_generic = |change: fn(&mut AccountDetails)| {
+        let mut update = only_generic();
+        change(
+            update
+                .accounts
+                .get_mut(&generic)
+                .expect("the generic account"),
+        );
+        update
+    };
+
+    // An account missing from the first complete answer after a start loses
+    // its mail.
+    let (window, ui, loader, widgets) = open_window(store.clone());
+    ui.apply_account_update(&only_generic());
+    wait_until(|| !has_stored_inbox(&google));
+    assert!(has_stored_inbox(&generic));
+
+    // A failed read, an answer not yet checked and a missing Mail service
+    // delete nothing.
+    let mut failed_read = accounts_update(&[]);
+    failed_read.last_check =
+        AccountCheckResult::Failed(AccountCheckError::new("check", ErrorCause::Unavailable));
+    ui.apply_account_update(&failed_read);
+    ui.apply_account_update(&AccountUpdate::default());
+    ui.apply_account_update(&with_generic(|details| {
+        details.mail_service_available = false
+    }));
+    let_deletions_run();
+    assert!(has_stored_inbox(&generic));
+
+    // Mail turned off deletes the account's mail.
+    let mail_off = with_generic(|details| details.mail_enabled = false);
+    ui.apply_account_update(&mail_off);
+    wait_until(|| !has_stored_inbox(&generic));
+
+    // Two deletions that wait for the store read the accounts of the newest
+    // answer, whichever runs last: Mail off, then on again, keeps the mail.
+    store
+        .replace_inbox(&generic, &two_messages(), || false)
+        .unwrap();
+    let (holding, held) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn({
+        let store = store.clone();
+        move || {
+            // A write that holds the store's lock and then writes nothing.
+            store.replace_inbox(&account("holder"), &[], || {
+                holding.send(()).unwrap();
+                released.recv().unwrap();
+                true
+            })
+        }
+    });
+    held.recv().unwrap();
+    ui.apply_account_update(&mail_off);
+    ui.apply_account_update(&only_generic());
+    release.send(()).unwrap();
+    holder.join().unwrap().unwrap();
+    let_deletions_run();
+    assert!(has_stored_inbox(&generic));
+
+    // A load that ends after its account was excluded stores nothing.
+    widgets.select_account(0);
+    settle(&ui);
+    ui.refresh_action().activate(None);
+    settle(&ui);
+    ui.apply_account_update(&mail_off);
+    loader.report_stored(&two_messages(), None);
+    wait_until(|| !has_stored_inbox(&generic));
+    let_deletions_run();
+    assert!(!has_stored_inbox(&generic));
+    window.destroy();
+}
+
+/// Runs the window's pending work until `condition` holds; the store's work
+/// runs on GIO's thread pool.
+fn wait_until(mut condition: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !condition() {
+        assert!(Instant::now() < deadline, "the store's work did not finish");
+        dispatch_pending();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// Gives the deletions sent to GIO's thread pool time to run, where the test
+/// checks that they deleted nothing.
+fn let_deletions_run() {
+    let until = Instant::now() + Duration::from_millis(100);
+    while Instant::now() < until {
+        dispatch_pending();
+        std::thread::sleep(Duration::from_millis(1));
+    }
 }
 
 fn click(widgets: &WindowWidgets, button: &str) {
