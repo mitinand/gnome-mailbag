@@ -162,7 +162,7 @@ value, so a new variant without a declaration does not compile.
 
 | Carrier | Function | Channel in the window |
 |---|---|---|
-| A failed operation | `declare_failure(&Failure) -> DeclaredFailure` | The list's failure page; Details opens the dialog |
+| A failed operation | `declare_failure(&Failure) -> DeclaredFailure` | The list's failure page when nothing is stored; over stored rows, the banner (007); Details or the banner's button opens the dialog |
 | A stored Inbox that cannot be read (added by [007](../../007-mail-storage/research.md#10-retrys-operation-for-a-failure-the-window-reads-itself)) | `declare_failure(&Failure)` | The list's failure page, whose Retry reads the stored Inbox again |
 | A short list | `declare_short_list(&IncompleteList) -> DeclaredFailure` | The banner above the list; its button opens the dialog |
 | A message's content | `declare_content(&ReceivedContent) -> Option<DeclaredFailure>` (`None` for text) | The reader's status page in the body's place; no dialog |
@@ -211,7 +211,9 @@ nothing of this table.
   the one place that maps them to a label and an action name. A declaration never names a
   widget or an action string.
 - The technical details and the record's error line name the same kind
-  and the same status and codes; the declaration copies the details as the
+  and, for a load that met a remote failure, the same status and codes (a
+  store failure's SQLite code is in the details and in the store's debug
+  line, amended by 007 on 2026-09-26); the declaration copies the details as the
   lower layer wrote them.
 - Wording lives in `failure_declarations.rs` and follows FR-009 and
   AGENTS.md ("UI wording"); no document lists it. The texts' headings are

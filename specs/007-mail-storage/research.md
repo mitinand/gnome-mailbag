@@ -157,16 +157,18 @@ account that was just enabled would then end silently as cancelled. The
 cancellation needs no order between answers, and a late result becomes a
 case of FR-004's rule that a cancelled load changes nothing.
 
-**Deletions in order** (found by an external review, accepted
-2026-09-26): two complete answers close together send two deletions to GIO's
-pool, which may run them in either order. If Mail was turned off and on again
-and the Inbox refreshed in between, the older deletion running last would
-erase the fresh mail. The window therefore keeps the accounts of the latest
-complete answer in one shared set, and `keep_accounts` reads that set through
-a check under the store's lock, as a write reads its cancellation: whichever
-deletion runs last applies the newest answer. The window's reads are
-numbered for the same reason, and only the answer to the latest read is
-shown.
+**Deletions in order** (decided 2026-09-26, after the final review): each
+deletion keeps the accounts of its own answer. Two complete answers close
+together send two deletions to GIO's pool, which may run them in either
+order; an older deletion could erase fresh mail only if it waited in the
+pool for a whole refresh, seconds, which nothing in the application causes
+(inferred). A set shared with the window, read under the store's lock, was
+built first and removed: it did not keep the mail of an account whose Mail
+was turned off by mistake and on again, since a deletion runs within
+milliseconds, and when both answers came before the deletion it skipped the
+deletion FR-008 requires. The window's reads are numbered, and only the
+answer to the latest read is shown, because an older read's answer would
+replace what the user sees.
 
 **Checked**: `async_channel::Receiver::is_closed` is true once the only
 sender, the load handle's cancellation, is dropped (async-channel 2.5.0);

@@ -43,7 +43,7 @@ impl From<io::Error> for StoreError {
 /// by what it did (research §8). The technical details name the kind and
 /// what SQLite or the file system said, which a debug line repeats.
 pub(crate) fn storage_failure(operation: StoreOperation, error: &StoreError) -> Failure {
-    let (disk_full, cause) = match error {
+    let (disk_full, reported) = match error {
         StoreError::Sqlite(error) => match error.sqlite_error_code() {
             Some(code) => (
                 code == ErrorCode::DiskFull,
@@ -61,10 +61,10 @@ pub(crate) fn storage_failure(operation: StoreOperation, error: &StoreError) -> 
         StoreOperation::Write => FailureKind::MailNotSaved,
         StoreOperation::Read => FailureKind::StoredMailUnreadable,
     };
-    tracing::debug!(failure = ?kind, cause, "a mail store operation failed");
+    tracing::debug!(cause = ?kind, reported, "a mail store operation failed");
     Failure {
         kind,
         remote_texts: Vec::new(),
-        details: format!("Failure: {kind:?}\n{cause}"),
+        details: format!("Failure: {kind:?}\n{reported}"),
     }
 }

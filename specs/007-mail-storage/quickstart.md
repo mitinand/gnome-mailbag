@@ -32,9 +32,9 @@ flatpak run --command=sqlite3 io.github.mitinand.Mailbag ~/.var/app/io.github.mi
 | 3. A failed refresh keeps the mail (US3) | Network off; refresh | The rows stay; the banner says the server is unreachable; its dialog has Retry; after a restart the rows are there without a banner |
 | 4. An account leaves (US4) | Turn Mail off for one account in Online Accounts; then query the store | The account disappears, as 001 describes; the query shows no row for it; turning Mail on and refreshing brings its mail back |
 | 5. A damaged store (US5) | Quit; overwrite the store: `head -c 8192 /dev/urandom > <store path>`; start with `--log-level=info` | One warning line says the store was discarded as not a store; every account says that no mail is loaded until refreshed |
-| 6a. No visible wait (FR-011, SC-007) | Select an account with about 100 stored messages; switch between accounts; refresh one while scrolling its list | The rows appear without a visible wait; the list keeps scrolling while the load's result is written |
-| 6. Privacy (FR-009) | `stat -c %a ~/.var/app/io.github.mitinand.Mailbag/data/mailbag` | `700` |
-| 7. The record (SC-008) | Start with `--log-level=debug`, refresh, turn Mail off for one account and on again, quit | No subject, sender, text, password or token in the record; the deletion is named by the account's identifier only |
+| 6. No visible wait (FR-011, SC-007) | Select an account with about 100 stored messages; switch between accounts; refresh one while scrolling its list | The rows appear without a visible wait; the list keeps scrolling while the load's result is written |
+| 7. Privacy (FR-009) | `stat -c %a ~/.var/app/io.github.mitinand.Mailbag/data/mailbag` | `700` |
+| 8. The record (SC-008) | Start with `--log-level=debug`, refresh, turn Mail off for one account and on again, quit | No subject, sender, text, password or token in the record; the deletion is named by the account's identifier only |
 
 A changed structure (US5, the other reason) is checked by the store's tests:
 a developer build with another schema text discards the store the same way.

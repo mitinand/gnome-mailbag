@@ -12,7 +12,7 @@ mod tests;
 use crate::failure_declarations::{DeclaredFailure, declare_content};
 use crate::failure_dialog::{RetriedOperation, show_action_button, status_description};
 use adw::{gio, glib, gtk, prelude::*};
-use mailbag_domain::{DisplayFields, Message, ReceivedContent};
+use mailbag_domain::{AccountId, DisplayFields, Message, ReceivedContent};
 use std::{cell::RefCell, rc::Rc};
 
 /// How much text a GTK label shows, in UTF-8 bytes. Longer text is cut at a
@@ -54,6 +54,8 @@ pub struct MailUi {
     /// The stored Inbox the rows were built from, to rebuild them only when
     /// the shown account or its mail changed.
     shown_inbox: RefCell<Option<Rc<[Message]>>>,
+    /// Whose Inbox the rows show, for the record.
+    shown_account: RefCell<Option<AccountId>>,
 }
 
 /// One row's message: the stored Inbox it belongs to and its place in it.
@@ -96,6 +98,7 @@ impl MailUi {
             content_action: reader.content_action,
             sender_avatar: reader.avatar,
             shown_inbox: RefCell::new(None),
+            shown_account: RefCell::new(None),
         });
         let weak = Rc::downgrade(&mail);
         messages.connect_row_activated(move |_, row| {
@@ -107,9 +110,9 @@ impl MailUi {
         mail
     }
 
-    /// Shows the rows of a stored Inbox, keeping the open message when the
-    /// same read's Inbox is shown again.
-    pub fn show_inbox(&self, inbox: &Rc<[Message]>) {
+    /// Shows the rows of an account's stored Inbox, keeping the open message
+    /// when the same read's Inbox is shown again.
+    pub fn show_inbox(&self, account_id: &AccountId, inbox: &Rc<[Message]>) {
         let already_shown = self
             .shown_inbox
             .borrow()
@@ -126,6 +129,7 @@ impl MailUi {
             }));
         }
         *self.shown_inbox.borrow_mut() = Some(inbox.clone());
+        *self.shown_account.borrow_mut() = Some(account_id.clone());
         self.close_reader();
     }
 
@@ -137,6 +141,7 @@ impl MailUi {
         }
         self.rows.remove_all();
         *self.shown_inbox.borrow_mut() = None;
+        *self.shown_account.borrow_mut() = None;
         self.close_reader();
     }
 
@@ -166,7 +171,11 @@ impl MailUi {
             .expect("message row item");
         let listed = listed.borrow::<ListedMessage>();
         let message = &listed.inbox[listed.position];
-        tracing::debug!(identity = message.identity.as_str(), "message opened");
+        tracing::debug!(
+            account = self.shown_account.borrow().as_ref().map(AccountId::as_str),
+            identity = message.identity.as_str(),
+            "message opened"
+        );
         show_inert_text(&self.reader_subject, &subject_text(&message.fields));
         self.reader_sender.set_text(&sender_text(&message.fields));
         self.sender_avatar
@@ -179,7 +188,7 @@ impl MailUi {
             None => self.reader_to.set_visible(false),
         }
         self.reader_date
-            .set_text(&received_date_text(message.received, "%c"));
+            .set_text(&received_date_text(message.received_unix, "%c"));
         if let ReceivedContent::Text(text) = &message.content {
             show_inert_text(&self.reader_body, &inert_text(text));
         }
@@ -309,7 +318,7 @@ fn build_message_row(listed: &glib::Object) -> gtk::ListBoxRow {
     let row: gtk::ListBoxRow = builder.object("row").expect("message-row.ui: row");
     label(&builder, "sender").set_text(&sender_text(&message.fields));
     label(&builder, "subject").set_text(&subject_text(&message.fields));
-    label(&builder, "time").set_text(&received_date_text(message.received, "%x"));
+    label(&builder, "time").set_text(&received_date_text(message.received_unix, "%x"));
     // Previews and conversations are outside this feature.
     label(&builder, "preview").set_visible(false);
     builder

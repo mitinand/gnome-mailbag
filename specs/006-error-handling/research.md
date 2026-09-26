@@ -129,7 +129,9 @@ slot and calls the previous hook; `load_catching_panics` wraps the load future i
 `futures_util::FutureExt::catch_unwind` (with `AssertUnwindSafe`), leaves
 the payload unread (the hook already has the message) and turns `Err` into
 `LoadFailure::WorkerStopped(Some(panic))`. The worker loop goes on; no
-state survives a load, so nothing is left poisoned. A panic inside a
+state survives a load, so nothing is left poisoned (since 007 the store's
+lock outlives a load; the store takes it over after a panic, whose
+transaction SQLite rolled back). A panic inside a
 library may carry part of the text it was handling: `str` slicing off a
 char boundary prints up to 256 characters of the string (checked,
 `core/src/str/mod.rs`); the dialog shows the text as received, and FR-014
@@ -173,8 +175,8 @@ a rare bug); nothing, as today (the report then says only "stopped").
   button covers the case.
 - A crash file with a report at the next start: out of scope by the spec;
   the panic's text reaches the error stream and the journal.
-- The stale-mail banner over stored messages: waits for 007 (spec US2,
-  FR-013); until then a refresh starts from an empty list.
+- The stale-mail banner over stored messages: built by 007 on 2026-09-26
+  (spec US2, FR-013).
 - The application version in the technical lines: the About dialog shows it.
 - A shared domain crate with one failure type: decided, see §1 (corrected
   2026-09-26).

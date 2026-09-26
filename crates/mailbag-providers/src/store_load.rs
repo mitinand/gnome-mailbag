@@ -54,7 +54,7 @@ fn message(received: ReceivedMessage) -> Message {
     Message {
         identity,
         fields: received.fields,
-        received: received.internal_date,
+        received_unix: received.internal_date,
         seen: received.seen,
         content: received.content,
     }

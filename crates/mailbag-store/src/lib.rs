@@ -80,7 +80,7 @@ impl Store {
         messages: &[Message],
         load_cancelled: impl FnOnce() -> bool,
     ) -> Result<InboxWrite, Failure> {
-        self.locked(StoreOperation::Write, |connection| {
+        self.with_connection(StoreOperation::Write, |connection| {
             if load_cancelled() {
                 return Ok(InboxWrite::LoadCancelled);
             }
@@ -100,7 +100,7 @@ impl Store {
                     message.fields.subject,
                     message.fields.from,
                     message.fields.to,
-                    message.received,
+                    message.received_unix,
                     message.seen,
                     content_kind,
                     content_detail,
@@ -115,7 +115,7 @@ impl Store {
     /// The account's stored Inbox in the load's order, or `None` when no load
     /// of it completed.
     pub fn read_inbox(&self, account: &AccountId) -> Result<Option<Vec<Message>>, Failure> {
-        self.locked(StoreOperation::Read, |connection| {
+        self.with_connection(StoreOperation::Read, |connection| {
             let account = account.as_str();
             let stored: bool = connection.query_row(
                 "SELECT EXISTS (SELECT 1 FROM inbox WHERE account = ?1)",
@@ -137,15 +137,12 @@ impl Store {
     }
 
     /// Deletes the stored mail of every account not in `current_accounts`,
-    /// and returns those accounts for the record. The accounts are read under
-    /// the store's lock, so of two deletions the one that runs last applies
-    /// the newest accounts (research §6).
+    /// and returns those accounts for the record.
     pub fn keep_accounts(
         &self,
-        current_accounts: impl FnOnce() -> BTreeSet<AccountId>,
+        current_accounts: &BTreeSet<AccountId>,
     ) -> Result<Vec<AccountId>, Failure> {
-        self.locked(StoreOperation::Write, |connection| {
-            let current_accounts = current_accounts();
+        self.with_connection(StoreOperation::Write, |connection| {
             let transaction = connection.transaction()?;
             let stored_accounts: Vec<String> = transaction
                 .prepare("SELECT account FROM inbox")?
@@ -168,7 +165,7 @@ impl Store {
     /// Runs `work` with the connection, opening the store at its first use,
     /// and hands a failure on as `operation`'s. A lock poisoned by a panic is
     /// taken over: SQLite rolled back the transaction the panic interrupted.
-    fn locked<T>(
+    fn with_connection<T>(
         &self,
         operation: StoreOperation,
         work: impl FnOnce(&mut Connection) -> Result<T, StoreError>,
@@ -206,7 +203,7 @@ fn stored_message(row: &Row) -> rusqlite::Result<Message> {
             from: row.get("sender")?,
             to: row.get("recipients")?,
         },
-        received: row.get("received")?,
+        received_unix: row.get("received")?,
         seen: row.get("seen")?,
         content,
     })

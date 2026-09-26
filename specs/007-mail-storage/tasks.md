@@ -83,7 +83,8 @@ application does not use the store yet.
   `StoredMailUnreadable`, each documented with the SQLite condition it comes
   from (research §8); in src/panic.rs `catch_panic(work) -> Result<T,
   String>` (installs the hook once, runs the work under `catch_unwind`,
-  returns `take_panic()` or the payload's message) and
+  returns what `take_panic()` kept, the hook being installed by the helper
+  itself) and
   `Failure::stopped(panic: Option<String>)` with the technical lines
   `Failure: Stopped` and `Panic: …`; let `LoadFailure::into_failure` in
   crates/mailbag-providers/src/failure.rs build `WorkerStopped`'s failure
@@ -103,26 +104,24 @@ application does not use the store yet.
   `create_schema`, `schema_version` as 32-bit FNV-1a over the schema text,
   `journal_mode=WAL`, `synchronous=NORMAL`, `foreign_keys=ON`),
   src/content.rs (`content_columns`, `content_from_columns`),
-  src/failure.rs (`storage_failure(operation, &rusqlite::Error) -> Failure`:
-  `DiskFull` → `StorageFull`, any other failure of a write, its opening
+  src/failure.rs (`storage_failure(operation, &StoreError) -> Failure`:
+  `DiskFull` → `StorageFull` for any operation, any other failure of a write, its opening
   included → `MailNotSaved`, any failure of a read, its opening included →
   `StoredMailUnreadable`; technical lines `Failure:
   <kind>` and `SQLite: <code>: <text>`; a debug line with the same) and
   src/lib.rs (`Store::at`, `Store::in_memory`, `connection` opening at first
   use and taking over a poisoned lock, `replace_inbox(account, messages,
   load_cancelled)` with the check under the lock before the transaction,
-  `read_inbox`, `keep_accounts(current_accounts)` reading the accounts to
-  keep through the check under the lock, `InboxWrite { Stored, LoadCancelled
-  }`).
+  `read_inbox`, `keep_accounts(current_accounts)`, `InboxWrite { Stored,
+  LoadCancelled }`).
 - [X] T009 [P] Tests in crates/mailbag-store/src/tests.rs, about 200 lines:
   every content code and field round trips in load order; a replacement
   leaves exactly the new messages; an empty stored Inbox differs from none;
   a cancelled load writes nothing; `keep_accounts` deletes every other
-  account's mail and returns those accounts, and reads its set only once it
-  holds the lock (a check that records when it ran); a write that fails
-  (`PRAGMA query_only`) leaves the previous Inbox whole and returns
+  account's mail and returns those accounts; a write that fails
+  (a temporary trigger fails its second message) leaves the previous Inbox whole and returns
   `MailNotSaved`; a store reopened from the same file reads the same Inbox;
-  a store with another version, a file of random bytes and a damaged file
+  a store with another version, a file that is not a database and a damaged file
   each start empty with one warning line naming the reason
   (tests/support/record.rs); a directory that cannot be created is a
   failure and deletes nothing; the store's directory has mode 0700.
@@ -178,8 +177,9 @@ whose Retry reads it again (US5).
   included) and reports `Stored`; a refused list reports `Stored` with the
   refusal; a store whose directory cannot be created makes the load fail
   with `MailNotSaved` and one error line; a load
-  cancelled before its write stores nothing; a panic during the write ends
-  as `Stopped` and the worker serves the next load; move the record tests of
+  cancelled before its write stores nothing (tested on `store_batch`); the
+  write runs inside the load's panic guard, whose test panics in the load
+  and sees the worker serve the next load; move the record tests of
   `log_received_batch` from crates/mailbag/src/inbox/tests.rs.
 - [X] T016 [US1] [US2] [US3] [US5] In crates/mailbag: failure_dialog.rs gets
   `RetriedOperation { RefreshInbox, ReadStoredInbox }` for
@@ -227,35 +227,30 @@ or with its Mail off, and a late result cannot bring it back (US4).
   after the exclusion's cancellation and only when `last_check` is
   complete, call `delete_removed_accounts`: the accounts of the answer that
   are present with Mail on (from `AccountUpdate::accounts`, not from
-  `shows_account`) replace the window's latest set, shared as
-  `Arc<Mutex<BTreeSet<AccountId>>>`, and `keep_accounts` reads it under the
-  store's lock, through `gio::spawn_blocking` inside `catch_panic`; one info line per deleted account, one error line
+  `shows_account`) go to `keep_accounts`, through `gio::spawn_blocking`
+  inside `catch_panic` (each deletion keeps its own answer's accounts,
+  decided 2026-09-26; research §6); one info line per deleted account, one error line
   when the deletion fails (it happens again at the next complete answer).
 - [X] T020 [US4] Tests: a complete answer without an account, or with its
   Mail off, leaves none of its stored mail; a failed read and a not yet
   checked answer delete nothing; an account missing from the first complete
-  answer after a restart loses its mail; two deletions run in the reverse
-  order of their answers keep the newer answer's accounts (Mail off, then
-  on, then a stored Inbox: the older deletion running last deletes
-  nothing); a load that finishes after its
+  answer after a restart loses its mail; a load that finishes after its
   account was excluded stores nothing (in crates/mailbag-store with a
   cancelled check, and through the window with the scripted loader).
-- [ ] T021 STOP: run ./scripts/check.sh, git diff --check and the GTK tests
+- [X] T021 STOP: run ./scripts/check.sh, git diff --check and the GTK tests
   touched; compare the size with plan.md's table; report and suggest the
   commit.
 
 ## Phase 6: polish
 
-- [ ] T022 Run every GTK test of the branch on its own; run `simplify-review`
+- [X] T022 Run every GTK test of the branch on its own; run `simplify-review`
   on the branch diff in a fresh subagent; bring findings that add scope to
   the maintainer with the cheapest option.
 - [ ] T023 The maintainer runs quickstart.md on the installed build
-  (`scripts/build-flatpak.sh --install`); record the results, what was not
-  verified and the measured size against the budget in plan.md
-  ("Post-implementation"); update the status lines of spec.md, plan.md and
-  this file.
-- [ ] T024 STOP: final report with the size against the budget (≤ 650 net
-  production lines, ~450 test lines) and the open items.
+  (`scripts/build-flatpak.sh --install`); record the results and what was
+  not verified in plan.md ("Post-implementation"); update the status lines
+  of spec.md, plan.md and this file.
+- [ ] T024 STOP: final report with the open items.
 
 ## Dependencies
 

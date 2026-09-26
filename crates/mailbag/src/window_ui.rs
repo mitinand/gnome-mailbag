@@ -20,23 +20,13 @@ use goa_adapter::AccountUpdate;
 use mailbag_domain::{AccountId, Failure, Message, catch_panic};
 use mailbag_providers::{LoadResult, LoadsInbox, MailProvider};
 use mailbag_store::Store;
-use std::{
-    cell::RefCell,
-    collections::BTreeSet,
-    rc::Rc,
-    sync::{Arc, Mutex, PoisonError},
-};
+use std::{cell::RefCell, collections::BTreeSet, rc::Rc, sync::Arc};
 
 pub struct WindowUi {
     accounts: Rc<RefCell<AccountUi>>,
     inboxes: RefCell<InboxController>,
     store: Arc<Store>,
     shown_inbox: RefCell<ShownInbox>,
-    /// The accounts the latest complete Online Accounts answer lists with
-    /// Mail on, which keep their stored mail. A deletion reads them under the
-    /// store's lock, so the one that runs last applies the newest answer
-    /// (research §6).
-    accounts_with_mail: Arc<Mutex<BTreeSet<AccountId>>>,
     mail: Rc<MailUi>,
     loader: Box<dyn LoadsInbox>,
     list_stack: gtk::Stack,
@@ -72,7 +62,7 @@ struct ShownInbox {
 enum StoredInbox {
     /// Not read: a refresh forgot a failed read, so its own outcome shows.
     #[default]
-    Unknown,
+    NotRead,
     Reading,
     /// What the read found: `None` when no load of the account completed.
     Read(Option<Rc<[Message]>>),
@@ -83,6 +73,7 @@ enum StoredInbox {
 enum ShownMail {
     /// The stored rows, and the latest refresh's failure or short list.
     Messages {
+        account_id: AccountId,
         messages: Rc<[Message]>,
         banner: Option<DeclaredFailure>,
     },
@@ -115,7 +106,6 @@ impl WindowUi {
             inboxes: RefCell::new(InboxController::default()),
             store,
             shown_inbox: RefCell::new(ShownInbox::default()),
-            accounts_with_mail: Arc::default(),
             mail: MailUi::new(builder),
             loader,
             list_stack: builder
@@ -174,9 +164,7 @@ impl WindowUi {
         let selecting = Rc::downgrade(&window);
         window.accounts.borrow().connect_selection_changed(move || {
             if let Some(window) = selecting.upgrade() {
-                // Selecting an account shows its stored mail; it never loads.
-                window.read_shown_inbox();
-                window.render();
+                window.show_selected_account();
             }
         });
         window.render();
@@ -222,28 +210,15 @@ impl WindowUi {
     /// Mail service is missing is not shown but keeps its mail. A failed
     /// deletion happens again at the next complete answer.
     fn delete_removed_accounts(&self, update: &AccountUpdate) {
-        let accounts_with_mail = update
+        let accounts_with_mail: BTreeSet<AccountId> = update
             .accounts
             .iter()
             .filter(|(_, details)| details.mail_enabled)
             .map(|(account_id, _)| account_id.clone())
             .collect();
-        *self
-            .accounts_with_mail
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = accounts_with_mail;
         let store = self.store.clone();
-        let latest_accounts = self.accounts_with_mail.clone();
         glib::spawn_future_local(async move {
-            let deleted = run_on_pool(move || {
-                store.keep_accounts(|| {
-                    latest_accounts
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .clone()
-                })
-            })
-            .await;
+            let deleted = run_on_pool(move || store.keep_accounts(&accounts_with_mail)).await;
             match deleted {
                 Ok(accounts) => {
                     for account_id in accounts {
@@ -292,6 +267,20 @@ impl WindowUi {
         self.inboxes
             .borrow_mut()
             .begin_load(&account_id, cancellation);
+        self.render();
+    }
+
+    /// Shows the selected account's stored mail; selecting never loads. The
+    /// Inbox already on screen is not read again, so selecting its account
+    /// once more keeps the open message: every write to it is followed by a
+    /// read.
+    fn show_selected_account(self: &Rc<Self>) {
+        let selected = self.accounts.borrow().selected_id().cloned();
+        let on_screen =
+            selected.is_some_and(|account_id| self.shown_inbox.borrow().holds(&account_id));
+        if !on_screen {
+            self.read_shown_inbox();
+        }
         self.render();
     }
 
@@ -348,7 +337,11 @@ impl WindowUi {
     fn render(&self) {
         let shown_mail = self.shown_mail();
         match &shown_mail {
-            ShownMail::Messages { messages, .. } => self.mail.show_inbox(messages),
+            ShownMail::Messages {
+                account_id,
+                messages,
+                ..
+            } => self.mail.show_inbox(account_id, messages),
             _ => self.mail.clear(),
         }
         let accounts = self.accounts.borrow();
@@ -405,10 +398,11 @@ impl WindowUi {
         let shown = self.shown_inbox.borrow();
         let stored = match &shown.account {
             Some(shown_account) if shown_account == account_id => &shown.stored,
-            _ => &StoredInbox::Unknown,
+            _ => &StoredInbox::NotRead,
         };
         match (stored, outcome) {
             (StoredInbox::Read(Some(messages)), _) if !messages.is_empty() => ShownMail::Messages {
+                account_id: account_id.clone(),
                 messages: messages.clone(),
                 banner: outcome.and_then(banner_of),
             },
@@ -429,7 +423,7 @@ impl WindowUi {
                 title: "Inbox is empty",
                 description: None,
             },
-            (StoredInbox::Read(None) | StoredInbox::Unknown, _) => no_mail_loaded,
+            (StoredInbox::Read(None) | StoredInbox::NotRead, _) => no_mail_loaded,
         }
     }
 
@@ -514,6 +508,12 @@ fn banner_of(outcome: &RefreshOutcome) -> Option<DeclaredFailure> {
 }
 
 impl ShownInbox {
+    /// Whether this account's stored Inbox is on screen, or being read.
+    fn holds(&self, account_id: &AccountId) -> bool {
+        self.account.as_ref() == Some(account_id)
+            && matches!(self.stored, StoredInbox::Read(_) | StoredInbox::Reading)
+    }
+
     /// Starts a read of the account's stored Inbox and returns its number.
     fn start_read(&mut self, account_id: &AccountId) -> u64 {
         self.latest_read += 1;
@@ -536,7 +536,7 @@ impl ShownInbox {
 
     fn forget_read_failure(&mut self) {
         if matches!(self.stored, StoredInbox::ReadFailed(_)) {
-            self.stored = StoredInbox::Unknown;
+            self.stored = StoredInbox::NotRead;
         }
     }
 }

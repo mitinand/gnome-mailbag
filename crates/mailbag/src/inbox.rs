@@ -83,7 +83,7 @@ impl InboxController {
             _ if running.cancellation.is_none() => {
                 tracing::info!(
                     account = account_id.as_str(),
-                    "Inbox load result discarded: the account is no longer shown"
+                    "Inbox load outcome ignored: the account is no longer shown"
                 );
                 return;
             }

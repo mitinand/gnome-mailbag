@@ -12,13 +12,7 @@ use std::{
     fs,
     os::unix::fs::PermissionsExt,
     path::Path,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-        mpsc,
-    },
-    thread,
-    time::Duration,
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 fn account(name: &str) -> AccountId {
@@ -29,7 +23,7 @@ fn text_message(uid: u32) -> Message {
     Message {
         identity: format!("uid:{uid}"),
         fields: DisplayFields::default(),
-        received: None,
+        received_unix: None,
         seen: false,
         content: ReceivedContent::Text(format!("Text {uid}")),
     }
@@ -88,7 +82,7 @@ fn every_content_code_and_field_reads_back_in_the_loads_order() {
                 from: (number % 3 != 0).then(|| format!("Sender {number}")),
                 to: (number % 4 != 0).then(|| format!("Recipient {number}")),
             },
-            received: (number % 5 != 0).then_some(1_700_000_000 + number),
+            received_unix: (number % 5 != 0).then_some(1_700_000_000 + number),
             seen: number % 2 == 1,
             content,
         })
@@ -152,7 +146,7 @@ fn keeping_accounts_deletes_every_other_accounts_mail_and_names_them() {
             .unwrap();
     }
     let deleted = store
-        .keep_accounts(|| BTreeSet::from([kept.clone()]))
+        .keep_accounts(&BTreeSet::from([kept.clone()]))
         .unwrap();
     assert_eq!(
         BTreeSet::from_iter(deleted),
@@ -164,50 +158,6 @@ fn keeping_accounts_deletes_every_other_accounts_mail_and_names_them() {
 }
 
 #[test]
-fn keeping_accounts_reads_them_only_once_it_holds_the_lock() {
-    let store = Arc::new(Store::in_memory());
-    let events = Arc::new(Mutex::new(Vec::new()));
-    let record = |events: &Arc<Mutex<Vec<&str>>>, event| events.lock().unwrap().push(event);
-    let (holding, held) = mpsc::channel();
-    let (release, released) = mpsc::channel::<()>();
-    let writer = thread::spawn({
-        let (store, events) = (store.clone(), events.clone());
-        move || {
-            store.replace_inbox(&account("kept"), &[], || {
-                record(&events, "the write holds the lock");
-                holding.send(()).unwrap();
-                released.recv().unwrap();
-                false
-            })
-        }
-    });
-    held.recv().unwrap();
-    let deletion = thread::spawn({
-        let (store, events) = (store.clone(), events.clone());
-        move || {
-            store.keep_accounts(|| {
-                record(&events, "the deletion reads its accounts");
-                BTreeSet::from([account("kept")])
-            })
-        }
-    });
-    // Time for a deletion that did not wait for the lock to read its accounts.
-    thread::sleep(Duration::from_millis(50));
-    record(&events, "the write lets the lock go");
-    release.send(()).unwrap();
-    assert_eq!(writer.join().unwrap(), Ok(InboxWrite::Stored));
-    assert_eq!(deletion.join().unwrap(), Ok(Vec::new()));
-    assert_eq!(
-        *events.lock().unwrap(),
-        [
-            "the write holds the lock",
-            "the write lets the lock go",
-            "the deletion reads its accounts"
-        ]
-    );
-}
-
-#[test]
 fn a_write_that_fails_midway_leaves_the_previous_inbox_whole() {
     let store = Store::in_memory();
     let refreshed = account("refreshed");
@@ -216,7 +166,7 @@ fn a_write_that_fails_midway_leaves_the_previous_inbox_whole() {
         .replace_inbox(&refreshed, &previous, || false)
         .unwrap();
     store
-        .locked(StoreOperation::Write, |connection| {
+        .with_connection(StoreOperation::Write, |connection| {
             Ok(connection.execute_batch(
                 "CREATE TEMP TRIGGER fail_the_second_message BEFORE INSERT ON main.message \
                  WHEN (SELECT count(*) FROM main.message) = 1 \

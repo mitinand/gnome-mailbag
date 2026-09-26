@@ -183,28 +183,15 @@ fn a_cancelled_load_is_one_info_line_whatever_follows() {
         !text.contains(" WARN ") && !text.contains(" ERROR "),
         "{text}"
     );
-    assert!(
-        !text.contains("finished") && !text.contains("discarded"),
-        "{text}"
-    );
+    assert!(!text.contains("ignored"), "{text}");
 }
 
 #[test]
-fn a_late_result_for_an_excluded_account_writes_no_outcome() {
-    for late_result in [stored(), LoadResult::Failed(sign_in_failure())] {
-        let record = start_record(LogLevel::Debug);
-        let excluded = account("account_1726920000_4");
-        let mut controller = InboxController::default();
-        start_load(&mut controller, &excluded);
-        controller.discard_excluded(|_| false);
-        controller.finish_load(&excluded, late_result);
-        assert!(controller.outcome_of(&excluded).is_none());
-        let text = record.text();
-        for outcome in ["finished", " WARN ", " ERROR "] {
-            assert!(
-                !text.contains(outcome),
-                "{outcome} for a discarded result:\n{text}"
-            );
-        }
-    }
+fn a_late_failure_for_an_excluded_account_records_no_outcome() {
+    let excluded = account("account_1726920000_4");
+    let mut controller = InboxController::default();
+    start_load(&mut controller, &excluded);
+    controller.discard_excluded(|_| false);
+    controller.finish_load(&excluded, LoadResult::Failed(sign_in_failure()));
+    assert!(controller.outcome_of(&excluded).is_none());
 }

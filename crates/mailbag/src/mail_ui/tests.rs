@@ -190,7 +190,7 @@ fn two_messages() -> Vec<Message> {
                 from: Some("Second sender".to_owned()),
                 to: Some("Recipient".to_owned()),
             },
-            received: Some(1_700_000_000),
+            received_unix: Some(1_700_000_000),
             seen: false,
             content: ReceivedContent::Text("Second body".to_owned()),
         },
@@ -201,7 +201,7 @@ fn two_messages() -> Vec<Message> {
                 from: Some("First sender".to_owned()),
                 to: None,
             },
-            received: Some(1_699_000_000),
+            received_unix: Some(1_699_000_000),
             seen: true,
             content: ReceivedContent::StructureUnreadable,
         },
@@ -231,7 +231,7 @@ fn unwrapped_and_ordinary_messages() -> Vec<Message> {
                 from: Some("Long sender".to_owned()),
                 to: None,
             },
-            received: Some(1_700_000_000),
+            received_unix: Some(1_700_000_000),
             seen: true,
             content: body,
         })
@@ -692,6 +692,11 @@ fn mail_ui_transitions() {
     settle(&ui);
     assert_eq!(widgets.rows().len(), 2);
     assert_eq!(widgets.reader_page(), "message");
+    // So does selecting the account on screen again.
+    widgets.select_account(0);
+    settle(&ui);
+    assert_eq!(widgets.rows().len(), 2);
+    assert_eq!(widgets.reader_page(), "message");
 
     // During a refresh the stored rows stay with the spinner (US2).
     refresh.activate(None);
@@ -850,6 +855,12 @@ fn mail_ui_transitions() {
     restored_rows[0].emit_by_name::<()>("activate", &[]);
     settle(&restarted);
     assert_eq!(restarted_widgets.reader_body_label().text(), "Second body");
+    restored_rows[1].emit_by_name::<()>("activate", &[]);
+    settle(&restarted);
+    let restored_status = restarted_widgets
+        .content_status()
+        .expect("the reader's status page");
+    assert_eq!(restored_status.title(), content_failure.title);
     restarted_widgets.select_account(1);
     settle(&restarted);
     assert_eq!(restarted_widgets.status_title(), "Inbox is empty");
@@ -921,11 +932,8 @@ fn a_store_that_cannot_be_read() {
                 && button.action_name().as_deref() == Some("app.read-stored-inbox"))
     );
     dialog.force_close();
-    let unreadable = widgets.failure_title();
-    ui.read_stored_inbox_action().activate(None);
-    settle(&ui);
-    assert_eq!(widgets.failure_title(), unreadable);
 
+    // A refresh shows its own outcome instead of the failed read.
     ui.refresh_action().activate(None);
     settle(&ui);
     assert_eq!(widgets.status_title(), "Loading Inbox");
@@ -939,6 +947,19 @@ fn a_store_that_cannot_be_read() {
         widgets.status_button("failure_action"),
         Some(("Online Accounts".to_owned(), "app.accounts".to_owned()))
     );
+
+    // Retry reads the stored Inbox again: once the store can be opened, the
+    // account shows that nothing is stored.
+    widgets.select_account(1);
+    settle(&ui);
+    assert_eq!(
+        widgets.status_button("failure_action"),
+        Some(("Retry".to_owned(), "app.read-stored-inbox".to_owned()))
+    );
+    std::fs::remove_file(&blocking_file).unwrap();
+    ui.read_stored_inbox_action().activate(None);
+    settle(&ui);
+    assert_eq!(widgets.status_title(), "No mail loaded");
     window.destroy();
 }
 
@@ -1001,33 +1022,8 @@ fn stored_mail_leaves_with_its_account() {
     ui.apply_account_update(&mail_off);
     wait_until(|| !has_stored_inbox(&generic));
 
-    // Two deletions that wait for the store read the accounts of the newest
-    // answer, whichever runs last: Mail off, then on again, keeps the mail.
-    store
-        .replace_inbox(&generic, &two_messages(), || false)
-        .unwrap();
-    let (holding, held) = std::sync::mpsc::channel();
-    let (release, released) = std::sync::mpsc::channel::<()>();
-    let holder = std::thread::spawn({
-        let store = store.clone();
-        move || {
-            // A write that holds the store's lock and then writes nothing.
-            store.replace_inbox(&account("holder"), &[], || {
-                holding.send(()).unwrap();
-                released.recv().unwrap();
-                true
-            })
-        }
-    });
-    held.recv().unwrap();
-    ui.apply_account_update(&mail_off);
-    ui.apply_account_update(&only_generic());
-    release.send(()).unwrap();
-    holder.join().unwrap().unwrap();
-    let_deletions_run();
-    assert!(has_stored_inbox(&generic));
-
     // A load that ends after its account was excluded stores nothing.
+    ui.apply_account_update(&only_generic());
     widgets.select_account(0);
     settle(&ui);
     ui.refresh_action().activate(None);

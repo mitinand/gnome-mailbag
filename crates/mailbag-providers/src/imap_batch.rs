@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The steps both IMAP loads share, Generic IMAP and Gmail: opening the
-//! account on the server, and turning a message list into a batch the reader
-//! can show.
+//! account on the server, and turning a message list into the batch the
+//! worker stores.
 
 use crate::batch::{MessageIdentity, ReceivedBatch, ReceivedMessage};
 use goa_adapter::{ImapAccess, ImapCredential, ImapEncryption};

@@ -5,9 +5,9 @@
 **Status**: Implemented on `claude/errors` and accepted live 2026-09-25;
 challenged and analyzed on 2026-09-25, findings applied. Where the wording
 lives corrected on `claude/failure-ownership` (section "Correction
-2026-09-26", portion 5). Failures as domain values planned on
-`claude/storage` with 007 (section "Amendment 2026-09-26: failures as
-domain values", portion 6).
+2026-09-26", portion 5). Failures as domain values built on
+`claude/storage` with 007 on 2026-09-26 (section "Amendment 2026-09-26:
+failures as domain values", portion 6).
 The specification's decisions are settled and are not reopened here.
 
 ## Size

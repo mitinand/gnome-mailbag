@@ -51,7 +51,7 @@ pub struct Message {
     pub identity: String,
     pub fields: DisplayFields,
     /// The received date as seconds since the Unix epoch.
-    pub received: Option<i64>,
+    pub received_unix: Option<i64>,
     /// The read state as the server last reported it.
     pub seen: bool,
     pub content: ReceivedContent,
@@ -129,8 +129,9 @@ pub enum FailureKind {
     UnexpectedAnswer,
     /// A panic stopped the work, or the thread doing it vanished without one.
     Stopped,
-    /// Writing to the store met a full disk: SQLite's `SQLITE_FULL`, or the
-    /// file system's own report while the store's files were prepared.
+    /// The store met a full disk, whatever the operation: SQLite's
+    /// `SQLITE_FULL`, or the file system's own report while the store's
+    /// files were prepared.
     StorageFull,
     /// Any other failure of a write to the store, its opening included.
     MailNotSaved,

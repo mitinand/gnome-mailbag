@@ -703,7 +703,6 @@ version = "0.1.0-dev"
 dependencies = [
  "goa-adapter",
  "libadwaita",
- "mailbag-content",
  "mailbag-domain",
  "mailbag-providers",
  "mailbag-store",

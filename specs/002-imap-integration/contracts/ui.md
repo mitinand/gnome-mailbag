@@ -19,6 +19,10 @@ list_stack. AccountList remains the owner of F01 rules.
 | Selected account's last load failed | Status names the failed step; Refresh Inbox tries again. |
 | Nothing loaded for the selected account | Neutral status saying nothing has been loaded; for Generic IMAP it points to Refresh Inbox. Never “Inbox is empty”. |
 
+The order of these states is replaced by [007](../../007-mail-storage/spec.md)
+FR-005 and FR-013 on 2026-09-26: stored rows come before a running load, and a
+failed load over stored rows is the banner above them.
+
 A GOA failure lets F01's page cover the list and reader; received mail is not
 touched. Confirmed exclusion discards the account's mail. An account failure and
 a mail failure remain separate diagnoses. F01's Retry Check remains account
@@ -132,7 +136,8 @@ access to Refresh Inbox and received rows, including the spoken read/unread
 state. Check navigation and quitting during a stall. Do not repeat a full
 keyboard/pointer/touch/narrow-width matrix as SC-006.
 
-Verify that selection never loads, that refresh clears and then loads, a failed
+Verify that selection never loads, that refresh clears and then loads (since
+007: keeps the stored rows while it loads), a failed
 load and a repeated refresh, switching accounts during a load, F01 page priority,
 a row with an unreadable structure, inert ALERT text and display clipping at
 64 KiB. The threshold is an acceptance choice to test in Mailbag, not a claim

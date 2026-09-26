@@ -41,7 +41,7 @@ pub(crate) struct ReceivedMessage {
 /// How the message's provider identifies it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum MessageIdentity {
-    /// The IMAP UID, valid with the batch's `uid_validity`.
+    /// The IMAP UID in the Inbox the load read.
     ImapUid(u32),
     /// Microsoft Graph's identifier, which survives moves between folders.
     GraphImmutableId(String),

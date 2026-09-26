@@ -10,7 +10,6 @@ publish = false
 [dependencies]
 adw = { workspace = true, features = ["gtk_v4_10"] }
 goa-adapter = { path = "../goa-adapter" }
-mailbag-content = { path = "../mailbag-content" }
 mailbag-domain = { path = "../mailbag-domain" }
 mailbag-providers = { path = "../mailbag-providers" }
 mailbag-store = { path = "../mailbag-store" }

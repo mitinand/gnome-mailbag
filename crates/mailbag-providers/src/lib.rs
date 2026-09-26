@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Loads one account's Inbox from its provider. This crate joins Online
-//! Accounts, the protocol crate and the content crate; it owns no widget and
-//! no application state.
+//! Loads one account's Inbox from its provider and writes it into the store.
+//! This crate joins Online Accounts, the protocol crates, the content crate
+//! and the store; it owns no widget and no application state.
 
 mod batch;
 mod failure;

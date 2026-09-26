@@ -73,3 +73,4 @@ the version (research §4).
 |---|---|---|
 | Each account's latest refresh outcome: stored, with or without an incomplete list, or failed | The window's `InboxController` | The run (006 FR-007) |
 | The shown account's stored Inbox | The window | Until another account is selected or a load of it completes |
+| The number of the window's latest read, so an older answer is dropped | The window | The run |

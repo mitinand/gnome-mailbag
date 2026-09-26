@@ -28,7 +28,7 @@ this table.
 | Call sites or existing files touched | — | Rust: providers `lib.rs`, `batch.rs`, `worker.rs`, `imap_batch.rs`, `microsoft365.rs`, new `store_load.rs`; mailbag `main.rs`, `inbox.rs`, `window_ui.rs`, `mail_ui.rs`, `failure_declarations.rs`, `failure_dialog.rs`; `goa-adapter` and `mailbag-content` (the moved definitions; imports of `AccountId` in about 14 files change their path only). Build and checks: workspace `Cargo.toml`, the new crate's manifest and three existing ones, `Cargo.lock`, `cargo-sources.json`, `scripts/check.sh` (the store's dependency rule), `scripts/setup.sh`, `.github/workflows/check.yml` and the README's prerequisites (`sqlite-devel`). No form changes |
 | New crates | 1 | 1: `mailbag-store` (`mailbag-domain` comes with 006's portion 6) |
 | New threads, timers, queues | 0 | 0: GIO's pool for the window's calls, the existing mail worker for writes |
-| New state, types, error types | — | Types: `Store`, `InboxWrite`, `RefreshOutcome` (replaces `AccountInbox`), `RetriedOperation`; in the domain `Message` and three `FailureKind` variants. State: in the window, the shown account's stored Inbox, the number of the latest read and the accounts of the latest complete Online Accounts answer; no state inside `Store` beyond its connection (research §6) |
+| New state, types, error types | — | Types: `Store`, `InboxWrite`, `RefreshOutcome` (replaces `AccountInbox`), `RetriedOperation`; in the domain `Message` and three `FailureKind` variants. Built (2026-09-26) with a few private helpers besides: the store's `StoreError { Sqlite, File }` and `StoreOperation`, the window's `ShownInbox`, `StoredInbox` and `ShownMail`. State: in the window, the shown account's stored Inbox and the number of the latest read; no state inside `Store` beyond its file's path and its connection (research §6) |
 | New fields in existing data | — | `LoadResult::Received(batch)` becomes `LoadResult::Stored { incomplete }`; persisted: two tables ([data-model.md](data-model.md)) |
 | Changes to other features' contracts or documents | 002; 006 | 002 spec, data model and UI contract (memory-only mail, refresh clears the list); 006 spec (User Story 2 and FR-013(a) built) and contract (the store's kinds, a new carrier, Retry by carrier); 001 data model and account contract (`AccountId` lives in the domain crate); 003 FR-004's example amended by 006. 004, 005 unchanged |
 | New dependencies | 1 | `rusqlite` 0.40 without default features: `libsqlite3-sys` and four small crates, all MIT or Apache-2.0. `deny.toml` stays as it is: the Zlib licence approved at sizing came only with the default statement cache ([research §1](research.md)) |
@@ -82,8 +82,8 @@ The entry points and their steps, as the code will read.
   refuses an empty identifier with the domain's `EmptyAccountId`, which
   `goa-adapter`'s reader keeps turning into its `InvalidReply`.
 - `DisplayFields`, moved from `mailbag-content`.
-- `Message { identity: String, fields: DisplayFields, received: Option<i64>,
-  seen: bool, content: ReceivedContent }`, with a `Debug` that leaves the
+- `Message { identity: String, fields: DisplayFields, received_unix:
+  Option<i64>, seen: bool, content: ReceivedContent }`, with a `Debug` that leaves the
   fields and the text out.
 - `FailureKind::StorageFull`, `MailNotSaved`, `StoredMailUnreadable`.
 - `catch_panic(work) -> Result<T, String>` and `Failure::stopped(panic)`
@@ -93,21 +93,21 @@ The entry points and their steps, as the code will read.
 
 - `Store::at(path: PathBuf) -> Store`: no I/O; the file opens at first use.
   `Store::in_memory()` for tests.
-- `Store::replace_inbox(&self, account: &AccountId, messages: Vec<Message>,
-  load_cancelled: impl Fn() -> bool) -> Result<InboxWrite, Failure>`: lock;
+- `Store::replace_inbox(&self, account: &AccountId, messages: &[Message],
+  load_cancelled: impl FnOnce() -> bool) -> Result<InboxWrite, Failure>`: lock;
   a load cancelled by then → `InboxWrite::LoadCancelled`, nothing written;
   else one transaction: delete the `inbox` row, insert it, insert the
   messages in order, commit → `InboxWrite::Stored` (research §6).
 - `Store::read_inbox(&self, account: &AccountId) ->
   Result<Option<Vec<Message>>, Failure>`: `None` without an `inbox` row; the
   messages in load order with their content otherwise.
-- `Store::keep_accounts(&self, current_accounts: impl Fn() ->
-  BTreeSet<AccountId>) -> Result<Vec<AccountId>, Failure>`: lock; read the
+- `Store::keep_accounts(&self, current_accounts: &BTreeSet<AccountId>) -> Result<Vec<AccountId>, Failure>`: lock; read the
   accounts to keep through the check, under the lock; delete every other
   account's `inbox` row; return the accounts whose mail was deleted, for the
   record (research §6).
-- `connection(&self)`: the locked connection, opened by `open_store` at first
-  use; a poisoned lock is taken over, since a transaction a panic
+- `with_connection(&self, operation, work)`: runs the work with the locked
+  connection, opened by `open_store` at first use, and hands a failure on as
+  the operation's; a poisoned lock is taken over, since a transaction a panic
   interrupted was rolled back.
 - `open_store(path)`: `create_private_directory`, `Connection::open`,
   `examine_existing` → `Usable | Empty | Discard(reason)`;
@@ -117,9 +117,11 @@ The entry points and their steps, as the code will read.
 - `schema_version() -> i32`: FNV-1a over the schema text.
 - `content_columns(&ReceivedContent)` and `content_from_columns(kind,
   detail)`: the codes of the data model; an unknown code is a read failure.
-- `storage_failure(operation, &rusqlite::Error) -> Failure`: the kind by
-  operation and SQLite's code, `Failure: <kind>` and SQLite's error name and
-  text as the technical details, a debug line with the same.
+- `storage_failure(operation, &StoreError) -> Failure`: a full disk is
+  `StorageFull` whatever the operation, otherwise the kind by operation;
+  `Failure: <kind>` and `SQLite: <code>: <text>`, or `File: <error>` when the
+  file system failed while the directory or the files were prepared, as the
+  technical details; a debug line with the same.
 
 **`mailbag-providers`**
 
@@ -152,8 +154,13 @@ The entry points and their steps, as the code will read.
 
 - `WindowUi::new(builder, loader, store)`; the `read-stored-inbox` action,
   published by `main.rs` beside `refresh-inbox`.
+- `show_selected_account(self: &Rc<Self>)`: on selection, reads the
+  selected account's Inbox unless it is the one on screen or being read, so
+  selecting it again keeps the open message; every write to it is followed
+  by a read anyway.
 - `read_shown_inbox(self: &Rc<Self>)`: the selected account; a new read
-  number; spawn on GTK's context: `gio::spawn_blocking(catch_panic(read_inbox))`;
+  number; spawn on GTK's context: `run_on_pool(read_inbox)`, which is
+  `gio::spawn_blocking(catch_panic(work))` and is shared with the deletion;
   a caught panic becomes `Failure::stopped`; a failure writes the read's
   error line; keep the answer only if its number is still the latest, so
   neither another account's answer nor an older read of the same account
@@ -174,9 +181,8 @@ The entry points and their steps, as the code will read.
 - `apply_account_update`: as today, the exclusion's cancellation first, so
   a load finishing meanwhile finds itself cancelled under the store's lock
   (research §6); then on a complete answer `delete_removed_accounts(update)`:
-  the accounts present with Mail on become the latest set
-  (`Arc<Mutex<BTreeSet<AccountId>>>`), and `keep_accounts` reads that set
-  under the store's lock, through `gio::spawn_blocking`; each
+  `keep_accounts` with the answer's accounts present with Mail on, through
+  `run_on_pool` (research §6, "Deletions in order"); each
   deleted account and a failure go to the record. It does not use
   `shows_account`: an account whose Mail service is missing is not shown,
   and keeps its mail (spec FR-008).

@@ -6,7 +6,7 @@ approved 2026-09-25; portions 1–4 implemented, the simplify review applied
 (option A) and acceptance done live 2026-09-25 (plan.md,
 "Post-implementation"). Portion 5, where the wording lives, planned
 2026-09-26 on `claude/failure-ownership`. Portion 6, failures as domain
-values, planned 2026-09-26 on `claude/storage`, before 007's portions.
+values, built 2026-09-26 on `claude/storage`, before 007's portions.
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions

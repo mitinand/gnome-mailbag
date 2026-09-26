@@ -234,6 +234,13 @@ window shows and what the record says.
   window reads a message's content together with the list, so it cannot fail
   on its own.
 
+### Session 2026-09-26 (plan challenge)
+
+- Q: A failed read of the stored Inbox is on screen and the user refreshes;
+  which failure does the list show? → A: The refresh's: a refresh forgets the
+  failed read, so the list says that the Inbox is loading and then shows the
+  refresh's own outcome, the newest failure (FR-013).
+
 ## Requirements
 
 ### Functional Requirements

@@ -80,7 +80,9 @@ not establish the final synchronization or storage design.
 - Q: What happens to received mail when the account is removed, Mail is disabled
   or the account service fails? → A: It may be discarded; a later refresh loads
   it again. A load that finishes after removal or Mail disablement cannot
-  restore that account's mail.
+  restore that account's mail. (Amended by [007](../007-mail-storage/spec.md) on 2026-09-26: removal
+  or Mail off deletes the stored mail; a failed read or a service that fails
+  deletes nothing; 007 FR-008.)
 - Q: Must the reader explain text it does not display in full? → A: No. It may
   show only the beginning of a long text; this stage shows that text was received.
 
@@ -315,7 +317,9 @@ has no network failure or server-identity reconciliation of its own.
   while making the supported body text readable (US2; FR-004–006).
 - **SC-003**: A refresh clears the list and reader, then reflects arrivals,
   removals and changed read status. A failed refresh leaves the list empty with
-  an explanation of the failing step; refreshing again recovers without an
+  an explanation of the failing step (amended by [007](../007-mail-storage/spec.md) on 2026-09-26: the
+  stored rows stay during a refresh and after a failed one, under the banner;
+  007 FR-005, SC-003); refreshing again recovers without an
   application restart. A refresh the server answered only in part keeps the rows
   it delivered and names the server's reason, so an incomplete list is never
   shown as complete. Selecting an account never starts a load (US3; FR-003,
