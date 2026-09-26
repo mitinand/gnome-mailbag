@@ -223,7 +223,9 @@ nothing of this table.
 
 A caught panic is `<message> at <file>:<line>`, as the panic hook in
 `mailbag-domain` received it. A panic in Mailbag's code has fixed text; a
-library's panic may carry part of the text it was handling (FR-014). The
-`Failure` of kind `Stopped` carries it in the technical line `Panic: …`
-after `Failure: Stopped`. The panic is read on the thread where it
+library's panic may carry part of the text it was handling (FR-014). It is
+the failure of the operation it stopped, built by `Failure::from_panic(kind,
+panic)` with the operation's own kind: `Stopped` for a load, and
+`StoredMailUnreadable` for a read of the store (007). The technical line
+`Panic: …` follows `Failure: <kind>`. The panic is read on the thread where it
 happened, by the code that sent the work there (research §4).

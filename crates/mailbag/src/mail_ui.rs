@@ -51,11 +51,9 @@ pub struct MailUi {
     content_status: adw::StatusPage,
     content_action: gtk::Button,
     sender_avatar: adw::Avatar,
-    /// The stored Inbox the rows were built from, to rebuild them only when
-    /// the shown account or its mail changed.
-    shown_inbox: RefCell<Option<Rc<[Message]>>>,
-    /// Whose Inbox the rows show, for the record.
-    shown_account: RefCell<Option<AccountId>>,
+    /// Whose stored Inbox the rows were built from, and that Inbox, to rebuild
+    /// them only when the shown account or its mail changed.
+    listed_inbox: RefCell<Option<(AccountId, Rc<[Message]>)>>,
 }
 
 /// One row's message: the stored Inbox it belongs to and its place in it.
@@ -97,8 +95,7 @@ impl MailUi {
             content_status: reader.content_status,
             content_action: reader.content_action,
             sender_avatar: reader.avatar,
-            shown_inbox: RefCell::new(None),
-            shown_account: RefCell::new(None),
+            listed_inbox: RefCell::new(None),
         });
         let weak = Rc::downgrade(&mail);
         messages.connect_row_activated(move |_, row| {
@@ -114,10 +111,10 @@ impl MailUi {
     /// when the same read's Inbox is shown again.
     pub fn show_inbox(&self, account_id: &AccountId, inbox: &Rc<[Message]>) {
         let already_shown = self
-            .shown_inbox
+            .listed_inbox
             .borrow()
             .as_ref()
-            .is_some_and(|shown| Rc::ptr_eq(shown, inbox));
+            .is_some_and(|(_, listed)| Rc::ptr_eq(listed, inbox));
         if already_shown {
             return;
         }
@@ -128,20 +125,18 @@ impl MailUi {
                 position,
             }));
         }
-        *self.shown_inbox.borrow_mut() = Some(inbox.clone());
-        *self.shown_account.borrow_mut() = Some(account_id.clone());
+        *self.listed_inbox.borrow_mut() = Some((account_id.clone(), inbox.clone()));
         self.close_reader();
     }
 
     /// Empties the list and the reader, as an account without stored mail
     /// does.
     pub fn clear(&self) {
-        if self.shown_inbox.borrow().is_none() {
+        if self.listed_inbox.borrow().is_none() {
             return;
         }
         self.rows.remove_all();
-        *self.shown_inbox.borrow_mut() = None;
-        *self.shown_account.borrow_mut() = None;
+        *self.listed_inbox.borrow_mut() = None;
         self.close_reader();
     }
 
@@ -172,7 +167,11 @@ impl MailUi {
         let listed = listed.borrow::<ListedMessage>();
         let message = &listed.inbox[listed.position];
         tracing::debug!(
-            account = self.shown_account.borrow().as_ref().map(AccountId::as_str),
+            account = self
+                .listed_inbox
+                .borrow()
+                .as_ref()
+                .map(|(account_id, _)| account_id.as_str()),
             identity = message.identity.as_str(),
             "message opened"
         );

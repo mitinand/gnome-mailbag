@@ -12,6 +12,9 @@ mod failure;
 mod open;
 
 #[cfg(test)]
+#[path = "../../../tests/support/test_directory.rs"]
+mod test_directory;
+#[cfg(test)]
 #[allow(dead_code)]
 #[path = "../../../tests/support/record.rs"]
 mod test_record;
@@ -57,8 +60,8 @@ impl Store {
     /// An empty store in memory, for tests.
     pub fn in_memory() -> Self {
         let connection = Connection::open_in_memory()
-            .and_then(|connection| {
-                create_schema(&connection)?;
+            .and_then(|mut connection| {
+                create_schema(&mut connection)?;
                 configure_connection(&connection)?;
                 Ok(connection)
             })
@@ -138,7 +141,7 @@ impl Store {
 
     /// Deletes the stored mail of every account not in `current_accounts`,
     /// and returns those accounts for the record.
-    pub fn keep_accounts(
+    pub fn delete_other_accounts(
         &self,
         current_accounts: &BTreeSet<AccountId>,
     ) -> Result<Vec<AccountId>, Failure> {
@@ -184,14 +187,18 @@ impl Store {
     }
 }
 
-/// One stored message, from the columns `read_inbox` selects. A content code
-/// this build does not know makes the read fail.
+/// Where `read_inbox` selects `content_kind`, for a failure that names it.
+const CONTENT_KIND_COLUMN: usize = 6;
+
+/// One stored message, from the columns `read_inbox` selects. The schema's
+/// `CHECK` and its version keep unknown content codes out of the file, so a
+/// code the store cannot read here means a damaged row, and the read fails.
 fn stored_message(row: &Row) -> rusqlite::Result<Message> {
     let content_code: String = row.get("content_kind")?;
     let content =
         content_from_columns(&content_code, row.get("content_detail")?).ok_or_else(|| {
             rusqlite::Error::FromSqlConversionFailure(
-                6,
+                CONTENT_KIND_COLUMN,
                 Type::Text,
                 format!("unknown content code {content_code}").into(),
             )

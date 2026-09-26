@@ -34,12 +34,12 @@ pub(crate) fn open_store(path: &Path) -> Result<Connection, StoreError> {
     let mut connection = Connection::open(path)?;
     match examine_existing(&connection)? {
         ExistingStore::Usable => {}
-        ExistingStore::Empty => create_schema(&connection)?,
+        ExistingStore::Empty => create_schema(&mut connection)?,
         ExistingStore::Discard(reason) => {
             drop(connection);
             discard_store(path, reason)?;
             connection = Connection::open(path)?;
-            create_schema(&connection)?;
+            create_schema(&mut connection)?;
         }
     }
     configure_connection(&connection)?;
@@ -104,10 +104,14 @@ fn discard_store(path: &Path, reason: &str) -> Result<(), StoreError> {
     Ok(())
 }
 
-/// Creates the tables in an empty store and records their version.
-pub(crate) fn create_schema(connection: &Connection) -> rusqlite::Result<()> {
-    connection.execute_batch(SCHEMA)?;
-    connection.pragma_update(None, "user_version", schema_version())
+/// Creates the tables in an empty store and records their version, in one
+/// transaction: a store interrupted halfway would otherwise hold tables of
+/// version 0 and be discarded at the next start as of another structure.
+pub(crate) fn create_schema(connection: &mut Connection) -> rusqlite::Result<()> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(SCHEMA)?;
+    transaction.pragma_update(None, "user_version", schema_version())?;
+    transaction.commit()
 }
 
 /// A committed load survives a crash; after a power loss the latest one may

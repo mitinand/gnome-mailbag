@@ -25,8 +25,9 @@ pub(crate) fn content_columns(content: &ReceivedContent) -> (&'static str, Optio
     }
 }
 
-/// The content the stored columns describe; `None` for a code this build does
-/// not know, or a code without the detail it needs.
+/// The content the stored columns describe; `None` for a code outside the
+/// schema's `CHECK` or without the detail it needs, which only a damaged row
+/// holds.
 pub(crate) fn content_from_columns(code: &str, detail: Option<String>) -> Option<ReceivedContent> {
     let explained = ReceivedContent::Explained;
     Some(match (code, detail) {

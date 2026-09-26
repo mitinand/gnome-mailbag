@@ -8,9 +8,9 @@ mod account_ui;
 mod accounts;
 mod failure_declarations;
 mod failure_dialog;
-mod inbox;
 mod logging;
 mod mail_ui;
+mod refreshes;
 mod settings;
 mod window_ui;
 
@@ -25,6 +25,9 @@ mod account_tests;
 #[allow(dead_code)]
 #[path = "../../../tests/support/bus.rs"]
 mod test_bus;
+#[cfg(test)]
+#[path = "../../../tests/support/test_directory.rs"]
+mod test_directory;
 #[cfg(test)]
 #[allow(dead_code)]
 #[path = "../../../tests/support/record.rs"]

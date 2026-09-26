@@ -36,10 +36,36 @@ fn an_older_reads_answer_never_replaces_a_newer_ones() {
     let first = shown.start_read(&account("first"));
     let second = shown.start_read(&account("second"));
     assert!(shown.finish_read(second, Ok(None)));
-    let failure = Failure::stopped(None);
+    let failure = Failure::from_panic(FailureKind::StoredMailUnreadable, None);
     assert!(!shown.finish_read(first, Err(failure)));
     assert_eq!(shown.account, Some(account("second")));
     assert!(matches!(shown.stored, StoredInbox::Read(None)));
+}
+
+/// A panic in store work on GIO's pool is the failure of that work's own
+/// kind, with the panic's message and place in the details
+/// (specs/006-error-handling FR-014): a read's panic is an unreadable store,
+/// never a refresh that stopped.
+#[test]
+fn a_panic_on_the_pool_is_the_failure_of_the_work_it_stopped() {
+    let context = glib::MainContext::new();
+    let answer = context
+        .with_thread_default(|| {
+            context.block_on(run_on_pool(
+                FailureKind::StoredMailUnreadable,
+                || -> Result<(), Failure> { panic!("a read panicked on purpose") },
+            ))
+        })
+        .expect("the test owns its context");
+    let failure = answer.expect_err("the work panicked");
+    assert_eq!(failure.kind, FailureKind::StoredMailUnreadable);
+    assert!(
+        failure
+            .details
+            .starts_with("Failure: StoredMailUnreadable\nPanic: a read panicked on purpose at "),
+        "{}",
+        failure.details
+    );
 }
 
 /// A hidden account's mail may be deleted, so the window forgets what it read

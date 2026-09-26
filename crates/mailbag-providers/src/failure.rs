@@ -37,7 +37,7 @@ impl LoadFailure {
     /// The failure in the domain's terms.
     pub(crate) fn into_failure(self) -> Failure {
         if let Self::WorkerStopped(panic) = self {
-            return Failure::stopped(panic);
+            return Failure::from_panic(FailureKind::Stopped, panic);
         }
         Failure {
             kind: self.failure_kind(),

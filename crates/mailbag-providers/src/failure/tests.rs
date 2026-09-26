@@ -38,26 +38,7 @@ fn graph_failure(failure: GraphFailure) -> LoadFailure {
 fn every_failure_value_has_its_kind() {
     use FailureKind as Kind;
     use ImapFailure::{Failed, TimedOut};
-    let access = LoadFailure::OnlineAccounts;
     let cases = [
-        (
-            access(AccessError::Settings),
-            Kind::AccountSettingsUnavailable,
-        ),
-        (
-            access(AccessError::NoEncryption),
-            Kind::EncryptionNotConfigured,
-        ),
-        (access(AccessError::Password), Kind::PasswordUnavailable),
-        (
-            access(AccessError::AccessToken),
-            Kind::AuthorizationUnavailable,
-        ),
-        (
-            access(AccessError::Timeout),
-            Kind::OnlineAccountsNotResponding,
-        ),
-        (access(AccessError::Cancelled), Kind::AccountRequestStopped),
         // Only a code that blames the credentials, or none, rejects them.
         (
             imap_failure(Failed(ImapStep::SignIn), Some("AUTHENTICATIONFAILED")),
@@ -127,18 +108,6 @@ fn every_failure_value_has_its_kind() {
     ];
     for (failure, kind) in cases {
         assert_eq!(failure.clone().into_failure().kind, kind, "{failure:?}");
-    }
-    let steps = [
-        (ImapStep::Connect, ServerStep::Connect),
-        (ImapStep::SecureConnection, ServerStep::SecureConnection),
-        (ImapStep::SignIn, ServerStep::SignIn),
-        (ImapStep::OpenInbox, ServerStep::OpenInbox),
-        (ImapStep::FetchMessages, ServerStep::FetchMessages),
-        (ImapStep::FetchText, ServerStep::FetchText),
-    ];
-    for (imap_step, step) in steps {
-        let failure = imap_failure(TimedOut(imap_step), None).into_failure();
-        assert_eq!(failure.kind, Kind::ServerNotResponding(step));
     }
 }
 

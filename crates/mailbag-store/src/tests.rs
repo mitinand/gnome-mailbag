@@ -6,14 +6,9 @@
 //! used discarded at the first use.
 
 use super::*;
-use crate::test_record::CapturedRecord;
+use crate::{test_directory::TestDirectory, test_record::CapturedRecord};
 use mailbag_domain::{ContentExplanation, FailureKind, ReceivedContent};
-use std::{
-    fs,
-    os::unix::fs::PermissionsExt,
-    path::Path,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use std::{fs, os::unix::fs::PermissionsExt, path::Path};
 
 fn account(name: &str) -> AccountId {
     AccountId::try_from(name).expect("synthetic account id")
@@ -26,34 +21,6 @@ fn text_message(uid: u32) -> Message {
         received_unix: None,
         seen: false,
         content: ReceivedContent::Text(format!("Text {uid}")),
-    }
-}
-
-/// A directory of its own under the system's temporary directory, removed
-/// with what it holds when dropped.
-struct TestDirectory(PathBuf);
-
-impl TestDirectory {
-    fn new() -> Self {
-        static SERIAL: AtomicU64 = AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!(
-            "mailbag-store-{}-{}",
-            std::process::id(),
-            SERIAL.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&path).expect("a test directory");
-        Self(path)
-    }
-
-    /// Where the application keeps its store, below this directory.
-    fn store_path(&self) -> PathBuf {
-        self.0.join("mailbag").join("mail.sqlite")
-    }
-}
-
-impl Drop for TestDirectory {
-    fn drop(&mut self) {
-        fs::remove_dir_all(&self.0).ok();
     }
 }
 
@@ -146,7 +113,7 @@ fn keeping_accounts_deletes_every_other_accounts_mail_and_names_them() {
             .unwrap();
     }
     let deleted = store
-        .keep_accounts(&BTreeSet::from([kept.clone()]))
+        .delete_other_accounts(&BTreeSet::from([kept.clone()]))
         .unwrap();
     assert_eq!(
         BTreeSet::from_iter(deleted),
@@ -182,6 +149,44 @@ fn a_write_that_fails_midway_leaves_the_previous_inbox_whole() {
         failure
             .details
             .starts_with("Failure: MailNotSaved\nSQLite: "),
+        "{}",
+        failure.details
+    );
+    assert_eq!(store.read_inbox(&refreshed), Ok(Some(previous)));
+}
+
+/// A full disk is its own failure, so the window can advise freeing space,
+/// and the previous Inbox stays whole. The store's size limit stands in for
+/// the disk: SQLite reports both as `SQLITE_FULL`.
+#[test]
+fn a_full_disk_is_storage_full_and_leaves_the_previous_inbox_whole() {
+    let store = Store::in_memory();
+    let refreshed = account("refreshed");
+    let previous = vec![text_message(1)];
+    store
+        .replace_inbox(&refreshed, &previous, || false)
+        .unwrap();
+    store
+        .with_connection(StoreOperation::Write, |connection| {
+            let pages: i64 = connection.query_row("PRAGMA page_count", [], |row| row.get(0))?;
+            Ok(connection.execute_batch(&format!("PRAGMA max_page_count = {pages}"))?)
+        })
+        .unwrap();
+    let mut large = text_message(2);
+    large.content = ReceivedContent::Text("x".repeat(64 * 1024));
+    let failure = store
+        .replace_inbox(&refreshed, &[large], || false)
+        .unwrap_err();
+    assert_eq!(
+        failure.kind,
+        FailureKind::StorageFull,
+        "{}",
+        failure.details
+    );
+    assert!(
+        failure
+            .details
+            .starts_with("Failure: StorageFull\nSQLite: "),
         "{}",
         failure.details
     );

@@ -43,10 +43,13 @@ every layer depends on, and lets only the application explain an outcome;
 the store, the second layer whose failures reach the window, is where the
 cost of converting is lowest.
 
-**Checked** (`Cargo.toml` of every crate): `goa-adapter`, `mailbag-imap`,
-`mailbag-graph` and `mailbag-content` depend on nothing in the workspace;
-`mailbag-providers` depends on all four; `mailbag` on all five. A domain
-crate with no workspace dependency can be reached by all of them.
+**Checked** (`Cargo.toml` of every crate, before the domain crate existed):
+`goa-adapter`, `mailbag-imap`, `mailbag-graph` and `mailbag-content`
+depended on nothing in the workspace; `mailbag-providers` on all four;
+`mailbag` on all five. A domain crate with no workspace dependency can be
+reached by all of them. Since 2026-09-26 `goa-adapter` and
+`mailbag-content` depend on `mailbag-domain`, and `mailbag` no longer on the
+protocol crates.
 `ContentExplanation` moves from `mailbag-content` into it, so that the
 domain crate depends on nothing and `mailbag-content` returns the domain's
 type.

@@ -77,7 +77,7 @@ application does not use the store yet.
   imports in crates/mailbag-providers/src/imap_batch.rs, microsoft365.rs,
   batch.rs and crates/mailbag/src/mail_ui.rs.
 - [X] T007 In crates/mailbag-domain add `Message { identity: String, fields:
-  DisplayFields, received: Option<i64>, seen: bool, content: ReceivedContent
+  DisplayFields, received_unix: Option<i64>, seen: bool, content: ReceivedContent
   }` with a `Debug` that leaves the fields and the text out; the
   `FailureKind` variants `StorageFull`, `MailNotSaved` and
   `StoredMailUnreadable`, each documented with the SQLite condition it comes
@@ -109,7 +109,7 @@ application does not use the store yet.
   included → `MailNotSaved`, any failure of a read, its opening included →
   `StoredMailUnreadable`; technical lines `Failure:
   <kind>` and `SQLite: <code>: <text>`; a debug line with the same) and
-  src/lib.rs (`Store::at`, `Store::in_memory`, `connection` opening at first
+  src/lib.rs (`Store::at`, `Store::in_memory`, `with_connection` opening at first
   use and taking over a poisoned lock, `replace_inbox(account, messages,
   load_cancelled)` with the check under the lock before the transaction,
   `read_inbox`, `keep_accounts(current_accounts)`, `InboxWrite { Stored,
@@ -193,7 +193,7 @@ whose Retry reads it again (US5).
   read numbered and only the latest read's answer kept, `render` in the plan's
   order, a `Stored` outcome of the shown account read again, a refresh
   forgetting the shown account's read failure, the `read-stored-inbox`
-  action; mail_ui.rs `show_inbox(&Rc<[Message]>)` in place of `show_batch`,
+  action; mail_ui.rs `show_inbox(account_id, &Rc<[Message]>)` in place of `show_batch`,
   the reader's status page with `RefreshInbox`; main.rs creates
   `Arc::new(Store::at(glib::user_data_dir().join("mailbag").join("mail.sqlite")))`
   for `MailLoader` and `WindowUi` and publishes and removes
@@ -251,6 +251,28 @@ or with its Mail off, and a late result cannot bring it back (US4).
   not verified in plan.md ("Post-implementation"); update the status lines
   of spec.md, plan.md and this file.
 - [X] T024 STOP: final report with the open items.
+- [X] T025 Final review in fresh contexts on 2026-09-26 (consistency,
+  convergence, simplicity, correctness), findings verified in the code and
+  applied with the maintainer's decisions: in crates/mailbag/src/window_ui.rs
+  a read in flight comes first in `shown_mail`, and `run_on_pool` takes the
+  kind a panic ends the work as (`StoredMailUnreadable` for a read); in
+  crates/mailbag-domain `Failure::stopped` became `Failure::from_panic(kind,
+  panic)`; in crates/mailbag-store/src/open.rs the schema and its version are
+  created in one transaction; renames: `InboxController` → `Refreshes` in
+  crates/mailbag/src/refreshes.rs (was inbox.rs), `keep_accounts` →
+  `delete_other_accounts`, `MailUi`'s two fields → `listed_inbox`, a named
+  column constant in crates/mailbag-store/src/lib.rs; `TestDirectory` shared
+  from tests/support/test_directory.rs; tests added: a full disk
+  (crates/mailbag-store/src/tests.rs), the store's three failures' wording
+  (crates/mailbag/src/failure_declarations/tests.rs), a failed load over a
+  stored Inbox (crates/mailbag-providers/src/tests.rs), a panic on the pool
+  (crates/mailbag/src/window_ui/tests.rs), no banner after a restart and the
+  failure's banner back after another account (`mail_ui_transitions`);
+  removed: provider tests repeating a `match` line for line and the last
+  block of `stored_mail_leaves_with_its_account`; documents brought in line
+  with the code; the measured size recorded in plan.md and accepted.
+- [ ] T026 STOP: the maintainer reviews the final review's changes and
+  commits.
 
 ## Dependencies
 

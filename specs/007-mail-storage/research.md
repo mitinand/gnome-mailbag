@@ -66,6 +66,12 @@ thread of Mailbag's own.
 store call, which takes milliseconds (FR-011). The store's functions stay
 ordinary synchronous functions, tested without threads.
 
+**Accepted** (final review, 2026-09-26; inferred, not measured): when the
+window closes and the mail worker never ran in that session, the window
+holds the last reference to the store, and the connection closes on GTK's
+thread; SQLite then folds its write-ahead log into the file. That is file
+work of a few milliseconds, once, at quit.
+
 **Alternatives**: a store thread of Mailbag's own with a request channel
 (works equally in the prototype; more code for the same result); all store
 work on the mail worker with a copy of the stored mail in the window's
@@ -148,7 +154,7 @@ on its cancellation channel. The window cancels an excluded account's load
 before it asks the store to delete that account's mail, so whichever takes
 the lock first, the result stays out: a write that came first is erased by
 the deletion, a write that comes later finds its load cancelled.
-`keep_accounts` only deletes and keeps no state.
+`delete_other_accounts` only deletes and keeps no state.
 
 **Why**: the store's calls from the window run on GIO's pool, where the
 order of two tasks is not guaranteed; a set of accounts kept in the store
@@ -254,10 +260,13 @@ the helper for work outside the mail worker comes with 007.
 **Decision**: `mailbag-domain` gets `catch_panic(work) -> Result<T, String>`,
 which installs the hook once, runs the work under `catch_unwind` and returns
 the message and place the hook kept for that thread, and
-`Failure::stopped(panic: Option<String>)`, which builds the failure of kind
-`Stopped` with the technical lines the worker writes today. The window wraps
-each store call it sends to GIO's pool in the helper; a write on the worker
-stays inside the load's existing guard.
+`Failure::from_panic(kind, panic)`, which builds the failure of the operation
+the panic stopped, of that operation's own kind, with `Failure: <kind>` and
+`Panic: …` as technical lines: `Stopped` for a load, `StoredMailUnreadable`
+for a read of the store (corrected at the final review: a read's panic had
+been shown as "Refresh stopped", though nothing was refreshed). The window
+wraps each store call it sends to GIO's pool in the helper; a write on the
+worker stays inside the load's existing guard.
 
 **Why**: 006 FR-014 asks for the message and the place on every worker
 thread; the payload that `gio::spawn_blocking` returns carries only the
@@ -282,8 +291,8 @@ message's content keep `app.refresh-inbox`; a stored Inbox that cannot be
 read uses a new application action, `app.read-stored-inbox`, which reads the
 shown account's Inbox again (spec FR-013). The failure dialog receives the
 same operation from the channel that opened it. The read's failure is the
-store's `Failure`, or `Failure::stopped` for a caught panic; the window needs
-no type of its own for it.
+store's `Failure`, or `Failure::from_panic(StoredMailUnreadable, …)` for a
+caught panic; the window needs no type of its own for it.
 
 **Why**: a Retry that starts a network refresh does not repeat a failed read,
 and without a network it would show the same page again while the load's

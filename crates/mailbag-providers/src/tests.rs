@@ -502,6 +502,12 @@ fn a_refused_sign_in_is_one_error_line_of_the_load() {
     let mut access = account_access(&fixture);
     access.credential = ImapCredential::Password("wrong password".to_owned());
     let store = Arc::new(Store::in_memory());
+    // A failed load leaves the Inbox an earlier load stored as it was
+    // (specs/007-mail-storage FR-004).
+    let account_id = access.account_id.clone();
+    store
+        .replace_inbox(&account_id, &[stored_earlier_message()], || false)
+        .unwrap();
     let (outcome, record) = load_inbox_with_account(access, &store, tracing::Level::DEBUG);
     let text = record.text();
     assert!(matches!(outcome, LoadResult::Failed(_)), "{outcome:?}");
@@ -509,6 +515,21 @@ fn a_refused_sign_in_is_one_error_line_of_the_load() {
     assert_eq!(errors.len(), 1, "{text}");
     assert!(errors[0].contains("cause=ServerRejectedSignIn"), "{text}");
     assert!(!text.contains("wrong password"), "{text}");
+    assert_eq!(
+        store.read_inbox(&account_id).unwrap(),
+        Some(vec![stored_earlier_message()])
+    );
+}
+
+/// A message an earlier load stored.
+fn stored_earlier_message() -> Message {
+    Message {
+        identity: "uid:1".to_owned(),
+        fields: DisplayFields::default(),
+        received_unix: None,
+        seen: true,
+        content: ReceivedContent::Text("Stored earlier".to_owned()),
+    }
 }
 
 #[test]

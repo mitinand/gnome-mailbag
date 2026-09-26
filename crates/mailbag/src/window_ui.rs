@@ -13,18 +13,18 @@ use crate::account_ui::{AccountUi, PageAction, show_check_progress};
 use crate::accounts::AccountPage;
 use crate::failure_declarations::{DeclaredFailure, declare_failure, declare_short_list};
 use crate::failure_dialog::{self, RetriedOperation, show_action_button, status_description};
-use crate::inbox::{InboxController, RefreshOutcome};
 use crate::mail_ui::MailUi;
+use crate::refreshes::{RefreshOutcome, Refreshes};
 use adw::{gio, glib, gtk, prelude::*};
 use goa_adapter::AccountUpdate;
-use mailbag_domain::{AccountId, Failure, Message, catch_panic};
+use mailbag_domain::{AccountId, Failure, FailureKind, Message, catch_panic};
 use mailbag_providers::{LoadResult, LoadsInbox, MailProvider};
 use mailbag_store::Store;
 use std::{cell::RefCell, collections::BTreeSet, rc::Rc, sync::Arc};
 
 pub struct WindowUi {
     accounts: Rc<RefCell<AccountUi>>,
-    inboxes: RefCell<InboxController>,
+    refreshes: RefCell<Refreshes>,
     store: Arc<Store>,
     shown_inbox: RefCell<ShownInbox>,
     mail: Rc<MailUi>,
@@ -105,7 +105,7 @@ impl WindowUi {
             .set_visible_child_name("active");
         let window = Rc::new(Self {
             accounts,
-            inboxes: RefCell::new(InboxController::default()),
+            refreshes: RefCell::new(Refreshes::default()),
             store,
             shown_inbox: RefCell::new(ShownInbox::default()),
             mail: MailUi::new(builder),
@@ -197,7 +197,7 @@ impl WindowUi {
     pub fn apply_account_update(&self, update: &AccountUpdate) {
         self.accounts.borrow_mut().apply_update(update);
         let accounts = self.accounts.borrow();
-        self.inboxes
+        self.refreshes
             .borrow_mut()
             .discard_excluded(|account_id| accounts.shows_account(account_id));
         self.shown_inbox
@@ -223,7 +223,10 @@ impl WindowUi {
             .collect();
         let store = self.store.clone();
         glib::spawn_future_local(async move {
-            let deleted = run_on_pool(move || store.keep_accounts(&accounts_with_mail)).await;
+            let deleted = run_on_pool(FailureKind::Stopped, move || {
+                store.delete_other_accounts(&accounts_with_mail)
+            })
+            .await;
             match deleted {
                 Ok(accounts) => {
                     for account_id in accounts {
@@ -243,7 +246,7 @@ impl WindowUi {
 
     /// Quit: cancels a running load without waiting for its worker.
     pub fn cancel_loads(&self) {
-        self.inboxes.borrow_mut().cancel_load();
+        self.refreshes.borrow_mut().cancel_load();
     }
 
     /// Refresh Inbox: starts the only load; the stored rows stay meanwhile.
@@ -251,7 +254,7 @@ impl WindowUi {
         let Some((account_id, provider)) = self.refreshable_account() else {
             return;
         };
-        if self.inboxes.borrow().is_loading() {
+        if self.refreshes.borrow().is_loading() {
             return;
         }
         // The list shows the refresh's outcome, the newest, rather than an
@@ -269,7 +272,7 @@ impl WindowUi {
                 }
             }),
         );
-        self.inboxes
+        self.refreshes
             .borrow_mut()
             .begin_load(&account_id, cancellation);
         self.render();
@@ -294,7 +297,7 @@ impl WindowUi {
     /// replaced its stored Inbox, which the window then reads.
     fn finish_load(self: &Rc<Self>, account_id: &AccountId, result: LoadResult) {
         let stored = matches!(result, LoadResult::Stored { .. });
-        self.inboxes.borrow_mut().finish_load(account_id, result);
+        self.refreshes.borrow_mut().finish_load(account_id, result);
         if stored && self.accounts.borrow().selected_id() == Some(account_id) {
             self.read_shown_inbox();
         }
@@ -313,7 +316,11 @@ impl WindowUi {
         let window = Rc::downgrade(self);
         glib::spawn_future_local(async move {
             let read_account = account_id.clone();
-            let answer = run_on_pool(move || store.read_inbox(&read_account)).await;
+            // A panic in the read is the read's failure (006 FR-014).
+            let answer = run_on_pool(FailureKind::StoredMailUnreadable, move || {
+                store.read_inbox(&read_account)
+            })
+            .await;
             if let Err(failure) = &answer {
                 tracing::error!(
                     account = account_id.as_str(),
@@ -379,16 +386,16 @@ impl WindowUi {
                 ShownMail::Reading => self.list_stack.set_visible_child_name("messages"),
             }
         }
-        let inboxes = self.inboxes.borrow();
-        self.loading_spinner_box.set_visible(inboxes.is_loading());
+        let refreshes = self.refreshes.borrow();
+        self.loading_spinner_box.set_visible(refreshes.is_loading());
         self.refresh_inbox
-            .set_enabled(!inboxes.is_loading() && accounts.selected_provider().is_some());
+            .set_enabled(!refreshes.is_loading() && accounts.selected_provider().is_some());
     }
 
     /// What the list shows for the selected account, the first that applies:
-    /// stored rows; a load running; a failed read; a failed refresh; a read
-    /// running; an empty stored Inbox; nothing stored
-    /// (specs/007-mail-storage FR-005, FR-006, FR-013).
+    /// stored rows; a read running, so no older state shows meanwhile; a load
+    /// running; a failed read; a failed refresh; an empty stored Inbox;
+    /// nothing stored (specs/007-mail-storage FR-005, FR-006, FR-013).
     fn shown_mail(&self) -> ShownMail {
         let no_mail_loaded = ShownMail::Status {
             title: "No mail loaded",
@@ -400,8 +407,8 @@ impl WindowUi {
         let Some(account_id) = accounts.selected_id() else {
             return no_mail_loaded;
         };
-        let inboxes = self.inboxes.borrow();
-        let outcome = inboxes.outcome_of(account_id);
+        let refreshes = self.refreshes.borrow();
+        let outcome = refreshes.outcome_of(account_id);
         let shown = self.shown_inbox.borrow();
         let stored = match &shown.account {
             Some(shown_account) if shown_account == account_id => &shown.stored,
@@ -413,7 +420,8 @@ impl WindowUi {
                 messages: messages.clone(),
                 banner: outcome.and_then(banner_of),
             },
-            _ if inboxes.is_loading_account(account_id) => ShownMail::Status {
+            (StoredInbox::Reading, _) => ShownMail::Reading,
+            _ if refreshes.is_loading_account(account_id) => ShownMail::Status {
                 title: "Loading Inbox",
                 description: None,
             },
@@ -425,7 +433,6 @@ impl WindowUi {
                 failure: declare_failure(failure),
                 retried: RetriedOperation::RefreshInbox,
             },
-            (StoredInbox::Reading, _) => ShownMail::Reading,
             (StoredInbox::Read(Some(_)), _) => ShownMail::EmptyInbox {
                 banner: outcome.and_then(banner_of),
             },
@@ -502,16 +509,17 @@ impl WindowUi {
 }
 
 /// Runs store work on GIO's thread pool, off GTK's thread; a panic inside it
-/// ends it as a failure of kind `Stopped` with the panic's message and place
-/// (specs/007-mail-storage/research.md §9).
+/// ends it as a failure of the work's own kind, `panicked_as`, with the
+/// panic's message and place (specs/007-mail-storage/research.md §9).
 async fn run_on_pool<T: Send + 'static>(
+    panicked_as: FailureKind,
     work: impl FnOnce() -> Result<T, Failure> + Send + 'static,
 ) -> Result<T, Failure> {
     match gio::spawn_blocking(move || catch_panic(work)).await {
         Ok(Ok(result)) => result,
-        Ok(Err(panic)) => Err(Failure::stopped(Some(panic))),
+        Ok(Err(panic)) => Err(Failure::from_panic(panicked_as, Some(panic))),
         // The work catches its own panics, so the pool's guard is not reached.
-        Err(_) => Err(Failure::stopped(None)),
+        Err(_) => Err(Failure::from_panic(panicked_as, None)),
     }
 }
 

@@ -351,8 +351,10 @@ window shows and what the record says.
   shown like any failed load. A list that cannot be read for the selected
   account leaves nothing to show, so the failure page takes the list's place,
   as for a failed load; its Retry reads the stored list again, since reading
-  is the operation that failed (006 FR-003). Panics and cancellation follow
-  006 FR-014 and FR-010.
+  is the operation that failed (006 FR-003), and a refresh forgets the failed
+  read, so the list shows the refresh's outcome, the newest failure. A panic
+  is the failure of the operation it stopped: a read's panic is a list that
+  cannot be read (006 FR-014). Cancellation follows 006 FR-010.
 
 **Deferred**
 

@@ -333,6 +333,13 @@ the wording, every channel and every button stays as it is. The technical
 protocol value (decided 2026-09-26); the status and the codes stay. Budget
 approved by the maintainer on 2026-09-26.
 
+Result, measured on 2026-09-26 (commit `45dce5a`, `git diff --numstat`, a
+line moved between files counted once): production +656 −442, net +214
+against ≤ 120 new; tests +391 −265, net +126 against ≤ 80 new. Accepted by
+the maintainer at 007's final review on 2026-09-26. The move carried more
+than counted: every declaration's `match` was rewritten over the kinds, and
+each kind's source is documented.
+
 | Item | Budget | Estimate |
 |---|---|---|
 | Production lines | ≤ 120 new, ≤ 160 moved | ~95 new (the domain's `Failure`, `FailureKind`, `ServerStep`, `RemoteText`, `RemoteSource` ~90; providers' conversion ~75; minus the window's protocol matching ~45 and its error line ~25, which moves down), ~140 moved (`ReceivedContent`, `ContentExplanation`, `IncompleteList`, the panic hook and slot into the domain crate; the remote texts and the error line into providers) |

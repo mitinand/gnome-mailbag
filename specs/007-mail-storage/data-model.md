@@ -71,6 +71,6 @@ the version (research §4).
 
 | Value | Owner | Lifetime |
 |---|---|---|
-| Each account's latest refresh outcome: stored, with or without an incomplete list, or failed | The window's `InboxController` | The run (006 FR-007) |
-| The shown account's stored Inbox | The window | Until another account is selected or a load of it completes |
+| Each account's latest refresh outcome: stored, with or without an incomplete list, or failed | The window's `Refreshes` | The run (006 FR-007) |
+| The shown account's stored Inbox | The window | Until another account is selected, a load of it completes, or Online Accounts no longer shows its account (its mail may then be deleted) |
 | The number of the window's latest read, so an older answer is dropped | The window | The run |

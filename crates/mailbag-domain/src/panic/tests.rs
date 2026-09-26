@@ -16,8 +16,9 @@ fn a_caught_panic_gives_its_message_and_place() {
 
 #[test]
 fn stopped_work_names_its_kind_and_the_panic() {
-    let stopped = Failure::stopped(Some("boom at x.rs:1".to_owned()));
+    let stopped = Failure::from_panic(FailureKind::Stopped, Some("boom at x.rs:1".to_owned()));
     assert_eq!(stopped.kind, FailureKind::Stopped);
     assert_eq!(stopped.details, "Failure: Stopped\nPanic: boom at x.rs:1");
-    assert_eq!(Failure::stopped(None).details, "Failure: Stopped");
+    let read = Failure::from_panic(FailureKind::StoredMailUnreadable, None);
+    assert_eq!(read.details, "Failure: StoredMailUnreadable");
 }

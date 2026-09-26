@@ -145,6 +145,27 @@ fn a_stopped_worker_offers_retry_and_asks_for_a_report() {
     assert!(declared.advice.is_some());
 }
 
+/// The store's failures all offer Retry; only a full disk has a next step
+/// outside Mailbag, so only it advises (specs/006-error-handling FR-004).
+#[test]
+fn the_stores_failures_offer_retry_and_only_a_full_disk_advises() {
+    for kind in [
+        FailureKind::StorageFull,
+        FailureKind::MailNotSaved,
+        FailureKind::StoredMailUnreadable,
+    ] {
+        let failure = failure_of(kind);
+        let declared = declare_failure(&failure);
+        assert_eq!(declared.action, Some(FailureAction::Retry), "{kind:?}");
+        assert_eq!(
+            declared.advice.is_some(),
+            kind == FailureKind::StorageFull,
+            "{kind:?}"
+        );
+        assert_eq!(declared.details, failure.details);
+    }
+}
+
 #[test]
 fn a_short_list_carries_the_refusal_only_when_the_server_refused() {
     let refused = declare_short_list(&IncompleteList::ServerRefused {

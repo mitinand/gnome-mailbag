@@ -4,7 +4,7 @@
 //! A panic's message and place, kept on the thread where it happened. The
 //! code that sends work to a thread catches the panic there and reads its
 //! message there (specs/006-error-handling/research.md §4), and the work ends
-//! as a failure of kind `Stopped`.
+//! as a failure of the operation it ran (006 FR-014).
 
 #[cfg(test)]
 mod tests;
@@ -59,10 +59,11 @@ pub fn catch_panic<T>(work: impl FnOnce() -> T) -> Result<T, String> {
 }
 
 impl Failure {
-    /// The failure of work a panic stopped, with the panic's message and place,
-    /// or of a thread that vanished without one.
-    pub fn stopped(panic: Option<String>) -> Self {
-        let kind = FailureKind::Stopped;
+    /// The failure of an operation a panic stopped, of the operation's own
+    /// kind (`Stopped` for a load, `StoredMailUnreadable` for a read of the
+    /// store), with the panic's message and place, or of a thread that
+    /// vanished without one.
+    pub fn from_panic(kind: FailureKind, panic: Option<String>) -> Self {
         let mut details = format!("Failure: {kind:?}");
         if let Some(panic) = panic {
             details.push_str(&format!("\nPanic: {panic}"));

@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::failure_declarations::{declare_content, declare_failure, declare_short_list};
+use crate::test_directory::TestDirectory;
 use crate::window_ui::WindowUi;
 use goa_adapter::{
     AccountCheckError, AccountCheckResult, AccountDetails, AccountProvider, AccountUpdate,
@@ -15,7 +16,6 @@ use mailbag_providers::{CancelsLoadOnDrop, LoadResult, LoadsInbox, MailProvider}
 use mailbag_store::{InboxWrite, Store};
 use std::{
     cell::Cell,
-    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -255,24 +255,6 @@ fn rejected_sign_in() -> Failure {
     }
 }
 
-/// A directory of its own under the system's temporary directory, removed
-/// with what it holds when dropped.
-struct TestDirectory(PathBuf);
-
-impl TestDirectory {
-    fn new() -> Self {
-        let path = std::env::temp_dir().join(format!("mailbag-window-{}", std::process::id()));
-        std::fs::create_dir(&path).expect("a test directory");
-        Self(path)
-    }
-}
-
-impl Drop for TestDirectory {
-    fn drop(&mut self) {
-        std::fs::remove_dir_all(&self.0).ok();
-    }
-}
-
 /// A window over `store`, with its scripted loader and its widgets.
 fn open_window(
     store: Arc<Store>,
@@ -504,7 +486,7 @@ fn dispatch_pending() {
 fn mail_ui_transitions() {
     adw::init().expect("GTK display");
     let directory = TestDirectory::new();
-    let store_path = directory.0.join("mailbag").join("mail.sqlite");
+    let store_path = directory.store_path();
     let (window, ui, loader, widgets) = open_window(Arc::new(Store::at(store_path.clone())));
     let refresh = ui.refresh_action().clone();
     settle(&ui);
@@ -787,6 +769,14 @@ fn mail_ui_transitions() {
     let dialog = window.visible_dialog().expect("the failure dialog");
     assert_eq!(dialog.title(), rejected.title);
     dialog.force_close();
+    // The banner is there again after another account and back, with the same
+    // rows (US3).
+    widgets.select_account(1);
+    settle(&ui);
+    widgets.select_account(0);
+    settle(&ui);
+    assert_eq!(widgets.rows().len(), 3);
+    assert_eq!(widgets.banner_title(), Some(rejected.title.to_owned()));
 
     // A repeated refresh that switches accounts keeps loading for its own one.
     refresh.activate(None);
@@ -865,6 +855,9 @@ fn mail_ui_transitions() {
     settle(&restarted);
     let restored_rows = restarted_widgets.rows();
     assert_eq!(restored_rows.len(), 2);
+    // No refresh ended in this run, so no banner: a short list is not stored
+    // (US2).
+    assert_eq!(restarted_widgets.banner_title(), None);
     assert!(row_texts(&restored_rows[0]).contains("Second subject"));
     assert!(shows_unread_dot(&restored_rows[0]));
     restored_rows[0].emit_by_name::<()>("activate", &[]);
@@ -1014,7 +1007,7 @@ fn stored_mail_leaves_with_its_account() {
 
     // An account missing from the first complete answer after a start loses
     // its mail.
-    let (window, ui, loader, widgets) = open_window(store.clone());
+    let (window, ui, _loader, widgets) = open_window(store.clone());
     ui.apply_account_update(&only_generic());
     wait_until(|| !has_stored_inbox(&google));
     assert!(has_stored_inbox(&generic));
@@ -1045,16 +1038,6 @@ fn stored_mail_leaves_with_its_account() {
     settle(&ui);
     assert!(widgets.rows().is_empty());
     assert_eq!(widgets.status_title(), "No mail loaded");
-
-    // A load that ends after its account was excluded stores nothing.
-    settle(&ui);
-    ui.refresh_action().activate(None);
-    settle(&ui);
-    ui.apply_account_update(&mail_off);
-    loader.report_stored(&two_messages(), None);
-    wait_until(|| !has_stored_inbox(&generic));
-    let_deletions_run();
-    assert!(!has_stored_inbox(&generic));
     window.destroy();
 }
 

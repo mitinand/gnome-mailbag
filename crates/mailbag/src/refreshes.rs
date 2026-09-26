@@ -25,7 +25,7 @@ pub enum RefreshOutcome {
 /// Each account's latest refresh outcome and the single load that may be
 /// running.
 #[derive(Default)]
-pub struct InboxController {
+pub struct Refreshes {
     outcomes: BTreeMap<AccountId, RefreshOutcome>,
     running_load: Option<RunningLoad>,
 }
@@ -36,7 +36,7 @@ struct RunningLoad {
     cancellation: Option<Box<dyn CancelsLoadOnDrop>>,
 }
 
-impl InboxController {
+impl Refreshes {
     pub fn outcome_of(&self, account_id: &AccountId) -> Option<&RefreshOutcome> {
         self.outcomes.get(account_id)
     }

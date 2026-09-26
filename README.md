@@ -100,6 +100,9 @@ control them. Read the file before you attach it.
 
 The root Cargo workspace owns shared dependencies, lints and `Cargo.lock`.
 `crates/goa-adapter/` provides the account data contract and GNOME account integration.
-`crates/mailbag-imap/` reads mail over IMAP and `crates/mailbag-content/` decodes
-message text. `third-party-notices/` holds license texts for dependencies that
+`crates/mailbag-imap/` reads mail over IMAP, `crates/mailbag-graph/` over Microsoft
+Graph, and `crates/mailbag-content/` decodes message text. `crates/mailbag-providers/`
+runs each provider's load and writes it to `crates/mailbag-store/`, which keeps the
+mail in a local SQLite file; `crates/mailbag-domain/` holds the definitions every
+layer shares. `third-party-notices/` holds license texts for dependencies that
 publish none.
