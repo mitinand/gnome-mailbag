@@ -1,0 +1,22 @@
+[package]
+name = "mailbag-store"
+version = "0.1.0-dev"
+edition = "2024"
+rust-version = "1.95"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/mitinand/gnome-mailbag"
+publish = false
+
+[dependencies]
+mailbag-domain = { path = "../mailbag-domain" }
+# The platform's SQLite. Without the default statement cache, whose hash map
+# brings a licence deny.toml does not allow (specs/007-mail-storage/research.md §1).
+rusqlite = { version = "0.40", default-features = false }
+tracing.workspace = true
+
+[dev-dependencies]
+# Tests read the lines the store logs (tests/support/record.rs).
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::tests::*;
-use crate::{AccountCheckResult, AccountId};
+use crate::AccountCheckResult;
 use crate::{test_bus::TestBus, test_goa::*};
 use gio::prelude::*;
 use glib::variant::ObjectPath;
+use mailbag_domain::AccountId;
 use std::collections::BTreeMap;
 use std::time::Duration;
 

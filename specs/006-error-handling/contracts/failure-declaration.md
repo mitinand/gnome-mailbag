@@ -97,9 +97,13 @@ chooses the kind; reading a protocol's codes happens there.
 | `RequestRefused` | providers | `GraphFailure::Refused` with any other status |
 | `UnexpectedAnswer` | providers | `GraphFailure::InvalidReply` |
 | `Stopped` | whoever caught the panic | A panic on a worker thread, or a worker that vanished without one (FR-014) |
+| `StorageFull` | the store | SQLite or the file system reports a full disk |
+| `MailNotSaved` | the store | Any other failure of a write, the store's opening included |
+| `StoredMailUnreadable` | the store | Any failure of a read, the store's opening included |
 
-A later layer adds its own kinds under the same rule; the store's are added
-by [007](../../007-mail-storage/plan.md).
+A later layer adds its own kinds under the same rule; the store's three were
+added by [007](../../007-mail-storage/research.md#8-types-and-crates) on
+2026-09-26.
 
 ## What a lower layer provides
 

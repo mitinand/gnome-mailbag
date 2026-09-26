@@ -5,11 +5,11 @@ use super::*;
 use crate::failure_declarations::{declare_content, declare_failure, declare_short_list};
 use crate::window_ui::WindowUi;
 use goa_adapter::{
-    AccountCheckError, AccountCheckResult, AccountDetails, AccountId, AccountProvider,
-    AccountUpdate, ErrorCause,
+    AccountCheckError, AccountCheckResult, AccountDetails, AccountProvider, AccountUpdate,
+    ErrorCause,
 };
 use mailbag_domain::{
-    ContentExplanation, Failure, FailureKind, IncompleteList, RemoteSource, RemoteText,
+    AccountId, ContentExplanation, Failure, FailureKind, IncompleteList, RemoteSource, RemoteText,
 };
 use mailbag_providers::{
     CancelsLoadOnDrop, LoadResult, LoadsInbox, MailProvider, MessageIdentity, ReceivedMessage,

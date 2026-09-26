@@ -10,7 +10,7 @@
 mod tests;
 
 use mail_parser::{MessageParser, MimeHeaders, PartType, decoders::charsets::map::charset_decoder};
-use mailbag_domain::ContentExplanation;
+use mailbag_domain::{ContentExplanation, DisplayFields};
 
 /// One part of a message's MIME structure, as the server described it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -366,14 +366,6 @@ pub fn decode_message_text<'a>(
         .map(|(mime_header, body)| decode_text_part(mime_header, body))
         .collect::<Result<_, _>>()?;
     Ok(decoded.join("\n\n"))
-}
-
-/// Subject, sender and recipients for the list and the reader.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct DisplayFields {
-    pub subject: Option<String>,
-    pub from: Option<String>,
-    pub to: Option<String>,
 }
 
 /// Decodes the From, To and Subject header lines of a received message.

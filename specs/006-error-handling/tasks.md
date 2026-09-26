@@ -254,7 +254,7 @@ technical lines and record fields stay as they are.
   crates/mailbag/src/failure_declarations/tests.rs over kinds, keeping its
   assertions; switch the fixtures of crates/mailbag/src/mail_ui/tests.rs,
   failure_dialog/tests.rs and inbox/tests.rs to `Failure`.
-- [ ] T032 STOP: run ./scripts/check.sh, git diff --check and each GTK test
+- [X] T032 STOP: run ./scripts/check.sh, git diff --check and each GTK test
   on its own; confirm with `git diff` that no wording literal of
   failure_declarations.rs changed (the `Failure:` line and `cause` change by
   decision); compare the size with the amendment's

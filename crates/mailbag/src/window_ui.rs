@@ -14,7 +14,8 @@ use crate::failure_dialog::{self, show_action_button, status_description};
 use crate::inbox::{AccountInbox, InboxController};
 use crate::mail_ui::MailUi;
 use adw::{gio, gtk, prelude::*};
-use goa_adapter::{AccountId, AccountUpdate};
+use goa_adapter::AccountUpdate;
+use mailbag_domain::AccountId;
 use mailbag_providers::{LoadResult, LoadsInbox, MailProvider};
 use std::{cell::RefCell, rc::Rc};
 

@@ -3,8 +3,8 @@
 
 use super::*;
 use crate::logging::{LogLevel, capture::start_record};
-use mailbag_content::DisplayFields;
-use mailbag_domain::{ContentExplanation, FailureKind};
+
+use mailbag_domain::{ContentExplanation, DisplayFields, FailureKind};
 use mailbag_providers::{MessageIdentity, ReceivedMessage};
 use std::cell::Cell;
 

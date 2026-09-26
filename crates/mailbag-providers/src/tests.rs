@@ -4,9 +4,11 @@
 use super::*;
 use crate::test_record::CapturedRecord;
 use crate::worker::{LoadKind, MailWorker, report_outcome};
-use goa_adapter::{AccountId, GraphAccess, ImapAccess, ImapCredential, ImapEncryption};
-use mailbag_content::DisplayFields;
-use mailbag_domain::{Failure, FailureKind, IncompleteList, ReceivedContent, ServerStep};
+use goa_adapter::{GraphAccess, ImapAccess, ImapCredential, ImapEncryption};
+
+use mailbag_domain::{
+    AccountId, DisplayFields, Failure, FailureKind, IncompleteList, ReceivedContent, ServerStep,
+};
 use mailbag_graph::test_server as graph_service;
 use mailbag_imap::{
     GmailRow,

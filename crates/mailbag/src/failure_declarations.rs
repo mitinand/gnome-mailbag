@@ -183,6 +183,25 @@ pub fn declare_failure(failure: &Failure) -> DeclaredFailure {
             Some("If this happens again, report it with the technical details."),
             Some(FailureAction::Retry),
         ),
+        // A full disk can also meet a read: opening the store writes its files.
+        FailureKind::StorageFull => (
+            "Not enough disk space",
+            "There is not enough free disk space to store mail.",
+            Some("Free some disk space, then try again."),
+            Some(FailureAction::Retry),
+        ),
+        FailureKind::MailNotSaved => (
+            "Mail not saved",
+            "The received messages could not be saved.",
+            None,
+            Some(FailureAction::Retry),
+        ),
+        FailureKind::StoredMailUnreadable => (
+            "Stored mail unreadable",
+            "The stored messages could not be read.",
+            None,
+            Some(FailureAction::Retry),
+        ),
     };
     DeclaredFailure {
         title,

@@ -12,8 +12,8 @@
 mod tests;
 
 use crate::{LoadFailure, LoadResult};
-use goa_adapter::{AccessError, AccountId};
-use mailbag_domain::{Failure, FailureKind, RemoteSource, RemoteText, ServerStep};
+use goa_adapter::AccessError;
+use mailbag_domain::{AccountId, Failure, FailureKind, RemoteSource, RemoteText, ServerStep};
 use mailbag_graph::{GraphError, GraphFailure};
 use mailbag_imap::{ImapFailure, ImapStep};
 
@@ -36,6 +36,9 @@ impl LoadFailure {
 
     /// The failure in the domain's terms.
     pub(crate) fn into_failure(self) -> Failure {
+        if let Self::WorkerStopped(panic) = self {
+            return Failure::stopped(panic);
+        }
         Failure {
             kind: self.failure_kind(),
             remote_texts: self.remote_texts(),
@@ -152,9 +155,6 @@ impl LoadFailure {
                 _ => "Server code",
             };
             lines.push(format!("{label}: {code}"));
-        }
-        if let Self::WorkerStopped(Some(panic)) = self {
-            lines.push(format!("Panic: {panic}"));
         }
         lines.join("\n")
     }

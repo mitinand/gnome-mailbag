@@ -4,7 +4,8 @@ use super::GraphAccess;
 use crate::client::tests::{
     RecordedUpdates, dispatch_for, run_in_context, start_test_client, wait_until,
 };
-use crate::{AccessError, AccessRequest, AccountId, GoaAdapter, test_bus::TestBus, test_goa::*};
+use crate::{AccessError, AccessRequest, GoaAdapter, test_bus::TestBus, test_goa::*};
+use mailbag_domain::AccountId;
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
 type AccessResults = Rc<RefCell<Vec<Result<GraphAccess, AccessError>>>>;

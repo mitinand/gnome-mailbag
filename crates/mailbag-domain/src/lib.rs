@@ -1,17 +1,69 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The definitions every layer of the application shares: what a message's
-//! content is, and how a failure is handed on in the application's terms
-//! rather than a protocol's (specs/006-error-handling/research.md §1). Only
-//! the application words them for the user. The crate depends on nothing in
-//! the workspace, so every layer can reach it.
+//! The definitions every layer of the application shares: the account, the
+//! message as the application keeps and shows it, and how a failure is handed
+//! on in the application's terms rather than a protocol's
+//! (specs/006-error-handling/research.md §1). Only the application words them
+//! for the user. The crate depends on nothing in the workspace, so every layer
+//! can reach it.
 
 mod panic;
 
-pub use panic::{install_panic_hook, take_panic};
+pub use panic::{catch_panic, install_panic_hook, take_panic};
 
 use std::fmt;
+
+/// An Online Accounts account's identifier: nonempty, opaque and stable
+/// across renames (specs/001-goa-account-observation/contracts/accounts.md).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AccountId(String);
+
+impl AccountId {
+    /// The identifier's text, by which the record names the account.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// An empty text is not an account identifier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EmptyAccountId;
+
+impl TryFrom<&str> for AccountId {
+    type Error = EmptyAccountId;
+
+    fn try_from(id: &str) -> Result<Self, Self::Error> {
+        if id.is_empty() {
+            Err(EmptyAccountId)
+        } else {
+            Ok(Self(id.to_owned()))
+        }
+    }
+}
+
+/// A message as the application keeps and shows it: what a load received,
+/// what the store holds and what the window lists and reads.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Message {
+    /// What the load calls the message, for the record only: `uid:<n>`,
+    /// `gmail:<X-GM-MSGID>` or `graph:<immutable id>`.
+    pub identity: String,
+    pub fields: DisplayFields,
+    /// The received date as seconds since the Unix epoch.
+    pub received: Option<i64>,
+    /// The read state as the server last reported it.
+    pub seen: bool,
+    pub content: ReceivedContent,
+}
+
+/// Subject, sender and recipients for the list and the reader.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DisplayFields {
+    pub subject: Option<String>,
+    pub from: Option<String>,
+    pub to: Option<String>,
+}
 
 /// A failure the user may be told about, as the layer that met it hands it on.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,6 +129,13 @@ pub enum FailureKind {
     UnexpectedAnswer,
     /// A panic stopped the work, or the thread doing it vanished without one.
     Stopped,
+    /// Writing to the store met a full disk: SQLite's `SQLITE_FULL`, or the
+    /// file system's own report while the store's files were prepared.
+    StorageFull,
+    /// Any other failure of a write to the store, its opening included.
+    MailNotSaved,
+    /// Any failure of a read from the store, its opening included.
+    StoredMailUnreadable,
 }
 
 /// The steps of a session with a mail server.
@@ -178,6 +237,17 @@ impl ContentExplanation {
 // The remote side's words and received mail are shown to the user, never
 // written to diagnostics; server text reaches the record only at debug, where
 // the failure is built (specs/003-logging).
+impl fmt::Debug for Message {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Message")
+            .field("identity", &self.identity)
+            .field("seen", &self.seen)
+            .field("content", &self.content)
+            .finish_non_exhaustive()
+    }
+}
+
 impl fmt::Debug for RemoteText {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter

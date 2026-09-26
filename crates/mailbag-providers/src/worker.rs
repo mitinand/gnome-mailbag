@@ -12,8 +12,8 @@ use futures_util::{
     FutureExt,
     future::{self, Either},
 };
-use goa_adapter::{AccountId, GraphAccess, ImapAccess};
-use mailbag_domain::{install_panic_hook, take_panic};
+use goa_adapter::{GraphAccess, ImapAccess};
+use mailbag_domain::{AccountId, install_panic_hook, take_panic};
 use std::{cell::RefCell, panic::AssertUnwindSafe, pin::pin, thread};
 
 /// The mail worker. It runs one load at a time for the selected account and

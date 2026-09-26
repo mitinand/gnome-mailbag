@@ -6,6 +6,7 @@ members = [
     "crates/mailbag-imap",
     "crates/mailbag-content",
     "crates/mailbag-providers",
+    "crates/mailbag-store",
     "crates/mailbag-graph",
 ]
 default-members = ["crates/mailbag"]

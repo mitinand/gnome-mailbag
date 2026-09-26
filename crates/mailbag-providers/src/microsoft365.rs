@@ -8,8 +8,8 @@
 
 use crate::batch::{BATCH_SIZE, MessageIdentity, ReceivedBatch, ReceivedMessage};
 use goa_adapter::GraphAccess;
-use mailbag_content::{DisplayFields, display_names};
-use mailbag_domain::{IncompleteList, ReceivedContent};
+use mailbag_content::display_names;
+use mailbag_domain::{DisplayFields, IncompleteList, ReceivedContent};
 use mailbag_graph::{GraphError, GraphMessage, Mailbox, list_inbox_messages};
 
 pub(crate) async fn load_microsoft365_inbox(

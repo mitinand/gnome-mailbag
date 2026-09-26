@@ -5,9 +5,9 @@
 //! from the mail worker to whatever shows the mail; a failure crosses as the
 //! domain's `Failure`.
 
-use goa_adapter::{AccessError, AccountId};
-use mailbag_content::DisplayFields;
-use mailbag_domain::{Failure, IncompleteList, ReceivedContent};
+use goa_adapter::AccessError;
+
+use mailbag_domain::{AccountId, DisplayFields, Failure, IncompleteList, ReceivedContent};
 use mailbag_graph::GraphError;
 use mailbag_imap::{GmailRow, ImapError};
 use std::fmt;

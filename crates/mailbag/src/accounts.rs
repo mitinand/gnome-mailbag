@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::logging;
-use goa_adapter::{
-    AccountCheckResult, AccountDetails, AccountId, AccountProvider, AccountUpdate, ErrorCause,
-};
+use goa_adapter::{AccountCheckResult, AccountDetails, AccountProvider, AccountUpdate, ErrorCause};
+use mailbag_domain::AccountId;
 use mailbag_providers::MailProvider;
 use std::{
     collections::{BTreeMap, BTreeSet},

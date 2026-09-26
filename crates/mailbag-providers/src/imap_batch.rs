@@ -6,11 +6,11 @@
 //! can show.
 
 use crate::batch::{MessageIdentity, ReceivedBatch, ReceivedMessage};
-use goa_adapter::{AccountId, ImapAccess, ImapCredential, ImapEncryption};
+use goa_adapter::{ImapAccess, ImapCredential, ImapEncryption};
 use mailbag_content::{
     MimePart, TextSelection, decode_display_fields, decode_message_text, select_text_parts,
 };
-use mailbag_domain::{IncompleteList, ReceivedContent};
+use mailbag_domain::{AccountId, IncompleteList, ReceivedContent};
 use mailbag_imap::{
     Credential, Encryption, ImapAccount, ImapError, ImapFailure, InboxReader, MessageList,
     MessagePart, MessageText, TextParts, TextRequest,

@@ -48,7 +48,7 @@ privacy invariants.
 
 - [X] T002 Implement specs/006-error-handling/tasks.md T028–T031 and mark
   them done there.
-- [ ] T003 STOP: run 006's T032 (checks, the size against 006's amendment
+- [X] T003 STOP: run 006's T032 (checks, the size against 006's amendment
   table, the wording literals unchanged); report, suggest the commit and
   wait before portion 1.
 
@@ -57,7 +57,7 @@ privacy invariants.
 Goal: `mailbag-store` and the domain's additions exist and are tested; the
 application does not use the store yet.
 
-- [ ] T004 Amend the documents first: in
+- [X] T004 Amend the documents first: in
   specs/001-goa-account-observation/data-model.md and contracts/accounts.md,
   mark as amended by 007 that `AccountId` lives in `mailbag-domain`, whose
   `TryFrom<&str>` refuses an empty identifier, which `goa-adapter` turns
@@ -65,18 +65,18 @@ application does not use the store yet.
   specs/006-error-handling/contracts/failure-declaration.md add the store's
   kinds `StorageFull`, `MailNotSaved` and `StoredMailUnreadable`, produced by
   the store.
-- [ ] T005 Move `AccountId` from crates/goa-adapter/src/account_model.rs
+- [X] T005 Move `AccountId` from crates/goa-adapter/src/account_model.rs
   into crates/mailbag-domain (same derives, `as_str`, `TryFrom<&str>` with
   the domain's error `EmptyAccountId`); make goa-adapter depend on
   mailbag-domain and turn `EmptyAccountId` into its
   `AccountCheckError { "account ID", InvalidReply }` where it reads an
   identifier; switch the imports in goa-adapter, crates/mailbag-providers and
   crates/mailbag (about 14 files, paths only).
-- [ ] T006 Move `DisplayFields` from crates/mailbag-content/src/lib.rs into
+- [X] T006 Move `DisplayFields` from crates/mailbag-content/src/lib.rs into
   crates/mailbag-domain; `decode_display_fields` returns it; switch the
   imports in crates/mailbag-providers/src/imap_batch.rs, microsoft365.rs,
   batch.rs and crates/mailbag/src/mail_ui.rs.
-- [ ] T007 In crates/mailbag-domain add `Message { identity: String, fields:
+- [X] T007 In crates/mailbag-domain add `Message { identity: String, fields:
   DisplayFields, received: Option<i64>, seen: bool, content: ReceivedContent
   }` with a `Debug` that leaves the fields and the text out; the
   `FailureKind` variants `StorageFull`, `MailNotSaved` and
@@ -92,7 +92,7 @@ application does not use the store yet.
   three arms of `declare_failure` with Retry and, for `StorageFull`, advice
   to free disk space (wording final in code, impersonal, AGENTS.md "UI
   wording").
-- [ ] T008 Create crates/mailbag-store (Cargo.toml: mailbag-domain,
+- [X] T008 Create crates/mailbag-store (Cargo.toml: mailbag-domain,
   `rusqlite = { version = "0.40", default-features = false }`, tracing; the
   workspace lints; add it to the workspace members) with src/schema.sql (the
   two `STRICT` tables, the index and the content codes as a `CHECK`, as in
@@ -114,7 +114,7 @@ application does not use the store yet.
   `read_inbox`, `keep_accounts(current_accounts)` reading the accounts to
   keep through the check under the lock, `InboxWrite { Stored, LoadCancelled
   }`).
-- [ ] T009 [P] Tests in crates/mailbag-store/src/tests.rs, about 200 lines:
+- [X] T009 [P] Tests in crates/mailbag-store/src/tests.rs, about 200 lines:
   every content code and field round trips in load order; a replacement
   leaves exactly the new messages; an empty stored Inbox differs from none;
   a cancelled load writes nothing; `keep_accounts` deletes every other
@@ -126,10 +126,10 @@ application does not use the store yet.
   each start empty with one warning line naming the reason
   (tests/support/record.rs); a directory that cannot be created is a
   failure and deletes nothing; the store's directory has mode 0700.
-- [ ] T010 [P] Tests in crates/mailbag-domain: `catch_panic` returns the
+- [X] T010 [P] Tests in crates/mailbag-domain: `catch_panic` returns the
   message and the place of a panic on the calling thread and the work's
   value otherwise; `Failure::stopped` gives the two technical lines.
-- [ ] T011 Build and checks: Cargo.lock; run scripts/generate-cargo-sources.sh
+- [X] T011 Build and checks: Cargo.lock; run scripts/generate-cargo-sources.sh
   for cargo-sources.json; in scripts/check.sh add that mailbag-store depends
   on no GTK, GLib, mailbag, mailbag-content, mailbag-imap, mailbag-graph,
   mailbag-providers or goa-adapter; add the `sqlite3` pkg-config check and

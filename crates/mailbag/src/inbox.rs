@@ -9,8 +9,7 @@
 #[cfg(test)]
 mod tests;
 
-use goa_adapter::AccountId;
-use mailbag_domain::{Failure, IncompleteList, ReceivedContent};
+use mailbag_domain::{AccountId, Failure, IncompleteList, ReceivedContent};
 use mailbag_providers::{CancelsLoadOnDrop, LoadResult, ReceivedBatch};
 use std::{collections::BTreeMap, rc::Rc};
 

@@ -5,7 +5,7 @@
 //! cancellation types, and the Online Accounts calls both of them make.
 
 use crate::{
-    AccountId, ErrorCause,
+    ErrorCause,
     accounts::{
         ACCOUNT_INTERFACE, GOA_BUS_NAME, GOA_ROOT_PATH, ManagedObjects, OAUTH2_BASED_INTERFACE,
         OBJECT_MANAGER_INTERFACE, Properties, classify_glib_error, read_property,
@@ -13,6 +13,7 @@ use crate::{
 };
 use gio::prelude::*;
 use glib::variant::ObjectPath;
+use mailbag_domain::AccountId;
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

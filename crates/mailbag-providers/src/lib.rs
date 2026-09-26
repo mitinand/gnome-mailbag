@@ -23,7 +23,8 @@ mod tests;
 pub use batch::{CancelsLoadOnDrop, LoadResult, MessageIdentity, ReceivedBatch, ReceivedMessage};
 
 use batch::LoadFailure;
-use goa_adapter::{AccessError, AccessRequest, AccountId, GoaAdapter, ImapAccess};
+use goa_adapter::{AccessError, AccessRequest, GoaAdapter, ImapAccess};
+use mailbag_domain::AccountId;
 use std::{cell::RefCell, rc::Rc};
 use worker::{LoadHandle, LoadKind, MailWorker};
 

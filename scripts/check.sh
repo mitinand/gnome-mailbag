@@ -44,6 +44,8 @@ reject_crate_dependencies goa-adapter "$gtk_packages|mailbag|mailbag-graph|mailb
 reject_crate_dependencies mailbag-imap "$gtk_packages|mail-parser|mailbag|mailbag-content|mailbag-graph|mailbag-providers"
 reject_crate_dependencies mailbag-content "$gtk_packages|$glib_packages|mailbag|mailbag-graph|mailbag-imap|mailbag-providers"
 reject_crate_dependencies mailbag-graph "$gtk_packages|mail-parser|mailbag|mailbag-imap|mailbag-content|mailbag-providers"
+# The store keeps the domain's values and knows no account source, protocol or widget.
+reject_crate_dependencies mailbag-store "$gtk_packages|$glib_packages|goa-adapter|mailbag|mailbag-content|mailbag-graph|mailbag-imap|mailbag-providers"
 # The provider layer joins the library crates; the widgets stay above it.
 reject_crate_dependencies mailbag-providers "$gtk_packages|mailbag"
 # No bridge between the log crate and tracing (specs/003-logging/research.md §1).
