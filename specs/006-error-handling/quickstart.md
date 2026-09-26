@@ -53,13 +53,13 @@ cannot: the real widgets, the keyboard and the screen reader (SC-005).
 ## The record (SC-003, FR-014)
 
 ```bash
-mailbag --log-level=debug 2> failures.log
+mailbag --log-level=debug 2> ~/failures.log
 ```
 
 8. Repeat step 1 and quit. Expect one error line naming the account and
    `cause=ServerRejectedSignIn` (the domain kind since portion 6), the server's reply at debug with `<login>`, and
    no password, user name or address anywhere: `grep -c '<user name>'
-   failures.log` prints 0.
+   ~/failures.log` prints 0.
 9. A panic on the worker cannot be provoked live; the test with a
    panicking load is the evidence that the status page says "Refresh
    stopped" with the panic's message and place under Technical details and

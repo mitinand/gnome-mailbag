@@ -61,19 +61,20 @@ Mailbag first: if it is already running, a new start only says that logging was
 not turned on. Then start it from a terminal with the record going to a file:
 
 ```bash
-flatpak run io.github.mitinand.Mailbag --log-level=debug 2> mailbag.log
+flatpak run io.github.mitinand.Mailbag --log-level=debug 2> ~/mailbag.log
 ```
 
 For a build from this repository, build first so that Cargo's own output stays
-out of the file:
+out of the file; the record goes to your home folder, not into the repository:
 
 ```bash
 cargo build --locked
-./target/debug/mailbag --log-level=debug 2> mailbag.log
+./target/debug/mailbag --log-level=debug 2> ~/mailbag.log
 ```
 
-Reproduce the problem, quit Mailbag and attach `mailbag.log` to the issue. The
-levels are `error`, `warning`, `info` and `debug`; `debug` tells the most.
+Reproduce the problem, quit Mailbag and attach `mailbag.log` from your home
+folder to the issue. The levels are `error`, `warning`, `info` and `debug`;
+`debug` tells the most.
 
 A debug record contains the Online Accounts identifiers of your accounts, also at
 the other levels; message numbers (UIDs) and, for Microsoft 365 accounts, message
