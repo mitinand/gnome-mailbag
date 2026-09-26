@@ -13,7 +13,8 @@ use crate::failure_declarations::{DeclaredFailure, declare_content};
 use crate::failure_dialog::{show_action_button, status_description};
 use adw::{gio, glib, gtk, prelude::*};
 use mailbag_content::DisplayFields;
-use mailbag_providers::{ReceivedBatch, ReceivedContent};
+use mailbag_domain::ReceivedContent;
+use mailbag_providers::ReceivedBatch;
 use std::{cell::RefCell, rc::Rc};
 
 /// How much text a GTK label shows, in UTF-8 bytes. Longer text is cut at a

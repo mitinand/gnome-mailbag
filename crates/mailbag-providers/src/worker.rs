@@ -12,20 +12,9 @@ use futures_util::{
     FutureExt,
     future::{self, Either},
 };
-use goa_adapter::{GraphAccess, ImapAccess};
-use std::{
-    cell::{Cell, RefCell},
-    panic::{self, AssertUnwindSafe},
-    pin::pin,
-    sync::Once,
-    thread,
-};
-
-thread_local! {
-    /// The last panic on this thread as `message at file:line`, written by the
-    /// panic hook and taken by the load the panic stopped.
-    static LAST_PANIC: Cell<Option<String>> = const { Cell::new(None) };
-}
+use goa_adapter::{AccountId, GraphAccess, ImapAccess};
+use mailbag_domain::{install_panic_hook, take_panic};
+use std::{cell::RefCell, panic::AssertUnwindSafe, pin::pin, thread};
 
 /// The mail worker. It runs one load at a time for the selected account and
 /// keeps GTK's context free of mail access. Its thread starts with the first
@@ -47,7 +36,19 @@ pub(crate) enum LoadKind {
     },
     /// Panics inside the load, as a hostile message could make a parser do.
     #[cfg(test)]
-    PanicsForTest,
+    PanicsForTest(AccountId),
+}
+
+impl LoadKind {
+    /// The account whose Inbox the load reads.
+    fn account_id(&self) -> &AccountId {
+        match self {
+            Self::GenericImap(access) | Self::Gmail(access) => &access.account_id,
+            Self::Microsoft365 { access, .. } => &access.account_id,
+            #[cfg(test)]
+            Self::PanicsForTest(account_id) => account_id,
+        }
+    }
 }
 
 pub(crate) struct LoadRequest {
@@ -75,6 +76,7 @@ impl MailWorker {
         kind: LoadKind,
         on_finished: impl FnOnce(LoadResult) + 'static,
     ) -> LoadHandle {
+        let account_id = kind.account_id().clone();
         let (cancel, cancelled) = async_channel::bounded(1);
         let (sender, outcome) = async_channel::bounded(1);
         let request = LoadRequest {
@@ -84,8 +86,11 @@ impl MailWorker {
         };
         // The worker's queue is unbounded, so sending cannot block GTK.
         let accepted = self.queue().try_send(request).is_ok();
-        glib::MainContext::ref_thread_default()
-            .spawn_local(report_outcome(accepted.then_some(outcome), on_finished));
+        glib::MainContext::ref_thread_default().spawn_local(report_outcome(
+            account_id,
+            accepted.then_some(outcome),
+            on_finished,
+        ));
         LoadHandle { _cancel: cancel }
     }
 
@@ -114,6 +119,7 @@ impl MailWorker {
 /// cancelled load, leaves no outcome behind, and the window still hears that
 /// the load is over.
 pub(crate) async fn report_outcome(
+    account_id: AccountId,
     outcome: Option<async_channel::Receiver<LoadResult>>,
     on_finished: impl FnOnce(LoadResult),
 ) {
@@ -121,7 +127,7 @@ pub(crate) async fn report_outcome(
         Some(outcome) => outcome.recv().await.ok(),
         None => None,
     };
-    on_finished(reported.unwrap_or(LoadResult::Failed(LoadFailure::WorkerStopped(None))));
+    on_finished(reported.unwrap_or_else(|| LoadFailure::WorkerStopped(None).give_up(&account_id)));
 }
 
 /// Runs loads until the last worker handle is dropped.
@@ -158,6 +164,7 @@ async fn run_load(kind: LoadKind, cancelled: &async_channel::Receiver<()>) -> Lo
 /// failure that carries the panic's message and place, and the worker goes
 /// on with the next load (specs/006-error-handling FR-014).
 async fn load_catching_panics(kind: LoadKind) -> LoadResult {
+    let account_id = kind.account_id().clone();
     // The kind is read once, here, to choose the sequence; no sequence asks
     // about the provider again (004 plan, decision D1).
     let load = async move {
@@ -173,33 +180,14 @@ async fn load_catching_panics(kind: LoadKind) -> LoadResult {
                 .await
                 .map_err(LoadFailure::MicrosoftGraph),
             #[cfg(test)]
-            LoadKind::PanicsForTest => panic!("a load panicked on purpose"),
+            LoadKind::PanicsForTest(_) => panic!("a load panicked on purpose"),
         }
     };
     // No state outlives a load, so nothing the panic interrupted is used
     // again. The payload is not read: the hook already kept the message.
     match AssertUnwindSafe(load).catch_unwind().await {
         Ok(Ok(batch)) => LoadResult::Received(batch),
-        Ok(Err(failure)) => LoadResult::Failed(failure),
-        Err(_) => LoadResult::Failed(LoadFailure::WorkerStopped(LAST_PANIC.take())),
+        Ok(Err(failure)) => failure.give_up(&account_id),
+        Err(_) => LoadFailure::WorkerStopped(take_panic()).give_up(&account_id),
     }
-}
-
-/// Keeps each panic's message and place on the thread where it happens, then
-/// lets the previous hook report it to the error stream as before. The hook
-/// serves the whole process, so it is installed once.
-fn install_panic_hook() {
-    static INSTALLED: Once = Once::new();
-    INSTALLED.call_once(|| {
-        let previous_hook = panic::take_hook();
-        panic::set_hook(Box::new(move |info| {
-            let message = info.payload_as_str().unwrap_or("panic");
-            let panic = match info.location() {
-                Some(place) => format!("{message} at {}:{}", place.file(), place.line()),
-                None => message.to_owned(),
-            };
-            LAST_PANIC.set(Some(panic));
-            previous_hook(info);
-        }));
-    });
 }

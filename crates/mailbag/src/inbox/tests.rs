@@ -3,11 +3,8 @@
 
 use super::*;
 use crate::logging::{LogLevel, capture::start_record};
-use goa_adapter::AccessError;
-use mailbag_content::ContentExplanation;
 use mailbag_content::DisplayFields;
-use mailbag_graph::{GraphError, GraphFailure};
-use mailbag_imap::{ImapError, ImapFailure, ImapStep, ServerReply};
+use mailbag_domain::{ContentExplanation, FailureKind};
 use mailbag_providers::{MessageIdentity, ReceivedMessage};
 use std::cell::Cell;
 
@@ -34,8 +31,12 @@ fn batch_of(account_id: &AccountId, uids: &[u32]) -> ReceivedBatch {
     }
 }
 
-fn sign_in_failure() -> LoadFailure {
-    LoadFailure::Imap(ImapFailure::Failed(ImapStep::SignIn).into())
+fn sign_in_failure() -> Failure {
+    Failure {
+        kind: FailureKind::ServerRejectedSignIn,
+        remote_texts: Vec::new(),
+        details: "Failure: ServerRejectedSignIn".to_owned(),
+    }
 }
 
 /// A running step that records its cancellation, as dropping the Online
@@ -141,7 +142,10 @@ fn a_failed_load_leaves_the_account_without_mail() {
     controller.finish_load(&id, LoadResult::Failed(sign_in_failure()));
     assert!(matches!(
         controller.inbox_of(&id),
-        Some(AccountInbox::Failed(LoadFailure::Imap(_)))
+        Some(AccountInbox::Failed(Failure {
+            kind: FailureKind::ServerRejectedSignIn,
+            ..
+        }))
     ));
     assert!(!controller.is_loading());
 }
@@ -241,10 +245,10 @@ fn unreadable_content_and_a_refused_list_each_warn_without_server_text() {
     let batch = ReceivedBatch {
         account_id: loaded.clone(),
         uid_validity: Some(1),
-        incomplete: Some(IncompleteList::ServerRefused(ServerReply {
+        incomplete: Some(IncompleteList::ServerRefused {
+            reply: "private refusal text".to_owned(),
             code: Some("LIMIT".to_owned()),
-            text: "private refusal text".to_owned(),
-        })),
+        }),
         messages: vec![
             message_with(30, ReceivedContent::Text("Text".to_owned())),
             // Not supported by design, so counted at info and not warned about.
@@ -268,69 +272,6 @@ fn unreadable_content_and_a_refused_list_each_warn_without_server_text() {
     assert!(warnings[0].contains("messages=1"), "{}", warnings[0]);
     assert!(warnings[1].contains(r#"code="LIMIT""#), "{}", warnings[1]);
     assert!(!text.contains("private refusal text"), "{text}");
-}
-
-#[test]
-fn each_failed_load_is_one_error_line_naming_its_cause() {
-    let refused_sign_in = ImapError {
-        failure: ImapFailure::Failed(ImapStep::SignIn),
-        server_reply: Some(ServerReply {
-            code: Some("AUTHENTICATIONFAILED".to_owned()),
-            text: "private server text".to_owned(),
-        }),
-        alerts: vec!["private alert".to_owned()],
-    };
-    let failures = [
-        (
-            LoadFailure::Imap(refused_sign_in),
-            r#"cause=Failed(SignIn) code="AUTHENTICATIONFAILED" alerts=1"#,
-        ),
-        (
-            LoadFailure::Imap(ImapFailure::TimedOut(ImapStep::FetchText).into()),
-            "cause=TimedOut(FetchText)",
-        ),
-        (
-            LoadFailure::Imap(ImapFailure::InboxChanged.into()),
-            "cause=InboxChanged",
-        ),
-        (
-            LoadFailure::OnlineAccounts(AccessError::Timeout),
-            "cause=Timeout",
-        ),
-        (
-            LoadFailure::MicrosoftGraph(GraphError {
-                failure: GraphFailure::Refused {
-                    status: 401,
-                    code: Some("InvalidAuthenticationToken".to_owned()),
-                },
-                reason: Some("private server text".to_owned()),
-            }),
-            r#"cause=Refused status=401 code="InvalidAuthenticationToken""#,
-        ),
-        (LoadFailure::WorkerStopped(None), "cause=WorkerStopped"),
-    ];
-    for (failure, fields) in failures {
-        let record = start_record(LogLevel::Debug);
-        let failed = account("account_1726920000_1");
-        let mut controller = InboxController::default();
-        start_load(&mut controller, &failed);
-        controller.finish_load(&failed, LoadResult::Failed(failure));
-        let text = record.text();
-        let errors: Vec<&str> = text
-            .lines()
-            .filter(|line| line.contains(" ERROR "))
-            .collect();
-        assert_eq!(errors.len(), 1, "{text}");
-        assert!(
-            errors[0].contains("Inbox load failed") && errors[0].contains(fields),
-            "{fields}: {}",
-            errors[0]
-        );
-        assert!(
-            !text.contains("private") && !text.contains(" WARN "),
-            "{text}"
-        );
-    }
 }
 
 #[test]

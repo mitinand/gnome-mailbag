@@ -5,13 +5,12 @@
 //! account on the server, and turning a message list into a batch the reader
 //! can show.
 
-use crate::batch::{
-    IncompleteList, MessageIdentity, ReceivedBatch, ReceivedContent, ReceivedMessage,
-};
+use crate::batch::{MessageIdentity, ReceivedBatch, ReceivedMessage};
 use goa_adapter::{AccountId, ImapAccess, ImapCredential, ImapEncryption};
 use mailbag_content::{
     MimePart, TextSelection, decode_display_fields, decode_message_text, select_text_parts,
 };
+use mailbag_domain::{IncompleteList, ReceivedContent};
 use mailbag_imap::{
     Credential, Encryption, ImapAccount, ImapError, ImapFailure, InboxReader, MessageList,
     MessagePart, MessageText, TextParts, TextRequest,
@@ -111,7 +110,10 @@ pub(crate) async fn load_batch_from_rows(
         account_id,
         uid_validity: reader.uid_validity(),
         messages,
-        incomplete: listed.refusal.map(IncompleteList::ServerRefused),
+        incomplete: listed.refusal.map(|refusal| IncompleteList::ServerRefused {
+            reply: refusal.text,
+            code: refusal.code,
+        }),
     })
 }
 

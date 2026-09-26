@@ -6,7 +6,8 @@ use crate::test_record::CapturedRecord;
 use crate::worker::{LoadKind, MailWorker, report_outcome};
 use goa_adapter::{AccountId, GraphAccess, ImapAccess, ImapCredential, ImapEncryption};
 use mailbag_content::DisplayFields;
-use mailbag_graph::{GraphFailure, test_server as graph_service};
+use mailbag_domain::{Failure, FailureKind, IncompleteList, ReceivedContent, ServerStep};
+use mailbag_graph::test_server as graph_service;
 use mailbag_imap::{
     GmailRow,
     test_server::{
@@ -176,10 +177,10 @@ fn an_interrupted_transfer_publishes_no_batch() {
         ..FixtureSetup::default()
     });
     match load_inbox(&fixture) {
-        LoadResult::Failed(LoadFailure::Imap(failure)) => {
+        LoadResult::Failed(failure) => {
             assert_eq!(
-                failure.failure,
-                mailbag_imap::ImapFailure::Failed(mailbag_imap::ImapStep::FetchText)
+                failure.kind,
+                FailureKind::ServerStepFailed(ServerStep::FetchText)
             );
         }
         other => panic!("an interrupted transfer must not publish: {other:?}"),
@@ -222,8 +223,8 @@ fn a_window_that_empties_during_the_load_is_not_an_empty_inbox() {
         ..FixtureSetup::default()
     });
     match load_inbox(&fixture) {
-        LoadResult::Failed(LoadFailure::Imap(failure)) => {
-            assert_eq!(failure.failure, mailbag_imap::ImapFailure::InboxChanged);
+        LoadResult::Failed(failure) => {
+            assert_eq!(failure.kind, FailureKind::InboxChanged);
         }
         other => panic!("an emptied window must not publish a batch: {other:?}"),
     }
@@ -259,13 +260,20 @@ fn a_stopped_worker_ends_the_load_with_a_visible_failure() {
         // A worker thread that stopped leaves its outcome channel closed.
         let (sender, outcome) = async_channel::bounded::<LoadResult>(1);
         drop(sender);
+        let account_id = AccountId::try_from("synthetic-account").unwrap();
         for reported in [Some(outcome), None] {
             let mut outcome = None;
-            report_outcome(reported, |result| outcome = Some(result)).await;
+            report_outcome(account_id.clone(), reported, |result| {
+                outcome = Some(result)
+            })
+            .await;
             assert!(
                 matches!(
                     outcome,
-                    Some(LoadResult::Failed(LoadFailure::WorkerStopped(None)))
+                    Some(LoadResult::Failed(Failure {
+                        kind: FailureKind::Stopped,
+                        ..
+                    }))
                 ),
                 "{outcome:?}"
             );
@@ -281,10 +289,13 @@ fn a_panic_ends_its_load_with_the_place_and_the_worker_serves_the_next() {
     });
     run_on_context(async {
         let worker = MailWorker::new();
-        match finish_load(&worker, LoadKind::PanicsForTest).await {
-            LoadResult::Failed(LoadFailure::WorkerStopped(Some(panic))) => {
-                assert!(panic.contains("a load panicked on purpose"), "{panic}");
-                assert!(panic.contains("worker.rs:"), "{panic}");
+        let panicking = LoadKind::PanicsForTest(AccountId::try_from("synthetic-account").unwrap());
+        match finish_load(&worker, panicking).await {
+            LoadResult::Failed(failure) => {
+                assert_eq!(failure.kind, FailureKind::Stopped);
+                let details = failure.details;
+                assert!(details.contains("a load panicked on purpose"), "{details}");
+                assert!(details.contains("worker.rs:"), "{details}");
             }
             other => panic!("unexpected {other:?}"),
         }
@@ -377,10 +388,10 @@ fn a_batch_short_of_a_refused_message_says_why() {
             .collect::<Vec<_>>(),
         [&MessageIdentity::ImapUid(20)]
     );
-    let Some(IncompleteList::ServerRefused(refusal)) = batch.incomplete else {
+    let Some(IncompleteList::ServerRefused { reply, .. }) = batch.incomplete else {
         panic!("the list is not marked as refused: {:?}", batch.incomplete);
     };
-    assert_eq!(refusal.text, "Some messages could not be FETCHed");
+    assert_eq!(reply, "Some messages could not be FETCHed");
 }
 
 /// Manual acceptance of the whole chain against a running `serve_fixture`:
@@ -407,10 +418,10 @@ fn online_accounts_settings_load_the_inbox() {
         (Ok("success") | Err(_), Ok(LoadResult::Received(batch))) => {
             println!("loaded {} messages", batch.messages.len());
         }
-        (Ok("rejected"), Ok(LoadResult::Failed(LoadFailure::Imap(failure)))) => {
+        (Ok("rejected"), Ok(LoadResult::Failed(failure))) => {
             assert_eq!(
-                failure.failure,
-                mailbag_imap::ImapFailure::Failed(mailbag_imap::ImapStep::SecureConnection)
+                failure.kind,
+                FailureKind::ServerStepFailed(ServerStep::SecureConnection)
             );
             println!("refused at the secure-connection step, so no password was sent");
         }
@@ -468,14 +479,16 @@ fn load_inbox_with_account(
 }
 
 #[test]
-fn a_refused_sign_in_leaves_the_error_line_to_the_load() {
+fn a_refused_sign_in_is_one_error_line_of_the_load() {
     let fixture = ImapFixture::start(FixtureSetup::default());
     let mut access = account_access(&fixture);
     access.credential = ImapCredential::Password("wrong password".to_owned());
     let (outcome, record) = load_inbox_with_account(access, tracing::Level::DEBUG);
     let text = record.text();
     assert!(matches!(outcome, LoadResult::Failed(_)), "{outcome:?}");
-    assert!(record.lines_at("ERROR").is_empty(), "{text}");
+    let errors = record.lines_at("ERROR");
+    assert_eq!(errors.len(), 1, "{text}");
+    assert!(errors[0].contains("cause=ServerRejectedSignIn"), "{text}");
     assert!(!text.contains("wrong password"), "{text}");
 }
 
@@ -731,12 +744,9 @@ fn a_refused_microsoft_365_request_fails_the_load_after_one_request() {
     let service =
         graph_service::ScriptedService::start(graph_service::ScriptedAnswer::sign_in_refused());
     match load_microsoft365(&service) {
-        LoadResult::Failed(LoadFailure::MicrosoftGraph(error)) => assert_eq!(
-            error.failure,
-            GraphFailure::Refused {
-                status: 401,
-                code: Some("InvalidAuthenticationToken".to_owned()),
-            }
+        LoadResult::Failed(failure) => assert_eq!(
+            failure.details,
+            "Failure: ServiceRejectedSignIn\nStatus: 401\nService code: InvalidAuthenticationToken"
         ),
         other => panic!("a refused request must fail the load: {other:?}"),
     }

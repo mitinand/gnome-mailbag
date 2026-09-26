@@ -38,6 +38,8 @@ cargo test --locked --workspace
 cargo build --locked --workspace
 gtk_packages='gtk4(-sys|-macros)?|libadwaita(-sys)?'
 glib_packages='(glib|gio|gobject)(-sys|-macros)?'
+# The shared definitions sit below every layer (specs/006-error-handling/research.md §1).
+reject_crate_dependencies mailbag-domain "$gtk_packages|$glib_packages|goa-adapter|mailbag|mailbag-content|mailbag-graph|mailbag-imap|mailbag-providers"
 reject_crate_dependencies goa-adapter "$gtk_packages|mailbag|mailbag-graph|mailbag-providers"
 reject_crate_dependencies mailbag-imap "$gtk_packages|mail-parser|mailbag|mailbag-content|mailbag-graph|mailbag-providers"
 reject_crate_dependencies mailbag-content "$gtk_packages|$glib_packages|mailbag|mailbag-graph|mailbag-imap|mailbag-providers"

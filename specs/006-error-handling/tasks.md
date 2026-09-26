@@ -202,7 +202,7 @@ kinds. Every wording literal stays as it is; the technical `Failure:` line
 and the record's `cause` name the kind (decided 2026-09-26), the other
 technical lines and record fields stay as they are.
 
-- [ ] T028 Create crates/mailbag-domain (Cargo.toml without workspace
+- [X] T028 Create crates/mailbag-domain (Cargo.toml without workspace
   dependencies, the workspace lints; add it to the workspace members) with
   the contract's `Failure`, `FailureKind` (each variant documented with the
   value it comes from), `ServerStep`, `RemoteText` and `RemoteSource`; move
@@ -217,7 +217,7 @@ technical lines and record fields stay as they are.
   mailbag-content depend on it and return its `ContentExplanation`; add to
   scripts/check.sh that mailbag-domain depends on no GTK, GLib or workspace
   crate.
-- [ ] T029 In crates/mailbag-providers make `LoadFailure` private to the
+- [X] T029 In crates/mailbag-providers make `LoadFailure` private to the
   crate; in failure.rs add `LoadFailure::into_failure(self) -> Failure` with
   `failure_kind()` (the contract's table, using `credentials_rejected` and
   `server_temporarily_unavailable`), `remote_texts()` (alerts then the
@@ -234,7 +234,7 @@ technical lines and record fields stay as they are.
   lib.rs for an Online Accounts failure, which ends the load on GTK's
   context before the worker is involved; switch imports of the moved types
   in lib.rs, imap_batch.rs and microsoft365.rs.
-- [ ] T030 In crates/mailbag/src/failure_declarations.rs replace
+- [X] T030 In crates/mailbag/src/failure_declarations.rs replace
   `declare_load_failure` and its protocol arms with `declare_failure(&Failure)`,
   one arm per `FailureKind` with the same title, explanation, advice and
   action as today, and `remote_heading(RemoteSource)` for the four headings;
@@ -242,7 +242,7 @@ technical lines and record fields stay as they are.
   switch crates/mailbag/src/inbox.rs, window_ui.rs, mail_ui.rs and
   failure_dialog.rs to `Failure`; remove `mailbag-imap` and `mailbag-graph`
   from crates/mailbag/Cargo.toml.
-- [ ] T031 Tests, about 60 new lines: in providers, the kind of every
+- [X] T031 Tests, about 60 new lines: in providers, the kind of every
   `AccessError`, of `Failed` and `TimedOut` at each step with the codes
   `AUTHENTICATIONFAILED`, none, `UNAVAILABLE` and another, of
   `NoSignInMethod`, `InboxChanged`, Graph 401, 500, a failed connection, a

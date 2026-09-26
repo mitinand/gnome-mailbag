@@ -33,7 +33,7 @@ privacy invariants.
 
 ## Phase 1: documents and review
 
-- [ ] T001 STOP: present specs/007-mail-storage/ (spec.md, plan.md,
+- [X] T001 STOP: present specs/007-mail-storage/ (spec.md, plan.md,
   research.md, data-model.md, quickstart.md, checklists/requirements.md,
   this tasks.md) together with the amendments made for it on this branch:
   specs/006-error-handling/ (research §1, §4, §5; contracts/
@@ -46,7 +46,7 @@ privacy invariants.
 006's portion 6, planned in 006's documents with its own budget. It creates
 `mailbag-domain`, which every later portion uses.
 
-- [ ] T002 Implement specs/006-error-handling/tasks.md T028–T031 and mark
+- [X] T002 Implement specs/006-error-handling/tasks.md T028–T031 and mark
   them done there.
 - [ ] T003 STOP: run 006's T032 (checks, the size against 006's amendment
   table, the wording literals unchanged); report, suggest the commit and

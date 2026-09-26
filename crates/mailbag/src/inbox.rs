@@ -2,16 +2,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The mail each account received in this run, and the one load that fills it.
-//! The batch itself and the load belong to `mailbag-providers`; this module
-//! keeps what the window shows and writes the record of a finished load.
+//! The batch itself and the load belong to `mailbag-providers`, which also
+//! records a failed load; this module keeps what the window shows and writes
+//! the record of a received batch.
 
 #[cfg(test)]
 mod tests;
 
 use goa_adapter::AccountId;
-use mailbag_providers::{
-    CancelsLoadOnDrop, IncompleteList, LoadFailure, LoadResult, ReceivedBatch, ReceivedContent,
-};
+use mailbag_domain::{Failure, IncompleteList, ReceivedContent};
+use mailbag_providers::{CancelsLoadOnDrop, LoadResult, ReceivedBatch};
 use std::{collections::BTreeMap, rc::Rc};
 
 /// What one account shows for its mail. No entry means that nothing has been
@@ -20,7 +20,7 @@ use std::{collections::BTreeMap, rc::Rc};
 pub enum AccountInbox {
     Loading,
     Received(Rc<ReceivedBatch>),
-    Failed(LoadFailure),
+    Failed(Failure),
 }
 
 /// Each account's received mail and the single load that may be running.
@@ -86,10 +86,7 @@ impl InboxController {
                 log_received_batch(account, &batch);
                 AccountInbox::Received(Rc::new(batch))
             }
-            LoadResult::Failed(failure) => {
-                log_load_failure(account, &failure);
-                AccountInbox::Failed(failure)
-            }
+            LoadResult::Failed(failure) => AccountInbox::Failed(failure),
         };
         self.inboxes.insert(account_id.clone(), inbox);
     }
@@ -185,9 +182,9 @@ fn log_received_batch(account: &str, batch: &ReceivedBatch) {
         );
     }
     match &batch.incomplete {
-        Some(IncompleteList::ServerRefused(refusal)) => tracing::warn!(
+        Some(IncompleteList::ServerRefused { code, .. }) => tracing::warn!(
             account,
-            code = refusal.code.as_deref(),
+            code = code.as_deref(),
             "the server refused to finish the message list"
         ),
         Some(IncompleteList::MoreAvailable) => tracing::warn!(
@@ -196,25 +193,4 @@ fn log_received_batch(account: &str, batch: &ReceivedBatch) {
         ),
         None => {}
     }
-}
-
-/// The load's single error line: the failure the UI explains, the mail
-/// service's status, the server's or the service's error code and the number
-/// of alerts, never the server's text. The failure values hold no server text,
-/// so the record can name them as they are (`ImapFailure`, `AccessError`).
-fn log_load_failure(account: &str, failure: &LoadFailure) {
-    let alerts = match failure {
-        LoadFailure::Imap(error) => error.alerts.len(),
-        _ => 0,
-    };
-    tracing::error!(
-        account,
-        // Named by our own enumerations, never by server text, so it is
-        // written without quotes, as the record has always named it.
-        cause = ?format_args!("{}", failure.cause_name()),
-        status = failure.status(),
-        code = failure.server_code(),
-        alerts = Some(alerts).filter(|alerts| *alerts > 0),
-        "Inbox load failed"
-    );
 }

@@ -20,11 +20,9 @@ mod test_record;
 #[cfg(test)]
 mod tests;
 
-pub use batch::{
-    CancelsLoadOnDrop, IncompleteList, LoadFailure, LoadResult, MessageIdentity, ReceivedBatch,
-    ReceivedContent, ReceivedMessage,
-};
+pub use batch::{CancelsLoadOnDrop, LoadResult, MessageIdentity, ReceivedBatch, ReceivedMessage};
 
+use batch::LoadFailure;
 use goa_adapter::{AccessError, AccessRequest, AccountId, GoaAdapter, ImapAccess};
 use std::{cell::RefCell, rc::Rc};
 use worker::{LoadHandle, LoadKind, MailWorker};
@@ -81,13 +79,16 @@ impl LoadsInbox for MailLoader {
         let transfer = Rc::new(RefCell::new(None));
         let started_transfer = transfer.clone();
         let worker = self.worker.clone();
+        let requested_account = account_id.clone();
         let start_transfer = move |access: Result<LoadKind, AccessError>| match access {
             Ok(kind) => {
                 *started_transfer.borrow_mut() = Some(worker.load_inbox(kind, report));
             }
             // The request was cancelled by an exclusion or by quitting.
             Err(AccessError::Cancelled) => report(LoadResult::Cancelled),
-            Err(error) => report(LoadResult::Failed(LoadFailure::OnlineAccounts(error))),
+            // The load ends here, on GTK's context, before the worker is
+            // involved.
+            Err(error) => report(LoadFailure::OnlineAccounts(error).give_up(&requested_account)),
         };
         let request = match provider {
             MailProvider::GenericImap => request_imap_load(

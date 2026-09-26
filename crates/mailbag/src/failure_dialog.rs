@@ -8,7 +8,7 @@
 #[cfg(test)]
 mod tests;
 
-use crate::failure_declarations::{DeclaredFailure, FailureAction};
+use crate::failure_declarations::{DeclaredFailure, FailureAction, remote_heading};
 use crate::mail_ui::{cut_unbroken_runs, inert_text, show_inert_text};
 use adw::{glib, gtk, prelude::*};
 
@@ -90,12 +90,10 @@ pub fn report_text(failure: &DeclaredFailure) -> String {
         failure.explanation.clone(),
         failure.advice.unwrap_or_default().to_owned(),
     ];
-    parts.extend(
-        failure
-            .remote_texts
-            .iter()
-            .map(|remote_text| format!("{}:\n{}", remote_text.source, remote_text.text)),
-    );
+    parts.extend(failure.remote_texts.iter().map(|remote_text| {
+        let heading = remote_heading(remote_text.source);
+        format!("{heading}:\n{}", remote_text.text)
+    }));
     if !failure.details.is_empty() {
         parts.push(format!("Technical details:\n{}", failure.details));
     }
@@ -117,7 +115,10 @@ fn show_paragraph(label: &gtk::Label, text: &str) {
 /// One block per remote text, then the technical details.
 fn append_blocks(blocks: &gtk::Box, failure: &DeclaredFailure) {
     for remote_text in &failure.remote_texts {
-        blocks.append(&build_block(remote_text.source, &remote_text.text));
+        blocks.append(&build_block(
+            remote_heading(remote_text.source),
+            &remote_text.text,
+        ));
     }
     if !failure.details.is_empty() {
         blocks.append(&build_block("Technical details", &failure.details));

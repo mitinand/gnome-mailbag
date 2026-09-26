@@ -11,9 +11,7 @@ publish = false
 adw = { workspace = true, features = ["gtk_v4_10"] }
 goa-adapter = { path = "../goa-adapter" }
 mailbag-content = { path = "../mailbag-content" }
-# The failure kinds of the Microsoft 365 load, which the window words.
-mailbag-graph = { path = "../mailbag-graph" }
-mailbag-imap = { path = "../mailbag-imap" }
+mailbag-domain = { path = "../mailbag-domain" }
 mailbag-providers = { path = "../mailbag-providers" }
 tracing.workspace = true
 tracing-subscriber.workspace = true

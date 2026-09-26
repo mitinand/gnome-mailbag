@@ -2,17 +2,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::*;
-use crate::failure_declarations::{declare_content, declare_load_failure, declare_short_list};
+use crate::failure_declarations::{declare_content, declare_failure, declare_short_list};
 use crate::window_ui::WindowUi;
 use goa_adapter::{
     AccountCheckError, AccountCheckResult, AccountDetails, AccountId, AccountProvider,
     AccountUpdate, ErrorCause,
 };
-use mailbag_content::ContentExplanation;
-use mailbag_imap::{ImapError, ImapFailure, ImapStep, ServerReply};
+use mailbag_domain::{
+    ContentExplanation, Failure, FailureKind, IncompleteList, RemoteSource, RemoteText,
+};
 use mailbag_providers::{
-    CancelsLoadOnDrop, IncompleteList, LoadFailure, LoadResult, LoadsInbox, MailProvider,
-    MessageIdentity, ReceivedMessage,
+    CancelsLoadOnDrop, LoadResult, LoadsInbox, MailProvider, MessageIdentity, ReceivedMessage,
 };
 use std::{
     cell::Cell,
@@ -205,15 +205,21 @@ fn unwrapped_and_ordinary_batch(account_id: &AccountId) -> ReceivedBatch {
     }
 }
 
-fn rejected_sign_in() -> LoadFailure {
-    LoadFailure::Imap(ImapError {
-        failure: ImapFailure::Failed(ImapStep::SignIn),
-        server_reply: Some(ServerReply {
-            code: Some("AUTHENTICATIONFAILED".to_owned()),
-            text: "Invalid credentials".to_owned(),
-        }),
-        alerts: vec!["Mailbox quota is nearly full".to_owned()],
-    })
+fn rejected_sign_in() -> Failure {
+    Failure {
+        kind: FailureKind::ServerRejectedSignIn,
+        remote_texts: vec![
+            RemoteText {
+                source: RemoteSource::ServerAlert,
+                text: "Mailbox quota is nearly full".to_owned(),
+            },
+            RemoteText {
+                source: RemoteSource::ServerReply,
+                text: "Invalid credentials".to_owned(),
+            },
+        ],
+        details: "Failure: ServerRejectedSignIn\nServer code: AUTHENTICATIONFAILED".to_owned(),
+    }
 }
 
 /// The window's widgets, read the way the user sees them.
@@ -534,10 +540,10 @@ fn mail_ui_transitions() {
     dispatch_pending();
     let mut short_batch = batch_with_two_messages(&generic);
     short_batch.messages.pop();
-    let refusal = IncompleteList::ServerRefused(ServerReply {
+    let refusal = IncompleteList::ServerRefused {
+        reply: "Some messages could not be FETCHed".to_owned(),
         code: None,
-        text: "Some messages could not be FETCHed".to_owned(),
-    });
+    };
     short_batch.incomplete = Some(refusal.clone());
     loader.report(LoadResult::Received(short_batch));
     dispatch_pending();
@@ -607,7 +613,7 @@ fn mail_ui_transitions() {
 
     // A failed load takes the list's place with its declaration; the
     // server's words stay in the failure dialog.
-    let rejected = declare_load_failure(&rejected_sign_in());
+    let rejected = declare_failure(&rejected_sign_in());
     loader.report(LoadResult::Failed(rejected_sign_in()));
     dispatch_pending();
     assert_eq!(widgets.list_page(), "failed");
@@ -684,9 +690,11 @@ fn mail_ui_transitions() {
     refresh.activate(None);
     dispatch_pending();
     assert_eq!(widgets.list_page(), "empty");
-    loader.report(LoadResult::Failed(LoadFailure::Imap(
-        ImapFailure::NoSignInMethod.into(),
-    )));
+    loader.report(LoadResult::Failed(Failure {
+        kind: FailureKind::NoSignInMethod,
+        remote_texts: Vec::new(),
+        details: "Failure: NoSignInMethod".to_owned(),
+    }));
     dispatch_pending();
     assert_eq!(widgets.status_button("failure_action"), None);
     assert!(widgets.status_button("failure_details").is_some());

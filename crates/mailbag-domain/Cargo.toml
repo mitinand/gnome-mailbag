@@ -1,16 +1,11 @@
 [package]
-name = "mailbag-content"
+name = "mailbag-domain"
 version = "0.1.0-dev"
 edition = "2024"
 rust-version = "1.95"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/mitinand/gnome-mailbag"
 publish = false
-
-[dependencies]
-mail-parser = { version = "0.11.9", features = ["full_encoding"] }
-mailbag-domain = { path = "../mailbag-domain" }
-tracing.workspace = true
 
 [lints]
 workspace = true

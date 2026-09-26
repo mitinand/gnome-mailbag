@@ -6,11 +6,10 @@
 //! The service renders the text itself, so no MIME is read
 //! (specs/005-microsoft-graph-integration/spec.md FR-005).
 
-use crate::batch::{
-    BATCH_SIZE, IncompleteList, MessageIdentity, ReceivedBatch, ReceivedContent, ReceivedMessage,
-};
+use crate::batch::{BATCH_SIZE, MessageIdentity, ReceivedBatch, ReceivedMessage};
 use goa_adapter::GraphAccess;
 use mailbag_content::{DisplayFields, display_names};
+use mailbag_domain::{IncompleteList, ReceivedContent};
 use mailbag_graph::{GraphError, GraphMessage, Mailbox, list_inbox_messages};
 
 pub(crate) async fn load_microsoft365_inbox(

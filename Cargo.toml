@@ -2,6 +2,7 @@
 members = [
     "crates/mailbag",
     "crates/goa-adapter",
+    "crates/mailbag-domain",
     "crates/mailbag-imap",
     "crates/mailbag-content",
     "crates/mailbag-providers",

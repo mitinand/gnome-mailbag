@@ -681,8 +681,7 @@ dependencies = [
  "goa-adapter",
  "libadwaita",
  "mailbag-content",
- "mailbag-graph",
- "mailbag-imap",
+ "mailbag-domain",
  "mailbag-providers",
  "tracing",
  "tracing-subscriber",
@@ -693,8 +692,13 @@ name = "mailbag-content"
 version = "0.1.0-dev"
 dependencies = [
  "mail-parser",
+ "mailbag-domain",
  "tracing",
 ]
+
+[[package]]
+name = "mailbag-domain"
+version = "0.1.0-dev"
 
 [[package]]
 name = "mailbag-graph"
@@ -731,6 +735,7 @@ dependencies = [
  "glib",
  "goa-adapter",
  "mailbag-content",
+ "mailbag-domain",
  "mailbag-graph",
  "mailbag-imap",
  "tracing",

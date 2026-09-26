@@ -9,7 +9,7 @@ mod tests;
 
 use crate::account_ui::{AccountUi, PageAction, show_check_progress};
 use crate::accounts::AccountPage;
-use crate::failure_declarations::{DeclaredFailure, declare_load_failure, declare_short_list};
+use crate::failure_declarations::{DeclaredFailure, declare_failure, declare_short_list};
 use crate::failure_dialog::{self, show_action_button, status_description};
 use crate::inbox::{AccountInbox, InboxController};
 use crate::mail_ui::MailUi;
@@ -205,9 +205,7 @@ impl WindowUi {
                 Some("Choose Refresh Inbox in the main menu to load this account's Inbox."),
             ),
             Some(AccountInbox::Loading) => self.show_mail_status("Loading Inbox", None),
-            Some(AccountInbox::Failed(failure)) => {
-                self.show_failed_load(&declare_load_failure(failure))
-            }
+            Some(AccountInbox::Failed(failure)) => self.show_failed_load(&declare_failure(failure)),
             Some(AccountInbox::Received(batch)) => {
                 if batch.messages.is_empty() {
                     self.show_mail_status("Inbox is empty", None);
@@ -275,7 +273,7 @@ impl WindowUi {
                 .selected_id()
                 .and_then(|account_id| inboxes.inbox_of(account_id))
             {
-                Some(AccountInbox::Failed(failure)) => Some(declare_load_failure(failure)),
+                Some(AccountInbox::Failed(failure)) => Some(declare_failure(failure)),
                 Some(AccountInbox::Received(batch)) => {
                     batch.incomplete.as_ref().map(declare_short_list)
                 }
