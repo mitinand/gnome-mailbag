@@ -41,3 +41,15 @@ fn an_older_reads_answer_never_replaces_a_newer_ones() {
     assert_eq!(shown.account, Some(account("second")));
     assert!(matches!(shown.stored, StoredInbox::Read(None)));
 }
+
+/// A hidden account's mail may be deleted, so the window forgets what it read
+/// of it, and a read still running for it is dropped when it answers.
+#[test]
+fn a_hidden_accounts_inbox_is_forgotten_with_its_read_in_flight() {
+    let hidden = AccountId::try_from("hidden").expect("synthetic account id");
+    let mut shown = ShownInbox::default();
+    let read = shown.start_read(&hidden);
+    shown.forget_excluded(|_| false);
+    assert!(!shown.finish_read(read, Ok(Some(Vec::new()))));
+    assert!(!shown.holds(&hidden));
+}

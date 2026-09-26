@@ -1,0 +1,43 @@
+2026-09-26T14:03:13.035+03:00  INFO mailbag: Mailbag 0.1.0-dev, Flatpak build, runtime/org.gnome.Platform/x86_64/50, GTK 4.22.5, libadwaita 1.9.4, level info
+2026-09-26T14:03:13.126+03:00  INFO goa_adapter::client: account list read accounts=4
+2026-09-26T14:03:13.126+03:00  INFO mailbag::accounts: account shown account="account_1789597881_0" provider="imap"
+2026-09-26T14:03:13.126+03:00  INFO mailbag::accounts: account shown account="account_1790120127_0" provider="google"
+2026-09-26T14:03:13.126+03:00  INFO mailbag::accounts: account shown account="account_1790201360_0" provider="microsoft365"
+2026-09-26T14:03:13.126+03:00  INFO mailbag::accounts: account shown account="account_1790333079_0" provider="imap"
+2026-09-26T14:03:19.007+03:00  INFO mailbag::inbox: Inbox load started account="account_1789597881_0"
+2026-09-26T14:03:19.011+03:00  INFO mailbag_providers: Online Accounts gave the settings and credential encryption=ImplicitTls
+2026-09-26T14:03:19.195+03:00  INFO mailbag_imap::transport: connected
+2026-09-26T14:03:19.754+03:00  INFO mailbag_imap::transport: connection secured encryption=ImplicitTls tls=Tls13
+2026-09-26T14:03:20.114+03:00  INFO mailbag_imap::session: server capabilities capabilities="IMAP4rev1 XAPPLEPUSHSERVICE AUTH=XOAUTH2 IMAP4 SASL-IR AUTH=PLAIN AUTH=ATOKEN2 AUTH=ATOKEN"
+2026-09-26T14:03:20.698+03:00  INFO mailbag_imap::session: signed in method="PLAIN"
+2026-09-26T14:03:20.950+03:00  INFO mailbag_imap::session: Inbox opened messages=5924
+2026-09-26T14:03:21.568+03:00  INFO mailbag_imap::reader: message list loaded rows=100
+2026-09-26T14:03:22.342+03:00  INFO mailbag_imap::reader: part structures loaded messages=100
+2026-09-26T14:03:25.064+03:00  INFO mailbag_imap::reader: text loaded messages=62 commands=2
+2026-09-26T14:03:25.081+03:00  INFO mailbag_providers::store_load: Inbox load finished account="account_1789597881_0" messages=100 unsupported=38
+2026-09-26T14:03:27.274+03:00  INFO mailbag::inbox: Inbox load started account="account_1790120127_0"
+2026-09-26T14:03:27.277+03:00  INFO mailbag_providers: Online Accounts gave the settings and credential encryption=ImplicitTls
+2026-09-26T14:03:27.348+03:00  INFO mailbag_imap::transport: connected
+2026-09-26T14:03:27.424+03:00  INFO mailbag_imap::transport: connection secured encryption=ImplicitTls tls=Tls13
+2026-09-26T14:03:27.555+03:00  INFO mailbag_imap::session: server capabilities capabilities="AUTH=PLAIN XLIST IMAP4rev1 ID SASL-IR IDLE UNSELECT QUOTA XYZZY CHILDREN AUTH=PLAIN-CLIENTTOKEN AUTH=XOAUTH2 NAMESPACE AUTH=OAUTHBEARER X-GM-EXT-1"
+2026-09-26T14:03:27.946+03:00  INFO mailbag_imap::session: signed in method="XOAUTH2"
+2026-09-26T14:03:28.506+03:00  INFO mailbag_imap::session: Inbox opened messages=757
+2026-09-26T14:03:28.903+03:00  INFO mailbag_imap::reader: message list loaded rows=100
+2026-09-26T14:03:29.153+03:00  INFO mailbag_imap::reader: part structures loaded messages=100
+2026-09-26T14:03:31.738+03:00  INFO mailbag_imap::reader: text loaded messages=91 commands=2
+2026-09-26T14:03:31.740+03:00  INFO mailbag_providers::store_load: Inbox load finished account="account_1790120127_0" messages=100 unsupported=9
+2026-09-26T14:03:34.571+03:00  INFO mailbag::inbox: Inbox load started account="account_1790201360_0"
+2026-09-26T14:03:34.573+03:00  INFO mailbag_providers: Online Accounts gave the access token
+2026-09-26T14:03:35.830+03:00  INFO mailbag_providers::store_load: Inbox load finished account="account_1790201360_0" messages=100 unsupported=0
+2026-09-26T14:03:41.787+03:00  INFO mailbag::inbox: Inbox load started account="account_1789597881_0"
+2026-09-26T14:03:41.789+03:00  INFO mailbag_providers: Online Accounts gave the settings and credential encryption=ImplicitTls
+2026-09-26T14:03:41.970+03:00  INFO mailbag_imap::transport: connected
+2026-09-26T14:03:42.162+03:00  INFO mailbag_imap::transport: connection secured encryption=ImplicitTls tls=Tls13
+2026-09-26T14:03:42.532+03:00  INFO mailbag_imap::session: server capabilities capabilities="AUTH=ATOKEN SASL-IR AUTH=XOAUTH2 AUTH=PLAIN XAPPLEPUSHSERVICE IMAP4rev1 IMAP4 AUTH=ATOKEN2"
+2026-09-26T14:03:43.133+03:00  INFO mailbag_imap::session: signed in method="PLAIN"
+2026-09-26T14:03:43.382+03:00  INFO mailbag_imap::session: Inbox opened messages=5924
+2026-09-26T14:03:43.971+03:00  INFO mailbag_imap::reader: message list loaded rows=100
+2026-09-26T14:03:44.385+03:00  INFO mailbag_imap::reader: part structures loaded messages=100
+2026-09-26T14:03:46.490+03:00  INFO mailbag_imap::reader: text loaded messages=62 commands=2
+2026-09-26T14:03:46.492+03:00  INFO mailbag_providers::store_load: Inbox load finished account="account_1789597881_0" messages=100 unsupported=38
+2026-09-26T14:03:56.083+03:00  INFO mailbag::logging: Mailbag is quitting

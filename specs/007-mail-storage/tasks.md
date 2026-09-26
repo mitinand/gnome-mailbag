@@ -1,8 +1,8 @@
 # Tasks: Mail Storage
 
 **Feature**: `007-mail-storage`
-**Created**: 2026-09-26 · **Branch**: `claude/storage` · **Status**: Documents
-ready for review; no code yet.
+**Created**: 2026-09-26 · **Branch**: `claude/storage` · **Status**: All
+portions implemented; accepted on the installed build on 2026-09-26.
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -246,11 +246,11 @@ or with its Mail off, and a late result cannot bring it back (US4).
 - [X] T022 Run every GTK test of the branch on its own; run `simplify-review`
   on the branch diff in a fresh subagent; bring findings that add scope to
   the maintainer with the cheapest option.
-- [ ] T023 The maintainer runs quickstart.md on the installed build
+- [X] T023 The maintainer runs quickstart.md on the installed build
   (`scripts/build-flatpak.sh --install`); record the results and what was
   not verified in plan.md ("Post-implementation"); update the status lines
   of spec.md, plan.md and this file.
-- [ ] T024 STOP: final report with the open items.
+- [X] T024 STOP: final report with the open items.
 
 ## Dependencies
 

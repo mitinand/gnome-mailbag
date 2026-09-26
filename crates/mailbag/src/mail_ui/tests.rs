@@ -832,6 +832,21 @@ fn mail_ui_transitions() {
     loader.report_stored(&[], None);
     settle(&ui);
     assert_eq!(widgets.status_title(), "Inbox is empty");
+    assert_eq!(widgets.banner_title(), None);
+    // A service that offered more than it sent leaves the notice over it.
+    refresh.activate(None);
+    settle(&ui);
+    loader.report_stored(&[], Some(IncompleteList::MoreAvailable));
+    settle(&ui);
+    assert_eq!(widgets.status_title(), "Inbox is empty");
+    assert_eq!(
+        widgets.banner_title(),
+        Some(
+            declare_short_list(&IncompleteList::MoreAvailable)
+                .title
+                .to_owned()
+        )
+    );
 
     // A new window over the same store shows the same rows and content and
     // starts no load; an account never loaded has no mail (US1, FR-006).
@@ -1017,14 +1032,21 @@ fn stored_mail_leaves_with_its_account() {
     let_deletions_run();
     assert!(has_stored_inbox(&generic));
 
-    // Mail turned off deletes the account's mail.
+    // Mail turned off deletes the account's mail, and the window forgets what
+    // it read: with Mail on again the account has none.
+    widgets.select_account(0);
+    settle(&ui);
+    assert_eq!(widgets.rows().len(), 2);
     let mail_off = with_generic(|details| details.mail_enabled = false);
     ui.apply_account_update(&mail_off);
     wait_until(|| !has_stored_inbox(&generic));
-
-    // A load that ends after its account was excluded stores nothing.
     ui.apply_account_update(&only_generic());
     widgets.select_account(0);
+    settle(&ui);
+    assert!(widgets.rows().is_empty());
+    assert_eq!(widgets.status_title(), "No mail loaded");
+
+    // A load that ends after its account was excluded stores nothing.
     settle(&ui);
     ui.refresh_action().activate(None);
     settle(&ui);

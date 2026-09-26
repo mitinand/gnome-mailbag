@@ -77,6 +77,8 @@ enum ShownMail {
         messages: Rc<[Message]>,
         banner: Option<DeclaredFailure>,
     },
+    /// A stored Inbox without messages, and why its list may be short.
+    EmptyInbox { banner: Option<DeclaredFailure> },
     /// A failure that left nothing to show, and the operation Retry repeats.
     Failed {
         failure: DeclaredFailure,
@@ -198,6 +200,9 @@ impl WindowUi {
         self.inboxes
             .borrow_mut()
             .discard_excluded(|account_id| accounts.shows_account(account_id));
+        self.shown_inbox
+            .borrow_mut()
+            .forget_excluded(|account_id| accounts.shows_account(account_id));
         drop(accounts);
         if update.last_check.is_complete() {
             self.delete_removed_accounts(update);
@@ -273,7 +278,8 @@ impl WindowUi {
     /// Shows the selected account's stored mail; selecting never loads. The
     /// Inbox already on screen is not read again, so selecting its account
     /// once more keeps the open message: every write to it is followed by a
-    /// read.
+    /// read, and the window forgets it when its account is hidden, whose mail
+    /// may then be deleted.
     fn show_selected_account(self: &Rc<Self>) {
         let selected = self.accounts.borrow().selected_id().cloned();
         let on_screen =
@@ -349,8 +355,8 @@ impl WindowUi {
         self.mail
             .show_account(selected.and_then(|account_id| accounts.label_of(account_id)));
         // The list's pages and the banner have one writer: this function. Each
-        // state shows one page and fills it whole, and only stored rows reveal
-        // the banner, so no notice outlives its cause.
+        // state shows one page and fills it whole, and only a stored Inbox
+        // reveals the banner, so no notice outlives its cause.
         self.list_banner.set_revealed(false);
         // The account page comes first; it covers the list and the reader
         // without touching the account's mail.
@@ -360,10 +366,11 @@ impl WindowUi {
             match shown_mail {
                 ShownMail::Messages { banner, .. } => {
                     self.list_stack.set_visible_child_name("messages");
-                    if let Some(banner) = banner {
-                        self.list_banner.set_title(banner.title);
-                        self.list_banner.set_revealed(true);
-                    }
+                    self.show_banner(banner);
+                }
+                ShownMail::EmptyInbox { banner } => {
+                    self.show_mail_status("Inbox is empty", None);
+                    self.show_banner(banner);
                 }
                 ShownMail::Failed { failure, retried } => self.show_failure(&failure, retried),
                 ShownMail::Status { title, description } => {
@@ -419,9 +426,8 @@ impl WindowUi {
                 retried: RetriedOperation::RefreshInbox,
             },
             (StoredInbox::Reading, _) => ShownMail::Reading,
-            (StoredInbox::Read(Some(_)), _) => ShownMail::Status {
-                title: "Inbox is empty",
-                description: None,
+            (StoredInbox::Read(Some(_)), _) => ShownMail::EmptyInbox {
+                banner: outcome.and_then(banner_of),
             },
             (StoredInbox::Read(None) | StoredInbox::NotRead, _) => no_mail_loaded,
         }
@@ -440,6 +446,14 @@ impl WindowUi {
         show_check_progress(&self.status_retry_check, accounts.retry_pending());
         self.status_online_accounts
             .set_visible(action == Some(PageAction::OnlineAccounts));
+    }
+
+    /// The latest refresh's failure or short list over the stored Inbox.
+    fn show_banner(&self, banner: Option<DeclaredFailure>) {
+        if let Some(banner) = banner {
+            self.list_banner.set_title(banner.title);
+            self.list_banner.set_revealed(true);
+        }
     }
 
     /// A state of the selected account's mail that is not a failure.
@@ -470,6 +484,9 @@ impl WindowUi {
             ShownMail::Messages {
                 banner: Some(failure),
                 ..
+            }
+            | ShownMail::EmptyInbox {
+                banner: Some(failure),
             } => (failure, RetriedOperation::RefreshInbox),
             _ => return,
         };
@@ -532,6 +549,21 @@ impl ShownInbox {
             Err(failure) => StoredInbox::ReadFailed(failure),
         };
         true
+    }
+
+    /// Forgets what was read of an account Online Accounts no longer shows,
+    /// whose stored mail may be deleted; a read still running for it is
+    /// dropped when it answers.
+    fn forget_excluded(&mut self, is_visible: impl Fn(&AccountId) -> bool) {
+        if self
+            .account
+            .as_ref()
+            .is_some_and(|account_id| !is_visible(account_id))
+        {
+            self.latest_read += 1;
+            self.account = None;
+            self.stored = StoredInbox::NotRead;
+        }
     }
 
     fn forget_read_failure(&mut self) {

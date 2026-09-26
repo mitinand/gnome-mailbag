@@ -2,8 +2,10 @@
 
 **Branch**: `claude/storage` | **Feature**: `007-mail-storage`
 **Date**: 2026-09-25, revised 2026-09-26 | **Spec**: [spec.md](spec.md)
-**Status**: Draft. Paused on 2026-09-25 because the plan declared the
-store's failures in `mailbag-providers`; revised on 2026-09-26 on top of
+**Status**: Implemented on `claude/storage` and accepted on the installed
+Flatpak build on 2026-09-26 (see Post-implementation). Paused on 2026-09-25
+because the plan declared the store's failures in `mailbag-providers`;
+revised on 2026-09-26 on top of
 006's amendment of that day: `mailbag-domain` holds the application's shared
 definitions, a lower layer hands the application domain values only, and
 006's portion 6 builds that crate on this branch before 007's portions. The
@@ -170,7 +172,8 @@ The entry points and their steps, as the code will read.
   refresh's failure or incomplete list; a load running → "Loading Inbox"; a
   read failure → the failure page with `ReadStoredInbox`; a failed refresh →
   the failure page with `RefreshInbox`; a read in flight → the list's page
-  with no rows; an empty stored Inbox → "Inbox is empty"; nothing stored →
+  with no rows; an empty stored Inbox → "Inbox is empty", with the banner for an
+  incomplete list; nothing stored →
   "No mail loaded". After a refresh forgets a read failure, nothing is read
   and nothing is in flight, so the list says "Loading Inbox" while the load
   runs and shows the refresh's own outcome after it.
@@ -363,3 +366,34 @@ Cargo.toml, Cargo.lock, cargo-sources.json
 | specs/002-imap-integration/spec.md | FR-006's stage rule, FR-008's "MAY discard", FR-009's empty list after a failed refresh, SC-004's stage part and the Clarification "What does a refresh keep?" marked as amended by 007 | 2 |
 | specs/002-imap-integration/data-model.md | "In-Memory Data": the batch no longer reaches the window; Refresh no longer clears the list | 2 |
 | specs/002-imap-integration/contracts/ui.md | "Refresh clears the list, selection and reader before loading" replaced by 007 FR-005 | 2 |
+
+## Post-implementation
+
+Acceptance on 2026-09-26 by the maintainer, with the maintainer's accounts
+and the Flatpak built from the branch and installed
+(`scripts/build-flatpak.sh --install`), following
+[quickstart.md](quickstart.md). Every step gave the expected result.
+
+| Step | Result |
+|---|---|
+| 1. Stored mail without a network (US1) | Passed: the same rows, read states and texts after a restart offline; no load started |
+| 2. A refresh replaces the Inbox (US2) | Passed: rows kept with the spinner, the new message stored, the reader closed; selecting the shown account again kept the open message |
+| 3. A failed refresh keeps the mail (US3) | Passed: rows under the banner, Retry in its dialog; no banner after a restart |
+| 4. An account leaves (US4) | Passed: no stored row for the account with Mail off; with Mail on again it showed "No mail loaded" until refreshed |
+| 5. A damaged store (US5) | Passed: one warning line, discarded as not a store; every account without mail until refreshed |
+| 6. No visible wait (FR-011, SC-007) | Passed |
+| 7. Privacy (FR-009) | Passed: `700` |
+| 8. The record (SC-008) | Passed: no subject, sender, text, password or token; the deletion named by the account's identifier |
+
+Verified by tests only: a store written with another structure and a
+damaged store with a valid header (the store's tests); a write that fails
+and a full disk (`MailNotSaved`, `StorageFull`; the store's and the
+providers' tests); a stored Inbox that cannot be read and its Retry
+(`a_store_that_cannot_be_read`); a load that ends after its account was
+excluded; an empty page whose service offered more (the window's graphical
+test). Killing the process seven times during a write left the previous or
+the new Inbox whole each time (checked 2026-09-26).
+
+Not verified: a power loss during a write (FR-010); a deletion that fails
+and happens again at the next complete answer; a panic inside a store call
+outside the tests of `catch_panic`.

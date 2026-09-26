@@ -2,8 +2,9 @@
 
 **Feature**: `007-mail-storage`
 **Created**: 2026-09-25
-**Status**: Draft, challenged 2026-09-25; FR-013 aligned on 2026-09-26 with
-006 as corrected that day. The decisions taken at sizing and at the
+**Status**: Implemented and accepted on the installed build on 2026-09-26
+([plan](plan.md), Post-implementation). Challenged 2026-09-25; FR-013
+aligned on 2026-09-26 with 006 as corrected that day. The decisions taken at sizing and at the
 specification challenge are recorded under Clarifications.
 **Input**: Every piece of mail the window shows comes from a local store and
 from nowhere else. A load writes what it received into the store; the window
