@@ -2,20 +2,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::*;
-use crate::failure_declarations::{declare_content, declare_load_failure, declare_short_list};
+use crate::failure_declarations::{declare_content, declare_failure, declare_short_list};
+use crate::test_directory::TestDirectory;
 use crate::window_ui::WindowUi;
 use goa_adapter::{
-    AccountCheckError, AccountCheckResult, AccountDetails, AccountId, AccountProvider,
-    AccountUpdate, ErrorCause,
+    AccountCheckError, AccountCheckResult, AccountDetails, AccountProvider, AccountUpdate,
+    ErrorCause,
 };
-use mailbag_content::ContentExplanation;
-use mailbag_imap::{ImapError, ImapFailure, ImapStep, ServerReply};
-use mailbag_providers::{
-    CancelsLoadOnDrop, IncompleteList, LoadFailure, LoadResult, LoadsInbox, MailProvider,
-    MessageIdentity, ReceivedMessage,
+use mailbag_domain::{
+    AccountId, ContentExplanation, Failure, FailureKind, IncompleteList, RemoteSource, RemoteText,
 };
+use mailbag_providers::{CancelsLoadOnDrop, LoadResult, LoadsInbox, MailProvider};
+use mailbag_store::{InboxWrite, Store};
 use std::{
     cell::Cell,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -24,23 +25,32 @@ struct StartedLoad {
     account_id: AccountId,
     provider: MailProvider,
     report: Box<dyn FnOnce(LoadResult)>,
+    /// Set when the window drops the load's step, which cancels it.
+    cancelled: Rc<Cell<bool>>,
 }
 
 /// Reports the load results the test chooses, so the window is exercised
-/// without Online Accounts and without a mail server.
-#[derive(Default)]
+/// without Online Accounts and without a mail server. A completed load writes
+/// its messages into the window's store, as the mail worker does.
 struct ScriptedLoader {
     started_loads: RefCell<Vec<StartedLoad>>,
     cancelled_loads: Rc<Cell<usize>>,
+    store: Arc<Store>,
 }
 
-struct CountedStep(Rc<Cell<usize>>);
+/// A running load's step: dropping it counts a cancellation and marks the
+/// load cancelled.
+struct CountedStep {
+    cancellations: Rc<Cell<usize>>,
+    cancelled: Rc<Cell<bool>>,
+}
 
 impl CancelsLoadOnDrop for CountedStep {}
 
 impl Drop for CountedStep {
     fn drop(&mut self) {
-        self.0.set(self.0.get() + 1);
+        self.cancellations.set(self.cancellations.get() + 1);
+        self.cancelled.set(true);
     }
 }
 
@@ -51,12 +61,17 @@ impl LoadsInbox for ScriptedLoader {
         provider: MailProvider,
         report: Box<dyn FnOnce(LoadResult)>,
     ) -> Box<dyn CancelsLoadOnDrop> {
+        let cancelled = Rc::new(Cell::new(false));
         self.started_loads.borrow_mut().push(StartedLoad {
             account_id: account_id.clone(),
             provider,
             report,
+            cancelled: cancelled.clone(),
         });
-        Box::new(CountedStep(self.cancelled_loads.clone()))
+        Box::new(CountedStep {
+            cancellations: self.cancelled_loads.clone(),
+            cancelled,
+        })
     }
 }
 
@@ -76,6 +91,14 @@ impl LoadsInbox for SharedLoader {
 }
 
 impl ScriptedLoader {
+    fn new(store: Arc<Store>) -> Self {
+        Self {
+            started_loads: RefCell::default(),
+            cancelled_loads: Rc::default(),
+            store,
+        }
+    }
+
     fn running_loads(&self) -> usize {
         self.started_loads.borrow().len()
     }
@@ -105,29 +128,45 @@ impl ScriptedLoader {
             .expect("a load is running");
         (started.report)(result);
     }
+
+    /// Ends the running load as a completed one, as the worker does: its
+    /// messages become the account's stored Inbox, unless the load was
+    /// cancelled before the store took them.
+    fn report_stored(&self, messages: &[Message], incomplete: Option<IncompleteList>) {
+        let started = self
+            .started_loads
+            .borrow_mut()
+            .pop()
+            .expect("a load is running");
+        let write = self
+            .store
+            .replace_inbox(&started.account_id, messages, || started.cancelled.get())
+            .expect("the test store takes the load");
+        (started.report)(match write {
+            InboxWrite::Stored => LoadResult::Stored { incomplete },
+            InboxWrite::LoadCancelled => LoadResult::Cancelled,
+        });
+    }
 }
 
 fn account(name: &str) -> AccountId {
     AccountId::try_from(name).expect("synthetic account id")
 }
 
-fn imap_and_google_accounts() -> AccountUpdate {
+fn accounts_update(accounts: &[(&str, AccountProvider, &str)]) -> AccountUpdate {
     let mut update = AccountUpdate {
         last_check: AccountCheckResult::Complete,
         ..Default::default()
     };
-    for (name, provider, label) in [
-        ("synthetic-generic", AccountProvider::ImapSmtp, "Generic"),
-        ("synthetic-google", AccountProvider::Google, "Google"),
-    ] {
+    for (name, provider, label) in accounts {
         update.accounts.insert(
             account(name),
             AccountDetails {
-                provider,
+                provider: *provider,
                 mail_enabled: true,
                 needs_attention: false,
                 mail_service_available: true,
-                display_name: Some(label.to_owned()),
+                display_name: Some((*label).to_owned()),
                 email_address: Some(format!("{label}@example.invalid")),
             },
         );
@@ -135,43 +174,43 @@ fn imap_and_google_accounts() -> AccountUpdate {
     update
 }
 
-fn batch_with_two_messages(account_id: &AccountId) -> ReceivedBatch {
-    ReceivedBatch {
-        account_id: account_id.clone(),
-        uid_validity: Some(7),
-        incomplete: None,
-        messages: vec![
-            ReceivedMessage {
-                identity: MessageIdentity::ImapUid(20),
-                fields: DisplayFields {
-                    subject: Some("Second subject".to_owned()),
-                    from: Some("Second sender".to_owned()),
-                    to: Some("Recipient".to_owned()),
-                },
-                internal_date: Some(1_700_000_000),
-                seen: false,
-                content: ReceivedContent::Text("Second body".to_owned()),
-                gmail: None,
+fn imap_and_google_accounts() -> AccountUpdate {
+    accounts_update(&[
+        ("synthetic-generic", AccountProvider::ImapSmtp, "Generic"),
+        ("synthetic-google", AccountProvider::Google, "Google"),
+    ])
+}
+
+fn two_messages() -> Vec<Message> {
+    vec![
+        Message {
+            identity: "uid:20".to_owned(),
+            fields: DisplayFields {
+                subject: Some("Second subject".to_owned()),
+                from: Some("Second sender".to_owned()),
+                to: Some("Recipient".to_owned()),
             },
-            ReceivedMessage {
-                identity: MessageIdentity::ImapUid(10),
-                fields: DisplayFields {
-                    subject: Some("First subject".to_owned()),
-                    from: Some("First sender".to_owned()),
-                    to: None,
-                },
-                internal_date: Some(1_699_000_000),
-                seen: true,
-                content: ReceivedContent::StructureUnreadable,
-                gmail: None,
+            received_unix: Some(1_700_000_000),
+            seen: false,
+            content: ReceivedContent::Text("Second body".to_owned()),
+        },
+        Message {
+            identity: "uid:10".to_owned(),
+            fields: DisplayFields {
+                subject: Some("First subject".to_owned()),
+                from: Some("First sender".to_owned()),
+                to: None,
             },
-        ],
-    }
+            received_unix: Some(1_699_000_000),
+            seen: true,
+            content: ReceivedContent::StructureUnreadable,
+        },
+    ]
 }
 
 /// One message the sender never wrapped and one of ordinary lines, both at
 /// the 64 KiB display boundary, and one whose character set name is as long.
-fn unwrapped_and_ordinary_batch(account_id: &AccountId) -> ReceivedBatch {
+fn unwrapped_and_ordinary_messages() -> Vec<Message> {
     let bodies = [
         ("Never wrapped", ReceivedContent::Text("я".repeat(32_768))),
         (
@@ -183,37 +222,63 @@ fn unwrapped_and_ordinary_batch(account_id: &AccountId) -> ReceivedBatch {
             ReceivedContent::Explained(ContentExplanation::UnknownCharset("x".repeat(65_536))),
         ),
     ];
-    ReceivedBatch {
-        account_id: account_id.clone(),
-        uid_validity: Some(7),
-        incomplete: None,
-        messages: (1..)
-            .zip(bodies)
-            .map(|(number, (subject, body))| ReceivedMessage {
-                identity: MessageIdentity::ImapUid(number * 10),
-                fields: DisplayFields {
-                    subject: Some(subject.to_owned()),
-                    from: Some("Long sender".to_owned()),
-                    to: None,
-                },
-                internal_date: Some(1_700_000_000),
-                seen: true,
-                content: body,
-                gmail: None,
-            })
-            .collect(),
+    (1..)
+        .zip(bodies)
+        .map(|(number, (subject, body))| Message {
+            identity: format!("uid:{}", number * 10),
+            fields: DisplayFields {
+                subject: Some(subject.to_owned()),
+                from: Some("Long sender".to_owned()),
+                to: None,
+            },
+            received_unix: Some(1_700_000_000),
+            seen: true,
+            content: body,
+        })
+        .collect()
+}
+
+fn rejected_sign_in() -> Failure {
+    Failure {
+        kind: FailureKind::ServerRejectedSignIn,
+        remote_texts: vec![
+            RemoteText {
+                source: RemoteSource::ServerAlert,
+                text: "Mailbox quota is nearly full".to_owned(),
+            },
+            RemoteText {
+                source: RemoteSource::ServerReply,
+                text: "Invalid credentials".to_owned(),
+            },
+        ],
+        details: "Failure: ServerRejectedSignIn\nServer code: AUTHENTICATIONFAILED".to_owned(),
     }
 }
 
-fn rejected_sign_in() -> LoadFailure {
-    LoadFailure::Imap(ImapError {
-        failure: ImapFailure::Failed(ImapStep::SignIn),
-        server_reply: Some(ServerReply {
-            code: Some("AUTHENTICATIONFAILED".to_owned()),
-            text: "Invalid credentials".to_owned(),
-        }),
-        alerts: vec!["Mailbox quota is nearly full".to_owned()],
-    })
+/// A window over `store`, with its scripted loader and its widgets.
+fn open_window(
+    store: Arc<Store>,
+) -> (adw::Window, Rc<WindowUi>, Rc<ScriptedLoader>, WindowWidgets) {
+    let builder = gtk::Builder::from_string(include_str!("../../resources/ui/mailbag.ui"));
+    let window: adw::Window = builder.object("window").expect("window");
+    let loader = Rc::new(ScriptedLoader::new(store.clone()));
+    let ui = WindowUi::new(&builder, Box::new(SharedLoader(loader.clone())), store);
+    window.present();
+    (window, ui, loader, WindowWidgets { builder })
+}
+
+/// Runs the window's pending work and waits for its read of the store,
+/// which runs on GIO's thread pool.
+fn settle(ui: &WindowUi) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        dispatch_pending();
+        if !ui.reads_stored_inbox() {
+            return;
+        }
+        assert!(Instant::now() < deadline, "the stored Inbox was not read");
+        std::thread::sleep(Duration::from_millis(1));
+    }
 }
 
 /// The window's widgets, read the way the user sees them.
@@ -420,20 +485,15 @@ fn dispatch_pending() {
 #[ignore = "requires a graphical GTK session"]
 fn mail_ui_transitions() {
     adw::init().expect("GTK display");
-    let builder = gtk::Builder::from_string(include_str!("../../resources/ui/mailbag.ui"));
-    let window: adw::Window = builder.object("window").expect("window");
-    let loader = Rc::new(ScriptedLoader::default());
-    let ui = WindowUi::new(&builder, Box::new(SharedLoader(loader.clone())));
-    let widgets = WindowWidgets {
-        builder: builder.clone(),
-    };
+    let directory = TestDirectory::new();
+    let store_path = directory.store_path();
+    let (window, ui, loader, widgets) = open_window(Arc::new(Store::at(store_path.clone())));
     let refresh = ui.refresh_action().clone();
-    window.present();
-    dispatch_pending();
+    settle(&ui);
 
     // Without a selection the account page decides what the list area shows.
     ui.apply_account_update(&imap_and_google_accounts());
-    dispatch_pending();
+    settle(&ui);
     assert_eq!(widgets.list_page(), "empty");
     assert_eq!(widgets.status_title(), "Select an account");
     assert_eq!(widgets.status_button("status_retry_check"), None);
@@ -441,10 +501,10 @@ fn mail_ui_transitions() {
     assert_eq!(widgets.list_title(), ("Mailbag".to_owned(), String::new()));
     assert!(!refresh.is_enabled());
 
-    // Selecting shows that nothing has been loaded, and loads nothing.
+    // Selecting shows that nothing is stored, and loads nothing.
     let generic = account("synthetic-generic");
     widgets.select_account(0);
-    dispatch_pending();
+    settle(&ui);
     assert_eq!(loader.running_loads(), 0);
     assert_eq!(widgets.status_title(), "No mail loaded");
     assert!(
@@ -461,155 +521,20 @@ fn mail_ui_transitions() {
 
     // A Google account is loadable too, and gets the same hint.
     widgets.select_account(1);
-    dispatch_pending();
+    settle(&ui);
     assert!(refresh.is_enabled());
     assert_eq!(widgets.status_title(), "No mail loaded");
     assert!(widgets.status_description().contains("Refresh Inbox"));
     // Refreshing it asks for the Gmail sequence, not the Generic IMAP one.
     refresh.activate(None);
-    dispatch_pending();
+    settle(&ui);
     assert_eq!(loader.loading_provider(), Some(MailProvider::Gmail));
+
+    // With nothing stored, a failed load takes the list's place with its
+    // declaration; the server's words stay in the failure dialog.
+    let rejected = declare_failure(&rejected_sign_in());
     loader.report(LoadResult::Failed(rejected_sign_in()));
-    dispatch_pending();
-    widgets.select_account(0);
-
-    // A refresh loads once, with the spinner and without a second attempt.
-    refresh.activate(None);
-    refresh.activate(None);
-    dispatch_pending();
-    assert_eq!(loader.running_loads(), 1);
-    assert_eq!(loader.loading_account().as_ref(), Some(&generic));
-    assert_eq!(loader.loading_provider(), Some(MailProvider::GenericImap));
-    assert_eq!(widgets.status_title(), "Loading Inbox");
-    assert_eq!(widgets.list_page(), "empty");
-    assert!(widgets.shows_load_feedback());
-    assert!(!refresh.is_enabled());
-
-    // A received batch fills the list, newest first.
-    loader.report(LoadResult::Received(batch_with_two_messages(&generic)));
-    dispatch_pending();
-    assert_eq!(widgets.list_page(), "messages");
-    assert!(!widgets.shows_load_feedback());
-    assert!(refresh.is_enabled());
-    let rows = widgets.rows();
-    assert_eq!(rows.len(), 2);
-    assert!(
-        row_texts(&rows[0]).contains("Second sender"),
-        "{}",
-        row_texts(&rows[0])
-    );
-    assert!(row_texts(&rows[0]).contains("Second subject"));
-    assert!(shows_unread_dot(&rows[0]));
-    assert!(!shows_unread_dot(&rows[1]));
-
-    // Opening a message shows received content and sends no request. A
-    // message without text shows why in the body's place; its row stays.
-    rows[1].emit_by_name::<()>("activate", &[]);
-    dispatch_pending();
-    assert_eq!(widgets.reader_page(), "message");
-    let content_failure =
-        declare_content(&ReceivedContent::StructureUnreadable).expect("no text to show");
-    let content_status = widgets.content_status().expect("the reader's status page");
-    assert_eq!(content_status.title(), content_failure.title);
-    assert!(!widgets.reader_body_label().is_visible());
-    assert_eq!(widgets.reader_subject(), "First subject");
-    assert!(widgets.reader_body().contains("First sender"));
-    assert_eq!(loader.running_loads(), 0);
-    rows[0].emit_by_name::<()>("activate", &[]);
-    dispatch_pending();
-    assert!(widgets.content_status().is_none());
-    assert!(widgets.reader_body_label().is_visible());
-    assert_eq!(widgets.reader_body_label().text(), "Second body");
-
-    // An account update that leaves this account's mail alone keeps the rows
-    // and the open message.
-    ui.apply_account_update(&imap_and_google_accounts());
-    dispatch_pending();
-    assert_eq!(widgets.rows().len(), 2);
-    assert_eq!(widgets.reader_page(), "message");
-
-    // A list the server refused to finish keeps its rows under the banner,
-    // which stays while that list is on screen.
-    refresh.activate(None);
-    dispatch_pending();
-    let mut short_batch = batch_with_two_messages(&generic);
-    short_batch.messages.pop();
-    let refusal = IncompleteList::ServerRefused(ServerReply {
-        code: None,
-        text: "Some messages could not be FETCHed".to_owned(),
-    });
-    short_batch.incomplete = Some(refusal.clone());
-    loader.report(LoadResult::Received(short_batch));
-    dispatch_pending();
-    assert_eq!(widgets.rows().len(), 1);
-    assert_eq!(widgets.list_page(), "messages");
-    let short_list_title = Some(declare_short_list(&refusal).title.to_owned());
-    assert_eq!(widgets.banner_title(), short_list_title);
-    widgets.select_account(1);
-    dispatch_pending();
-    assert_eq!(widgets.banner_title(), None);
-    widgets.select_account(0);
-    dispatch_pending();
-    assert_eq!(widgets.banner_title(), short_list_title);
-    assert_eq!(widgets.rows().len(), 1);
-    widgets.banner().emit_by_name::<()>("button-clicked", &[]);
-    let dialog = window.visible_dialog().expect("the failure dialog");
-    assert_eq!(dialog.title(), declare_short_list(&refusal).title);
-    dialog.force_close();
-
-    // A message the sender never wrapped opens without freezing the window,
-    // and ordinary text keeps word wrapping.
-    refresh.activate(None);
-    dispatch_pending();
-    loader.report(LoadResult::Received(unwrapped_and_ordinary_batch(&generic)));
-    dispatch_pending();
-    // The next complete load leaves no banner behind.
-    assert_eq!(widgets.banner_title(), None);
-    let long_rows = widgets.rows();
-    long_rows[0].emit_by_name::<()>("activate", &[]);
-    // The wrapping is checked before the layout runs, because word wrapping
-    // would take minutes here instead of failing.
-    assert_eq!(
-        widgets.reader_body_label().wrap_mode(),
-        gtk::pango::WrapMode::Char
-    );
-    let unwrapped = widgets.lay_out_reader();
-    assert!(
-        unwrapped < Duration::from_secs(5),
-        "opening took {unwrapped:?}"
-    );
-    long_rows[1].emit_by_name::<()>("activate", &[]);
-    assert_eq!(
-        widgets.reader_body_label().wrap_mode(),
-        gtk::pango::WrapMode::WordChar
-    );
-    let ordinary = widgets.lay_out_reader();
-    assert!(
-        ordinary < Duration::from_secs(5),
-        "opening took {ordinary:?}"
-    );
-    // A name from the message in the reader's status page is laid out as
-    // fast: that page wraps its description by word.
-    long_rows[2].emit_by_name::<()>("activate", &[]);
-    let started = Instant::now();
-    dispatch_pending();
-    let content_status = widgets.content_status().expect("the reader's status page");
-    content_status.measure(gtk::Orientation::Horizontal, -1);
-    content_status.measure(gtk::Orientation::Vertical, 800);
-    let named = started.elapsed();
-    assert!(named < Duration::from_secs(5), "opening took {named:?}");
-
-    // A refresh clears the list and the reader before loading again.
-    refresh.activate(None);
-    dispatch_pending();
-    assert!(widgets.rows().is_empty());
-    assert_eq!(widgets.reader_page(), "unselected");
-
-    // A failed load takes the list's place with its declaration; the
-    // server's words stay in the failure dialog.
-    let rejected = declare_load_failure(&rejected_sign_in());
-    loader.report(LoadResult::Failed(rejected_sign_in()));
-    dispatch_pending();
+    settle(&ui);
     assert_eq!(widgets.list_page(), "failed");
     assert_eq!(widgets.failure_title(), rejected.title);
     // The page reads its description as markup, so the text arrives escaped.
@@ -682,40 +607,202 @@ fn mail_ui_transitions() {
     // A failure nothing the user does can change offers no action, only
     // Details.
     refresh.activate(None);
-    dispatch_pending();
-    assert_eq!(widgets.list_page(), "empty");
-    loader.report(LoadResult::Failed(LoadFailure::Imap(
-        ImapFailure::NoSignInMethod.into(),
-    )));
-    dispatch_pending();
+    settle(&ui);
+    assert_eq!(widgets.status_title(), "Loading Inbox");
+    loader.report(LoadResult::Failed(Failure {
+        kind: FailureKind::NoSignInMethod,
+        remote_texts: Vec::new(),
+        details: "Failure: NoSignInMethod".to_owned(),
+    }));
+    settle(&ui);
     assert_eq!(widgets.status_button("failure_action"), None);
     assert!(widgets.status_button("failure_details").is_some());
 
+    // A refresh loads once, with the spinner and without a second attempt.
+    widgets.select_account(0);
+    settle(&ui);
+    refresh.activate(None);
+    refresh.activate(None);
+    settle(&ui);
+    assert_eq!(loader.running_loads(), 1);
+    assert_eq!(loader.loading_account().as_ref(), Some(&generic));
+    assert_eq!(loader.loading_provider(), Some(MailProvider::GenericImap));
+    assert_eq!(widgets.status_title(), "Loading Inbox");
+    assert_eq!(widgets.list_page(), "empty");
+    assert!(widgets.shows_load_feedback());
+    assert!(!refresh.is_enabled());
+
+    // A completed load's stored Inbox fills the list, newest first.
+    loader.report_stored(&two_messages(), None);
+    settle(&ui);
+    assert_eq!(widgets.list_page(), "messages");
+    assert!(!widgets.shows_load_feedback());
+    assert!(refresh.is_enabled());
+    let rows = widgets.rows();
+    assert_eq!(rows.len(), 2);
+    assert!(
+        row_texts(&rows[0]).contains("Second sender"),
+        "{}",
+        row_texts(&rows[0])
+    );
+    assert!(row_texts(&rows[0]).contains("Second subject"));
+    assert!(shows_unread_dot(&rows[0]));
+    assert!(!shows_unread_dot(&rows[1]));
+
+    // Opening a message shows stored content and sends no request. A
+    // message without text shows why in the body's place; its row stays.
+    rows[1].emit_by_name::<()>("activate", &[]);
+    settle(&ui);
+    assert_eq!(widgets.reader_page(), "message");
+    let content_failure =
+        declare_content(&ReceivedContent::StructureUnreadable).expect("no text to show");
+    let content_status = widgets.content_status().expect("the reader's status page");
+    assert_eq!(content_status.title(), content_failure.title);
+    assert!(!widgets.reader_body_label().is_visible());
+    assert_eq!(widgets.reader_subject(), "First subject");
+    assert!(widgets.reader_body().contains("First sender"));
+    assert_eq!(loader.running_loads(), 0);
+    rows[0].emit_by_name::<()>("activate", &[]);
+    settle(&ui);
+    assert!(widgets.content_status().is_none());
+    assert!(widgets.reader_body_label().is_visible());
+    assert_eq!(widgets.reader_body_label().text(), "Second body");
+
+    // An account update that leaves this account alone keeps the rows and
+    // the open message.
+    ui.apply_account_update(&imap_and_google_accounts());
+    settle(&ui);
+    assert_eq!(widgets.rows().len(), 2);
+    assert_eq!(widgets.reader_page(), "message");
+    // So does selecting the account on screen again.
+    widgets.select_account(0);
+    settle(&ui);
+    assert_eq!(widgets.rows().len(), 2);
+    assert_eq!(widgets.reader_page(), "message");
+
+    // During a refresh the stored rows stay with the spinner (US2).
+    refresh.activate(None);
+    settle(&ui);
+    assert_eq!(widgets.rows().len(), 2);
+    assert_eq!(widgets.list_page(), "messages");
+    assert!(widgets.shows_load_feedback());
+
+    // A list the server refused to finish replaces the rows and closes the
+    // reader; the banner stays while that list is on screen.
+    let refusal = IncompleteList::ServerRefused {
+        reply: "Some messages could not be FETCHed".to_owned(),
+        code: None,
+    };
+    loader.report_stored(&two_messages()[..1], Some(refusal.clone()));
+    settle(&ui);
+    assert_eq!(widgets.rows().len(), 1);
+    assert_eq!(widgets.list_page(), "messages");
+    assert_eq!(widgets.reader_page(), "unselected");
+    let short_list_title = Some(declare_short_list(&refusal).title.to_owned());
+    assert_eq!(widgets.banner_title(), short_list_title);
+    widgets.select_account(1);
+    settle(&ui);
+    assert_eq!(widgets.banner_title(), None);
+    widgets.select_account(0);
+    settle(&ui);
+    assert_eq!(widgets.banner_title(), short_list_title);
+    assert_eq!(widgets.rows().len(), 1);
+    widgets.banner().emit_by_name::<()>("button-clicked", &[]);
+    let dialog = window.visible_dialog().expect("the failure dialog");
+    assert_eq!(dialog.title(), declare_short_list(&refusal).title);
+    dialog.force_close();
+
+    // A message the sender never wrapped opens without freezing the window,
+    // and ordinary text keeps word wrapping.
+    refresh.activate(None);
+    settle(&ui);
+    loader.report_stored(&unwrapped_and_ordinary_messages(), None);
+    settle(&ui);
+    // The next complete load leaves no banner behind.
+    assert_eq!(widgets.banner_title(), None);
+    let long_rows = widgets.rows();
+    long_rows[0].emit_by_name::<()>("activate", &[]);
+    // The wrapping is checked before the layout runs, because word wrapping
+    // would take minutes here instead of failing.
+    assert_eq!(
+        widgets.reader_body_label().wrap_mode(),
+        gtk::pango::WrapMode::Char
+    );
+    let unwrapped = widgets.lay_out_reader();
+    assert!(
+        unwrapped < Duration::from_secs(5),
+        "opening took {unwrapped:?}"
+    );
+    long_rows[1].emit_by_name::<()>("activate", &[]);
+    assert_eq!(
+        widgets.reader_body_label().wrap_mode(),
+        gtk::pango::WrapMode::WordChar
+    );
+    let ordinary = widgets.lay_out_reader();
+    assert!(
+        ordinary < Duration::from_secs(5),
+        "opening took {ordinary:?}"
+    );
+    // A name from the message in the reader's status page is laid out as
+    // fast: that page wraps its description by word.
+    long_rows[2].emit_by_name::<()>("activate", &[]);
+    let started = Instant::now();
+    dispatch_pending();
+    let content_status = widgets.content_status().expect("the reader's status page");
+    content_status.measure(gtk::Orientation::Horizontal, -1);
+    content_status.measure(gtk::Orientation::Vertical, 800);
+    let named = started.elapsed();
+    assert!(named < Duration::from_secs(5), "opening took {named:?}");
+
+    // A failed refresh keeps the stored rows and the open message under the
+    // banner that names the failure; its button opens the failure dialog
+    // (US3).
+    refresh.activate(None);
+    settle(&ui);
+    loader.report(LoadResult::Failed(rejected_sign_in()));
+    settle(&ui);
+    assert_eq!(widgets.list_page(), "messages");
+    assert_eq!(widgets.rows().len(), 3);
+    assert_eq!(widgets.reader_page(), "message");
+    assert_eq!(widgets.banner_title(), Some(rejected.title.to_owned()));
+    widgets.banner().emit_by_name::<()>("button-clicked", &[]);
+    let dialog = window.visible_dialog().expect("the failure dialog");
+    assert_eq!(dialog.title(), rejected.title);
+    dialog.force_close();
+    // The banner is there again after another account and back, with the same
+    // rows (US3).
+    widgets.select_account(1);
+    settle(&ui);
+    widgets.select_account(0);
+    settle(&ui);
+    assert_eq!(widgets.rows().len(), 3);
+    assert_eq!(widgets.banner_title(), Some(rejected.title.to_owned()));
+
     // A repeated refresh that switches accounts keeps loading for its own one.
     refresh.activate(None);
-    dispatch_pending();
+    settle(&ui);
     widgets.select_account(1);
-    dispatch_pending();
+    settle(&ui);
     assert_eq!(widgets.list_page(), "failed");
-    assert_eq!(widgets.failure_title(), rejected.title);
     assert!(widgets.shows_load_feedback());
     // The load continues for the account it was started for.
     assert_eq!(loader.loading_account().as_ref(), Some(&generic));
-    loader.report(LoadResult::Received(batch_with_two_messages(&generic)));
-    dispatch_pending();
+    loader.report_stored(&two_messages(), None);
+    settle(&ui);
     assert_eq!(widgets.list_page(), "failed");
     assert!(widgets.rows().is_empty());
     widgets.select_account(0);
-    dispatch_pending();
+    settle(&ui);
     assert_eq!(widgets.list_page(), "messages");
     assert_eq!(widgets.rows().len(), 2);
+    assert_eq!(widgets.banner_title(), None);
 
     // An account failure covers the mail without discarding it.
     let mut failed_check = imap_and_google_accounts();
     failed_check.last_check =
         AccountCheckResult::Failed(AccountCheckError::new("check", ErrorCause::Timeout));
     ui.apply_account_update(&failed_check);
-    dispatch_pending();
+    settle(&ui);
     assert_eq!(widgets.list_page(), "empty");
     assert_eq!(widgets.status_title(), "Unable to get accounts");
     assert_eq!(
@@ -723,25 +810,91 @@ fn mail_ui_transitions() {
         Some(("Retry Check".to_owned(), "app.retry-accounts".to_owned()))
     );
     ui.apply_account_update(&imap_and_google_accounts());
-    dispatch_pending();
+    settle(&ui);
     assert_eq!(widgets.list_page(), "messages");
     assert_eq!(widgets.rows().len(), 2);
 
-    // A confirmed exclusion discards that account's mail and cancels its load.
+    // An empty Inbox is said so only after a completed load stored it.
+    widgets.select_account(1);
+    settle(&ui);
     refresh.activate(None);
-    dispatch_pending();
+    settle(&ui);
+    loader.report_stored(&[], None);
+    settle(&ui);
+    assert_eq!(widgets.status_title(), "Inbox is empty");
+    assert_eq!(widgets.banner_title(), None);
+    // A service that offered more than it sent leaves the notice over it.
+    refresh.activate(None);
+    settle(&ui);
+    loader.report_stored(&[], Some(IncompleteList::MoreAvailable));
+    settle(&ui);
+    assert_eq!(widgets.status_title(), "Inbox is empty");
+    assert_eq!(
+        widgets.banner_title(),
+        Some(
+            declare_short_list(&IncompleteList::MoreAvailable)
+                .title
+                .to_owned()
+        )
+    );
+
+    // A new window over the same store shows the same rows and content and
+    // starts no load; an account never loaded has no mail (US1, FR-006).
+    let (restarted_window, restarted, restarted_loader, restarted_widgets) =
+        open_window(Arc::new(Store::at(store_path)));
+    restarted.apply_account_update(&accounts_update(&[
+        ("synthetic-generic", AccountProvider::ImapSmtp, "Generic"),
+        ("synthetic-google", AccountProvider::Google, "Google"),
+        (
+            "synthetic-microsoft365",
+            AccountProvider::Microsoft365,
+            "Microsoft",
+        ),
+    ]));
+    restarted_widgets.select_account(0);
+    settle(&restarted);
+    let restored_rows = restarted_widgets.rows();
+    assert_eq!(restored_rows.len(), 2);
+    // No refresh ended in this run, so no banner: a short list is not stored
+    // (US2).
+    assert_eq!(restarted_widgets.banner_title(), None);
+    assert!(row_texts(&restored_rows[0]).contains("Second subject"));
+    assert!(shows_unread_dot(&restored_rows[0]));
+    restored_rows[0].emit_by_name::<()>("activate", &[]);
+    settle(&restarted);
+    assert_eq!(restarted_widgets.reader_body_label().text(), "Second body");
+    restored_rows[1].emit_by_name::<()>("activate", &[]);
+    settle(&restarted);
+    let restored_status = restarted_widgets
+        .content_status()
+        .expect("the reader's status page");
+    assert_eq!(restored_status.title(), content_failure.title);
+    restarted_widgets.select_account(1);
+    settle(&restarted);
+    assert_eq!(restarted_widgets.status_title(), "Inbox is empty");
+    restarted_widgets.select_account(2);
+    settle(&restarted);
+    assert_eq!(restarted_widgets.status_title(), "No mail loaded");
+    assert_eq!(restarted_loader.running_loads(), 0);
+    restarted_window.destroy();
+
+    // A confirmed exclusion cancels the account's load and hides its mail.
+    widgets.select_account(0);
+    settle(&ui);
+    refresh.activate(None);
+    settle(&ui);
     let cancelled_before_exclusion = loader.cancelled_loads.get();
     let mut without_generic = imap_and_google_accounts();
     without_generic.accounts.remove(&generic);
     ui.apply_account_update(&without_generic);
-    dispatch_pending();
+    settle(&ui);
     assert_eq!(loader.cancelled_loads.get(), cancelled_before_exclusion + 1);
     assert!(widgets.rows().is_empty());
     assert_eq!(widgets.list_title(), ("Mailbag".to_owned(), String::new()));
 
-    // The cancelled load ends without restoring the discarded mail.
-    loader.report(LoadResult::Received(batch_with_two_messages(&generic)));
-    dispatch_pending();
+    // A result of the cancelled load changes nothing on screen.
+    loader.report(LoadResult::Stored { incomplete: None });
+    settle(&ui);
     assert!(widgets.rows().is_empty());
     assert!(!widgets.shows_load_feedback());
 
@@ -750,12 +903,163 @@ fn mail_ui_transitions() {
         last_check: AccountCheckResult::Complete,
         ..Default::default()
     });
-    dispatch_pending();
+    settle(&ui);
     assert_eq!(
         widgets.status_button("status_online_accounts"),
         Some(("Online Accounts".to_owned(), "app.accounts".to_owned()))
     );
     window.destroy();
+}
+
+/// A stored Inbox that cannot be read shows the failure page, whose Retry
+/// reads it again; a refresh then shows its own outcome (US5, FR-013).
+#[test]
+#[ignore = "requires a graphical GTK session"]
+fn a_store_that_cannot_be_read() {
+    adw::init().expect("GTK display");
+    let directory = TestDirectory::new();
+    // A file stands where the store's directory would be created.
+    let blocking_file = directory.0.join("mailbag");
+    std::fs::write(&blocking_file, "not a directory").unwrap();
+    let (window, ui, loader, widgets) =
+        open_window(Arc::new(Store::at(blocking_file.join("mail.sqlite"))));
+    ui.apply_account_update(&imap_and_google_accounts());
+    widgets.select_account(0);
+    settle(&ui);
+    assert_eq!(widgets.list_page(), "failed");
+    assert_eq!(
+        widgets.status_button("failure_action"),
+        Some(("Retry".to_owned(), "app.read-stored-inbox".to_owned()))
+    );
+    click(&widgets, "failure_details");
+    let dialog = window.visible_dialog().expect("the failure dialog");
+    assert!(
+        descendants::<gtk::Button>(&dialog.clone().upcast())
+            .iter()
+            .any(|button| button.is_visible()
+                && button.action_name().as_deref() == Some("app.read-stored-inbox"))
+    );
+    dialog.force_close();
+
+    // A refresh shows its own outcome instead of the failed read.
+    ui.refresh_action().activate(None);
+    settle(&ui);
+    assert_eq!(widgets.status_title(), "Loading Inbox");
+    loader.report(LoadResult::Failed(rejected_sign_in()));
+    settle(&ui);
+    assert_eq!(
+        widgets.failure_title(),
+        declare_failure(&rejected_sign_in()).title
+    );
+    assert_eq!(
+        widgets.status_button("failure_action"),
+        Some(("Online Accounts".to_owned(), "app.accounts".to_owned()))
+    );
+
+    // Retry reads the stored Inbox again: once the store can be opened, the
+    // account shows that nothing is stored.
+    widgets.select_account(1);
+    settle(&ui);
+    assert_eq!(
+        widgets.status_button("failure_action"),
+        Some(("Retry".to_owned(), "app.read-stored-inbox".to_owned()))
+    );
+    std::fs::remove_file(&blocking_file).unwrap();
+    ui.read_stored_inbox_action().activate(None);
+    settle(&ui);
+    assert_eq!(widgets.status_title(), "No mail loaded");
+    window.destroy();
+}
+
+/// A complete Online Accounts answer that no longer lists an account, or
+/// lists it with Mail off, deletes that account's stored mail; nothing else
+/// deletes it, and a load that ends after the exclusion stores nothing (US4,
+/// FR-008).
+#[test]
+#[ignore = "requires a graphical GTK session"]
+fn stored_mail_leaves_with_its_account() {
+    adw::init().expect("GTK display");
+    let store = Arc::new(Store::in_memory());
+    let (generic, google) = (account("synthetic-generic"), account("synthetic-google"));
+    for account_id in [&generic, &google] {
+        store
+            .replace_inbox(account_id, &two_messages(), || false)
+            .unwrap();
+    }
+    let has_stored_inbox = |account_id: &AccountId| {
+        store
+            .read_inbox(account_id)
+            .expect("the store reads")
+            .is_some()
+    };
+    let only_generic =
+        || accounts_update(&[("synthetic-generic", AccountProvider::ImapSmtp, "Generic")]);
+    let with_generic = |change: fn(&mut AccountDetails)| {
+        let mut update = only_generic();
+        change(
+            update
+                .accounts
+                .get_mut(&generic)
+                .expect("the generic account"),
+        );
+        update
+    };
+
+    // An account missing from the first complete answer after a start loses
+    // its mail.
+    let (window, ui, _loader, widgets) = open_window(store.clone());
+    ui.apply_account_update(&only_generic());
+    wait_until(|| !has_stored_inbox(&google));
+    assert!(has_stored_inbox(&generic));
+
+    // A failed read, an answer not yet checked and a missing Mail service
+    // delete nothing.
+    let mut failed_read = accounts_update(&[]);
+    failed_read.last_check =
+        AccountCheckResult::Failed(AccountCheckError::new("check", ErrorCause::Unavailable));
+    ui.apply_account_update(&failed_read);
+    ui.apply_account_update(&AccountUpdate::default());
+    ui.apply_account_update(&with_generic(|details| {
+        details.mail_service_available = false
+    }));
+    let_deletions_run();
+    assert!(has_stored_inbox(&generic));
+
+    // Mail turned off deletes the account's mail, and the window forgets what
+    // it read: with Mail on again the account has none.
+    widgets.select_account(0);
+    settle(&ui);
+    assert_eq!(widgets.rows().len(), 2);
+    let mail_off = with_generic(|details| details.mail_enabled = false);
+    ui.apply_account_update(&mail_off);
+    wait_until(|| !has_stored_inbox(&generic));
+    ui.apply_account_update(&only_generic());
+    widgets.select_account(0);
+    settle(&ui);
+    assert!(widgets.rows().is_empty());
+    assert_eq!(widgets.status_title(), "No mail loaded");
+    window.destroy();
+}
+
+/// Runs the window's pending work until `condition` holds; the store's work
+/// runs on GIO's thread pool.
+fn wait_until(mut condition: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !condition() {
+        assert!(Instant::now() < deadline, "the store's work did not finish");
+        dispatch_pending();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// Gives the deletions sent to GIO's thread pool time to run, where the test
+/// checks that they deleted nothing.
+fn let_deletions_run() {
+    let until = Instant::now() + Duration::from_millis(100);
+    while Instant::now() < until {
+        dispatch_pending();
+        std::thread::sleep(Duration::from_millis(1));
+    }
 }
 
 fn click(widgets: &WindowWidgets, button: &str) {

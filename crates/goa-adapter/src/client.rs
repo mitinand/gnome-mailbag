@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::{
-    AccountCheckError, AccountCheckResult, AccountDetails, AccountId, AccountUpdate,
+    AccountCheckError, AccountCheckResult, AccountDetails, AccountUpdate,
     access_calls::read_account_objects,
     accounts::{
         GOA_ACCOUNT_PATH_PREFIX, GOA_BUS_NAME, GOA_ROOT_PATH, OBJECT_MANAGER_INTERFACE,
@@ -10,6 +10,7 @@ use crate::{
     },
 };
 use gio::prelude::*;
+use mailbag_domain::AccountId;
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,

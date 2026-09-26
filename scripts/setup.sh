@@ -13,7 +13,7 @@ for tool in git curl openssl cc pkg-config glib-compile-resources python3 deskto
     command -v "$tool" >/dev/null || missing+=("$tool")
 done
 if command -v pkg-config >/dev/null; then
-    for library in gtk4 libadwaita-1 libsoup-3.0; do
+    for library in gtk4 libadwaita-1 libsoup-3.0 sqlite3; do
         pkg-config --exists "$library" || missing+=("$library development files")
     done
 fi
@@ -23,7 +23,7 @@ if ((${#missing[@]})); then
         source /etc/os-release
         if [[ ${ID:-} == fedora ]]; then
             echo 'Install prerequisites, then rerun setup:' >&2
-            echo 'sudo dnf install git curl openssl gcc pkgconf-pkg-config gtk4-devel libadwaita-devel libsoup3-devel python3 python3-pip desktop-file-utils appstream dbus-daemon meson ninja-build flatpak flatpak-builder' >&2
+            echo 'sudo dnf install git curl openssl gcc pkgconf-pkg-config gtk4-devel libadwaita-devel libsoup3-devel sqlite-devel python3 python3-pip desktop-file-utils appstream dbus-daemon meson ninja-build flatpak flatpak-builder' >&2
         fi
     fi
     exit 1

@@ -16,10 +16,10 @@ one Inbox message carrying a user label whose name is not in Latin letters.
 ## Record at debug (SC-004, SC-005, SC-006)
 
 ```bash
-mailbag --log-level=debug 2> gmail.log
+mailbag --log-level=debug 2> ~/gmail.log
 ```
 
-Refresh the Google account, quit, then read `gmail.log`:
+Refresh the Google account, quit, then read `~/gmail.log`:
 
 - A line with the list Gmail announced after sign-in, the lines for ENABLE
   (the enabled list and the command's result), and one with the server's
@@ -29,7 +29,7 @@ Refresh the Google account, quit, then read `gmail.log`:
 - Take one identifier, convert it to hexadecimal
   (`printf '%x\n' <decimal>`), open the message in the Gmail web interface
   and compare with the identifier in the page address. They match.
-- Search the file for the token: `grep -c 'ya29' gmail.log` prints 0. Search
+- Search the file for the token: `grep -c 'ya29' ~/gmail.log` prints 0. Search
   for the address and the mail address of the account: none.
 
 ## Authorization (SC-003)

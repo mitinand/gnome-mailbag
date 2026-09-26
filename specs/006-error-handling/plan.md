@@ -5,7 +5,9 @@
 **Status**: Implemented on `claude/errors` and accepted live 2026-09-25;
 challenged and analyzed on 2026-09-25, findings applied. Where the wording
 lives corrected on `claude/failure-ownership` (section "Correction
-2026-09-26", portion 5).
+2026-09-26", portion 5). Failures as domain values built on
+`claude/storage` with 007 on 2026-09-26 (section "Amendment 2026-09-26:
+failures as domain values", portion 6).
 The specification's decisions are settled and are not reopened here.
 
 ## Size
@@ -319,6 +321,60 @@ Not in this portion: a shared domain crate and a failure classification
 Retry's operation by carrier and a panic helper for work outside the mail
 worker (both with 007), notifications about failures (016).
 
+## Amendment 2026-09-26: failures as domain values
+
+Portion 6 finishes what portion 5 began (research §1, corrected twice): a
+lower layer hands the application a `Failure` of `mailbag-domain`, and the
+window words domain values only. It is built on `claude/storage` before
+007's portions, because the store is the second layer whose failures reach
+the window. User-visible behaviour does not change: every string literal of
+the wording, every channel and every button stays as it is. The technical
+`Failure:` line and the record's `cause` name the domain kind instead of the
+protocol value (decided 2026-09-26); the status and the codes stay. Budget
+approved by the maintainer on 2026-09-26.
+
+Result, measured on 2026-09-26 (commit `45dce5a`, `git diff --numstat`, a
+line moved between files counted once): production +656 −442, net +214
+against ≤ 120 new; tests +391 −265, net +126 against ≤ 80 new. Accepted by
+the maintainer at 007's final review on 2026-09-26. The move carried more
+than counted: every declaration's `match` was rewritten over the kinds, and
+each kind's source is documented.
+
+| Item | Budget | Estimate |
+|---|---|---|
+| Production lines | ≤ 120 new, ≤ 160 moved | ~95 new (the domain's `Failure`, `FailureKind`, `ServerStep`, `RemoteText`, `RemoteSource` ~90; providers' conversion ~75; minus the window's protocol matching ~45 and its error line ~25, which moves down), ~140 moved (`ReceivedContent`, `ContentExplanation`, `IncompleteList`, the panic hook and slot into the domain crate; the remote texts and the error line into providers) |
+| Files touched | — | new crate `mailbag-domain`; `mailbag-content` `lib.rs`; providers `batch.rs`, `failure.rs`, `worker.rs`, `lib.rs`, `imap_batch.rs`, `microsoft365.rs`; mailbag `failure_declarations.rs`, `failure_dialog.rs`, `inbox.rs`, `window_ui.rs`, `mail_ui.rs`, `Cargo.toml` (drops `mailbag-imap` and `mailbag-graph`); workspace `Cargo.toml`; `scripts/check.sh` (the domain crate's rule) |
+| Threads, timers, dependencies | 0 | 0 |
+| Crates | 1 | `mailbag-domain` |
+| Types | — | `Failure`, `FailureKind`, `ServerStep`, `RemoteText` (now the domain's, with `RemoteSource`); `LoadFailure` becomes private to providers |
+| Tests | ≤ 80 new | ~60 new (providers: the kind of every value, the order of the remote texts); `failure_declarations` tests rewritten over kinds; fixtures of the window's tests build `Failure` |
+| User-visible behaviour | unchanged wording | texts, channels and buttons as before; `Failure:` and `cause` name the kind |
+
+Function map:
+
+- `mailbag-domain`: the types of the [contract](contracts/failure-declaration.md);
+  `ReceivedContent` with its `Debug`, `ContentExplanation` with
+  `is_by_design`, `IncompleteList` with `technical_details`; the panic hook
+  and its slot (`install_panic_hook`, `take_panic`), moved from `worker.rs`.
+- `mailbag-content`: returns the domain's `ContentExplanation`.
+- `mailbag-providers`: `LoadFailure` private; `LoadFailure::into_failure(self)
+  -> Failure`: `failure_kind()` (the table of the contract, reading
+  `credentials_rejected` and `server_temporarily_unavailable`),
+  `remote_texts()` (alerts then reply; the service's message or the
+  platform's text), `technical_details()` with `Failure:` naming the kind;
+  `LoadFailure::give_up(self, account) -> LoadResult` writes the load's
+  error line through `log_load_failure(account, kind, status, code,
+  alerts)`, moved from `inbox.rs`, the one function that writes it, with
+  `cause` naming the kind, and returns `Failed(failure)`; both places that give a load up call
+  it: the worker, and `start_transfer` for an Online Accounts failure,
+  which ends the load before the worker is involved.
+- `mailbag/src/failure_declarations.rs`: `declare_failure(&Failure)`, one arm
+  per kind with today's title, explanation, advice and action;
+  `declare_short_list` and `declare_content` over the domain types;
+  `remote_heading(RemoteSource)` gives the four headings.
+- `mailbag/src/inbox.rs`, `window_ui.rs`, `mail_ui.rs`, `failure_dialog.rs`:
+  hold and pass `Failure` instead of `LoadFailure`.
+
 ## Documents amended before implementing
 
 | Document | Change | Portion |
@@ -328,6 +384,8 @@ worker (both with 007), notifications about failures (016).
 | specs/005-microsoft-graph-integration/research.md §5 | The service's message may appear in the failure dialog as a remote text | 3 |
 | specs/002-imap-integration/data-model.md; contracts/imap-reading.md | Server text, with the sign-in name replaced where the failure is built, is for the failure dialog and the debug lines | 3 |
 | AGENTS.md | "UI wording" (the impersonal voice, the Workbench demos) and the forms-only layout rule | before 1 |
+| specs/006-error-handling/research.md §1, §4, §5; contracts/failure-declaration.md | Failures reach the application as domain values; the kinds; the domain crate holds the panic hook | before 6 |
+| specs/003-logging/spec.md FR-004 | The example of `cause` names the domain kind | before 6 |
 
 ## Post-implementation
 
@@ -343,7 +401,7 @@ by the maintainer, following [quickstart.md](quickstart.md).
 | 5. Content problem in the reader | Live | The reader's status page under the envelope; rows kept |
 | 6. Keyboard | Live | As described |
 | 7. Screen reader | Live, Orca | As described |
-| 8. The record | Live, `--log-level=debug` | One error line per failed load (`cause=Failed(SignIn) code="AUTHENTICATIONFAILED"`, `cause=Failed(Connect)`); the server's reply at debug; no address, password or token in the file |
+| 8. The record | Live, `--log-level=debug` | One error line per failed load (`cause=Failed(SignIn) code="AUTHENTICATIONFAILED"`, `cause=Failed(Connect)`; since portion 6 the domain kind, `cause=ServerRejectedSignIn`); the server's reply at debug; no address, password or token in the file |
 | 9. Panic on the worker | Tests only (a load that panics on purpose) | — |
 
 Not verified live: `<login>` in a server's text, because the real

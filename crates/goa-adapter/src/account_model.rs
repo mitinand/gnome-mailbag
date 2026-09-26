@@ -1,31 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use mailbag_domain::AccountId;
 use std::{collections::BTreeMap, fmt};
-
-/// Account ID supplied by the account source.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AccountId(String);
-impl AccountId {
-    /// The identifier's text, by which the record names the account.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-impl TryFrom<&str> for AccountId {
-    type Error = AccountCheckError;
-
-    fn try_from(id: &str) -> Result<Self, Self::Error> {
-        if !id.is_empty() {
-            Ok(Self(id.to_owned()))
-        } else {
-            Err(AccountCheckError::new(
-                "account ID",
-                ErrorCause::InvalidReply,
-            ))
-        }
-    }
-}
 
 /// Provider identity recognized by an adapter. Mailbag decides which it supports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

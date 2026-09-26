@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Loads one account's Inbox from its provider. This crate joins Online
-//! Accounts, the protocol crate and the content crate; it owns no widget and
-//! no application state.
+//! Loads one account's Inbox from its provider and writes it into the store.
+//! This crate joins Online Accounts, the protocol crates, the content crate
+//! and the store; it owns no widget and no application state.
 
 mod batch;
 mod failure;
@@ -11,6 +11,7 @@ mod gmail;
 mod imap;
 mod imap_batch;
 mod microsoft365;
+mod store_load;
 mod worker;
 
 #[cfg(test)]
@@ -20,13 +21,13 @@ mod test_record;
 #[cfg(test)]
 mod tests;
 
-pub use batch::{
-    CancelsLoadOnDrop, IncompleteList, LoadFailure, LoadResult, MessageIdentity, ReceivedBatch,
-    ReceivedContent, ReceivedMessage,
-};
+pub use batch::{CancelsLoadOnDrop, LoadResult};
 
-use goa_adapter::{AccessError, AccessRequest, AccountId, GoaAdapter, ImapAccess};
-use std::{cell::RefCell, rc::Rc};
+use batch::LoadFailure;
+use goa_adapter::{AccessError, AccessRequest, GoaAdapter, ImapAccess};
+use mailbag_domain::AccountId;
+use mailbag_store::Store;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 use worker::{LoadHandle, LoadKind, MailWorker};
 
 /// Which load sequence an account needs. The window turns the account's
@@ -56,17 +57,18 @@ pub trait LoadsInbox {
 }
 
 /// Loads an Inbox with the account's Online Accounts settings and credential,
-/// and the mail worker that speaks to the server.
+/// and the mail worker that speaks to the server and writes what it received
+/// into the store.
 pub struct MailLoader {
     accounts: GoaAdapter,
     worker: Rc<MailWorker>,
 }
 
 impl MailLoader {
-    pub fn new(accounts: GoaAdapter) -> Self {
+    pub fn new(accounts: GoaAdapter, store: Arc<Store>) -> Self {
         Self {
             accounts,
-            worker: Rc::new(MailWorker::new()),
+            worker: Rc::new(MailWorker::new(store)),
         }
     }
 }
@@ -81,13 +83,16 @@ impl LoadsInbox for MailLoader {
         let transfer = Rc::new(RefCell::new(None));
         let started_transfer = transfer.clone();
         let worker = self.worker.clone();
+        let requested_account = account_id.clone();
         let start_transfer = move |access: Result<LoadKind, AccessError>| match access {
             Ok(kind) => {
                 *started_transfer.borrow_mut() = Some(worker.load_inbox(kind, report));
             }
             // The request was cancelled by an exclusion or by quitting.
             Err(AccessError::Cancelled) => report(LoadResult::Cancelled),
-            Err(error) => report(LoadResult::Failed(LoadFailure::OnlineAccounts(error))),
+            // The load ends here, on GTK's context, before the worker is
+            // involved.
+            Err(error) => report(LoadFailure::OnlineAccounts(error).give_up(&requested_account)),
         };
         let request = match provider {
             MailProvider::GenericImap => request_imap_load(

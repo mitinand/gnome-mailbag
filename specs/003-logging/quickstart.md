@@ -85,14 +85,14 @@ finishes without a visible delay (SC-008).
 
 ## Manual, installed Flatpak (SC-007)
 
-Use a temporary host directory outside the repository and follow the README's
-Flatpak command:
+Follow the README's Flatpak command, which writes the record to the home
+folder, outside the repository:
 
 ```bash
-flatpak run io.github.mitinand.Mailbag --log-level=debug 2> mailbag.log
+flatpak run io.github.mitinand.Mailbag --log-level=debug 2> ~/mailbag.log
 ```
 
-Expected: `mailbag.log` appears in the current host directory; its first
+Expected: `mailbag.log` appears in the home folder; its first
 Mailbag line says `Flatpak build` and names the GNOME runtime. Reproduce a
 load and check its lines. While Mailbag is still running, repeat the command:
 the captured explanation says logging was not turned on, the exit status is

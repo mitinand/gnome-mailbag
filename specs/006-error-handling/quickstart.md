@@ -20,7 +20,7 @@ cannot: the real widgets, the keyboard and the screen reader (SC-005).
 2. Open Details. Expect the dialog: the title in the header bar, the two
    paragraphs, "Reply from the mail server" with the server's words and
    `<login>` in place of the user name if the server repeated it,
-   "Technical details" with `Failure: Failed(SignIn)` and the server code,
+   "Technical details" with `Failure: ServerRejectedSignIn` and the server code,
    the Online Accounts button. Press the copy button, paste into a text
    editor: the same text in the same order.
 3. Restore the account (a new app password needs the account added
@@ -53,13 +53,13 @@ cannot: the real widgets, the keyboard and the screen reader (SC-005).
 ## The record (SC-003, FR-014)
 
 ```bash
-mailbag --log-level=debug 2> failures.log
+mailbag --log-level=debug 2> ~/failures.log
 ```
 
 8. Repeat step 1 and quit. Expect one error line naming the account and
-   `cause=Failed(SignIn)`, the server's reply at debug with `<login>`, and
+   `cause=ServerRejectedSignIn` (the domain kind since portion 6), the server's reply at debug with `<login>`, and
    no password, user name or address anywhere: `grep -c '<user name>'
-   failures.log` prints 0.
+   ~/failures.log` prints 0.
 9. A panic on the worker cannot be provoked live; the test with a
    panicking load is the evidence that the status page says "Refresh
    stopped" with the panic's message and place under Technical details and

@@ -3,18 +3,18 @@
 
 //! What the user is told about each failure: its title, explanation, advice,
 //! action and the remote side's texts under their headings, written once per
-//! failure value (specs/006-error-handling/contracts/failure-declaration.md).
-//! The layer that met the failure gives the value, its technical details and
-//! what a protocol's codes mean; the window chooses where to show it.
+//! failure kind (specs/006-error-handling/contracts/failure-declaration.md).
+//! The layer that met the failure gives its kind, the remote texts and the
+//! technical details in the domain's terms; the window chooses where to show
+//! it.
 
 #[cfg(test)]
 mod tests;
 
-use goa_adapter::AccessError;
-use mailbag_content::ContentExplanation;
-use mailbag_graph::{GraphError, GraphFailure};
-use mailbag_imap::{ImapError, ImapFailure, ImapStep};
-use mailbag_providers::{IncompleteList, LoadFailure, ReceivedContent};
+use mailbag_domain::{
+    ContentExplanation, Failure, FailureKind, IncompleteList, ReceivedContent, RemoteSource,
+    RemoteText, ServerStep,
+};
 
 /// One failure as the user sees it, whatever channel shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -46,41 +46,177 @@ pub enum FailureAction {
     OnlineAccounts,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RemoteText {
-    /// The block's heading, such as "Reply from the mail server".
-    pub source: &'static str,
-    /// The text as received, with `<login>` in place of the sign-in name.
-    pub text: String,
-}
-
-const ALERT_FROM_SERVER: &str = "Alert from the mail server";
-const REPLY_FROM_SERVER: &str = "Reply from the mail server";
-const MESSAGE_FROM_SERVICE: &str = "Message from the mail service";
-const FROM_SYSTEM: &str = "From the system";
-
 /// Where a rejected sign-in sends the user, for every provider.
 const CHECK_SIGN_IN: &str = "Check this account's sign-in in Online Accounts, then choose \
                              Refresh Inbox.";
 
-/// The failure of a load that delivered no mail.
-pub fn declare_load_failure(failure: &LoadFailure) -> DeclaredFailure {
-    let declared = match failure {
-        LoadFailure::OnlineAccounts(error) => declare_access_failure(*error),
-        LoadFailure::Imap(error) => declare_imap_failure(failure, error),
-        LoadFailure::MicrosoftGraph(error) => declare_graph_failure(failure, error),
-        LoadFailure::WorkerStopped(_) => declare_worker_stopped(),
+/// The heading of a remote text's block: who said it.
+pub fn remote_heading(source: RemoteSource) -> &'static str {
+    match source {
+        RemoteSource::ServerAlert => "Alert from the mail server",
+        RemoteSource::ServerReply => "Reply from the mail server",
+        RemoteSource::ServiceMessage => "Message from the mail service",
+        RemoteSource::System => "From the system",
+    }
+}
+
+/// The failure of an operation that delivered nothing, such as a load.
+pub fn declare_failure(failure: &Failure) -> DeclaredFailure {
+    let (title, explanation, advice, action) = match failure.kind {
+        FailureKind::AccountSettingsUnavailable => (
+            "Account settings unavailable",
+            "This account's settings could not be read from Online Accounts.",
+            Some("Check this account in Online Accounts, then choose Refresh Inbox."),
+            Some(FailureAction::OnlineAccounts),
+        ),
+        FailureKind::EncryptionNotConfigured => (
+            "No encryption configured",
+            "This account has no encryption configured, so no password was requested and no \
+             connection was made.",
+            Some(
+                "Choose SSL or STARTTLS for this account in Online Accounts, then choose \
+                  Refresh Inbox.",
+            ),
+            Some(FailureAction::OnlineAccounts),
+        ),
+        FailureKind::PasswordUnavailable => (
+            "Password unavailable",
+            "This account's password could not be read from Online Accounts, so no sign-in \
+             was attempted.",
+            Some(CHECK_SIGN_IN),
+            Some(FailureAction::OnlineAccounts),
+        ),
+        FailureKind::AuthorizationUnavailable => (
+            "Authorization unavailable",
+            "This account's authorization could not be read from Online Accounts, so no \
+             sign-in was attempted.",
+            Some(CHECK_SIGN_IN),
+            Some(FailureAction::OnlineAccounts),
+        ),
+        FailureKind::OnlineAccountsNotResponding => (
+            "Online Accounts not responding",
+            "Online Accounts did not answer in time, so no sign-in was attempted.",
+            None,
+            Some(FailureAction::Retry),
+        ),
+        // The load reports a cancellation instead (FR-010); this arm keeps
+        // the declaration total.
+        FailureKind::AccountRequestStopped => (
+            "Loading stopped",
+            "Loading this Inbox stopped before it finished.",
+            None,
+            Some(FailureAction::Retry),
+        ),
+        FailureKind::ServerUnavailable(_) => (
+            "Server unavailable",
+            "The mail server is temporarily unavailable.",
+            None,
+            Some(FailureAction::Retry),
+        ),
+        FailureKind::ServerRejectedSignIn => (
+            failed_step_title(ServerStep::SignIn),
+            failed_step_explanation(ServerStep::SignIn),
+            Some(CHECK_SIGN_IN),
+            Some(FailureAction::OnlineAccounts),
+        ),
+        // A failed secure connection gets Retry: a refused certificate and a
+        // handshake cut short arrive as the same failure.
+        FailureKind::ServerStepFailed(step) => (
+            failed_step_title(step),
+            failed_step_explanation(step),
+            None,
+            Some(FailureAction::Retry),
+        ),
+        FailureKind::ServerNotResponding(step) => (
+            "Server not responding",
+            waiting_step_explanation(step),
+            None,
+            Some(FailureAction::Retry),
+        ),
+        // Repeating meets the same server offer.
+        FailureKind::NoSignInMethod => (
+            "No sign-in method",
+            "The mail server offers no supported sign-in method, so no password was sent.",
+            None,
+            None,
+        ),
+        FailureKind::InboxChanged => (
+            "Inbox changed",
+            "The messages being loaded are no longer in this Inbox.",
+            None,
+            Some(FailureAction::Retry),
+        ),
+        FailureKind::ServiceUnreachable => (
+            "Service unreachable",
+            "The mail service could not be reached.",
+            None,
+            Some(FailureAction::Retry),
+        ),
+        FailureKind::ServiceNotResponding => (
+            "Service not responding",
+            "The mail service stopped responding.",
+            None,
+            Some(FailureAction::Retry),
+        ),
+        FailureKind::ServiceRejectedSignIn => (
+            "Sign-in rejected",
+            "The mail service rejected sign-in.",
+            Some(CHECK_SIGN_IN),
+            Some(FailureAction::OnlineAccounts),
+        ),
+        // Any other status: the general arm, with the status in the details.
+        FailureKind::RequestRefused => (
+            "Request failed",
+            "The mail service refused the request.",
+            None,
+            Some(FailureAction::Retry),
+        ),
+        FailureKind::UnexpectedAnswer => (
+            "Unexpected answer",
+            "The mail service answered in an unexpected form.",
+            None,
+            Some(FailureAction::Retry),
+        ),
+        FailureKind::Stopped => (
+            "Refresh stopped",
+            "Loading this Inbox stopped because of an internal error.",
+            Some("If this happens again, report it with the technical details."),
+            Some(FailureAction::Retry),
+        ),
+        // A full disk can also meet a read: opening the store writes its files.
+        FailureKind::StorageFull => (
+            "Not enough disk space",
+            "There is not enough free disk space to store mail.",
+            Some("Free some disk space, then try again."),
+            Some(FailureAction::Retry),
+        ),
+        FailureKind::MailNotSaved => (
+            "Mail not saved",
+            "The received messages could not be saved.",
+            None,
+            Some(FailureAction::Retry),
+        ),
+        FailureKind::StoredMailUnreadable => (
+            "Stored mail unreadable",
+            "The stored messages could not be read.",
+            None,
+            Some(FailureAction::Retry),
+        ),
     };
     DeclaredFailure {
-        details: failure.technical_details(),
-        ..declared
+        title,
+        explanation: explanation.to_owned(),
+        advice,
+        action,
+        remote_texts: failure.remote_texts.clone(),
+        details: failure.details.clone(),
     }
 }
 
 /// Why the list on screen holds fewer messages than the Inbox offered.
 pub fn declare_short_list(incomplete: &IncompleteList) -> DeclaredFailure {
     match incomplete {
-        IncompleteList::ServerRefused(reply) => DeclaredFailure {
+        IncompleteList::ServerRefused { reply, .. } => DeclaredFailure {
             title: "Some messages not loaded",
             explanation: "The mail server stopped sending the message list, so some \
                           messages are missing."
@@ -88,8 +224,8 @@ pub fn declare_short_list(incomplete: &IncompleteList) -> DeclaredFailure {
             advice: None,
             action: Some(FailureAction::Retry),
             remote_texts: vec![RemoteText {
-                source: REPLY_FROM_SERVER,
-                text: reply.text.clone(),
+                source: RemoteSource::ServerReply,
+                text: reply.clone(),
             }],
             details: incomplete.technical_details(),
         },
@@ -171,222 +307,44 @@ fn explain_content(explanation: &ContentExplanation) -> (&'static str, String) {
     }
 }
 
-/// Online Accounts did not give what the load needs; no server was asked.
-fn declare_access_failure(error: AccessError) -> DeclaredFailure {
-    let (title, explanation, advice, action) = match error {
-        AccessError::Settings => (
-            "Account settings unavailable",
-            "This account's settings could not be read from Online Accounts.",
-            Some("Check this account in Online Accounts, then choose Refresh Inbox."),
-            FailureAction::OnlineAccounts,
-        ),
-        AccessError::NoEncryption => (
-            "No encryption configured",
-            "This account has no encryption configured, so no password was requested and no \
-             connection was made.",
-            Some(
-                "Choose SSL or STARTTLS for this account in Online Accounts, then choose \
-                  Refresh Inbox.",
-            ),
-            FailureAction::OnlineAccounts,
-        ),
-        AccessError::Password => (
-            "Password unavailable",
-            "This account's password could not be read from Online Accounts, so no sign-in \
-             was attempted.",
-            Some(CHECK_SIGN_IN),
-            FailureAction::OnlineAccounts,
-        ),
-        AccessError::AccessToken => (
-            "Authorization unavailable",
-            "This account's authorization could not be read from Online Accounts, so no \
-             sign-in was attempted.",
-            Some(CHECK_SIGN_IN),
-            FailureAction::OnlineAccounts,
-        ),
-        AccessError::Timeout => (
-            "Online Accounts not responding",
-            "Online Accounts did not answer in time, so no sign-in was attempted.",
-            None,
-            FailureAction::Retry,
-        ),
-        // The load reports a cancellation instead (FR-010); this arm keeps
-        // the declaration total.
-        AccessError::Cancelled => (
-            "Loading stopped",
-            "Loading this Inbox stopped before it finished.",
-            None,
-            FailureAction::Retry,
-        ),
-    };
-    DeclaredFailure {
-        title,
-        explanation: explanation.to_owned(),
-        advice,
-        action: Some(action),
-        remote_texts: Vec::new(),
-        // Filled by `declare_load_failure` from the provider's details.
-        details: String::new(),
-    }
-}
-
-/// `failure` is the load failure that holds `error`; it tells what the
-/// server's codes mean.
-fn declare_imap_failure(failure: &LoadFailure, error: &ImapError) -> DeclaredFailure {
-    let (title, explanation) = match error.failure {
-        _ if failure.server_temporarily_unavailable() => (
-            "Server unavailable",
-            "The mail server is temporarily unavailable.",
-        ),
-        ImapFailure::Failed(step) => (failed_step_title(step), failed_step_explanation(step)),
-        ImapFailure::TimedOut(step) => ("Server not responding", waiting_step_explanation(step)),
-        ImapFailure::NoSignInMethod => (
-            "No sign-in method",
-            "The mail server offers no supported sign-in method, so no password was sent.",
-        ),
-        ImapFailure::InboxChanged => (
-            "Inbox changed",
-            "The messages being loaded are no longer in this Inbox.",
-        ),
-    };
-    let (action, advice) = match error.failure {
-        _ if failure.credentials_rejected() => {
-            (Some(FailureAction::OnlineAccounts), Some(CHECK_SIGN_IN))
-        }
-        // Repeating meets the same server offer. A failed secure connection
-        // gets Retry: a refused certificate and a handshake cut short arrive
-        // as the same failure.
-        ImapFailure::NoSignInMethod => (None, None),
-        _ => (Some(FailureAction::Retry), None),
-    };
-    // An alert is what RFC 3501 requires the user to see, so it comes first.
-    let alerts = error.alerts.iter().map(|alert| RemoteText {
-        source: ALERT_FROM_SERVER,
-        text: alert.clone(),
-    });
-    let reply = error.server_reply.iter().map(|reply| RemoteText {
-        source: REPLY_FROM_SERVER,
-        text: reply.text.clone(),
-    });
-    DeclaredFailure {
-        title,
-        explanation: explanation.to_owned(),
-        advice,
-        action,
-        remote_texts: alerts.chain(reply).collect(),
-        // Filled by `declare_load_failure` from the provider's details.
-        details: String::new(),
-    }
-}
-
-fn failed_step_title(step: ImapStep) -> &'static str {
+fn failed_step_title(step: ServerStep) -> &'static str {
     match step {
-        ImapStep::Connect => "Server unreachable",
-        ImapStep::SecureConnection => "Secure connection failed",
-        ImapStep::SignIn => "Sign-in rejected",
-        ImapStep::OpenInbox => "Inbox not opened",
-        ImapStep::FetchMessages => "Message list not received",
-        ImapStep::FetchText => "Message text not received",
+        ServerStep::Connect => "Server unreachable",
+        ServerStep::SecureConnection => "Secure connection failed",
+        ServerStep::SignIn => "Sign-in rejected",
+        ServerStep::OpenInbox => "Inbox not opened",
+        ServerStep::FetchMessages => "Message list not received",
+        ServerStep::FetchText => "Message text not received",
     }
 }
 
-fn failed_step_explanation(step: ImapStep) -> &'static str {
+fn failed_step_explanation(step: ServerStep) -> &'static str {
     match step {
-        ImapStep::Connect => "The mail server could not be reached.",
-        ImapStep::SecureConnection => {
+        ServerStep::Connect => "The mail server could not be reached.",
+        ServerStep::SecureConnection => {
             "A verified encrypted connection to the mail server could not be established, so \
              no password was sent."
         }
-        ImapStep::SignIn => "The mail server rejected sign-in.",
-        ImapStep::OpenInbox => "The mail server did not open the Inbox.",
-        ImapStep::FetchMessages => "The mail server did not send this Inbox's messages.",
-        ImapStep::FetchText => "The mail server did not send the text of these messages.",
+        ServerStep::SignIn => "The mail server rejected sign-in.",
+        ServerStep::OpenInbox => "The mail server did not open the Inbox.",
+        ServerStep::FetchMessages => "The mail server did not send this Inbox's messages.",
+        ServerStep::FetchText => "The mail server did not send the text of these messages.",
     }
 }
 
-fn waiting_step_explanation(step: ImapStep) -> &'static str {
+fn waiting_step_explanation(step: ServerStep) -> &'static str {
     match step {
-        ImapStep::Connect => "The mail server did not answer the connection.",
-        ImapStep::SecureConnection => {
+        ServerStep::Connect => "The mail server did not answer the connection.",
+        ServerStep::SecureConnection => {
             "The mail server stopped responding while the encrypted connection was being set up."
         }
-        ImapStep::SignIn => "The mail server stopped responding during sign-in.",
-        ImapStep::OpenInbox => "The mail server stopped responding while opening the Inbox.",
-        ImapStep::FetchMessages => {
+        ServerStep::SignIn => "The mail server stopped responding during sign-in.",
+        ServerStep::OpenInbox => "The mail server stopped responding while opening the Inbox.",
+        ServerStep::FetchMessages => {
             "The mail server stopped responding while sending this Inbox's messages."
         }
-        ImapStep::FetchText => "The mail server stopped responding while sending the message text.",
-    }
-}
-
-/// `failure` is the load failure that holds `error`; it tells what the
-/// service's status means.
-fn declare_graph_failure(failure: &LoadFailure, error: &GraphError) -> DeclaredFailure {
-    let (title, explanation, advice, action) = match &error.failure {
-        GraphFailure::ConnectionFailed => (
-            "Service unreachable",
-            "The mail service could not be reached.",
-            None,
-            FailureAction::Retry,
-        ),
-        GraphFailure::TimedOut => (
-            "Service not responding",
-            "The mail service stopped responding.",
-            None,
-            FailureAction::Retry,
-        ),
-        GraphFailure::Refused { .. } if failure.credentials_rejected() => (
-            "Sign-in rejected",
-            "The mail service rejected sign-in.",
-            Some(CHECK_SIGN_IN),
-            FailureAction::OnlineAccounts,
-        ),
-        // Any other status: the general arm, with the status in the details.
-        GraphFailure::Refused { .. } => (
-            "Request failed",
-            "The mail service refused the request.",
-            None,
-            FailureAction::Retry,
-        ),
-        GraphFailure::InvalidReply => (
-            "Unexpected answer",
-            "The mail service answered in an unexpected form.",
-            None,
-            FailureAction::Retry,
-        ),
-    };
-    // A refusal carries the service's own message; any other reason is the
-    // platform's text about the connection.
-    let source = match error.failure {
-        GraphFailure::Refused { .. } => MESSAGE_FROM_SERVICE,
-        _ => FROM_SYSTEM,
-    };
-    DeclaredFailure {
-        title,
-        explanation: explanation.to_owned(),
-        advice,
-        action: Some(action),
-        remote_texts: error
-            .reason
-            .iter()
-            .map(|text| RemoteText {
-                source,
-                text: text.clone(),
-            })
-            .collect(),
-        // Filled by `declare_load_failure` from the provider's details.
-        details: String::new(),
-    }
-}
-
-fn declare_worker_stopped() -> DeclaredFailure {
-    DeclaredFailure {
-        title: "Refresh stopped",
-        explanation: "Loading this Inbox stopped because of an internal error.".to_owned(),
-        advice: Some("If this happens again, report it with the technical details."),
-        action: Some(FailureAction::Retry),
-        remote_texts: Vec::new(),
-        // Filled by `declare_load_failure` from the provider's details.
-        details: String::new(),
+        ServerStep::FetchText => {
+            "The mail server stopped responding while sending the message text."
+        }
     }
 }

@@ -9,7 +9,7 @@ Linux is required; Fedora is the primary development environment.
 Install [rustup](https://rustup.rs/) and the system prerequisites:
 
 ```bash
-sudo dnf install git curl openssl gcc pkgconf-pkg-config gtk4-devel libadwaita-devel libsoup3-devel python3 python3-pip desktop-file-utils appstream dbus-daemon meson ninja-build flatpak flatpak-builder
+sudo dnf install git curl openssl gcc pkgconf-pkg-config gtk4-devel libadwaita-devel libsoup3-devel sqlite-devel python3 python3-pip desktop-file-utils appstream dbus-daemon meson ninja-build flatpak flatpak-builder
 ```
 
 Then run from the repository root:
@@ -61,19 +61,20 @@ Mailbag first: if it is already running, a new start only says that logging was
 not turned on. Then start it from a terminal with the record going to a file:
 
 ```bash
-flatpak run io.github.mitinand.Mailbag --log-level=debug 2> mailbag.log
+flatpak run io.github.mitinand.Mailbag --log-level=debug 2> ~/mailbag.log
 ```
 
 For a build from this repository, build first so that Cargo's own output stays
-out of the file:
+out of the file; the record goes to your home folder, not into the repository:
 
 ```bash
 cargo build --locked
-./target/debug/mailbag --log-level=debug 2> mailbag.log
+./target/debug/mailbag --log-level=debug 2> ~/mailbag.log
 ```
 
-Reproduce the problem, quit Mailbag and attach `mailbag.log` to the issue. The
-levels are `error`, `warning`, `info` and `debug`; `debug` tells the most.
+Reproduce the problem, quit Mailbag and attach `mailbag.log` from your home
+folder to the issue. The levels are `error`, `warning`, `info` and `debug`;
+`debug` tells the most.
 
 A debug record contains the Online Accounts identifiers of your accounts, also at
 the other levels; message numbers (UIDs) and, for Microsoft 365 accounts, message
@@ -99,6 +100,9 @@ control them. Read the file before you attach it.
 
 The root Cargo workspace owns shared dependencies, lints and `Cargo.lock`.
 `crates/goa-adapter/` provides the account data contract and GNOME account integration.
-`crates/mailbag-imap/` reads mail over IMAP and `crates/mailbag-content/` decodes
-message text. `third-party-notices/` holds license texts for dependencies that
+`crates/mailbag-imap/` reads mail over IMAP, `crates/mailbag-graph/` over Microsoft
+Graph, and `crates/mailbag-content/` decodes message text. `crates/mailbag-providers/`
+runs each provider's load and writes it to `crates/mailbag-store/`, which keeps the
+mail in a local SQLite file; `crates/mailbag-domain/` holds the definitions every
+layer shares. `third-party-notices/` holds license texts for dependencies that
 publish none.

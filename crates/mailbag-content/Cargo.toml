@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 mail-parser = { version = "0.11.9", features = ["full_encoding"] }
+mailbag-domain = { path = "../mailbag-domain" }
 tracing.workspace = true
 
 [lints]

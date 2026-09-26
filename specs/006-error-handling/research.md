@@ -5,15 +5,24 @@ checked (a source or an experiment), inferred, or unknown.
 
 ## 1. Where the declarations live
 
-**Decision** (corrected 2026-09-26): the wording and the action are written
-in `mailbag`, in `failure_declarations.rs`, one exhaustive function per
-failure value (`declare_load_failure`, `declare_short_list`,
-`declare_content`). The lower layer keeps what only it knows: the typed
-value, the remote texts built with the sign-in name replaced, the technical
-details (`technical_details()`), the record's values (`cause_name`,
-`status`, `server_code`) and the facts read from a protocol's codes
-(`LoadFailure::credentials_rejected`, `server_temporarily_unavailable`).
-The Settings launch failure, a type of `mailbag`, keeps its one sentence.
+**Decision** (corrected twice on 2026-09-26): a lower layer hands the
+application a failure in the domain's terms, never in a protocol's.
+`mailbag-domain`, a crate below every layer, defines the failure every layer
+speaks: `Failure { kind, remote_texts, details }`, where `kind` is a
+`FailureKind` that says what went wrong in the application's terms (the
+stable reason), `remote_texts` are the remote side's words with their
+source, and `details` are the identifiers for a report. The layer that meets
+a failure converts its own values into it: providers turn an `AccessError`,
+an `ImapError` or a `GraphError` into a `FailureKind`, which is where a
+protocol's codes are read (a sign-in rejected for its credentials, a server
+temporarily unavailable); the store (007) turns SQLite's errors into its
+kinds. The layer that gives an operation up also writes its error line to
+the record (003 FR-004), since it holds the protocol values the line names.
+The wording and the action are written in `mailbag`, in
+`failure_declarations.rs`, one exhaustive `match` over `FailureKind`; the
+window no longer sees a protocol type and does not depend on the protocol
+crates. The content outcome (`ReceivedContent`) and the short list
+(`IncompleteList`) are domain types for the same reason.
 
 **Why the first decision was wrong**: it put the declarations in
 `mailbag-providers`, reading "the code of the feature that owns the
@@ -21,35 +30,50 @@ failure" as "the crate where the loads meet". No other owner could declare
 there: the store (007) lies below providers, a synchronization engine will
 lie above it and would make providers depend on it, and the window's own
 failures (a stored Inbox that cannot be read) belong to the window. The
-wording would also have to be translated in a lower layer. The rejected
-alternative "in the window" was rejected for two reasons that do not hold:
-a synchronization layer decides whether to try again from the typed
-failure, not from wording or a button; and the window already depends on
-the protocol crates and receives `LoadFailure` today. The phrase is gone from
-the specification, which describes what the user sees; where the wording
-is written is this decision.
+wording would also have to be translated in a lower layer.
 
-**Checked** (`Cargo.toml` of every crate): `goa-adapter`, `mailbag-imap`,
-`mailbag-graph` and `mailbag-content` depend on nothing in the workspace;
-`mailbag-providers` depends on all four; `mailbag` on all five. Every layer
-that runs an operation for the user is `mailbag-providers` or above it, so
-its failure value reaches `mailbag` without a new dependency.
+**Why the second decision was incomplete**: it moved the wording into
+`mailbag` but let the protocol values travel up: `failure_declarations.rs`
+matched `ImapFailure`, `ImapStep`, `GraphFailure` and `AccessError`, read the
+provider's facts, and `mailbag` depended on `mailbag-graph` and
+`mailbag-imap` only to word their errors. Every new layer that fails would
+have added its own type to the window. The application's architecture puts
+the shared definitions, outcome types included, into one domain crate that
+every layer depends on, and lets only the application explain an outcome;
+the store, the second layer whose failures reach the window, is where the
+cost of converting is lowest.
+
+**Checked** (`Cargo.toml` of every crate, before the domain crate existed):
+`goa-adapter`, `mailbag-imap`, `mailbag-graph` and `mailbag-content`
+depended on nothing in the workspace; `mailbag-providers` on all four;
+`mailbag` on all five. A domain crate with no workspace dependency can be
+reached by all of them. Since 2026-09-26 `goa-adapter` and
+`mailbag-content` depend on `mailbag-domain`, and `mailbag` no longer on the
+protocol crates.
+`ContentExplanation` moves from `mailbag-content` into it, so that the
+domain crate depends on nothing and `mailbag-content` returns the domain's
+type.
+
+**The kinds**: one per text the window shows today, so that no string
+changes ([contract](contracts/failure-declaration.md)). The mail server's
+steps are a domain enumeration (`ServerStep`) that repeats `ImapStep`: this
+repetition is the price of a window that knows no protocol. The kind also
+names the failure in the technical details (`Failure:`) and in the record's
+`cause` (decided by the maintainer on 2026-09-26), so a report and the
+record say it the same way the window chooses its words; the status and
+the codes stay as separate lines and fields. `ServerUnavailable` carries its
+step, so no kind names less than the protocol value it replaces.
 
 **Alternatives**:
+- The wording in `mailbag`, matching the protocol types (the second
+  decision): no domain crate, but the window depends on every protocol and
+  on every lower layer's error type.
 - A new leaf crate for the declaration's type and wording, below every
-  owner: every owner could declare, but every owner would write wording and
-  need translation, and lower crates without the operation's context (the
-  IMAP crate does not know that a password came from Online Accounts) would
-  be invited to write advice they cannot know.
-- The declarations in providers, the rule narrowed to "the layer that runs
-  the operation declares": no new crate, but the wording stays in a lower
-  layer and splits across providers, the window and later the engine, each
-  translated.
-- A shared failure type with a short list of kinds in a domain crate, which
-  every layer converts its errors into: the application would stop matching
-  protocol types, but to keep today's texts the list must tell apart about
-  thirty cases, a copy of the existing enumerations with conversions; or it
-  stays coarse and the texts change. Deferred to §5.
+  owner: every owner would write wording and need translation, and lower
+  crates without the operation's context would be invited to write advice
+  they cannot know.
+- A coarse list of kinds (a few for all remote failures): fewer variants,
+  but the texts that name the failed step would change.
 
 ## 2. The failure dialog and the status pages
 
@@ -108,7 +132,9 @@ slot and calls the previous hook; `load_catching_panics` wraps the load future i
 `futures_util::FutureExt::catch_unwind` (with `AssertUnwindSafe`), leaves
 the payload unread (the hook already has the message) and turns `Err` into
 `LoadFailure::WorkerStopped(Some(panic))`. The worker loop goes on; no
-state survives a load, so nothing is left poisoned. A panic inside a
+state survives a load, so nothing is left poisoned (since 007 the store's
+lock outlives a load; the store takes it over after a panic, whose
+transaction SQLite rolled back). A panic inside a
 library may carry part of the text it was handling: `str` slicing off a
 char boundary prints up to 256 characters of the string (checked,
 `core/src/str/mod.rs`); the dialog shows the text as received, and FR-014
@@ -136,7 +162,9 @@ pool is therefore caught inside that work, where `catch_unwind` and the
 slot give the message and the place, and the pool keeps serving. The code
 that sends work to a thread catches its panics there; a
 helper for work outside the mail worker comes with the first such work
-(007).
+(007). The hook and its slot live in `mailbag-domain` (corrected
+2026-09-26): every layer that sends work to a thread needs them, and a
+caught panic becomes a `Failure` of kind `Stopped` whose details carry it.
 
 **Alternatives**: joining the thread to read the panic payload (the thread
 is long-lived); a fresh thread per load (a thread per load for the sake of
@@ -150,19 +178,11 @@ a rare bug); nothing, as today (the report then says only "stopped").
   button covers the case.
 - A crash file with a report at the next start: out of scope by the spec;
   the panic's text reaches the error stream and the journal.
-- The stale-mail banner over stored messages: waits for 007 (spec US2,
-  FR-013); until then a refresh starts from an empty list.
+- The stale-mail banner over stored messages: built by 007 on 2026-09-26
+  (spec US2, FR-013).
 - The application version in the technical lines: the About dialog shows it.
-- A shared domain crate with one failure type and a short list of kinds
-  (§1): it is needed when failures of several lower crates must be told
-  apart the same way, for example when a synchronization engine hands the
-  application outcomes that do not depend on the provider, or when two
-  lower crates need the same types (007's content outcome, shared by the
-  store and providers, is the first candidate). The classification of
-  failures goes into that crate then, never into one of its producers;
-  the typed facts providers gives today
-  (`credentials_rejected`, `server_temporarily_unavailable`) are where it
-  starts.
+- A shared domain crate with one failure type: decided, see §1 (corrected
+  2026-09-26).
 - Server text as a type that can only be built with the sign-in name
   replaced, so that the compiler refuses unmasked text in a failure:
   today the name is replaced where IMAP failures are built, in one place

@@ -10,6 +10,7 @@
 mod tests;
 
 use mail_parser::{MessageParser, MimeHeaders, PartType, decoders::charsets::map::charset_decoder};
+use mailbag_domain::{ContentExplanation, DisplayFields};
 
 /// One part of a message's MIME structure, as the server described it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,35 +60,6 @@ pub enum TextSelection {
     /// Section numbers of the plain-text parts, in reading order.
     Parts(Vec<Vec<u32>>),
     Explained(ContentExplanation),
-}
-
-/// Why a message shows no text, in terms the reader explains.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ContentExplanation {
-    /// No supported plain text. HTML-only mail is the usual case.
-    NoPlainText {
-        has_html: bool,
-    },
-    Encrypted,
-    /// S/MIME, which this feature neither decrypts nor verifies.
-    SecuredWithSMime,
-    /// A character set mail-parser does not know.
-    UnknownCharset(String),
-    /// A Content-Transfer-Encoding no client knows.
-    UnknownEncoding(String),
-    /// The MIME entity itself could not be read.
-    Undecodable,
-}
-
-impl ContentExplanation {
-    /// Content this version does not show by design, as opposed to content
-    /// that could not be read.
-    pub fn is_by_design(&self) -> bool {
-        matches!(
-            self,
-            Self::NoPlainText { .. } | Self::Encrypted | Self::SecuredWithSMime
-        )
-    }
 }
 
 /// Chooses the plain-text parts to read, without reading any payload.
@@ -394,14 +366,6 @@ pub fn decode_message_text<'a>(
         .map(|(mime_header, body)| decode_text_part(mime_header, body))
         .collect::<Result<_, _>>()?;
     Ok(decoded.join("\n\n"))
-}
-
-/// Subject, sender and recipients for the list and the reader.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct DisplayFields {
-    pub subject: Option<String>,
-    pub from: Option<String>,
-    pub to: Option<String>,
 }
 
 /// Decodes the From, To and Subject header lines of a received message.

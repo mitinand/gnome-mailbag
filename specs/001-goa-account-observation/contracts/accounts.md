@@ -8,7 +8,7 @@ The module defines ordinary Rust data. The adapter decodes GOA; Mailbag owns
 
 | Type / field | Meaning |
 |---|---|
-| AccountId | Nonempty opaque GOA ID; stable across renames, comparable, with ordinary derived Debug; `as_str` gives its text for the record of [003](../../003-logging/spec.md) |
+| AccountId | Nonempty opaque GOA ID; stable across renames, comparable, with ordinary derived Debug; `as_str` gives its text for the record of [003](../../003-logging/spec.md). Defined in `mailbag-domain`, whose `TryFrom<&str>` refuses an empty identifier; `goa-adapter` turns that refusal into its invalid reply (amended by [007](../../007-mail-storage/research.md#8-types-and-crates) on 2026-09-26) |
 | AccountProvider | ImapSmtp, Google, Microsoft365 or Other; recognition, not application support |
 | AccountDetails.provider | Required AccountProvider |
 | mail_enabled | Required bool, the inverse of GOA MailDisabled |

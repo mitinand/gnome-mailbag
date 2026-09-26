@@ -4,7 +4,8 @@
 use crate::accounts::{AccountList, AccountPage, AccountProblem, AccountRow, ExclusionReason};
 use crate::settings::LaunchError;
 use adw::{gio, glib, gtk, prelude::*};
-use goa_adapter::{AccountId, AccountUpdate, ErrorCause};
+use goa_adapter::{AccountUpdate, ErrorCause};
+use mailbag_domain::AccountId;
 use mailbag_providers::MailProvider;
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 

@@ -1,13 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! What one load delivered, and how a load that failed is described. These
-//! types cross from the mail worker to whatever shows the mail.
+//! What one load delivered, and how it ended. The batch stays in this crate:
+//! the mail worker stores it, and only the result crosses to whatever shows
+//! the mail, which reads the store (specs/007-mail-storage FR-001); a failure
+//! crosses as the domain's `Failure`.
 
-use goa_adapter::{AccessError, AccountId};
-use mailbag_content::{ContentExplanation, DisplayFields};
+use goa_adapter::AccessError;
+use mailbag_domain::{AccountId, DisplayFields, Failure, IncompleteList, ReceivedContent};
 use mailbag_graph::GraphError;
-use mailbag_imap::{GmailRow, ImapError, ServerReply};
+use mailbag_imap::{GmailRow, ImapError};
 use std::fmt;
 
 /// How many of the newest Inbox messages one load delivers, for every
@@ -16,61 +18,40 @@ pub(crate) const BATCH_SIZE: u32 = 100;
 
 /// One account's Inbox as a single load received it.
 #[derive(Debug)]
-pub struct ReceivedBatch {
-    pub account_id: AccountId,
-    /// The Inbox version these UIDs belong to.
-    pub uid_validity: Option<u32>,
+pub(crate) struct ReceivedBatch {
+    pub(crate) account_id: AccountId,
     /// Newest first, at most `BATCH_SIZE`.
-    pub messages: Vec<ReceivedMessage>,
+    pub(crate) messages: Vec<ReceivedMessage>,
     /// Why messages are missing from this batch. `None` when it is complete.
-    pub incomplete: Option<IncompleteList>,
-}
-
-/// Why a batch holds fewer messages than the Inbox offered.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum IncompleteList {
-    /// The server refused to finish the message list; this is what it said.
-    ServerRefused(ServerReply),
-    /// The mail service offered further messages beyond the one request.
-    MoreAvailable,
+    pub(crate) incomplete: Option<IncompleteList>,
 }
 
 /// One message of a batch. Raw MIME is released once it is decoded.
-pub struct ReceivedMessage {
-    pub identity: MessageIdentity,
-    pub fields: DisplayFields,
+pub(crate) struct ReceivedMessage {
+    pub(crate) identity: MessageIdentity,
+    pub(crate) fields: DisplayFields,
     /// INTERNALDATE as seconds since the Unix epoch.
-    pub internal_date: Option<i64>,
-    pub seen: bool,
-    pub content: ReceivedContent,
+    pub(crate) internal_date: Option<i64>,
+    pub(crate) seen: bool,
+    pub(crate) content: ReceivedContent,
     /// Gmail's own identifier and labels; `None` for every other provider.
-    pub gmail: Option<GmailRow>,
+    pub(crate) gmail: Option<GmailRow>,
 }
 
 /// How the message's provider identifies it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MessageIdentity {
-    /// The IMAP UID, valid with the batch's `uid_validity`.
+pub(crate) enum MessageIdentity {
+    /// The IMAP UID in the Inbox the load read.
     ImapUid(u32),
     /// Microsoft Graph's identifier, which survives moves between folders.
     GraphImmutableId(String),
 }
 
-/// The text of a message, or why the reader shows none.
-#[derive(Clone, PartialEq, Eq)]
-pub enum ReceivedContent {
-    Text(String),
-    /// Why the content rules found no text to show.
-    Explained(ContentExplanation),
-    /// The server could not describe the message, so nothing was read.
-    StructureUnreadable,
-    /// The server or the service did not return the message's text.
-    TextNotReturned,
-}
-
-/// Why a refresh delivered no mail, at the step where it stopped.
+/// Why a refresh delivered no mail, at the step where it stopped, in the
+/// protocol's terms. It stays in this crate; the application receives the
+/// `Failure` it turns into.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum LoadFailure {
+pub(crate) enum LoadFailure {
     /// Online Accounts did not give the settings or the credential.
     OnlineAccounts(AccessError),
     /// The IMAP connection, the sign-in or the transfer failed.
@@ -86,8 +67,12 @@ pub enum LoadFailure {
 /// How one load ended.
 #[derive(Debug)]
 pub enum LoadResult {
-    Received(ReceivedBatch),
-    Failed(LoadFailure),
+    /// The load's messages are the account's stored Inbox now; `incomplete`
+    /// says why messages the Inbox offered are missing.
+    Stored {
+        incomplete: Option<IncompleteList>,
+    },
+    Failed(Failure),
     /// Cancelled by a confirmed exclusion or by quitting; the connection is
     /// closed, so the next refresh may start.
     Cancelled,
@@ -106,16 +91,5 @@ impl fmt::Debug for ReceivedMessage {
             .field("seen", &self.seen)
             .field("content", &self.content)
             .finish_non_exhaustive()
-    }
-}
-
-impl fmt::Debug for ReceivedContent {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Text(text) => write!(formatter, "Text({} characters)", text.chars().count()),
-            Self::Explained(explanation) => write!(formatter, "Explained({explanation:?})"),
-            Self::StructureUnreadable => write!(formatter, "StructureUnreadable"),
-            Self::TextNotReturned => write!(formatter, "TextNotReturned"),
-        }
     }
 }

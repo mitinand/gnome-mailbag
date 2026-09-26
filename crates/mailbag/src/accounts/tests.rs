@@ -3,9 +3,10 @@
 use crate::accounts::*;
 use crate::logging::{LogLevel, capture::start_record};
 use goa_adapter::{
-    AccountCheckError, AccountCheckResult, AccountDetails, AccountId, AccountProvider,
-    AccountUpdate, ErrorCause,
+    AccountCheckError, AccountCheckResult, AccountDetails, AccountProvider, AccountUpdate,
+    ErrorCause,
 };
+use mailbag_domain::AccountId;
 use std::collections::BTreeSet;
 
 pub(super) fn make_account_id(id: &str) -> AccountId {

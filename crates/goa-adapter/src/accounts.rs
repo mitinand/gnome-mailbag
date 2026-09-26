@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use crate::{AccountCheckError, AccountDetails, AccountId, AccountProvider, ErrorCause};
+use crate::{AccountCheckError, AccountDetails, AccountProvider, ErrorCause};
 use glib::{
     Variant,
     variant::{FromVariant, ObjectPath},
 };
+use mailbag_domain::AccountId;
 use std::collections::BTreeMap;
 
 pub(crate) const GOA_ROOT_PATH: &str = "/org/gnome/OnlineAccounts";
@@ -31,7 +32,8 @@ pub(crate) fn parse_accounts(
         let Some(properties) = interfaces.get(ACCOUNT_INTERFACE) else {
             continue;
         };
-        let id = AccountId::try_from(read_required::<String>(properties, "Id")?.as_str())?;
+        let id = AccountId::try_from(read_required::<String>(properties, "Id")?.as_str())
+            .map_err(|_| AccountCheckError::new("account ID", ErrorCause::InvalidReply))?;
         let provider = match read_required::<String>(properties, "ProviderType")?.as_str() {
             "imap_smtp" => AccountProvider::ImapSmtp,
             "google" => AccountProvider::Google,

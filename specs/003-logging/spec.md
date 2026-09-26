@@ -88,7 +88,8 @@ Both are refused starts; FR-002 gives their exact wording and exit status.
 - **FR-004 — Error**: An operation did not complete and has no result. Each
   failed operation MUST produce exactly one error line, written by whoever gives
   the operation up, naming in one field, `cause`, the same failure value the UI
-  explains, such as `cause=TimedOut(SignIn)`. A component that reports its
+  explains, such as `cause=ServerNotResponding(SignIn)` (the domain's failure
+  kind, amended by 006 on 2026-09-26). A component that reports its
   failure upwards writes no error line of its own, and a step that could not run
   writes none. An operation, for this rule, is work with an account, a mail
   server or stored mail: a launch of Settings that fails writes no line, because

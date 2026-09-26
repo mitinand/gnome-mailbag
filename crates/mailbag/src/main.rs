@@ -8,9 +8,9 @@ mod account_ui;
 mod accounts;
 mod failure_declarations;
 mod failure_dialog;
-mod inbox;
 mod logging;
 mod mail_ui;
+mod refreshes;
 mod settings;
 mod window_ui;
 
@@ -25,6 +25,9 @@ mod account_tests;
 #[allow(dead_code)]
 #[path = "../../../tests/support/bus.rs"]
 mod test_bus;
+#[cfg(test)]
+#[path = "../../../tests/support/test_directory.rs"]
+mod test_directory;
 #[cfg(test)]
 #[allow(dead_code)]
 #[path = "../../../tests/support/record.rs"]
@@ -186,9 +189,18 @@ fn connect_account_updates(builder: &gtk::Builder, window: &adw::Window) {
             ui.apply_account_update(update);
         }
     });
+    // The mail store in the user's data directory, opened at its first use
+    // (specs/007-mail-storage/research.md §7).
+    let store = std::sync::Arc::new(mailbag_store::Store::at(
+        glib::user_data_dir().join("mailbag").join("mail.sqlite"),
+    ));
     let window_ui = window_ui::WindowUi::new(
         builder,
-        Box::new(mailbag_providers::MailLoader::new(adapter.clone())),
+        Box::new(mailbag_providers::MailLoader::new(
+            adapter.clone(),
+            store.clone(),
+        )),
+        store,
     );
     *updated_window.borrow_mut() = std::rc::Rc::downgrade(&window_ui);
     let refresh_adapter = adapter.clone();
@@ -206,11 +218,13 @@ fn connect_account_updates(builder: &gtk::Builder, window: &adw::Window) {
     let app = window.application().expect("application window");
     register_action(&app, "accounts", None, move || action_launcher.open());
     app.add_action(window_ui.refresh_action());
+    app.add_action(window_ui.read_stored_inbox_action());
     app.add_action(window_ui.accounts().borrow().retry_check_action());
     let held_window = std::cell::RefCell::new(Some(window_ui));
     window.connect_destroy(move |_| {
         app.remove_action("accounts");
         app.remove_action("refresh-inbox");
+        app.remove_action("read-stored-inbox");
         app.remove_action("retry-accounts");
         if let Some(ui) = held_window.borrow_mut().take() {
             // The worker closes its connection on its own thread.

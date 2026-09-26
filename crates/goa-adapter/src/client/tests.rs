@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::GoaAdapter;
-use crate::{AccountId, AccountProvider, AccountUpdate};
+use crate::{AccountProvider, AccountUpdate};
 use crate::{ErrorCause, test_bus::TestBus, test_goa::*};
 use gio::prelude::*;
+use mailbag_domain::AccountId;
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 use std::{
     collections::VecDeque,

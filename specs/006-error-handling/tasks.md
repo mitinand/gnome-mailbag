@@ -5,7 +5,8 @@
 approved 2026-09-25; portions 1–4 implemented, the simplify review applied
 (option A) and acceptance done live 2026-09-25 (plan.md,
 "Post-implementation"). Portion 5, where the wording lives, planned
-2026-09-26 on `claude/failure-ownership`.
+2026-09-26 on `claude/failure-ownership`. Portion 6, failures as domain
+values, built 2026-09-26 on `claude/storage`, before 007's portions.
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -34,6 +35,7 @@ test pins wording except the privacy invariants and the general arms.
 | 4. Panic on the worker | T017–T019 | feat(providers): turn a panic on the mail worker into a failed load | Error handling |
 | Polish | T020–T022 | (per review) | Error handling |
 | 5. Where the wording lives | T023–T027 | refactor(errors): write failure wording in the application | Failure wording in the application |
+| 6. Failures as domain values | T028–T032 | refactor(errors): hand failures to the application as domain values | Mail storage |
 
 ## Phase 1: documents and review
 
@@ -191,3 +193,69 @@ and the window's GTK test, each unchanged in what it asserts.
   the size with plan.md's correction table; run the simplify review on the
   branch diff in a fresh subagent and bring scope-adding findings to the
   maintainer; report and suggest the commit.
+
+## Phase 8: failures as domain values (portion 6)
+
+Plan: "Amendment 2026-09-26: failures as domain values"; the
+[contract](contracts/failure-declaration.md) fixes the types and the
+kinds. Every wording literal stays as it is; the technical `Failure:` line
+and the record's `cause` name the kind (decided 2026-09-26), the other
+technical lines and record fields stay as they are.
+
+- [X] T028 Create crates/mailbag-domain (Cargo.toml without workspace
+  dependencies, the workspace lints; add it to the workspace members) with
+  the contract's `Failure`, `FailureKind` (each variant documented with the
+  value it comes from), `ServerStep`, `RemoteText` and `RemoteSource`; move
+  `ReceivedContent` with its `Debug` from
+  crates/mailbag-providers/src/batch.rs, recreate `IncompleteList` in the
+  contract's form (`ServerRefused { reply, code }`, which providers fill from
+  `mailbag-imap`'s `ServerReply`), `IncompleteList::technical_details`
+  from crates/mailbag-providers/src/failure.rs, `ContentExplanation` with
+  `is_by_design` from crates/mailbag-content/src/lib.rs, and the panic hook
+  and its slot from crates/mailbag-providers/src/worker.rs into
+  `src/panic.rs` (`install_panic_hook`, `take_panic`); make
+  mailbag-content depend on it and return its `ContentExplanation`; add to
+  scripts/check.sh that mailbag-domain depends on no GTK, GLib or workspace
+  crate.
+- [X] T029 In crates/mailbag-providers make `LoadFailure` private to the
+  crate; in failure.rs add `LoadFailure::into_failure(self) -> Failure` with
+  `failure_kind()` (the contract's table, using `credentials_rejected` and
+  `server_temporarily_unavailable`), `remote_texts()` (alerts then the
+  reply; the service's message after a refusal or the platform's text) and
+  `technical_details()` whose `Failure:` line names the kind (`Status:`,
+  `Server code:`, `Service code:`, `Panic:` as today); in worker.rs report
+  `LoadResult::Failed(Failure)`; add `LoadFailure::give_up(self, account)
+  -> LoadResult`, which writes the load's error line through
+  `log_load_failure(account, kind, status, code, alerts)` (moved from
+  crates/mailbag/src/inbox.rs, the one function that writes a load's error
+  line, `cause` naming the kind, its other fields unchanged) and returns
+  `Failed(self.into_failure())`, and call it
+  from both places that give a load up: the worker, and `start_transfer` in
+  lib.rs for an Online Accounts failure, which ends the load on GTK's
+  context before the worker is involved; switch imports of the moved types
+  in lib.rs, imap_batch.rs and microsoft365.rs.
+- [X] T030 In crates/mailbag/src/failure_declarations.rs replace
+  `declare_load_failure` and its protocol arms with `declare_failure(&Failure)`,
+  one arm per `FailureKind` with the same title, explanation, advice and
+  action as today, and `remote_heading(RemoteSource)` for the four headings;
+  let `declare_short_list` and `declare_content` take the domain types;
+  switch crates/mailbag/src/inbox.rs, window_ui.rs, mail_ui.rs and
+  failure_dialog.rs to `Failure`; remove `mailbag-imap` and `mailbag-graph`
+  from crates/mailbag/Cargo.toml.
+- [X] T031 Tests, about 60 new lines: in providers, the kind of every
+  `AccessError`, of `Failed` and `TimedOut` at each step with the codes
+  `AUTHENTICATIONFAILED`, none, `UNAVAILABLE` and another, of
+  `NoSignInMethod`, `InboxChanged`, Graph 401, 500, a failed connection, a
+  timeout and an invalid reply, and of a panic; one error line for a failed
+  Online Accounts request and one for a failed transfer; the remote texts in
+  order;
+  the `Failure:` line naming the kind and the other technical lines as
+  today. Rewrite
+  crates/mailbag/src/failure_declarations/tests.rs over kinds, keeping its
+  assertions; switch the fixtures of crates/mailbag/src/mail_ui/tests.rs,
+  failure_dialog/tests.rs and inbox/tests.rs to `Failure`.
+- [X] T032 STOP: run ./scripts/check.sh, git diff --check and each GTK test
+  on its own; confirm with `git diff` that no wording literal of
+  failure_declarations.rs changed (the `Failure:` line and `cause` change by
+  decision); compare the size with the amendment's
+  table; report and suggest the commit.

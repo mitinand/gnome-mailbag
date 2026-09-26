@@ -22,10 +22,10 @@ Refusals, short pages and stalls are verified by the scripted service in
 ## Record at debug (SC-004, SC-005, SC-006)
 
 ```bash
-mailbag --log-level=debug 2> ms365.log
+mailbag --log-level=debug 2> ~/ms365.log
 ```
 
-Refresh the Microsoft 365 account, quit, then read `ms365.log`:
+Refresh the Microsoft 365 account, quit, then read `~/ms365.log`:
 
 - One line for the request with its path and no query value beyond the
   fixed ones, one for the answer with status 200, the size, 100 messages and
@@ -35,7 +35,7 @@ Refresh the Microsoft 365 account, quit, then read `ms365.log`:
 - Note one identifier. In Outlook, move that message to another folder and
   back to the Inbox. Refresh at debug again: the message carries the same
   identifier.
-- Search the file for the token: `grep -c 'Bearer' ms365.log` prints 0, and
+- Search the file for the token: `grep -c 'Bearer' ~/ms365.log` prints 0, and
   the first characters of the token as shown by Online Accounts' debug
   output are absent. Search for a subject and the account's address: none.
 

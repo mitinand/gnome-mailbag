@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 gio.workspace = true
 glib.workspace = true
+mailbag-domain = { path = "../mailbag-domain" }
 tracing.workspace = true
 
 [lints]

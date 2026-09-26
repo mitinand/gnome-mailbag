@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::{
-    AccountId, GoaAdapter,
+    GoaAdapter,
     access_calls::{
         AccessError, AccessRequest, access_error, find_account_object, read_access_token,
         read_account_objects, report_without_connection,
@@ -14,6 +14,7 @@ use crate::{
 };
 use gio::prelude::*;
 use glib::variant::{FromVariant, ObjectPath};
+use mailbag_domain::AccountId;
 
 /// GOA's PasswordBased key for the IMAP password of a Generic IMAP account.
 const IMAP_PASSWORD_KEY: &str = "imap-password";

@@ -9,8 +9,8 @@ mod graph_access;
 mod imap_access;
 pub use access_calls::{AccessError, AccessRequest};
 pub use account_model::{
-    AccountCheckError, AccountCheckResult, AccountDetails, AccountId, AccountProvider,
-    AccountUpdate, ErrorCause,
+    AccountCheckError, AccountCheckResult, AccountDetails, AccountProvider, AccountUpdate,
+    ErrorCause,
 };
 pub use client::GoaAdapter;
 pub use graph_access::GraphAccess;

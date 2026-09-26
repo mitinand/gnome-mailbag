@@ -6,7 +6,7 @@
 //! (specs/002-imap-integration/contracts/goa-access.md, amendment by 005).
 
 use crate::{
-    AccountId, GoaAdapter,
+    GoaAdapter,
     access_calls::{
         AccessError, AccessRequest, access_error, find_account_object, read_access_token,
         read_account_objects, report_without_connection,
@@ -14,6 +14,7 @@ use crate::{
     accounts::OAUTH2_BASED_INTERFACE,
 };
 use glib::variant::ObjectPath;
+use mailbag_domain::AccountId;
 
 /// The access token of one Microsoft 365 account, owned by the load that asked
 /// for it. No Debug, Display or Clone: a token is as sensitive as a password.

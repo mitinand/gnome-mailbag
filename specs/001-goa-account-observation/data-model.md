@@ -4,7 +4,8 @@ All state belongs to the current run. F01 has no database, credentials or mail c
 
 | Data | Owner | Definition |
 |---|---|---|
-| AccountId, AccountDetails, AccountCheckResult, AccountUpdate, AccountCheckError | goa-adapter::account_model | [Account contract](contracts/accounts.md) |
+| AccountDetails, AccountCheckResult, AccountUpdate, AccountCheckError | goa-adapter::account_model | [Account contract](contracts/accounts.md) |
+| AccountId | mailbag-domain, shared by every layer (amended by [007](../007-mail-storage/research.md#8-types-and-crates) on 2026-09-26) | [Account contract](contracts/accounts.md) |
 | Last accepted full list and read result | GOA observer | [Parsing and acceptance](contracts/observation.md#parsing-and-acceptance) |
 | Active operation, refetch_needed, retry progress and subscriptions | GOA observer | [Read scheduling](contracts/observation.md#events-and-request-ordering) |
 | Visible rows, selected ID, page state and excluded reasons | Mailbag AccountList | [Application representation](contracts/accounts.md#application-representation) |
