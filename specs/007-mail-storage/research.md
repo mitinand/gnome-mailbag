@@ -187,7 +187,10 @@ mail worker's queue (a second request kind in the worker).
 **Decision**: `<user data directory>/mailbag/mail.sqlite`, from
 `glib::user_data_dir()`: `~/.var/app/io.github.mitinand.Mailbag/data/` in
 the Flatpak, `~/.local/share/` on the host. The store creates the `mailbag`
-directory with mode 0700.
+directory with mode 0700 and gives an existing one the same mode at every
+opening: creating a directory leaves an existing one's rights as they are
+(checked, Rust 1.95 `DirBuilder::create_dir_all`), and a copy restored from a
+backup may have wider rights.
 
 **Evidence** (checked): Flatpak created `~/.var/app` and the application's
 directories with mode 755; on this machine the home directory's mode 700 is

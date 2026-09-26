@@ -10,9 +10,9 @@
 use crate::failure::StoreError;
 use rusqlite::{Connection, ErrorCode};
 use std::{
-    fs::{self, DirBuilder},
+    fs::{self, DirBuilder, Permissions},
     io,
-    os::unix::fs::DirBuilderExt,
+    os::unix::fs::{DirBuilderExt, PermissionsExt},
     path::{Path, PathBuf},
 };
 
@@ -48,12 +48,15 @@ pub(crate) fn open_store(path: &Path) -> Result<Connection, StoreError> {
 
 /// The store's directory, readable by the user only: a Flatpak's data
 /// directories are readable by others, and only the home directory's rights
-/// keep them private (research §7). An existing directory keeps its rights.
+/// keep them private (research §7). An existing directory gets the same
+/// rights, which `create` leaves as they are, so a copy restored with wider
+/// rights becomes private again.
 fn create_private_directory(directory: &Path) -> io::Result<()> {
     DirBuilder::new()
         .recursive(true)
         .mode(0o700)
-        .create(directory)
+        .create(directory)?;
+    fs::set_permissions(directory, Permissions::from_mode(0o700))
 }
 
 /// Tells an empty file, a usable store and one to discard apart. Any other

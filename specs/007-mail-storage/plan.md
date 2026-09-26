@@ -64,7 +64,7 @@ the last section.
 |---|---|---|
 | The domain's additions | `AccountId` and `DisplayFields` moved in; `Message`; the store's three kinds; `catch_panic` and `Failure::stopped` | ~45 new, ~30 moved |
 | The store | `mailbag-store`: `Store` holds the file's path and one connection behind a mutex opened at first use; `replace_inbox`, `read_inbox`, `keep_accounts`; content codes; SQLite's errors turned into `Failure`; no wording | ~365 lines, ~200 lines of tests |
-| Opening and discarding | Create `mailbag/` with mode 0700, open, check version and damage, discard with one warning line, create the schema ([research §4](research.md)) | inside the store's ~365 |
+| Opening and discarding | Create `mailbag/` with mode 0700, or give an existing one that mode (built after the PR review, 2026-09-26), open, check version and damage, discard with one warning line, create the schema ([research §4](research.md)) | inside the store's ~365 |
 | Loads write | The worker turns the batch into `Message`s and calls `replace_inbox` inside the load's panic guard, with its cancellation as the store's check; `Stored { incomplete }`, `Failed(failure)` with the store's failure, or `Cancelled` when the load was cancelled meanwhile; the "Inbox load finished" record line moves here from the window | ~+60 in providers |
 | The window reads | On selecting an account and after a completed load of the shown account, read its Inbox through `gio::spawn_blocking` inside `catch_panic`; show rows, "Inbox is empty", "No mail loaded" or a failure page; rows stay while loading; the banner shows the latest refresh's failure or incomplete list | ~+105 in the window |
 | Wording and Retry | `declare_failure` words the store's three kinds; `show_action_button` takes the operation Retry repeats; `app.read-stored-inbox` reads the shown Inbox again ([research §10](research.md)) | ~50 |
@@ -219,7 +219,6 @@ None is planned. Each would need the situation named beside it.
 |---|---|---|
 | Reading a message's content when it opens | Stored texts so large that reading an Inbox shows a wait or holds too much memory | ~40 lines: a second read, a message replaced meanwhile, a reader failure |
 | rusqlite's statement cache | Preparing statements shows up in a measurement | A feature flag; `foldhash` brings the Zlib licence into `deny.toml` |
-| Correcting the rights of an existing store directory | The directory existed with wider rights before Mailbag created it | ~3 lines |
 | A busy timeout | A second process opens the same store; the application runs once per session today | 1 line |
 | A thread of Mailbag's own for the store | GIO's pool, shared with GIO's own work, delays the window's reads visibly | ~60 lines ([research §2](research.md)) |
 | Reclaiming file space | The file keeps growing; whole-Inbox replacement reuses freed pages, so it does not | 1 line (`auto_vacuum`) |

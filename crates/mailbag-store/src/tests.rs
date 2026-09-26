@@ -268,9 +268,18 @@ fn a_directory_that_cannot_be_created_fails_the_operation_and_deletes_nothing() 
 
 #[test]
 fn the_stores_directory_is_readable_by_the_user_only() {
-    let directory = TestDirectory::new();
-    let store = Store::at(directory.store_path());
-    assert_eq!(store.read_inbox(&account("loaded")), Ok(None));
-    let store_directory = fs::metadata(directory.0.join("mailbag")).unwrap();
-    assert_eq!(store_directory.permissions().mode() & 0o777, 0o700);
+    // A new directory, and one that existed with wider rights, as a copy
+    // restored from a backup may.
+    for existing_rights in [None, Some(0o755)] {
+        let directory = TestDirectory::new();
+        let store_directory = directory.0.join("mailbag");
+        if let Some(rights) = existing_rights {
+            fs::create_dir(&store_directory).unwrap();
+            fs::set_permissions(&store_directory, fs::Permissions::from_mode(rights)).unwrap();
+        }
+        let store = Store::at(directory.store_path());
+        assert_eq!(store.read_inbox(&account("loaded")), Ok(None));
+        let rights = fs::metadata(&store_directory).unwrap().permissions().mode() & 0o777;
+        assert_eq!(rights, 0o700, "{existing_rights:?}");
+    }
 }
