@@ -4,7 +4,9 @@
 **Created**: 2026-09-24
 **Status**: Implemented on `claude/errors` and accepted live by the
 maintainer 2026-09-25 (plan.md, "Post-implementation"); where the wording
-is written in code corrected 2026-09-26 (research §1). The decisions taken
+is written in code corrected 2026-09-26, and failures handed to the
+application as domain values decided the same day and built in portion 6
+(research §1). The decisions taken
 at sizing, at the specification challenge and on the prototype are
 recorded under Clarifications.
 **Input**: One lasting model for how Mailbag reports failures, from the
@@ -442,7 +444,8 @@ from the approved forms, and decided:
   user, and the status page is the only account channel.
 
 - **FR-014 — Defects in Mailbag**: A panic on a worker thread (the mail
-  worker; later the store's) is caught on that thread and becomes a failure
+  worker; later work sent to GIO's thread pool, such as the store's calls)
+  is caught on that thread and becomes a failure
   of the operation the worker ran: its Details carry the panic's message and
   its place in the code, its action is Retry, and the worker keeps serving
   the next operation. A panic in Mailbag's own code carries fixed text; a
