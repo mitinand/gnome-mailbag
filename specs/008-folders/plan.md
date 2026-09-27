@@ -194,8 +194,9 @@ horizontal scrolling, OBJECTID, localized role names (spec FR-013).
   read when the window does not hold its rows, since the load's start forgot
   a failed read of them (007 FR-013); a completed mailbox load re-reads the
   shown mailbox of its account, since the load also updated the messages
-  that mailbox holds with it (spec FR-004); the rows on screen stay while
-  a read runs, and rows a read finds unchanged keep the open message.
+  that mailbox holds with it (spec FR-004); while a mailbox is read again
+  its rows stay on screen, and rows the read finds unchanged keep the open
+  message; another mailbox's read starts from an empty list.
 - `read_folder_lists()` at start, after each complete account update and
   after a completed folder-list load: one read of every shown account's
   folders through GIO's pool, with one number so an older answer is

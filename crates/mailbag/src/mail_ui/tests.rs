@@ -1092,6 +1092,8 @@ fn mailbox_navigation() {
         ("Projects".to_owned(), "Generic".to_owned())
     );
     widgets.select(&ui, &generic, Some("INBOX"));
+    // While the store is read, the rows of the mailbox left are gone.
+    assert!(widgets.rows().is_empty());
     settle(&ui);
     assert_eq!(widgets.rows().len(), 2);
     assert!(row_texts(&widgets.rows()[0]).contains("Second subject"));

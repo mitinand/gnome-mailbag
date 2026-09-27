@@ -75,7 +75,10 @@ enum StoredMailbox {
     /// Not read: a refresh forgot a failed read, so its own outcome shows.
     #[default]
     NotRead,
-    Reading,
+    /// `again` when this mailbox's rows are on screen, read before.
+    Reading {
+        again: bool,
+    },
     /// What the read found: `None` when no load of the mailbox completed.
     Read(Option<Rc<[Message]>>),
     ReadFailed(Failure),
@@ -104,8 +107,9 @@ enum ShownMail {
         title: &'static str,
         description: Option<&'static str>,
     },
-    /// A read is running: the list's page without rows.
-    Reading,
+    /// A read is running: the list's page, with the rows on screen when they
+    /// are this mailbox's, otherwise without rows.
+    Reading { again: bool },
 }
 
 impl WindowUi {
@@ -497,9 +501,9 @@ impl WindowUi {
                 messages,
                 ..
             } => self.mail.show_rows(account_id, messages),
-            // The rows on screen stay until the read answers, so a read that
-            // finds them unchanged keeps the open message.
-            ShownMail::Reading => {}
+            // A mailbox read again keeps its rows until the read answers, so
+            // a read that finds them unchanged keeps the open message.
+            ShownMail::Reading { again: true } => {}
             _ => self.mail.clear(),
         }
         let sidebar = self.sidebar.borrow();
@@ -535,7 +539,7 @@ impl WindowUi {
                 ShownMail::Status { title, description } => {
                     self.show_mail_status(title, description)
                 }
-                ShownMail::Reading => self.list_stack.set_visible_child_name("messages"),
+                ShownMail::Reading { .. } => self.list_stack.set_visible_child_name("messages"),
             }
         }
         let refreshes = self.refreshes.borrow();
@@ -602,7 +606,7 @@ impl WindowUi {
                     banner,
                 }
             }
-            (StoredMailbox::Reading, _) => ShownMail::Reading,
+            (StoredMailbox::Reading { again }, _) => ShownMail::Reading { again: *again },
             _ if loading.is_some() => ShownMail::Status {
                 title: match loading {
                     Some(LoadTarget::FolderList) => "Loading mailbox list",
@@ -688,7 +692,10 @@ impl WindowUi {
     #[cfg(test)]
     pub fn reads_stored_mail(&self) -> bool {
         self.folder_lists.borrow().reading
-            || matches!(self.shown_mailbox.borrow().stored, StoredMailbox::Reading)
+            || matches!(
+                self.shown_mailbox.borrow().stored,
+                StoredMailbox::Reading { .. }
+            )
     }
 }
 
@@ -748,14 +755,22 @@ impl ShownMailbox {
     /// Whether this mailbox's stored messages are on screen, or being read.
     fn holds(&self, folder: &FolderRef) -> bool {
         self.folder.as_ref() == Some(folder)
-            && matches!(self.stored, StoredMailbox::Read(_) | StoredMailbox::Reading)
+            && matches!(
+                self.stored,
+                StoredMailbox::Read(_) | StoredMailbox::Reading { .. }
+            )
     }
 
     /// Starts a read of the mailbox's stored messages and returns its number.
     fn start_read(&mut self, folder: &FolderRef) -> u64 {
         self.latest_read += 1;
+        let again = self.folder.as_ref() == Some(folder)
+            && matches!(
+                self.stored,
+                StoredMailbox::Read(Some(_)) | StoredMailbox::Reading { again: true }
+            );
         self.folder = Some(folder.clone());
-        self.stored = StoredMailbox::Reading;
+        self.stored = StoredMailbox::Reading { again };
         self.latest_read
     }
 
