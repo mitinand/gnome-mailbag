@@ -2,7 +2,8 @@
 
 **Branch**: `claude/folders` | **Feature**: `008-folders`
 **Date**: 2026-09-27 | **Spec**: [spec.md](spec.md)
-**Status**: Approved on 2026-09-27. The budget was raised on 2026-09-27 to the plan's
+**Status**: Implemented and accepted on the installed build on 2026-09-27
+(Post-implementation). Approved on 2026-09-27. The budget was raised on 2026-09-27 to the plan's
 estimate after the clarification's additions; challenged the same day
 (four simplifications applied, one deferral declined by the maintainer's
 earlier decision), aligned with the spec and tasks by the consistency
@@ -320,8 +321,8 @@ crates/mailbag-graph/src/{lib,reply,test_server}.rs
 crates/mailbag-providers/src/{lib,batch,worker,folders,imap,gmail,imap_batch,microsoft365,store_load}.rs
 crates/mailbag-store/src/{schema.sql,lib}.rs
 crates/mailbag/src/{main,window_ui,sidebar_ui,accounts,refreshes,mail_ui,failure_declarations,failure_dialog}.rs
-crates/mailbag/resources/ui/{mailbag,account-problem}.ui
-crates/mailbag/resources/icons/scalable/places/mailbag-folder-inbox-symbolic.svg
+crates/mailbag/resources/ui/{mailbag,account-problem,folder-row}.ui
+crates/mailbag/resources/icons/scalable/places/mailbag-folder-{inbox,starred,important,archive,sent}-symbolic.svg
 the async-imap and imap-proto forks pinned in Cargo.toml (fix branches, new revisions)
 ```
 
@@ -356,6 +357,11 @@ at the acceptance:
   the tree now takes it back.
 - The row's icon sits 1 px above the platform's position; the name and the
   expander arrow keep the platform's placement, without a stylesheet.
+
+Changed after the acceptance, on 2026-09-27: Inbox, Starred, Important,
+Archive and Sent take bundled outline icons (contracts/folders.md, Window),
+and space sets every account but the first apart from the one above it
+(spec, Assumptions).
 
 The record of step 9 at debug level: folder names appear in debug lines
 only; no subject, sender, text or credential; a failed load is one error

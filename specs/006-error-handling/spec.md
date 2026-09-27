@@ -9,7 +9,8 @@ application as domain values decided the same day and built in portion 6
 (research §1). The decisions taken
 at sizing, at the specification challenge and on the prototype are
 recorded under Clarifications. FR-004 and the contract amended on
-2026-09-27 by [Folders](../008-folders/spec.md).
+2026-09-27 by [Folders](../008-folders/spec.md), built and accepted with it
+the same day.
 **Input**: One lasting model for how Mailbag reports failures, from the
 component that meets them to what the user sees. Today each failure is
 presented the way its feature happened to choose: a status page for a failed

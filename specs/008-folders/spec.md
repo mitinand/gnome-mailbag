@@ -2,7 +2,9 @@
 
 **Feature**: `008-folders`
 **Created**: 2026-09-26
-**Status**: Approved on 2026-09-27. Sized and challenged on 2026-09-26,
+**Status**: Implemented and accepted on the installed build on 2026-09-27
+([plan](plan.md), Post-implementation). Approved on 2026-09-27. Sized and
+challenged on 2026-09-26,
 clarified on 2026-09-27; the decisions are recorded under Clarifications.
 Amended on 2026-09-27 before the window was built: an empty folder list no
 longer hides the account (FR-001), and folder lists that cannot be read
@@ -739,7 +741,12 @@ rows and the failure shown after each.
   problem button and its explanation move from code into a form. Decided at
   the acceptance: the tree no longer activates a row on a single click
   (FR-010), and the row's icon sits 1 px higher than the platform's row
-  places it, closer to the middle of the name.
+  places it, closer to the middle of the name. Decided after the
+  acceptance: space, not a line, sets every account but the first apart
+  from the one above it; the form's hidden separator becomes the
+  platform's spacer at one and a half times its height (18 px). The space
+  belongs to the account's row, so an account row that can be selected
+  (FR-009) is highlighted with it; accepted, since that row is rare.
 
 ## Amendments to earlier specifications
 

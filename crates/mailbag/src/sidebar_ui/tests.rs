@@ -61,6 +61,8 @@ fn sidebar_transitions() {
     update.last_check = AccountCheckResult::Complete;
     ui.borrow_mut().apply_update(&update);
     assert_eq!(ui.borrow().account_nodes[&id], first_item);
+    // Space sets apart every account but the first.
+    assert!(!first_row.widgets.account_spacing.is_visible());
     let second_id = AccountId::try_from("synthetic-earlier").unwrap();
     update
         .accounts
@@ -72,6 +74,13 @@ fn sidebar_transitions() {
     );
     assert_eq!(ui.borrow().root.item(1).unwrap(), first_item);
     assert_eq!(selection.selected(), 1);
+    assert!(
+        !ui.borrow().account_nodes[&second_id]
+            .borrow::<SidebarNode>()
+            .widgets
+            .account_spacing
+            .is_visible()
+    );
     for mail_enabled in [false, true] {
         update.accounts.get_mut(&second_id).unwrap().mail_enabled = mail_enabled;
         ui.borrow_mut().apply_update(&update);
@@ -81,6 +90,7 @@ fn sidebar_transitions() {
             ui.borrow().root.item(u32::from(mail_enabled)).unwrap(),
             first_item
         );
+        assert_eq!(first_row.widgets.account_spacing.is_visible(), mail_enabled);
     }
     let list_item = first_row.widgets.root.parent().unwrap();
     assert!(list_item.activate());
@@ -137,7 +147,10 @@ fn sidebar_transitions() {
         icon("Inbox").as_deref(),
         Some("mailbag-folder-inbox-symbolic")
     );
-    assert_eq!(icon("Sent").as_deref(), Some("mail-send-symbolic"));
+    assert_eq!(
+        icon("Sent").as_deref(),
+        Some("mailbag-folder-sent-symbolic")
+    );
     assert_eq!(icon("Reports").as_deref(), Some("folder-symbolic"));
 
     // A heading and a container do not react to the pointer and change

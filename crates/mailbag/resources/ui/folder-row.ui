@@ -9,8 +9,15 @@
   <object class="GtkBox" id="folder_row">
     <property name="orientation">vertical</property>
     <child>
-      <object class="GtkSeparator" id="group_separator">
+      <!-- Space that sets an account apart from the one above it: the
+           platform's spacer, one and a half times its height. -->
+      <object class="GtkSeparator" id="account_spacing">
+        <property name="height-request">18</property>
+        <property name="orientation">vertical</property>
         <property name="visible">false</property>
+        <style>
+          <class name="spacer"/>
+        </style>
       </object>
     </child>
     <child>

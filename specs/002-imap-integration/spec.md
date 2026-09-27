@@ -4,7 +4,8 @@
 **Created**: 2026-09-16
 **Revised**: 2026-09-19
 **Status**: Approved by the maintainer 2026-09-19; FR-002, FR-003 and FR-012
-amended on 2026-09-27 by [Folders](../008-folders/spec.md)
+amended on 2026-09-27 by [Folders](../008-folders/spec.md), built and accepted
+with it the same day
 **Input**: On an explicit refresh, load recent Inbox message metadata and plain-text body parts into
 memory without attachment contents, fill the message list, and open the received
 text without another mail request.

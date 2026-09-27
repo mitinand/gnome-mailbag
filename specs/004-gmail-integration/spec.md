@@ -4,7 +4,8 @@
 **Created**: 2026-09-22
 **Revised**: 2026-09-23 after the specification challenge
 **Status**: Approved and implemented on `claude/gmail`; live acceptance by the maintainer 2026-09-23;
-FR-003 and FR-005 amended on 2026-09-27 by [Folders](../008-folders/spec.md)
+FR-003 and FR-005 amended on 2026-09-27 by [Folders](../008-folders/spec.md),
+built and accepted with it the same day
 **Input**: On an explicit refresh, load recent Inbox message metadata and
 plain-text body parts of the selected Google account into memory, the way
 [IMAP integration](../002-imap-integration/spec.md) does for a Generic IMAP

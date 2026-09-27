@@ -6,7 +6,8 @@
 maintainer 2026-09-24; approved 2026-09-23 with the plan after the
 feature-start sizing, a read-only probe against the service and the
 specification challenge (see Clarifications); FR-003 and FR-006 amended
-on 2026-09-27 by [Folders](../008-folders/spec.md)
+on 2026-09-27 by [Folders](../008-folders/spec.md), built and accepted with it
+the same day
 **Input**: On an explicit refresh, load recent Inbox message metadata and text
 of the selected Microsoft 365 account into memory, the way
 [IMAP integration](../002-imap-integration/spec.md) does for a Generic IMAP

@@ -57,11 +57,14 @@ Mailbox").
 ## Window
 
 - The sidebar gives each role its icon: Inbox
-  `mailbag-folder-inbox-symbolic` (bundled), Starred `starred-symbolic`,
-  Important `mail-mark-important-symbolic`, Junk `mail-mark-junk-symbolic`,
-  Trash `user-trash-symbolic`, Drafts `document-edit-symbolic`, Sent
-  `mail-send-symbolic`, Archive and All Mail `folder-symbolic`; all but the
-  first are in the platform's icon theme (checked on the host and in the
+  `mailbag-folder-inbox-symbolic`, Starred `mailbag-folder-starred-symbolic`,
+  Important `mailbag-folder-important-symbolic`, Archive
+  `mailbag-folder-archive-symbolic` and Sent `mailbag-folder-sent-symbolic`
+  (bundled, from the icon-development-kit's `inbox`, `star`,
+  `mail-important`, `box` and `paper-plane`), Junk
+  `mail-mark-junk-symbolic`, Trash `user-trash-symbolic`, Drafts
+  `document-edit-symbolic`, All Mail `folder-symbolic`; the
+  others are in the platform's icon theme (checked on the host and in the
   GNOME 50 runtime); a folder without a role uses `folder-symbolic`.
 
 - `app.refresh-mailbox` ("Refresh Mailbox"): the selected mailbox.

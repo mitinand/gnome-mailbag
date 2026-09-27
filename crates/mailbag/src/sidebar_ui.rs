@@ -52,6 +52,8 @@ struct SidebarNode {
 /// The widgets of folder-row.ui.
 struct RowWidgets {
     root: gtk::Box,
+    /// Shown above every account but the first.
+    account_spacing: gtk::Separator,
     expander: gtk::TreeExpander,
     details: adw::ActionRow,
     icon: gtk::Image,
@@ -289,8 +291,9 @@ impl SidebarUi {
                 self.root.insert(position as u32, &item);
                 item
             });
-            item.borrow::<SidebarNode>()
-                .show_account(account, self.accounts.retry_pending());
+            let node = item.borrow::<SidebarNode>();
+            node.show_account(account, self.accounts.retry_pending());
+            node.widgets.account_spacing.set_visible(position > 0);
         }
         self.changing_rows.set(false);
         self.show_selection();
@@ -553,6 +556,7 @@ impl RowWidgets {
         details.add_controller(click);
         Self {
             root,
+            account_spacing: builder.object("account_spacing").unwrap(),
             expander,
             details,
             icon: builder.object("folder_icon").unwrap(),
@@ -697,19 +701,20 @@ fn shown_name(folder: &Folder) -> &str {
     }
 }
 
-/// The icon of a folder with this role; the Inbox's is bundled with the
-/// application, the others come from the icon theme
+/// The icon of a folder with this role; the `mailbag-` ones are bundled with
+/// the application, the others come from the icon theme
 /// (specs/008-folders/contracts/folders.md).
 fn folder_icon(role: Option<FolderRole>) -> &'static str {
     match role {
         Some(FolderRole::Inbox) => "mailbag-folder-inbox-symbolic",
-        Some(FolderRole::Starred) => "starred-symbolic",
-        Some(FolderRole::Important) => "mail-mark-important-symbolic",
+        Some(FolderRole::Starred) => "mailbag-folder-starred-symbolic",
+        Some(FolderRole::Important) => "mailbag-folder-important-symbolic",
         Some(FolderRole::Junk) => "mail-mark-junk-symbolic",
         Some(FolderRole::Trash) => "user-trash-symbolic",
+        Some(FolderRole::Archive) => "mailbag-folder-archive-symbolic",
         Some(FolderRole::Drafts) => "document-edit-symbolic",
-        Some(FolderRole::Sent) => "mail-send-symbolic",
-        Some(FolderRole::Archive | FolderRole::AllMail) | None => "folder-symbolic",
+        Some(FolderRole::Sent) => "mailbag-folder-sent-symbolic",
+        Some(FolderRole::AllMail) | None => "folder-symbolic",
     }
 }
 

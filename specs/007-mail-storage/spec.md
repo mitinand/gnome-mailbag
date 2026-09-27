@@ -6,7 +6,8 @@
 ([plan](plan.md), Post-implementation). Challenged 2026-09-25; FR-013
 aligned on 2026-09-26 with 006 as corrected that day. FR-002, FR-003 and
 FR-014(b) amended on 2026-09-27 by [008](../008-folders/spec.md), which
-builds the target model of FR-003. The decisions taken at sizing and at the
+builds the target model of FR-003 except the IMAP UID and the folder state
+that synchronization needs; built and accepted with it the same day. The decisions taken at sizing and at the
 specification challenge are recorded under Clarifications.
 **Input**: Every piece of mail the window shows comes from a local store and
 from nowhere else. A load writes what it received into the store; the window

@@ -6,8 +6,8 @@ approved on 2026-09-27 (T001); portion 1 (T002–T010) committed on
 2026-09-27; portions 2 and 3 (T011–T023) committed on 2026-09-27. Before
 portion 4 the budget was raised and the empty list's hidden account and the
 folder-list read's own Retry were dropped (spec Clarifications); portion 4
-(T024–T033) committed on 2026-09-27; T034 committed; T035 done with the
-acceptance fixes, awaiting review.
+(T024–T033) committed on 2026-09-27; polish (T034–T037) done on
+2026-09-27; the feature is implemented and accepted.
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -392,9 +392,9 @@ speak of the mailbox (US1–US7).
 - [x] T035 The manual checks of quickstart.md on the installed build
   (`scripts/build-flatpak.sh --install`); record the results in plan.md
   under a "Post-implementation" heading without sizes.
-- [ ] T036 Mark the spec's Status implemented and accepted, and the amended
+- [x] T036 Mark the spec's Status implemented and accepted, and the amended
   specs' status lines.
-- [ ] T037 STOP: final report with the open items.
+- [x] T037 STOP: final report with the open items.
 
 ## Dependencies
 
