@@ -1,14 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The definitions every layer of the application shares: the account, the
-//! message as the application keeps and shows it, and how a failure is handed
-//! on in the application's terms rather than a protocol's
+//! The definitions every layer of the application shares: the account, its
+//! folders, the message as the application keeps and shows it, and how a
+//! failure is handed on in the application's terms rather than a protocol's
 //! (specs/006-error-handling/research.md §1). Only the application words them
 //! for the user. The crate depends on nothing in the workspace, so every layer
 //! can reach it.
 
 mod panic;
+#[cfg(test)]
+mod tests;
 
 pub use panic::{catch_panic, install_panic_hook, take_panic};
 
@@ -42,12 +44,122 @@ impl TryFrom<&str> for AccountId {
     }
 }
 
+/// A folder of an account as its provider lists it (specs/008-folders
+/// FR-002). The window shows it as a mailbox.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Folder {
+    /// What the provider opens it by: the IMAP or Gmail mailbox name as the
+    /// server sent it, the Microsoft 365 folder identifier.
+    pub identity: String,
+    /// The name shown to the user.
+    pub name: String,
+    /// The parent's identity; `None` directly under the account.
+    pub parent: Option<String>,
+    /// Every attribute or well-known name the server listed, as sent.
+    pub attributes: Vec<String>,
+    pub role: Option<FolderRole>,
+    /// Whether the folder can be opened; one that cannot is a container.
+    pub selectable: bool,
+}
+
+/// What the application makes of a folder's server roles (specs/008-folders
+/// FR-003).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FolderRole {
+    Inbox,
+    Starred,
+    Important,
+    Junk,
+    Trash,
+    Archive,
+    Drafts,
+    Sent,
+    AllMail,
+}
+
+impl FolderRole {
+    /// The order of the system folders in the sidebar (specs/008-folders FR-009).
+    pub const ORDER: [Self; 9] = [
+        Self::Inbox,
+        Self::Starred,
+        Self::Important,
+        Self::Junk,
+        Self::Trash,
+        Self::Archive,
+        Self::Drafts,
+        Self::Sent,
+        Self::AllMail,
+    ];
+
+    /// Whether the folder collects messages that live in other folders, as
+    /// RFC 6154 and RFC 8457 describe these roles. On IMAP a view allows no
+    /// move and no delete, because the standard does not define their effect
+    /// on the message's real folder (specs/008-folders FR-013(d)).
+    pub fn is_view(self) -> bool {
+        matches!(self, Self::Starred | Self::Important | Self::AllMail)
+    }
+
+    /// The icon of a folder with this role; the Inbox's is bundled with the
+    /// application, the others come from the icon theme.
+    pub fn icon_name(self) -> &'static str {
+        match self {
+            Self::Inbox => "mailbag-folder-inbox-symbolic",
+            Self::Starred => "starred-symbolic",
+            Self::Important => "mail-mark-important-symbolic",
+            Self::Junk => "mail-mark-junk-symbolic",
+            Self::Trash => "user-trash-symbolic",
+            Self::Drafts => "document-edit-symbolic",
+            Self::Sent => "mail-send-symbolic",
+            Self::Archive | Self::AllMail => "folder-symbolic",
+        }
+    }
+
+    /// The role as the store writes it (specs/008-folders/data-model.md).
+    pub fn as_code(self) -> &'static str {
+        match self {
+            Self::Inbox => "inbox",
+            Self::Starred => "starred",
+            Self::Important => "important",
+            Self::Junk => "junk",
+            Self::Trash => "trash",
+            Self::Archive => "archive",
+            Self::Drafts => "drafts",
+            Self::Sent => "sent",
+            Self::AllMail => "all_mail",
+        }
+    }
+
+    /// The role a stored code names; `None` for any other text.
+    pub fn from_code(code: &str) -> Option<Self> {
+        Self::ORDER.into_iter().find(|role| role.as_code() == code)
+    }
+}
+
+/// A folder of one account, as a mailbox load and the window address it.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FolderRef {
+    pub account: AccountId,
+    /// The folder's `Folder::identity`.
+    pub identity: String,
+}
+
+/// A message's place in a folder, as a mailbox load listed it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FolderMembership {
+    /// The IMAP UID in this folder, valid with the folder's UIDVALIDITY;
+    /// `None` on Microsoft 365.
+    pub uid: Option<u32>,
+    /// The load's order, newest first.
+    pub position: u32,
+}
+
 /// A message as the application keeps and shows it: what a load received,
 /// what the store holds and what the window lists and reads.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Message {
-    /// What the load calls the message, for the record only: `uid:<n>`,
-    /// `gmail:<X-GM-MSGID>` or `graph:<immutable id>`.
+    /// The message's identity within its account, by which the store keeps
+    /// it once however many folders list it: `uid:<n>`, `gmail:<X-GM-MSGID>`
+    /// or `graph:<immutable id>`.
     pub identity: String,
     pub fields: DisplayFields,
     /// The received date as seconds since the Unix epoch.
@@ -55,6 +167,9 @@ pub struct Message {
     /// The read state as the server last reported it.
     pub seen: bool,
     pub content: ReceivedContent,
+    /// Gmail's labels of the message as last received, kept as data; empty
+    /// elsewhere.
+    pub labels: Vec<String>,
 }
 
 /// Subject, sender and recipients for the list and the reader.
@@ -113,9 +228,9 @@ pub enum FailureKind {
     ServerNotResponding(ServerStep),
     /// The mail server offers no sign-in method the account can use.
     NoSignInMethod,
-    /// The Inbox was replaced, or all its listed messages disappeared, during
-    /// the load.
-    InboxChanged,
+    /// The mailbox was replaced, or all its listed messages disappeared,
+    /// during the load.
+    MailboxChanged,
     /// The mail service could not be reached: no connection, a refused
     /// certificate or a broken transfer.
     ServiceUnreachable,
@@ -146,7 +261,8 @@ pub enum ServerStep {
     /// TLS, certificate verification or STARTTLS.
     SecureConnection,
     SignIn,
-    OpenInbox,
+    ListFolders,
+    OpenMailbox,
     /// The message list or the messages' structures.
     FetchMessages,
     FetchText,
@@ -238,6 +354,15 @@ impl ContentExplanation {
 // The remote side's words and received mail are shown to the user, never
 // written to diagnostics; server text reaches the record only at debug, where
 // the failure is built (specs/003-logging).
+impl fmt::Debug for Folder {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Folder")
+            .field("identity", &self.identity)
+            .finish_non_exhaustive()
+    }
+}
+
 impl fmt::Debug for Message {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter

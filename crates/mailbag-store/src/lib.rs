@@ -1,14 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The mail store: each account's Inbox as the latest completed load left it,
-//! in one SQLite file in the user's data directory (specs/007-mail-storage).
-//! The mail worker writes a load's messages, the window reads them; both call
-//! it off GTK's thread. It speaks the domain's types and hands its failures on
-//! as the domain's `Failure`, with no wording.
+//! The mail store: each account's folders and their messages as the latest
+//! completed loads left them, in one SQLite file in the user's data directory
+//! (specs/007-mail-storage, specs/008-folders). The mail worker writes a
+//! load's result, the window reads it; both call it off GTK's thread. It
+//! speaks the domain's types and hands its failures on as the domain's
+//! `Failure`, with no wording.
 
 mod content;
 mod failure;
+mod folders;
 mod open;
 
 #[cfg(test)]
@@ -21,11 +23,16 @@ mod test_record;
 #[cfg(test)]
 mod tests;
 
-use content::{content_columns, content_from_columns};
 use failure::{StoreError, StoreOperation, storage_failure};
-use mailbag_domain::{AccountId, DisplayFields, Failure, Message};
+use folders::{
+    delete_messages_without_folder, delete_unlisted_folders, read_folder_messages, stored_folder,
+    upsert_folders, write_mailbox,
+};
+use mailbag_domain::{
+    AccountId, Failure, Folder, FolderMembership, FolderRef, FolderRole, Message,
+};
 use open::{configure_connection, create_schema, open_store};
-use rusqlite::{Connection, Row, params, types::Type};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::{
     collections::BTreeSet,
     path::PathBuf,
@@ -33,19 +40,27 @@ use std::{
 };
 
 /// The store: one connection behind a lock, opened at the first use, so that
-/// creating it does no I/O (research §2).
+/// creating it does no I/O (specs/007-mail-storage/research.md §2).
 pub struct Store {
     path: PathBuf,
     connection: Mutex<Option<Connection>>,
 }
 
-/// How a write of a load's messages ended when it did not fail.
+/// How a write of a load's result ended when it did not fail.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InboxWrite {
+pub enum StoreWrite {
     Stored,
-    /// The load was cancelled before the store took its messages, so nothing
+    /// The load was cancelled before the store took its result, so nothing
     /// was written.
     LoadCancelled,
+}
+
+/// A folder as the store holds it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredFolder {
+    pub folder: Folder,
+    /// Whether a load of it completed (specs/007-mail-storage FR-006).
+    pub loaded: bool,
 }
 
 impl Store {
@@ -72,71 +87,132 @@ impl Store {
         }
     }
 
-    /// Replaces the account's stored Inbox with a completed load's messages,
-    /// in their order, in one transaction: a failure leaves the previous Inbox
-    /// whole. `load_cancelled` is asked under the store's lock, so a load
-    /// cancelled because its account was excluded writes nothing, even when
-    /// it finished meanwhile (research §6).
+    /// Replaces the account's folder list with a completed one, in one
+    /// transaction (specs/008-folders FR-001, FR-007): a folder no longer
+    /// listed goes with its memberships and with the messages no other
+    /// folder holds, a listed folder keeps its mail, a new one is not loaded.
+    /// `folders` is never empty: an empty list is not stored. `load_cancelled`
+    /// is asked under the store's lock, so a load cancelled because its
+    /// account was excluded writes nothing, even when it finished meanwhile
+    /// (specs/007-mail-storage/research.md §6).
+    pub fn replace_folders(
+        &self,
+        account: &AccountId,
+        folders: &[Folder],
+        load_cancelled: impl FnOnce() -> bool,
+    ) -> Result<StoreWrite, Failure> {
+        self.with_connection(StoreOperation::Write, |connection| {
+            if load_cancelled() {
+                return Ok(StoreWrite::LoadCancelled);
+            }
+            let transaction = connection.transaction()?;
+            delete_unlisted_folders(&transaction, account, folders)?;
+            delete_messages_without_folder(&transaction, account)?;
+            upsert_folders(&transaction, account, folders)?;
+            transaction.commit()?;
+            Ok(StoreWrite::Stored)
+        })
+    }
+
+    /// Replaces the folder's messages with a completed load's, in their
+    /// order, in one transaction (specs/008-folders FR-004): a failure leaves
+    /// the previous state whole. A message another folder holds is kept once
+    /// with the fields of this load; a message no folder holds any more is
+    /// deleted. A folder the store does not hold fails the write.
+    pub fn replace_mailbox(
+        &self,
+        folder: &FolderRef,
+        messages: &[(Message, FolderMembership)],
+        load_cancelled: impl FnOnce() -> bool,
+    ) -> Result<StoreWrite, Failure> {
+        self.with_connection(StoreOperation::Write, |connection| {
+            if load_cancelled() {
+                return Ok(StoreWrite::LoadCancelled);
+            }
+            let transaction = connection.transaction()?;
+            write_mailbox(&transaction, folder, messages)?;
+            transaction.commit()?;
+            Ok(StoreWrite::Stored)
+        })
+    }
+
+    /// The account's stored folders in no particular order; the window sorts
+    /// them (specs/008-folders/research.md §7). Empty when no folder list was
+    /// stored.
+    pub fn read_folders(&self, account: &AccountId) -> Result<Vec<StoredFolder>, Failure> {
+        self.with_connection(StoreOperation::Read, |connection| {
+            let mut select = connection.prepare(
+                "SELECT identity, name, parent, attributes, role, selectable, loaded \
+                 FROM folder WHERE account = ?1",
+            )?;
+            let folders = select
+                .query_map([account.as_str()], stored_folder)?
+                .collect::<rusqlite::Result<_>>()?;
+            Ok(folders)
+        })
+    }
+
+    /// The folder's stored messages in the load's order, or `None` when no
+    /// load of it completed or the store does not hold the folder.
+    pub fn read_mailbox(&self, folder: &FolderRef) -> Result<Option<Vec<Message>>, Failure> {
+        self.with_connection(StoreOperation::Read, |connection| {
+            let loaded_folder: Option<i64> = connection
+                .query_row(
+                    "SELECT id FROM folder WHERE account = ?1 AND identity = ?2 AND loaded = 1",
+                    params![folder.account.as_str(), folder.identity],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            match loaded_folder {
+                Some(folder_id) => Ok(Some(read_folder_messages(connection, folder_id)?)),
+                None => Ok(None),
+            }
+        })
+    }
+
+    /// Until the loads know folders: stores the account's Inbox load as the
+    /// one folder `INBOX`.
     pub fn replace_inbox(
         &self,
         account: &AccountId,
         messages: &[Message],
         load_cancelled: impl FnOnce() -> bool,
-    ) -> Result<InboxWrite, Failure> {
+    ) -> Result<StoreWrite, Failure> {
+        let inbox = Folder {
+            identity: INBOX.to_owned(),
+            name: INBOX.to_owned(),
+            parent: None,
+            attributes: Vec::new(),
+            role: Some(FolderRole::Inbox),
+            selectable: true,
+        };
+        let placed: Vec<(Message, FolderMembership)> = (0..)
+            .zip(messages)
+            .map(|(position, message)| {
+                (
+                    message.clone(),
+                    FolderMembership {
+                        uid: None,
+                        position,
+                    },
+                )
+            })
+            .collect();
         self.with_connection(StoreOperation::Write, |connection| {
             if load_cancelled() {
-                return Ok(InboxWrite::LoadCancelled);
+                return Ok(StoreWrite::LoadCancelled);
             }
             let transaction = connection.transaction()?;
-            let account = account.as_str();
-            transaction.execute("DELETE FROM inbox WHERE account = ?1", [account])?;
-            transaction.execute("INSERT INTO inbox (account) VALUES (?1)", [account])?;
-            let mut insert = transaction.prepare(
-                "INSERT INTO message (account, identity, subject, sender, recipients, received, \
-                 seen, content_kind, content_detail) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            )?;
-            for message in messages {
-                let (content_kind, content_detail) = content_columns(&message.content);
-                insert.execute(params![
-                    account,
-                    message.identity,
-                    message.fields.subject,
-                    message.fields.from,
-                    message.fields.to,
-                    message.received_unix,
-                    message.seen,
-                    content_kind,
-                    content_detail,
-                ])?;
-            }
-            drop(insert);
+            upsert_folders(&transaction, account, std::slice::from_ref(&inbox))?;
+            write_mailbox(&transaction, &inbox_of(account), &placed)?;
             transaction.commit()?;
-            Ok(InboxWrite::Stored)
+            Ok(StoreWrite::Stored)
         })
     }
 
-    /// The account's stored Inbox in the load's order, or `None` when no load
-    /// of it completed.
+    /// Until the window knows folders: the account's folder `INBOX`.
     pub fn read_inbox(&self, account: &AccountId) -> Result<Option<Vec<Message>>, Failure> {
-        self.with_connection(StoreOperation::Read, |connection| {
-            let account = account.as_str();
-            let stored: bool = connection.query_row(
-                "SELECT EXISTS (SELECT 1 FROM inbox WHERE account = ?1)",
-                [account],
-                |row| row.get(0),
-            )?;
-            if !stored {
-                return Ok(None);
-            }
-            let mut select = connection.prepare(
-                "SELECT identity, subject, sender, recipients, received, seen, content_kind, \
-                 content_detail FROM message WHERE account = ?1 ORDER BY id",
-            )?;
-            let messages = select
-                .query_map([account], stored_message)?
-                .collect::<rusqlite::Result<_>>()?;
-            Ok(Some(messages))
-        })
+        self.read_mailbox(&inbox_of(account))
     }
 
     /// Deletes the stored mail of every account not in `current_accounts`,
@@ -148,7 +224,7 @@ impl Store {
         self.with_connection(StoreOperation::Write, |connection| {
             let transaction = connection.transaction()?;
             let stored_accounts: Vec<String> = transaction
-                .prepare("SELECT account FROM inbox")?
+                .prepare("SELECT account FROM folder UNION SELECT account FROM message")?
                 .query_map([], |row| row.get(0))?
                 .collect::<rusqlite::Result<_>>()?;
             // Only nonempty identifiers are ever stored.
@@ -157,8 +233,11 @@ impl Store {
                 .filter_map(|account| AccountId::try_from(account.as_str()).ok())
                 .filter(|account| !current_accounts.contains(account))
                 .collect();
+            // Memberships go with their folders and messages.
             for account in &removed_accounts {
-                transaction.execute("DELETE FROM inbox WHERE account = ?1", [account.as_str()])?;
+                transaction.execute("DELETE FROM folder WHERE account = ?1", [account.as_str()])?;
+                transaction
+                    .execute("DELETE FROM message WHERE account = ?1", [account.as_str()])?;
             }
             transaction.commit()?;
             Ok(removed_accounts)
@@ -187,31 +266,12 @@ impl Store {
     }
 }
 
-/// Where `read_inbox` selects `content_kind`, for a failure that names it.
-const CONTENT_KIND_COLUMN: usize = 6;
+/// The Inbox's reserved name (RFC 3501 §5.1), until the loads know folders.
+const INBOX: &str = "INBOX";
 
-/// One stored message, from the columns `read_inbox` selects. The schema's
-/// `CHECK` and its version keep unknown content codes out of the file, so a
-/// code the store cannot read here means a damaged row, and the read fails.
-fn stored_message(row: &Row) -> rusqlite::Result<Message> {
-    let content_code: String = row.get("content_kind")?;
-    let content =
-        content_from_columns(&content_code, row.get("content_detail")?).ok_or_else(|| {
-            rusqlite::Error::FromSqlConversionFailure(
-                CONTENT_KIND_COLUMN,
-                Type::Text,
-                format!("unknown content code {content_code}").into(),
-            )
-        })?;
-    Ok(Message {
-        identity: row.get("identity")?,
-        fields: DisplayFields {
-            subject: row.get("subject")?,
-            from: row.get("sender")?,
-            to: row.get("recipients")?,
-        },
-        received_unix: row.get("received")?,
-        seen: row.get("seen")?,
-        content,
-    })
+fn inbox_of(account: &AccountId) -> FolderRef {
+    FolderRef {
+        account: account.clone(),
+        identity: INBOX.to_owned(),
+    }
 }

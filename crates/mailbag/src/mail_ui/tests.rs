@@ -13,7 +13,7 @@ use mailbag_domain::{
     AccountId, ContentExplanation, Failure, FailureKind, IncompleteList, RemoteSource, RemoteText,
 };
 use mailbag_providers::{CancelsLoadOnDrop, LoadResult, LoadsInbox, MailProvider};
-use mailbag_store::{InboxWrite, Store};
+use mailbag_store::{Store, StoreWrite};
 use std::{
     cell::Cell,
     sync::Arc,
@@ -143,8 +143,8 @@ impl ScriptedLoader {
             .replace_inbox(&started.account_id, messages, || started.cancelled.get())
             .expect("the test store takes the load");
         (started.report)(match write {
-            InboxWrite::Stored => LoadResult::Stored { incomplete },
-            InboxWrite::LoadCancelled => LoadResult::Cancelled,
+            StoreWrite::Stored => LoadResult::Stored { incomplete },
+            StoreWrite::LoadCancelled => LoadResult::Cancelled,
         });
     }
 }
@@ -193,6 +193,7 @@ fn two_messages() -> Vec<Message> {
             received_unix: Some(1_700_000_000),
             seen: false,
             content: ReceivedContent::Text("Second body".to_owned()),
+            labels: Vec::new(),
         },
         Message {
             identity: "uid:10".to_owned(),
@@ -204,6 +205,7 @@ fn two_messages() -> Vec<Message> {
             received_unix: Some(1_699_000_000),
             seen: true,
             content: ReceivedContent::StructureUnreadable,
+            labels: Vec::new(),
         },
     ]
 }
@@ -234,6 +236,7 @@ fn unwrapped_and_ordinary_messages() -> Vec<Message> {
             received_unix: Some(1_700_000_000),
             seen: true,
             content: body,
+            labels: Vec::new(),
         })
         .collect()
 }

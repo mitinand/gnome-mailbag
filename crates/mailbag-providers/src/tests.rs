@@ -529,6 +529,7 @@ fn stored_earlier_message() -> Message {
         received_unix: None,
         seen: true,
         content: ReceivedContent::Text("Stored earlier".to_owned()),
+        labels: Vec::new(),
     }
 }
 

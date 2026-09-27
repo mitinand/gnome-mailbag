@@ -140,7 +140,7 @@ pub fn declare_failure(failure: &Failure) -> DeclaredFailure {
             None,
             None,
         ),
-        FailureKind::InboxChanged => (
+        FailureKind::MailboxChanged => (
             "Inbox changed",
             "The messages being loaded are no longer in this Inbox.",
             None,
@@ -312,7 +312,8 @@ fn failed_step_title(step: ServerStep) -> &'static str {
         ServerStep::Connect => "Server unreachable",
         ServerStep::SecureConnection => "Secure connection failed",
         ServerStep::SignIn => "Sign-in rejected",
-        ServerStep::OpenInbox => "Inbox not opened",
+        ServerStep::ListFolders => "Folder list not received",
+        ServerStep::OpenMailbox => "Inbox not opened",
         ServerStep::FetchMessages => "Message list not received",
         ServerStep::FetchText => "Message text not received",
     }
@@ -326,7 +327,8 @@ fn failed_step_explanation(step: ServerStep) -> &'static str {
              no password was sent."
         }
         ServerStep::SignIn => "The mail server rejected sign-in.",
-        ServerStep::OpenInbox => "The mail server did not open the Inbox.",
+        ServerStep::ListFolders => "The mail server did not send the folder list.",
+        ServerStep::OpenMailbox => "The mail server did not open the Inbox.",
         ServerStep::FetchMessages => "The mail server did not send this Inbox's messages.",
         ServerStep::FetchText => "The mail server did not send the text of these messages.",
     }
@@ -339,7 +341,10 @@ fn waiting_step_explanation(step: ServerStep) -> &'static str {
             "The mail server stopped responding while the encrypted connection was being set up."
         }
         ServerStep::SignIn => "The mail server stopped responding during sign-in.",
-        ServerStep::OpenInbox => "The mail server stopped responding while opening the Inbox.",
+        ServerStep::ListFolders => {
+            "The mail server stopped responding while sending the folder list."
+        }
+        ServerStep::OpenMailbox => "The mail server stopped responding while opening the Inbox.",
         ServerStep::FetchMessages => {
             "The mail server stopped responding while sending this Inbox's messages."
         }

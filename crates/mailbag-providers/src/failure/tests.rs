@@ -63,7 +63,7 @@ fn every_failure_value_has_its_kind() {
         // The same codes at another step say nothing about the credentials.
         (
             imap_failure(Failed(ImapStep::OpenMailbox), Some("AUTHENTICATIONFAILED")),
-            Kind::ServerStepFailed(ServerStep::OpenInbox),
+            Kind::ServerStepFailed(ServerStep::OpenMailbox),
         ),
         (
             imap_failure(Failed(ImapStep::FetchMessages), Some("UNAVAILABLE")),
@@ -83,7 +83,7 @@ fn every_failure_value_has_its_kind() {
         ),
         (
             imap_failure(ImapFailure::MailboxChanged, None),
-            Kind::InboxChanged,
+            Kind::MailboxChanged,
         ),
         (
             refused(401, "InvalidAuthenticationToken"),

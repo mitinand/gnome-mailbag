@@ -11,7 +11,7 @@ use crate::{
     failure::log_load_failure,
 };
 use mailbag_domain::{IncompleteList, Message, ReceivedContent};
-use mailbag_store::{InboxWrite, Store};
+use mailbag_store::{Store, StoreWrite};
 
 /// Stores the batch as its account's Inbox and says how the load ended. A
 /// load cancelled before the store took its messages writes nothing; a write
@@ -23,7 +23,7 @@ pub(crate) fn store_batch(
 ) -> LoadResult {
     let messages: Vec<Message> = batch.messages.into_iter().map(message).collect();
     match store.replace_inbox(&batch.account_id, &messages, load_cancelled) {
-        Ok(InboxWrite::Stored) => {
+        Ok(StoreWrite::Stored) => {
             log_received_batch(
                 batch.account_id.as_str(),
                 &messages,
@@ -34,7 +34,7 @@ pub(crate) fn store_batch(
             }
         }
         // The cancellation was recorded where it was requested.
-        Ok(InboxWrite::LoadCancelled) => LoadResult::Cancelled,
+        Ok(StoreWrite::LoadCancelled) => LoadResult::Cancelled,
         Err(failure) => {
             log_load_failure(&batch.account_id, failure.kind, None, None, 0);
             LoadResult::Failed(failure)
@@ -57,6 +57,7 @@ fn message(received: ReceivedMessage) -> Message {
         received_unix: received.internal_date,
         seen: received.seen,
         content: received.content,
+        labels: Vec::new(),
     }
 }
 

@@ -1,20 +1,40 @@
 -- SPDX-FileCopyrightText: 2026 Andrey Mitin
 -- SPDX-License-Identifier: GPL-3.0-or-later
 
--- The stored form of each account's Inbox (specs/007-mail-storage/data-model.md).
--- The hash of this text is the store's version: any change to it discards an
--- existing store at start, since nothing is converted before the first release.
+-- The stored form of each account's folders and their messages
+-- (specs/008-folders/data-model.md). The hash of this text is the store's
+-- version: any change to it discards an existing store at start, since
+-- nothing is converted before the first release.
 
--- A row means that a load of the account completed; without messages its
--- Inbox is empty.
-CREATE TABLE inbox (
-    account TEXT NOT NULL PRIMARY KEY
+-- A folder as the account's latest completed folder list left it. `loaded`
+-- means that a load of it completed; without memberships it is then empty.
+CREATE TABLE folder (
+    id INTEGER PRIMARY KEY,
+    account TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    name TEXT NOT NULL,
+    parent TEXT,
+    attributes TEXT NOT NULL,
+    role TEXT CHECK (role IN (
+        'inbox',
+        'starred',
+        'important',
+        'junk',
+        'trash',
+        'archive',
+        'drafts',
+        'sent',
+        'all_mail'
+    )),
+    selectable INTEGER NOT NULL CHECK (selectable IN (0, 1)),
+    loaded INTEGER NOT NULL CHECK (loaded IN (0, 1)),
+    UNIQUE (account, identity)
 ) STRICT;
 
--- The messages of a stored Inbox; `id` keeps the load's order, newest first.
+-- A message, once per account however many folders list it.
 CREATE TABLE message (
     id INTEGER PRIMARY KEY,
-    account TEXT NOT NULL REFERENCES inbox (account) ON DELETE CASCADE,
+    account TEXT NOT NULL,
     identity TEXT NOT NULL,
     subject TEXT,
     sender TEXT,
@@ -33,7 +53,20 @@ CREATE TABLE message (
         'structure_unreadable',
         'text_not_returned'
     )),
-    content_detail TEXT
+    content_detail TEXT,
+    -- Gmail's labels, one per line.
+    labels TEXT,
+    UNIQUE (account, identity)
 ) STRICT;
 
-CREATE INDEX message_in_inbox ON message (account, id);
+-- A message's place in a folder; `position` keeps the load's order, newest
+-- first.
+CREATE TABLE membership (
+    folder INTEGER NOT NULL REFERENCES folder (id) ON DELETE CASCADE,
+    message INTEGER NOT NULL REFERENCES message (id) ON DELETE CASCADE,
+    uid INTEGER,
+    position INTEGER NOT NULL,
+    PRIMARY KEY (folder, message)
+) STRICT;
+
+CREATE INDEX membership_of_message ON membership (message);

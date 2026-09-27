@@ -2,8 +2,8 @@
 
 **Feature**: `008-folders`
 **Created**: 2026-09-27 · **Branch**: `claude/folders` · **Status**: Documents
-approved on 2026-09-27 (T001); portion 1 (T002–T010) implemented on
-2026-09-27, awaiting review.
+approved on 2026-09-27 (T001); portion 1 (T002–T010) committed on
+2026-09-27; portion 2 (T011–T016) implemented on 2026-09-27, awaiting review.
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -135,13 +135,13 @@ Goal: the domain names folders and roles, the store holds folders, messages
 and memberships; the application keeps its behaviour through thin adapters
 that treat the Inbox as the one folder, removed in portion 3.
 
-- [ ] T011 Amend the documents first: specs/007-mail-storage/spec.md
+- [x] T011 Amend the documents first: specs/007-mail-storage/spec.md
   (FR-002 "its folders", FR-003 built now as this feature's FR-004 and
   FR-007 except the folder state synchronization needs, FR-014(b) reduced
   to what stays deferred) and
   specs/007-mail-storage/data-model.md (a note that 008's data model
   replaces its tables).
-- [ ] T012 [US2] [US4] In crates/mailbag-domain/src/lib.rs: `FolderRole`
+- [x] T012 [US2] [US4] In crates/mailbag-domain/src/lib.rs: `FolderRole`
   (Inbox, Starred, Important, Junk, Trash, Archive, Drafts, Sent, AllMail)
   with `ORDER`, `is_view()` (doc comment: the rule for moves and deletes,
   spec FR-013(d)), `icon_name()` and `as_code()`/`from_code()` for the
@@ -154,11 +154,11 @@ that treat the Inbox as the one folder, removed in portion 3.
   itself unchanged until portion 4); privacy-safe `Debug` for `Folder`
   (identity only);
   unit tests for the order and the views.
-- [ ] T013 [US1] [US4] [US5] In crates/mailbag-store/src/schema.sql: the
+- [x] T013 [US1] [US4] [US5] In crates/mailbag-store/src/schema.sql: the
   tables of data-model.md (`folder`, `message` with `labels` one per line and unique
   `(account, identity)`, `membership` with its index); drop `inbox`; role
   codes as a CHECK.
-- [ ] T014 [US1] [US4] [US5] In crates/mailbag-store/src/lib.rs (and a new
+- [x] T014 [US1] [US4] [US5] In crates/mailbag-store/src/lib.rs (and a new
   src/folders.rs if lib.rs grows past reading): `replace_folders(account,
   folders, load_cancelled)` (delete unlisted folders, delete the account's
   messages without a membership, update listed, insert new with loaded 0),
@@ -174,7 +174,7 @@ that treat the Inbox as the one folder, removed in portion 3.
   memberships by position) so crates/mailbag-providers/src/store_load.rs
   and crates/mailbag/src/window_ui.rs keep working until portion 3 removes
   them; `delete_other_accounts` over `folder` and `message`.
-- [ ] T015 [P] [US1] [US4] [US5] Tests in crates/mailbag-store/src/tests.rs
+- [x] T015 [P] [US1] [US4] [US5] Tests in crates/mailbag-store/src/tests.rs
   (rewritten, about 120 net lines): a folder list round-trips with attributes,
   roles, parents and selectable; a second list removes a folder with its
   memberships and its messages that belonged to it alone, keeps loaded on
@@ -186,7 +186,7 @@ that treat the Inbox as the one folder, removed in portion 3.
   `None`, loaded and empty is `Some(vec![])`; `delete_other_accounts`
   removes folders and messages; a store from 007's structure is discarded at
   start.
-- [ ] T016 STOP: run ./scripts/check.sh and git diff --check; compare the
+- [x] T016 STOP: run ./scripts/check.sh and git diff --check; compare the
   size with plan.md's table (domain ~70, store ~180); report, suggest the
   commit and wait before portion 3.
 

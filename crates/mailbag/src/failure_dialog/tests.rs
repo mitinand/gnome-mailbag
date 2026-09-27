@@ -49,16 +49,16 @@ fn the_report_leaves_out_what_the_failure_does_not_have() {
 #[test]
 fn a_long_remote_text_leaves_the_later_blocks_in_the_report() {
     let failure = declare_failure(&Failure {
-        kind: FailureKind::ServerStepFailed(ServerStep::OpenInbox),
+        kind: FailureKind::ServerStepFailed(ServerStep::OpenMailbox),
         remote_texts: vec![RemoteText {
             source: RemoteSource::ServerReply,
             text: "a".repeat(70_000),
         }],
-        details: "Failure: ServerStepFailed(OpenInbox)".to_owned(),
+        details: "Failure: ServerStepFailed(OpenMailbox)".to_owned(),
     });
     let report = report_text(&failure);
     assert!(
-        report.ends_with("Technical details:\nFailure: ServerStepFailed(OpenInbox)"),
+        report.ends_with("Technical details:\nFailure: ServerStepFailed(OpenMailbox)"),
         "{}",
         &report[report.len() - 80..]
     );
