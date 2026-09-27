@@ -55,8 +55,6 @@ pub struct Folder {
     pub name: String,
     /// The parent's identity; `None` directly under the account.
     pub parent: Option<String>,
-    /// Every attribute or well-known name the server listed, as sent.
-    pub attributes: Vec<String>,
     pub role: Option<FolderRole>,
     /// Whether the folder can be opened; one that cannot is a container.
     pub selectable: bool,
@@ -98,41 +96,6 @@ impl FolderRole {
     pub fn is_view(self) -> bool {
         matches!(self, Self::Starred | Self::Important | Self::AllMail)
     }
-
-    /// The icon of a folder with this role; the Inbox's is bundled with the
-    /// application, the others come from the icon theme.
-    pub fn icon_name(self) -> &'static str {
-        match self {
-            Self::Inbox => "mailbag-folder-inbox-symbolic",
-            Self::Starred => "starred-symbolic",
-            Self::Important => "mail-mark-important-symbolic",
-            Self::Junk => "mail-mark-junk-symbolic",
-            Self::Trash => "user-trash-symbolic",
-            Self::Drafts => "document-edit-symbolic",
-            Self::Sent => "mail-send-symbolic",
-            Self::Archive | Self::AllMail => "folder-symbolic",
-        }
-    }
-
-    /// The role as the store writes it (specs/008-folders/data-model.md).
-    pub fn as_code(self) -> &'static str {
-        match self {
-            Self::Inbox => "inbox",
-            Self::Starred => "starred",
-            Self::Important => "important",
-            Self::Junk => "junk",
-            Self::Trash => "trash",
-            Self::Archive => "archive",
-            Self::Drafts => "drafts",
-            Self::Sent => "sent",
-            Self::AllMail => "all_mail",
-        }
-    }
-
-    /// The role a stored code names; `None` for any other text.
-    pub fn from_code(code: &str) -> Option<Self> {
-        Self::ORDER.into_iter().find(|role| role.as_code() == code)
-    }
 }
 
 /// A folder of one account, as a mailbox load and the window address it.
@@ -141,16 +104,6 @@ pub struct FolderRef {
     pub account: AccountId,
     /// The folder's `Folder::identity`.
     pub identity: String,
-}
-
-/// A message's place in a folder, as a mailbox load listed it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FolderMembership {
-    /// The IMAP UID in this folder, valid with the folder's UIDVALIDITY;
-    /// `None` on Microsoft 365.
-    pub uid: Option<u32>,
-    /// The load's order, newest first.
-    pub position: u32,
 }
 
 /// A message as the application keeps and shows it: what a load received,
@@ -168,9 +121,6 @@ pub struct Message {
     /// The read state as the server last reported it.
     pub seen: bool,
     pub content: ReceivedContent,
-    /// Gmail's labels of the message as last received, kept as data; empty
-    /// elsewhere.
-    pub labels: Vec<String>,
 }
 
 /// Subject, sender and recipients for the list and the reader.

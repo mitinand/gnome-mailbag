@@ -117,10 +117,9 @@ fn an_account_keeps_the_outcome_of_its_latest_load_with_its_target() {
         Some((target, RefreshOutcome::Failed(_))) if *target == inbox
     ));
 
-    // A folder list without any folder is a completed load, which replaces
-    // the mailbox's failure.
+    // A later folder-list load of the account replaces the mailbox's failure.
     start_load(&mut refreshes, &id);
-    refreshes.finish_load(&id, LoadResult::EmptyFolderList);
+    refreshes.finish_load(&id, stored());
     assert!(matches!(
         refreshes.outcome_of(&id),
         Some((LoadTarget::FolderList, RefreshOutcome::Stored(None)))

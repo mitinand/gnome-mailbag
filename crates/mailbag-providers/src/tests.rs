@@ -11,8 +11,8 @@ use crate::test_record::CapturedRecord;
 use crate::worker::{LoadKind, MailWorker, report_outcome};
 use goa_adapter::{GraphAccess, ImapAccess, ImapCredential, ImapEncryption};
 use mailbag_domain::{
-    AccountId, ContentExplanation, DisplayFields, Failure, FailureKind, Folder, FolderMembership,
-    FolderRef, FolderRole, IncompleteList, Message, ReceivedContent,
+    AccountId, ContentExplanation, DisplayFields, Failure, FailureKind, Folder, FolderRef,
+    FolderRole, IncompleteList, Message, ReceivedContent,
 };
 use mailbag_graph::{GraphError, test_server as graph_service};
 use mailbag_imap::{
@@ -554,14 +554,9 @@ fn a_refused_sign_in_is_one_error_line_of_the_load() {
     // (specs/007-mail-storage FR-004).
     let inbox = folder_of(access.account_id.as_str(), "INBOX");
     store_inbox(&store, &inbox);
-    let earlier = [(
-        stored_earlier_message(),
-        FolderMembership {
-            uid: Some(1),
-            position: 0,
-        },
-    )];
-    store.replace_mailbox(&inbox, &earlier, || false).unwrap();
+    store
+        .replace_mailbox(&inbox, &[stored_earlier_message()], || false)
+        .unwrap();
     let (outcome, record) = load_inbox_with_account(access, &store, tracing::Level::DEBUG);
     let text = record.text();
     assert!(matches!(outcome, LoadResult::Failed(_)), "{outcome:?}");
@@ -583,7 +578,6 @@ fn stored_earlier_message() -> Message {
         received_unix: None,
         seen: true,
         content: ReceivedContent::Text("Stored earlier".to_owned()),
-        labels: Vec::new(),
     }
 }
 
@@ -1006,7 +1000,6 @@ fn store_inbox(store: &Store, inbox: &FolderRef) {
         identity: inbox.identity.clone(),
         name: inbox.identity.clone(),
         parent: None,
-        attributes: Vec::new(),
         role: None,
         selectable: true,
     };
@@ -1075,10 +1068,7 @@ fn stored_folders(
         .read_folders(&account)
         .expect("the store reads")
         .into_iter()
-        .map(|stored| {
-            let folder = stored.folder;
-            (folder.identity, folder.name, folder.parent, folder.role)
-        })
+        .map(|folder| (folder.identity, folder.name, folder.parent, folder.role))
         .collect();
     folders.sort_by(|left, right| left.0.cmp(&right.0));
     folders
@@ -1221,20 +1211,22 @@ fn a_folder_list_that_is_cut_short_or_fails_a_page_changes_nothing_stored() {
 }
 
 #[test]
-fn a_completed_list_without_any_folder_stores_nothing_and_says_so() {
+fn a_completed_list_without_any_folder_leaves_the_stored_list_as_it_was() {
     // The default server lists no mailbox.
     let fixture = ImapFixture::start(FixtureSetup::default());
-    let store = Arc::new(Store::in_memory());
+    let earlier = folder_of("synthetic-account", "INBOX");
+    let store = Arc::new(store_with_inbox(&earlier));
+    let before = stored_folders(&store, "synthetic-account");
     let outcome = load_target(
         LoadKind::GenericImap(account_access(&fixture)),
         LoadTarget::FolderList,
         &store,
     );
     assert!(
-        matches!(outcome, LoadResult::EmptyFolderList),
+        matches!(outcome, LoadResult::Stored { incomplete: None }),
         "{outcome:?}"
     );
-    assert_eq!(stored_folders(&store, "synthetic-account"), []);
+    assert_eq!(stored_folders(&store, "synthetic-account"), before);
 }
 
 #[test]
@@ -1245,7 +1237,6 @@ fn a_folder_list_load_cancelled_before_its_write_stores_nothing() {
         identity: "INBOX".to_owned(),
         name: "INBOX".to_owned(),
         parent: None,
-        attributes: Vec::new(),
         role: Some(FolderRole::Inbox),
         selectable: true,
     };
@@ -1302,6 +1293,5 @@ fn a_gmail_message_under_two_loaded_labels_is_one_message_in_both() {
     }
     let in_work = store.read_mailbox(&work).unwrap().expect("a loaded label");
     assert_eq!(in_work[0].identity, "gmail:1000");
-    assert_eq!(in_work[0].labels, ["Travel"]);
     assert_eq!(store.read_mailbox(&travel), Ok(Some(in_work)));
 }

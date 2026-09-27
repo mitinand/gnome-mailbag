@@ -6,7 +6,10 @@
 clarified on 2026-09-27; the decisions are recorded under Clarifications.
 Amended on 2026-09-27 before the window was built: an empty folder list no
 longer hides the account (FR-001), and folder lists that cannot be read
-share the stored mail's Retry (FR-008).
+share the stored mail's Retry (FR-008). Amended at the simplification
+review on 2026-09-27: the server's attributes, Gmail's labels and IMAP UIDs
+are not stored until a feature reads them (FR-002 to FR-004, FR-007), and
+the interface calls the folder list the mailbox list (FR-011).
 **Input**: Support for several mailboxes per account: their discovery, role
 recognition, nesting, storage and display in the sidebar. Deleting mailboxes
 is not built. Once mailboxes are shown, the account itself can no longer be
@@ -411,6 +414,21 @@ rows and the failure shown after each.
   shown as any stored mail that cannot be read, and the one Retry reads the
   folder lists and the shown mailbox again (FR-008).
 
+### Session 2026-09-27 (simplification review)
+
+- Q: Are the server's attributes, Gmail's labels and the IMAP UIDs stored
+  now, for the features that will read them? → A: No. Nothing reads them
+  yet; a stored UID is not valid without the folder's UIDVALIDITY, which
+  synchronization adds; and before the first release any change to the
+  store's structure discards the store (007 FR-012), so values stored now
+  would be gone before their reader exists, while adding them later needs
+  no conversion. The feature that reads them stores them (FR-013(b)). This
+  replaces the clarification's "every attribute is kept" and the UID and
+  labels kept with the relation and the message.
+- Q: Which words name the folder list in the interface? → A: *Mailbox
+  list*, since the user-visible word for a folder is mailbox: "Loading
+  mailbox list", "Mailbox list not received".
+
 ## Requirements
 
 ### Functional Requirements
@@ -433,8 +451,8 @@ rows and the failure shown after each.
 - **FR-002 — What a folder is**: A folder belongs to one account and has: the
   identity its provider gives it (a Generic IMAP or Gmail mailbox name as
   the server sends it; a Microsoft 365 folder identifier), by which it is
-  opened and matched between loads; every attribute the server listed for
-  it, kept as data (FR-003); its name for the user (FR-005); its parent, if
+  opened and matched between loads; its application role (FR-003); its
+  name for the user (FR-005); its parent, if
   any (FR-006); whether it can be opened; and whether a load of it completed
   (007 FR-006). A mailbox name with any character IMAP allows, a double
   quote and a backslash included, MUST be listed, opened and shown
@@ -449,8 +467,10 @@ rows and the failure shown after each.
   what it states: the mailbox attributes of a LIST reply on IMAP and Gmail,
   asked for with the special-use return option where the server offers it
   (RFC 6154 lets a server leave them out of a plain LIST), the well-known
-  folder names of Microsoft Graph. They are kept per folder
-  in full. The application's roles are: Inbox, Starred, Important, Junk,
+  folder names of Microsoft Graph. The providers read them to give each
+  folder its application role and, on IMAP, to tell whether it can be
+  opened; they are not stored until a feature reads them (Clarifications,
+  simplification review). The application's roles are: Inbox, Starred, Important, Junk,
   Trash, Archive, Drafts, Sent, All Mail. The mapping is the application's:
   on IMAP and Gmail, `\Flagged` → Starred, `\Important` → Important,
   `\Junk` → Junk, `\Trash` → Trash, `\Archive` → Archive, `\Drafts` →
@@ -472,22 +492,23 @@ rows and the failure shown after each.
   identifier (004 FR-004), Microsoft 365's immutable identifier (005 FR-004);
   a Generic IMAP message has no identity beyond its place in a folder and is
   the message of that one place. A message belongs to folders through a
-  relation that carries what belongs to the relation: the IMAP UID, valid
-  with the folder's UIDVALIDITY, and the message's position in the folder's
-  list. A Generic IMAP or Microsoft 365 message has exactly one such
+  relation that carries the message's position in the folder's list; the
+  IMAP UID, valid only with the folder's UIDVALIDITY, joins the relation
+  with synchronization (FR-013(b)). A Generic IMAP or Microsoft 365 message has exactly one such
   relation; a Gmail message has one per label whose load listed it. A folder
   shows exactly the messages its own loads listed, each once; nothing puts a
   message into a folder that was not loaded. A load of a folder replaces
   that folder's relations in one step, keeps a message the load listed
   that another folder already holds, and deletes a message left without any
-  relation. A message's fields, read state, content and labels are those of
+  relation. A message's fields, read state and content are those of
   the latest load that listed it, whichever folder that was, so a folder
   shows a message's latest state even when its own load is older. A
   relation another folder holds stays until that folder's next load: on
   the providers where a message is in one server folder, a message moved
   on the server may still be listed in its old folder until that folder is
-  refreshed; synchronization removes the lag (FR-013(b)). Gmail's labels of a message are kept with it as data (004
-  FR-005) and used by synchronization (FR-013(b)). No message is ever
+  refreshed; synchronization removes the lag (FR-013(b)). Gmail reports a
+  message's labels with it (004 FR-005); synchronization stores them and
+  turns them into relations (FR-013(b)). No message is ever
   matched to another by guessing from its date, size or headers.
 - **FR-005 — Names**: A folder is shown under the name its server gives it,
   the Inbox included. When the server announces neither `UTF8=ACCEPT` nor
@@ -514,9 +535,10 @@ rows and the failure shown after each.
   folder, the messages and relations its latest completed Refresh Mailbox
   left. This replaces 007 FR-003's "built now" part with 007's target model
   except the folder state that synchronization needs (UIDVALIDITY and the
-  like, FR-013(b)): the folder with its provider identity and attributes,
-  the message with its provider identity, and membership as a relation
-  carrying the UID. 007's
+  like, FR-013(b)): the folder with its provider identity, the message with
+  its provider identity, and membership as a relation carrying the
+  position; the UID, the server's attributes and Gmail's labels come with
+  the feature that reads them (FR-013(b)). 007's
   rules on privacy, wholeness, the window's thread, a store that cannot be
   used and an account's departure apply unchanged; an account's departure
   removes its folders with its mail.
@@ -569,7 +591,8 @@ rows and the failure shown after each.
   repeating the same action. The wording that today names the Inbox ("Inbox
   not opened", "Inbox changed", "Loading this Inbox stopped", "Refresh
   Inbox") MUST speak of the mailbox and the two actions instead, and
-  obtaining the folder list is a step of its own in the wording. The "no
+  obtaining the folder list is a step of its own in the wording; the
+  interface calls it the mailbox list. The "no
   mail loaded" page's advice, shown for an unloaded folder and for a
   selected account without a folder list alike, reads "Choose Refresh
   Account or Refresh Mailbox in the main menu." (decided at the plan
@@ -587,8 +610,10 @@ rows and the failure shown after each.
   (a) *Unread counts*: server counts obtained with the folder list and the
   badge the folder row already has (the next feature).
   (b) *Synchronization*: a whole folder instead of its newest 100, the
-  folder state it needs, and for Gmail All Mail plus Trash and Spam as the
-  synchronized folders with a message's labels becoming its relations to
+  folder state it needs (UIDVALIDITY with each relation's IMAP UID, and the
+  server attributes it reads), and for Gmail All Mail plus Trash and Spam as
+  the synchronized folders with a message's labels, then stored, becoming
+  its relations to
   every label (007 Clarifications); until then a folder holds what its own
   loads listed.
   (c) *Combined Inbox*: one list over every account's Inbox-role folder,
@@ -614,24 +639,24 @@ rows and the failure shown after each.
 ### Key Entities
 
 - **Folder**: One mailbox of one account as the server lists it: provider
-  identity, name, parent, whether it can be opened, its server roles, its
-  application role, whether a load completed. Owned by its account; gone
+  identity, name, parent, whether it can be opened, its application role,
+  whether a load completed. Owned by its account; gone
   with it. Shown to the user as a mailbox.
 - **Server role**: An attribute the server listed for the folder (an IMAP
-  mailbox attribute, a Microsoft Graph well-known name), kept as data in
-  full, whether the application maps it or not.
+  mailbox attribute, a Microsoft Graph well-known name), read from the
+  listing to give the application role; not stored.
 - **Application role**: What the application makes of the server roles:
   Inbox, Starred, Important, Junk, Trash, Archive, Drafts, Sent, All Mail,
   or none. Chooses an icon and a place in this feature; Starred, Important
   and All Mail are views.
 - **Label**: On Gmail, a folder. A message's labels are the folders it
-  belongs to; the server lists them with the message, and the application
-  keeps them with it.
+  belongs to; the server lists them with the message; synchronization
+  stores them.
 - **Message**: As in 007, stored once per account under its provider
   identity where the provider gives one.
-- **Membership**: The relation between a message and a folder, with the
-  attributes that belong to the relation: the IMAP UID with the folder's
-  UIDVALIDITY, the position in the folder's list.
+- **Membership**: The relation between a message and a folder, carrying the
+  message's position in the folder's list; the IMAP UID with the folder's
+  UIDVALIDITY joins it with synchronization.
 - **Account**: As in 001 and 007; in the sidebar an empty selectable row
   until its folders are known, then a heading over them.
 
@@ -642,7 +667,7 @@ rows and the failure shown after each.
 - **SC-001**: After Refresh Account on a scripted account of each provider,
   the sidebar lists every folder the server listed, with the right nesting,
   the system folders first in the fixed order with their icons, under their
-  server names, and every attribute the server sent is stored; a restart
+  server names; a restart
   with the server stopped shows the same (US1, US2, US3; FR-001, FR-003,
   FR-005, FR-006, FR-009).
 - **SC-002**: Selecting each listed folder shows its stored rows or "no mail

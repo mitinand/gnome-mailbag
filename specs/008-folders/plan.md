@@ -30,8 +30,8 @@ estimate; at every review pause the size so far is compared with this table.
 | Call sites or existing files touched | — | Rust: imap `lib.rs`, `session.rs`, `reader.rs`, `test_server.rs`, new `utf7.rs`; graph `lib.rs`, `reply.rs`, `test_server.rs`; providers `lib.rs`, `batch.rs`, `worker.rs`, `imap.rs`, `gmail.rs`, `imap_batch.rs`, `microsoft365.rs`, `store_load.rs`, new `folders.rs`; store `schema.sql`, `lib.rs`; domain `lib.rs`; mailbag `main.rs`, `window_ui.rs`, `account_ui.rs` (becomes `sidebar_ui.rs`), `accounts.rs`, `refreshes.rs`, `mail_ui.rs`, `failure_declarations.rs`, `failure_dialog.rs`. Forms: `mailbag.ui` (menu), new `account-problem.ui`; resources: one icon and `mailbag.gresource.xml`. Build: `Cargo.lock` and `cargo-sources.json` for the fork revisions |
 | New crates | 0 | 0 |
 | New threads, timers, queues | 0 | 0: the mail worker runs both load kinds one at a time; the window reads through GIO's pool as in 007 |
-| New state, types, error types | — | Domain: `FolderRole`, `Folder`, `FolderRef`, `FolderMembership`; `ServerStep::ListFolders`, `OpenInbox` → `OpenMailbox`, `InboxChanged` → `MailboxChanged`. Providers: `LoadTarget { FolderList, Mailbox(FolderRef) }`, `ReceivedFolderList`. Store: `StoredFolder`. Window: the selection (`Account(id)` / `Mailbox(ref)` / none), the folder lists as one numbered read, one latest refresh outcome per account with its target, `RetriedOperation::RefreshAccount` |
-| New fields in existing data | — | Persisted: tables `folder`, `membership`; `message` gains `labels` and loses `account`-scoped uniqueness in favour of `(account, identity)`; the `inbox` table goes ([data-model.md](data-model.md)). In memory: `ReceivedMessage` carries its UID for the membership; `LoadResult` unchanged |
+| New state, types, error types | — | Domain: `FolderRole`, `Folder`, `FolderRef`; `ServerStep::ListFolders`, `OpenInbox` → `OpenMailbox`, `InboxChanged` → `MailboxChanged`. Providers: `LoadTarget { FolderList, Mailbox(FolderRef) }`, `ReceivedFolderList`. Window: the selection (`Account(id)` / `Mailbox(ref)` / none), the folder lists as one numbered read, one latest refresh outcome per account with its target, `RetriedOperation::RefreshAccount` |
+| New fields in existing data | — | Persisted: tables `folder`, `membership`; `message` loses `account`-scoped uniqueness in favour of `(account, identity)`; the `inbox` table goes ([data-model.md](data-model.md)). In memory: `LoadResult` unchanged |
 | Changes to other features' contracts or documents | 007, 002, 004, 005, 006 | 007 spec FR-002/FR-003/FR-014(b) and data model (the target model built); 002 FR-002/FR-003/FR-012, 004 FR-003/FR-005, 005 FR-003/FR-006 (a named folder; Refresh Mailbox); 006 spec and contract (wording, the new step, Retry of Refresh Account); the 001 contract is untouched (accounts still come from Online Accounts) |
 | New dependencies | 0 | 0; the two fork branches move the pinned revisions |
 | Tests | ≤ 1 840 (raised from 550 to 600, then before the window portion, on 2026-09-27) | ≈ 560: imap ~150 (LIST scripting in the test server ~60, listing and names ~60, UTF-7 ~30); graph ~70 (folder routes in the test server, listing, well-known 404); domain ~20 (roles); store ~120; providers ~90 (three sequences, roles, the Gmail container, memberships from two labels); window ~80 (sidebar GTK test, selection and collapse, Refresh Account outcomes); ≈ 560 after the plan challenge and the review of 2026-09-27 |
@@ -46,10 +46,10 @@ a tree in the locale's order. Selecting a folder shows its stored rows;
 Refresh Mailbox loads its newest 100 messages as 007 loads the Inbox today
 and stores them under the folder. A message is stored once per account
 under its provider identity and belongs to folders through a relation that
-carries the IMAP UID and the position, so a Gmail message with several
+carries its position, so a Gmail message with several
 loaded labels is one stored message in several folders. Roles come from the
 server's attributes and well-known names only, mapped by the providers into
-the application's roles; every attribute is kept. Names are decoded from
+the application's roles. Names are decoded from
 modified UTF-7 when the server does not offer UTF-8 names. Failures follow
 006 unchanged, with wording that speaks of the mailbox. Two defects of the
 pinned IMAP libraries are corrected in the forks first: a refused or cut
@@ -62,9 +62,9 @@ that did not round-trip.
 |---|---|---|
 | Forks | async-imap: a NO or BAD completing LIST ends the name stream with an error, as `parse_fetches` already does. imap-proto: quoted strings are unescaped when parsed | ~20 + ~15, with tests |
 | Listing mailboxes | `mailbag-imap`: `list_mailboxes(account, options)` signs in, enables UTF-8 names when the server advertises `UTF8=ACCEPT` or `UTF8=ONLY`, runs `LIST "" "*"` with `RETURN (SPECIAL-USE)` when it advertises `SPECIAL-USE`, returns each mailbox's raw name, attributes and delimiter, and whether names are UTF-8; `MailboxReader::open(account, options, mailbox)` opens a named mailbox. `mailbag-graph`: `list_folders(service_url, token)` reads the change-tracking listing page by page and resolves the six well-known names, tolerating 404; `list_mailbox_messages(service_url, token, folder_id, batch_size)` | ~190 + ~130 |
-| The domain | `FolderRole` (nine roles, the sidebar's order, `is_view`), `Folder` (identity, name, parent, attributes, role, selectable), `FolderRef`, `FolderMembership` (UID, position) | ~70 |
+| The domain | `FolderRole` (nine roles, the sidebar's order, `is_view`), `Folder` (identity, name, parent, role, selectable), `FolderRef` | ~70 |
 | The store | Tables `folder`, `message`, `membership`; `replace_folders` (delete folders not listed with their memberships and orphaned messages, update listed ones, insert new); `replace_mailbox` (replace the folder's memberships, upsert messages by identity, drop orphans, mark loaded); `read_folders`; `read_mailbox` | ~180 |
-| Providers | `LoadTarget::FolderList` and `::Mailbox(ref)` through the same worker; folder-list sequences per provider producing `Folder`s with roles; the Gmail container dropped; an empty list reported as `LoadResult::EmptyFolderList` without a write; mailbox loads take the target's identity; the batch carries UIDs and labels; two writes | ~150 |
+| Providers | `LoadTarget::FolderList` and `::Mailbox(ref)` through the same worker; folder-list sequences per provider producing `Folder`s with roles; the Gmail container dropped; an empty list reported as completed without a write; mailbox loads take the target's identity; the batch carries its folder; two writes | ~150 |
 | The window | Sidebar as a tree list: accounts as headings or selectable empty rows, folders in order with icons, the account's subtree rebuilt when its stored list changed, collapse clears the selection; the shown mailbox read from the store; Refresh Mailbox and Refresh Account with their outcomes; wording; the account problem form | ~230 |
 
 Not built: unread counts, whole-folder loads, label-driven memberships, the
@@ -77,15 +77,13 @@ horizontal scrolling, OBJECTID, localized role names (spec FR-013).
 
 - `FolderRole { Inbox, Starred, Important, Junk, Trash, Archive, Drafts,
   Sent, AllMail }` with `ORDER`, `is_view()` (Starred, Important, All Mail;
-  the rule for the actions feature, spec FR-013(d)) and `icon_name()`.
+  the rule for the actions feature, spec FR-013(d)); its stored code lives
+  in the store, its icon in the sidebar.
 - `Folder { identity: String, name: String, parent: Option<String>,
-  attributes: Vec<String>, role: Option<FolderRole>, selectable: bool }`: a
-  folder as a provider lists it; `parent` is the parent's identity.
+  role: Option<FolderRole>, selectable: bool }`: a folder as a provider
+  lists it; `parent` is the parent's identity.
 - `FolderRef { account: AccountId, identity: String }`: what a mailbox load
   and the window address.
-- `FolderMembership { uid: Option<u32>, position: u32 }` beside `Message` in the
-  batch the store takes; `Message` gains `labels: Vec<String>` (Gmail,
-  empty elsewhere).
 - `ServerStep::ListFolders`; `OpenInbox` renamed `OpenMailbox`;
   `FailureKind::InboxChanged` renamed `MailboxChanged`.
 
@@ -133,9 +131,9 @@ horizontal scrolling, OBJECTID, localized role names (spec FR-013).
   and `load_<provider>_mailbox(access, folder identity)`; the latter is
   today's Inbox load with the named folder.
 - `store_load.rs`: `store_folder_list(store, account, folders, cancelled)`
-  returns `LoadResult::EmptyFolderList` without touching the store when the
-  list is empty (spec FR-001), else writes through `replace_folders`;
-  `store_mailbox(store, folder_ref, messages with memberships, cancelled)`;
+  reports a completed load without touching the store when the list is
+  empty (spec FR-001), else writes through `replace_folders`;
+  `store_mailbox(store, folder_ref, messages in the load's order, cancelled)`;
   the record lines name the folder's identity.
 - `worker.rs`: `LoadKind` carries the target; `run_load` chooses the
   sequence by provider and target.
@@ -146,15 +144,14 @@ horizontal scrolling, OBJECTID, localized role names (spec FR-013).
   Result<InboxWrite, Failure>`: one transaction: delete `folder` rows of the
   account whose identity is not listed (memberships cascade), delete the
   account's messages left without a membership, update listed rows (name,
-  parent, attributes, role, selectable; `loaded` kept), insert new rows.
-- `replace_mailbox(&self, folder: &FolderRef, messages: &[(Message,
-  FolderMembership)], load_cancelled)`: one transaction: delete the folder's
+  parent, role, selectable; `loaded` kept), insert new rows.
+- `replace_mailbox(&self, folder: &FolderRef, messages: &[Message],
+  load_cancelled)`: one transaction: delete the folder's
   memberships, for each message insert or update by `(account, identity)`,
   insert the membership, delete the messages that lost their last
   membership, set `loaded`.
-- `read_folders(&self, account) -> Result<Vec<StoredFolder>, Failure>`:
-  `Folder` plus `loaded`, in no particular order; the sidebar sorts
-  (research §7).
+- `read_folders(&self, account) -> Result<Vec<Folder>, Failure>`: in no
+  particular order; the sidebar sorts (research §7).
 - `read_mailbox(&self, folder: &FolderRef) -> Result<Option<Vec<Message>>,
   Failure>`: `None` when the folder is not loaded; the messages by position.
 - `delete_other_accounts`: as today over `folder` and `message`.
@@ -190,9 +187,9 @@ horizontal scrolling, OBJECTID, localized role names (spec FR-013).
   target; Retry repeats the target's action (007 FR-005's "latest refresh
   of the account").
 - `finish_load(target, result)`: outcome under its target; a completed
-  folder-list load re-reads the folder lists; `EmptyFolderList` ends the
-  load as a completed one that changed nothing (the providers' record line
-  says the list held no folder); after either, the selected mailbox is
+  folder-list load re-reads the folder lists; an empty one wrote nothing,
+  so the read changes nothing (the providers' record line says the list
+  held no folder); after either, the selected mailbox is
   read when the window does not hold its rows, since the load's start forgot
   a failed read of them (007 FR-013); a completed mailbox load re-reads the
   shown mailbox.
@@ -280,7 +277,7 @@ now; the model measured at a million messages (research §8).
   in source: a cut LIST would delete stored folders with their mail; a
   quoted name would not open.
 - **II. Clear language and concrete names**: `FolderRole`, `Folder`,
-  `FolderRef`, `FolderMembership`, `list_mailboxes`, `replace_folders`,
+  `FolderRef`, `list_mailboxes`, `replace_folders`,
   `replace_mailbox`, `read_mailbox`, `LoadTarget`, `refresh_account`; in
   code *folder* names the thing in the list and the store and *mailbox* a
   folder opened for its messages and everything the user sees
@@ -317,7 +314,7 @@ specs/008-folders/
 ### Source Code
 
 ```text
-crates/mailbag-domain/src/lib.rs          FolderRole, Folder, FolderRef, FolderMembership, labels
+crates/mailbag-domain/src/lib.rs          FolderRole, Folder, FolderRef
 crates/mailbag-imap/src/{lib,session,reader,utf7,test_server}.rs
 crates/mailbag-graph/src/{lib,reply,test_server}.rs
 crates/mailbag-providers/src/{lib,batch,worker,folders,imap,gmail,imap_batch,microsoft365,store_load}.rs

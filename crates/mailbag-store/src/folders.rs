@@ -5,13 +5,8 @@
 //! and the memberships between them (specs/008-folders/data-model.md). Each
 //! function runs inside the caller's transaction or read.
 
-use crate::{
-    StoredFolder,
-    content::{content_columns, content_from_columns},
-};
-use mailbag_domain::{
-    AccountId, DisplayFields, Folder, FolderMembership, FolderRef, FolderRole, Message,
-};
+use crate::content::{content_columns, content_from_columns};
+use mailbag_domain::{AccountId, DisplayFields, Folder, FolderRef, FolderRole, Message};
 use rusqlite::{Connection, Row, Transaction, params, types::Type};
 use std::collections::BTreeSet;
 
@@ -46,11 +41,10 @@ pub(crate) fn upsert_folders(
     folders: &[Folder],
 ) -> rusqlite::Result<()> {
     let mut upsert = transaction.prepare(
-        "INSERT INTO folder (account, identity, name, parent, attributes, role, selectable, \
-         loaded) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0) \
+        "INSERT INTO folder (account, identity, name, parent, role, selectable, loaded) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0) \
          ON CONFLICT (account, identity) DO UPDATE SET name = excluded.name, \
-         parent = excluded.parent, attributes = excluded.attributes, role = excluded.role, \
-         selectable = excluded.selectable",
+         parent = excluded.parent, role = excluded.role, selectable = excluded.selectable",
     )?;
     for folder in folders {
         upsert.execute(params![
@@ -58,22 +52,21 @@ pub(crate) fn upsert_folders(
             folder.identity,
             folder.name,
             folder.parent,
-            folder.attributes.join(" "),
-            folder.role.map(FolderRole::as_code),
+            folder.role.map(role_code),
             folder.selectable,
         ])?;
     }
     Ok(())
 }
 
-/// Replaces the folder's memberships with the load's, stores each message
-/// once by its identity with the load's fields, deletes the messages no
-/// folder holds any more and marks the folder loaded. A folder the store
-/// does not hold fails with no row found.
+/// Replaces the folder's memberships with the load's, in the load's order,
+/// stores each message once by its identity with the load's fields, deletes
+/// the messages no folder holds any more and marks the folder loaded. A
+/// folder the store does not hold fails with no row found.
 pub(crate) fn write_mailbox(
     transaction: &Transaction,
     folder: &FolderRef,
-    messages: &[(Message, FolderMembership)],
+    messages: &[Message],
 ) -> rusqlite::Result<()> {
     let folder_id: i64 = transaction.query_row(
         "SELECT id FROM folder WHERE account = ?1 AND identity = ?2",
@@ -83,20 +76,17 @@ pub(crate) fn write_mailbox(
     transaction.execute("DELETE FROM membership WHERE folder = ?1", [folder_id])?;
     let mut upsert_message = transaction.prepare(
         "INSERT INTO message (account, identity, subject, sender, recipients, received, seen, \
-         content_kind, content_detail, labels) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+         content_kind, content_detail) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
          ON CONFLICT (account, identity) DO UPDATE SET subject = excluded.subject, \
          sender = excluded.sender, recipients = excluded.recipients, \
          received = excluded.received, seen = excluded.seen, \
-         content_kind = excluded.content_kind, content_detail = excluded.content_detail, \
-         labels = excluded.labels \
+         content_kind = excluded.content_kind, content_detail = excluded.content_detail \
          RETURNING id",
     )?;
-    let mut insert_membership = transaction.prepare(
-        "INSERT INTO membership (folder, message, uid, position) VALUES (?1, ?2, ?3, ?4)",
-    )?;
-    for (message, membership) in messages {
+    let mut insert_membership = transaction
+        .prepare("INSERT INTO membership (folder, message, position) VALUES (?1, ?2, ?3)")?;
+    for (position, message) in (0_i64..).zip(messages) {
         let (content_kind, content_detail) = content_columns(&message.content);
-        let labels = (!message.labels.is_empty()).then(|| message.labels.join("\n"));
         let message_id: i64 = upsert_message.query_row(
             params![
                 folder.account.as_str(),
@@ -108,16 +98,10 @@ pub(crate) fn write_mailbox(
                 message.seen,
                 content_kind,
                 content_detail,
-                labels,
             ],
             |row| row.get(0),
         )?;
-        insert_membership.execute(params![
-            folder_id,
-            message_id,
-            membership.uid,
-            membership.position
-        ])?;
+        insert_membership.execute(params![folder_id, message_id, position])?;
     }
     delete_messages_without_folder(transaction, &folder.account)?;
     transaction.execute("UPDATE folder SET loaded = 1 WHERE id = ?1", [folder_id])?;
@@ -145,7 +129,7 @@ pub(crate) fn read_folder_messages(
     connection
         .prepare(
             "SELECT identity, subject, sender, recipients, received, seen, content_kind, \
-             content_detail, labels \
+             content_detail \
              FROM membership JOIN message ON message.id = membership.message \
              WHERE membership.folder = ?1 ORDER BY membership.position",
         )?
@@ -156,31 +140,48 @@ pub(crate) fn read_folder_messages(
 /// Where `read_folder_messages` selects `content_kind`, and `read_folders`
 /// selects `role`, for a failure that names the column.
 const CONTENT_KIND_COLUMN: usize = 6;
-const ROLE_COLUMN: usize = 4;
+const ROLE_COLUMN: usize = 3;
 
 /// One stored folder, from the columns `read_folders` selects. The schema's
 /// `CHECK` and its version keep unknown role codes out of the file, so a code
 /// the store cannot read here means a damaged row, and the read fails.
-pub(crate) fn stored_folder(row: &Row) -> rusqlite::Result<StoredFolder> {
-    let role_code: Option<String> = row.get("role")?;
-    let role = role_code
+pub(crate) fn stored_folder(row: &Row) -> rusqlite::Result<Folder> {
+    let code: Option<String> = row.get("role")?;
+    let role = code
         .map(|code| {
-            FolderRole::from_code(&code)
+            role_from_code(&code)
                 .ok_or_else(|| damaged_row(ROLE_COLUMN, format!("unknown role code {code}")))
         })
         .transpose()?;
-    let attributes: String = row.get("attributes")?;
-    Ok(StoredFolder {
-        folder: Folder {
-            identity: row.get("identity")?,
-            name: row.get("name")?,
-            parent: row.get("parent")?,
-            attributes: attributes.split_whitespace().map(str::to_owned).collect(),
-            role,
-            selectable: row.get("selectable")?,
-        },
-        loaded: row.get("loaded")?,
+    Ok(Folder {
+        identity: row.get("identity")?,
+        name: row.get("name")?,
+        parent: row.get("parent")?,
+        role,
+        selectable: row.get("selectable")?,
     })
+}
+
+/// The role as the schema's `CHECK` lists it (specs/008-folders/data-model.md).
+fn role_code(role: FolderRole) -> &'static str {
+    match role {
+        FolderRole::Inbox => "inbox",
+        FolderRole::Starred => "starred",
+        FolderRole::Important => "important",
+        FolderRole::Junk => "junk",
+        FolderRole::Trash => "trash",
+        FolderRole::Archive => "archive",
+        FolderRole::Drafts => "drafts",
+        FolderRole::Sent => "sent",
+        FolderRole::AllMail => "all_mail",
+    }
+}
+
+/// The role a stored code names; `None` for any other text.
+fn role_from_code(code: &str) -> Option<FolderRole> {
+    FolderRole::ORDER
+        .into_iter()
+        .find(|role| role_code(*role) == code)
 }
 
 /// One stored message, from the columns `read_folder_messages` selects, with
@@ -194,7 +195,6 @@ fn stored_message(row: &Row) -> rusqlite::Result<Message> {
                 format!("unknown content code {content_code}"),
             )
         })?;
-    let labels: Option<String> = row.get("labels")?;
     Ok(Message {
         identity: row.get("identity")?,
         fields: DisplayFields {
@@ -205,9 +205,6 @@ fn stored_message(row: &Row) -> rusqlite::Result<Message> {
         received_unix: row.get("received")?,
         seen: row.get("seen")?,
         content,
-        labels: labels
-            .map(|labels| labels.split('\n').map(str::to_owned).collect())
-            .unwrap_or_default(),
     })
 }
 

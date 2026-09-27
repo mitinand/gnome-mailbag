@@ -86,15 +86,13 @@ pub(crate) enum LoadFailure {
 /// How one load ended.
 #[derive(Debug)]
 pub enum LoadResult {
-    /// The folder list or the folder's messages are stored now; `incomplete`
-    /// says why messages the folder offered are missing, and is `None` for a
-    /// folder list.
+    /// The folder list or the folder's messages are stored now, or the folder
+    /// list completed without any folder and nothing was written
+    /// (specs/008-folders FR-001); `incomplete` says why messages the folder
+    /// offered are missing, and is `None` for a folder list.
     Stored {
         incomplete: Option<IncompleteList>,
     },
-    /// The folder list completed without any folder, so nothing was stored
-    /// (specs/008-folders FR-001).
-    EmptyFolderList,
     Failed(Failure),
     /// Cancelled by a confirmed exclusion or by quitting; the connection is
     /// closed, so the next refresh may start.

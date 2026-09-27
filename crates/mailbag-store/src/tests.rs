@@ -20,7 +20,6 @@ fn folder(identity: &str) -> Folder {
         identity: identity.to_owned(),
         name: identity.to_owned(),
         parent: None,
-        attributes: Vec::new(),
         role: None,
         selectable: true,
     }
@@ -40,24 +39,7 @@ fn text_message(identity: &str) -> Message {
         received_unix: None,
         seen: false,
         content: ReceivedContent::Text(format!("Text of {identity}")),
-        labels: Vec::new(),
     }
-}
-
-/// The messages in the load's order, without UIDs.
-fn in_order(messages: &[Message]) -> Vec<(Message, FolderMembership)> {
-    (0..)
-        .zip(messages)
-        .map(|(position, message)| {
-            (
-                message.clone(),
-                FolderMembership {
-                    uid: None,
-                    position,
-                },
-            )
-        })
-        .collect()
 }
 
 /// A store holding the account's folders, each loaded with its messages.
@@ -70,7 +52,7 @@ fn store_with(account: &AccountId, loaded: &[(&str, &[Message])]) -> Store {
     store.replace_folders(account, &folders, || false).unwrap();
     for (identity, messages) in loaded {
         store
-            .replace_mailbox(&folder_of(account, identity), &in_order(messages), || false)
+            .replace_mailbox(&folder_of(account, identity), messages, || false)
             .unwrap();
     }
     store
@@ -85,42 +67,34 @@ fn stored_message_count(store: &Store) -> i64 {
 }
 
 #[test]
-fn a_folder_list_reads_back_with_its_attributes_roles_parents_and_containers() {
+fn a_folder_list_reads_back_with_every_role_its_parents_and_containers() {
     let store = Store::in_memory();
     let listed = account("listed");
-    let folders = vec![
+    let mut folders = vec![
         Folder {
-            attributes: vec!["\\HasNoChildren".to_owned()],
-            role: Some(FolderRole::Inbox),
-            ..folder("INBOX")
-        },
-        Folder {
-            attributes: vec!["\\HasChildren".to_owned(), "\\Noselect".to_owned()],
             selectable: false,
             ..folder("Projects")
         },
         Folder {
-            name: "Sent".to_owned(),
+            name: "Reports".to_owned(),
             parent: Some("Projects".to_owned()),
-            attributes: vec!["\\Junk".to_owned(), "\\Sent".to_owned()],
-            role: Some(FolderRole::Junk),
-            ..folder("Projects/Sent")
+            ..folder("Projects/Reports")
         },
     ];
+    for role in FolderRole::ORDER {
+        folders.push(Folder {
+            role: Some(role),
+            ..folder(&format!("{role:?}"))
+        });
+    }
     assert_eq!(
         store.replace_folders(&listed, &folders, || false),
         Ok(StoreWrite::Stored)
     );
     let mut stored = store.read_folders(&listed).unwrap();
-    stored.sort_by(|left, right| left.folder.identity.cmp(&right.folder.identity));
-    let expected: Vec<StoredFolder> = folders
-        .into_iter()
-        .map(|folder| StoredFolder {
-            folder,
-            loaded: false,
-        })
-        .collect();
-    assert_eq!(stored, expected);
+    stored.sort_by(|left, right| left.identity.cmp(&right.identity));
+    folders.sort_by(|left, right| left.identity.cmp(&right.identity));
+    assert_eq!(stored, folders);
     assert_eq!(store.read_folders(&account("never-listed")), Ok(Vec::new()));
 }
 
@@ -143,21 +117,10 @@ fn a_new_folder_list_drops_unlisted_folders_with_their_own_mail_and_keeps_the_re
         .replace_folders(&listed, &[renamed_kept.clone(), folder("New")], || false)
         .unwrap();
     let mut stored = store.read_folders(&listed).unwrap();
-    stored.sort_by(|left, right| left.folder.identity.cmp(&right.folder.identity));
-    assert_eq!(
-        stored,
-        [
-            StoredFolder {
-                folder: renamed_kept,
-                loaded: true,
-            },
-            StoredFolder {
-                folder: folder("New"),
-                loaded: false,
-            },
-        ]
-    );
+    stored.sort_by(|left, right| left.identity.cmp(&right.identity));
+    assert_eq!(stored, [renamed_kept, folder("New")]);
     assert_eq!(store.read_mailbox(&folder_of(&listed, "Old")), Ok(None));
+    assert_eq!(store.read_mailbox(&folder_of(&listed, "New")), Ok(None));
     assert_eq!(
         store.read_mailbox(&folder_of(&listed, "Kept")),
         Ok(Some(vec![shared]))
@@ -166,7 +129,7 @@ fn a_new_folder_list_drops_unlisted_folders_with_their_own_mail_and_keeps_the_re
 }
 
 #[test]
-fn a_mailbox_reads_back_in_the_loads_order_with_every_field_uid_and_label() {
+fn a_mailbox_reads_back_in_the_loads_order_with_every_field() {
     use ContentExplanation::*;
     let contents = [
         ReceivedContent::Text("Hello".to_owned()),
@@ -181,30 +144,18 @@ fn a_mailbox_reads_back_in_the_loads_order_with_every_field_uid_and_label() {
         ReceivedContent::TextNotReturned,
     ];
     // Newest first, as a load delivers them; absent fields stay absent.
-    let placed: Vec<(Message, FolderMembership)> = (0..)
+    let messages: Vec<Message> = (0..)
         .zip(contents)
-        .map(|(number, content)| {
-            let message = Message {
-                identity: format!("message-{number}"),
-                fields: DisplayFields {
-                    subject: (number % 2 == 0).then(|| format!("Subject {number}")),
-                    from: (number % 3 != 0).then(|| format!("Sender {number}")),
-                    to: (number % 4 != 0).then(|| format!("Recipient {number}")),
-                },
-                received_unix: (number % 5 != 0).then_some(1_700_000_000 + i64::from(number)),
-                seen: number % 2 == 1,
-                content,
-                // A label name may hold a space.
-                labels: match number {
-                    0 => vec!["\\Important".to_owned(), "Project notes".to_owned()],
-                    _ => Vec::new(),
-                },
-            };
-            let membership = FolderMembership {
-                uid: Some(100 - number),
-                position: number,
-            };
-            (message, membership)
+        .map(|(number, content)| Message {
+            identity: format!("message-{number}"),
+            fields: DisplayFields {
+                subject: (number % 2 == 0).then(|| format!("Subject {number}")),
+                from: (number % 3 != 0).then(|| format!("Sender {number}")),
+                to: (number % 4 != 0).then(|| format!("Recipient {number}")),
+            },
+            received_unix: (number % 5 != 0).then_some(1_700_000_000 + i64::from(number)),
+            seen: number % 2 == 1,
+            content,
         })
         .collect();
     let store = Store::in_memory();
@@ -214,20 +165,10 @@ fn a_mailbox_reads_back_in_the_loads_order_with_every_field_uid_and_label() {
         .unwrap();
     let inbox = folder_of(&loaded, "INBOX");
     assert_eq!(
-        store.replace_mailbox(&inbox, &placed, || false),
+        store.replace_mailbox(&inbox, &messages, || false),
         Ok(StoreWrite::Stored)
     );
-    let messages: Vec<Message> = placed.iter().map(|(message, _)| message.clone()).collect();
     assert_eq!(store.read_mailbox(&inbox), Ok(Some(messages)));
-    let uids: Vec<u32> = store
-        .with_connection(StoreOperation::Read, |connection| {
-            Ok(connection
-                .prepare("SELECT uid FROM membership ORDER BY position")?
-                .query_map([], |row| row.get(0))?
-                .collect::<rusqlite::Result<_>>()?)
-        })
-        .unwrap();
-    assert_eq!(uids, (91..=100).rev().collect::<Vec<u32>>());
 }
 
 #[test]
@@ -239,7 +180,7 @@ fn a_new_load_of_a_mailbox_replaces_its_messages_and_deletes_those_left_nowhere(
     );
     let newer = vec![text_message("third")];
     store
-        .replace_mailbox(&folder_of(&loaded, "INBOX"), &in_order(&newer), || false)
+        .replace_mailbox(&folder_of(&loaded, "INBOX"), &newer, || false)
         .unwrap();
     assert_eq!(
         store.read_mailbox(&folder_of(&loaded, "INBOX")),
@@ -258,13 +199,12 @@ fn a_message_in_two_folders_is_stored_once_with_its_latest_fields() {
     );
     let read_later = Message {
         seen: true,
-        labels: vec!["Work".to_owned()],
         ..labelled
     };
     store
         .replace_mailbox(
             &folder_of(&loaded, "Travel"),
-            &in_order(std::slice::from_ref(&read_later)),
+            std::slice::from_ref(&read_later),
             || false,
         )
         .unwrap();
@@ -303,7 +243,7 @@ fn a_load_of_a_folder_the_store_does_not_hold_is_not_saved() {
     let failure = store
         .replace_mailbox(
             &folder_of(&loaded, "Unknown"),
-            &in_order(&[text_message("first")]),
+            &[text_message("first")],
             || false,
         )
         .unwrap_err();
@@ -323,7 +263,7 @@ fn a_cancelled_load_writes_nothing() {
     assert_eq!(
         store.replace_mailbox(
             &folder_of(&loaded, "INBOX"),
-            &in_order(&[text_message("second")]),
+            &[text_message("second")],
             || true
         ),
         Ok(StoreWrite::LoadCancelled)
@@ -346,7 +286,7 @@ fn keeping_accounts_deletes_every_other_accounts_folders_and_mail_and_names_them
         store
             .replace_mailbox(
                 &folder_of(account, "INBOX"),
-                &in_order(&[text_message("other")]),
+                &[text_message("other")],
                 || false,
             )
             .unwrap();
@@ -386,7 +326,7 @@ fn a_write_that_fails_midway_leaves_the_previous_state_whole() {
     let failure = store
         .replace_mailbox(
             &inbox,
-            &in_order(&[text_message("third"), text_message("fourth")]),
+            &[text_message("third"), text_message("fourth")],
             || false,
         )
         .unwrap_err();
@@ -421,7 +361,7 @@ fn a_full_disk_is_storage_full_and_leaves_the_previous_state_whole() {
     };
     let inbox = folder_of(&refreshed, "INBOX");
     let failure = store
-        .replace_mailbox(&inbox, &in_order(&[large]), || false)
+        .replace_mailbox(&inbox, &[large], || false)
         .unwrap_err();
     assert_eq!(
         failure.kind,
@@ -449,7 +389,7 @@ fn a_store_opened_again_from_its_file_reads_the_same_mail() {
         .replace_folders(&loaded, &[folder("INBOX")], || false)
         .unwrap();
     store
-        .replace_mailbox(&folder_of(&loaded, "INBOX"), &in_order(&messages), || false)
+        .replace_mailbox(&folder_of(&loaded, "INBOX"), &messages, || false)
         .unwrap();
     drop(store);
     let reopened = Store::at(directory.store_path());
@@ -496,9 +436,7 @@ fn a_store_that_cannot_be_used_starts_empty_with_one_warning_naming_why() {
         store
             .replace_folders(&loaded, &[folder("INBOX")], || false)
             .unwrap();
-        store
-            .replace_mailbox(&inbox, &in_order(&large), || false)
-            .unwrap();
+        store.replace_mailbox(&inbox, &large, || false).unwrap();
         drop(store);
         spoil(&path);
         let record = CapturedRecord::start(tracing::Level::WARN);

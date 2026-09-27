@@ -245,8 +245,8 @@ server reason and are shown the way 002 shows any refusal (see Assumptions).
   them.
   *Amended 2026-09-27 by [Folders](../008-folders/spec.md): labels are folders and
   memberships are built as 008 FR-004 says: a message is stored once under
-  Gmail's identifier and belongs to each label whose load listed it, its
-  reported labels kept as data. UTF-8 names are enabled when the server
+  Gmail's identifier and belongs to each label whose load listed it; its
+  reported labels are stored by synchronization, which reads them. UTF-8 names are enabled when the server
   announces them, and names that arrive in modified UTF-7 are decoded for
   display (008 FR-005).*
 - **FR-006 — Gmail is a separate provider**: Gmail's rules MUST live in a

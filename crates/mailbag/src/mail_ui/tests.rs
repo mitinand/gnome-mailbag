@@ -12,11 +12,11 @@ use goa_adapter::{
     ErrorCause,
 };
 use mailbag_domain::{
-    AccountId, ContentExplanation, Failure, FailureKind, Folder, FolderMembership, FolderRef,
-    FolderRole, IncompleteList, RemoteSource, RemoteText, ServerStep,
+    AccountId, ContentExplanation, Failure, FailureKind, Folder, FolderRef, FolderRole,
+    IncompleteList, RemoteSource, RemoteText, ServerStep,
 };
 use mailbag_providers::{CancelsLoadOnDrop, LoadResult, LoadTarget, LoadsMail, MailProvider};
-use mailbag_store::{Store, StoreWrite, StoredFolder};
+use mailbag_store::{Store, StoreWrite};
 use std::{
     cell::Cell,
     sync::Arc,
@@ -155,7 +155,7 @@ impl ScriptedLoader {
         let started = self.take_running_load();
         assert_eq!(started.target, LoadTarget::FolderList);
         if folders.is_empty() {
-            (started.report)(LoadResult::EmptyFolderList);
+            (started.report)(LoadResult::Stored { incomplete: None });
             return;
         }
         let write = self
@@ -175,7 +175,7 @@ impl ScriptedLoader {
         };
         let write = self
             .store
-            .replace_mailbox(folder, &placed(messages), || started.cancelled.get())
+            .replace_mailbox(folder, messages, || started.cancelled.get())
             .expect("the test store takes the load");
         (started.report)(stored_or_cancelled(write, incomplete));
     }
@@ -186,20 +186,6 @@ fn stored_or_cancelled(write: StoreWrite, incomplete: Option<IncompleteList>) ->
         StoreWrite::Stored => LoadResult::Stored { incomplete },
         StoreWrite::LoadCancelled => LoadResult::Cancelled,
     }
-}
-
-/// The messages with their places in the load's order, newest first.
-fn placed(messages: &[Message]) -> Vec<(Message, FolderMembership)> {
-    (0..)
-        .zip(messages)
-        .map(|(position, message)| {
-            let membership = FolderMembership {
-                uid: None,
-                position,
-            };
-            (message.clone(), membership)
-        })
-        .collect()
 }
 
 fn account(name: &str) -> AccountId {
@@ -239,7 +225,6 @@ fn folder(identity: &str, role: Option<FolderRole>) -> Folder {
         identity: identity.to_owned(),
         name: identity.to_owned(),
         parent: None,
-        attributes: Vec::new(),
         role,
         selectable: true,
     }
@@ -267,7 +252,7 @@ fn store_mail(store: &Store, account: &AccountId, messages: &[Message]) {
         .replace_folders(account, &inbox_and_projects(), || false)
         .expect("the test store takes the folder list");
     store
-        .replace_mailbox(&folder_of(account, "INBOX"), &placed(messages), || false)
+        .replace_mailbox(&folder_of(account, "INBOX"), messages, || false)
         .expect("the test store takes the messages");
 }
 
@@ -283,7 +268,6 @@ fn two_messages() -> Vec<Message> {
             received_unix: Some(1_700_000_000),
             seen: false,
             content: ReceivedContent::Text("Second body".to_owned()),
-            labels: Vec::new(),
         },
         Message {
             identity: "uid:10".to_owned(),
@@ -295,7 +279,6 @@ fn two_messages() -> Vec<Message> {
             received_unix: Some(1_699_000_000),
             seen: true,
             content: ReceivedContent::StructureUnreadable,
-            labels: Vec::new(),
         },
     ]
 }
@@ -326,7 +309,6 @@ fn unwrapped_and_ordinary_messages() -> Vec<Message> {
             received_unix: Some(1_700_000_000),
             seen: true,
             content: body,
-            labels: Vec::new(),
         })
         .collect()
 }
@@ -648,7 +630,7 @@ fn mail_ui_transitions() {
     settle(&ui);
     assert_eq!(loader.loading_provider(), Some(MailProvider::Gmail));
     assert_eq!(loader.loading_target(), Some(LoadTarget::FolderList));
-    assert_eq!(widgets.status_title(), "Loading folder list");
+    assert_eq!(widgets.status_title(), "Loading mailbox list");
 
     // With nothing stored, a failed load takes the list's place with its
     // declaration; the server's words stay in the failure dialog.
@@ -721,7 +703,7 @@ fn mail_ui_transitions() {
     // Details.
     refresh_account.activate(None);
     settle(&ui);
-    assert_eq!(widgets.status_title(), "Loading folder list");
+    assert_eq!(widgets.status_title(), "Loading mailbox list");
     loader.report(LoadResult::Failed(failure_of(FailureKind::NoSignInMethod)));
     settle(&ui);
     assert_eq!(widgets.status_button("failure_action"), None);
@@ -748,7 +730,7 @@ fn mail_ui_transitions() {
     assert_eq!(loader.running_loads(), 1);
     assert_eq!(loader.loading_account().as_ref(), Some(&generic));
     assert_eq!(loader.loading_provider(), Some(MailProvider::GenericImap));
-    assert_eq!(widgets.status_title(), "Loading folder list");
+    assert_eq!(widgets.status_title(), "Loading mailbox list");
     assert_eq!(widgets.list_page(), "empty");
     assert!(widgets.shows_load_feedback());
     assert!(!refresh_account.is_enabled());
@@ -1224,7 +1206,7 @@ fn a_store_that_cannot_be_read() {
     assert_eq!(widgets.status_button("failure_action"), read_again);
     ui.refresh_account_action().activate(None);
     settle(&ui);
-    assert_eq!(widgets.status_title(), "Loading folder list");
+    assert_eq!(widgets.status_title(), "Loading mailbox list");
     loader.report(LoadResult::Failed(rejected_sign_in()));
     settle(&ui);
     let rejected = declare_failure(&rejected_sign_in(), RetriedOperation::RefreshAccount);
@@ -1236,27 +1218,11 @@ fn a_store_that_cannot_be_read() {
 
     // A mailbox the sidebar still shows cannot be read either. This store
     // never opened, so the folders are given to the sidebar directly.
-    let shown_folders = inbox_and_projects()
-        .into_iter()
-        .map(|folder| StoredFolder {
-            folder,
-            loaded: true,
-        })
-        .collect();
     ui.sidebar()
         .borrow_mut()
-        .show_folders(&generic, shown_folders);
+        .show_folders(&generic, inbox_and_projects());
     widgets.select(&ui, &generic, Some("INBOX"));
     settle(&ui);
-    assert_eq!(widgets.status_button("failure_action"), read_again);
-
-    // A completed Refresh Account reads that mailbox again: it is not shown
-    // as never loaded while its stored rows are unknown.
-    ui.refresh_account_action().activate(None);
-    settle(&ui);
-    loader.report_folders(&[]);
-    settle(&ui);
-    assert_eq!(widgets.list_page(), "failed");
     assert_eq!(widgets.status_button("failure_action"), read_again);
 
     // Once the store can be opened, Retry reads the folder lists and the
@@ -1266,6 +1232,30 @@ fn a_store_that_cannot_be_read() {
     ui.read_stored_mail_action().activate(None);
     settle(&ui);
     assert_eq!(widgets.list_page(), "messages");
+    assert_eq!(widgets.rows().len(), 2);
+    window.destroy();
+
+    // A completed Refresh Account reads a mailbox whose read failed again,
+    // so it is not shown as never loaded: here a second store becomes usable
+    // while the load runs.
+    let later = TestDirectory::new();
+    let blocking_file = later.0.join("mailbag");
+    std::fs::write(&blocking_file, "not a directory").unwrap();
+    let (window, ui, loader, widgets) = open_window(Arc::new(Store::at(later.store_path())));
+    ui.apply_account_update(&imap_and_google_accounts());
+    settle(&ui);
+    ui.sidebar()
+        .borrow_mut()
+        .show_folders(&generic, inbox_and_projects());
+    widgets.select(&ui, &generic, Some("INBOX"));
+    settle(&ui);
+    assert_eq!(widgets.status_button("failure_action"), read_again);
+    ui.refresh_account_action().activate(None);
+    settle(&ui);
+    std::fs::remove_file(&blocking_file).unwrap();
+    store_mail(&Store::at(later.store_path()), &generic, &two_messages());
+    loader.report_folders(&inbox_and_projects());
+    settle(&ui);
     assert_eq!(widgets.rows().len(), 2);
     window.destroy();
 }

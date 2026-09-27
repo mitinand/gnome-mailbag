@@ -15,7 +15,6 @@ use adw::{gio, glib, gtk, prelude::*};
 use goa_adapter::{AccountUpdate, ErrorCause};
 use mailbag_domain::{AccountId, Folder, FolderRef, FolderRole};
 use mailbag_providers::MailProvider;
-use mailbag_store::StoredFolder;
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
@@ -164,7 +163,7 @@ impl SidebarUi {
     }
 
     /// Which account explanation the status page shows. Every page other than
-    /// SelectedAccount covers the mail list and the reader.
+    /// AccountsShown covers the mail list and the reader.
     pub fn page(&self) -> AccountPage {
         self.accounts.page()
     }
@@ -209,8 +208,8 @@ impl SidebarUi {
                     "Add a mail account or enable Mail in Online Accounts."
                 },
             ),
-            AccountPage::SelectMailbox => ("Select a mailbox", ""),
-            AccountPage::SelectedAccount => ("", ""),
+            // The window shows the mail instead.
+            AccountPage::AccountsShown => ("", ""),
         }
     }
 
@@ -223,9 +222,7 @@ impl SidebarUi {
             AccountPage::NoAccounts | AccountPage::NoEligibleAccounts => {
                 Some(PageAction::OnlineAccounts)
             }
-            AccountPage::Loading | AccountPage::SelectMailbox | AccountPage::SelectedAccount => {
-                None
-            }
+            AccountPage::Loading | AccountPage::AccountsShown => None,
         }
     }
 
@@ -314,11 +311,10 @@ impl SidebarUi {
     /// selection was cleared because the tree no longer shows it: a mailbox
     /// gone from the list, or an account whose folders appeared
     /// (specs/008-folders FR-010).
-    pub fn show_folders(&mut self, account: &AccountId, folders: Vec<StoredFolder>) -> bool {
+    pub fn show_folders(&mut self, account: &AccountId, mut folders: Vec<Folder>) -> bool {
         let Some(item) = self.account_nodes.get(account).cloned() else {
             return false;
         };
-        let mut folders: Vec<Folder> = folders.into_iter().map(|stored| stored.folder).collect();
         folders.sort_by(|left, right| left.identity.cmp(&right.identity));
         if *item.borrow::<SidebarNode>().listed_folders.borrow() == folders {
             return false;
@@ -570,8 +566,7 @@ impl SidebarNode {
         // A name too long for the sidebar is shortened; the tooltip keeps it
         // whole (specs/008-folders FR-006).
         widgets.details.set_tooltip_text(Some(&folder.name));
-        let icon = folder.role.map_or("folder-symbolic", FolderRole::icon_name);
-        widgets.icon.set_icon_name(Some(icon));
+        widgets.icon.set_icon_name(Some(folder_icon(folder.role)));
         Self {
             key: Selection::Mailbox(FolderRef {
                 account: account.clone(),
@@ -641,6 +636,22 @@ fn contains_focus(widget: &impl IsA<gtk::Widget>) -> bool {
         .root()
         .and_then(|root| root.focus())
         .is_some_and(|focus| focus == *widget.as_ref() || focus.is_ancestor(widget))
+}
+
+/// The icon of a folder with this role; the Inbox's is bundled with the
+/// application, the others come from the icon theme
+/// (specs/008-folders/contracts/folders.md).
+fn folder_icon(role: Option<FolderRole>) -> &'static str {
+    match role {
+        Some(FolderRole::Inbox) => "mailbag-folder-inbox-symbolic",
+        Some(FolderRole::Starred) => "starred-symbolic",
+        Some(FolderRole::Important) => "mail-mark-important-symbolic",
+        Some(FolderRole::Junk) => "mail-mark-junk-symbolic",
+        Some(FolderRole::Trash) => "user-trash-symbolic",
+        Some(FolderRole::Drafts) => "document-edit-symbolic",
+        Some(FolderRole::Sent) => "mail-send-symbolic",
+        Some(FolderRole::Archive | FolderRole::AllMail) | None => "folder-symbolic",
+    }
 }
 
 fn problem_text(problem: &AccountProblem) -> &'static str {

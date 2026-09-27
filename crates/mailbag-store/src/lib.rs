@@ -28,7 +28,7 @@ use folders::{
     delete_messages_without_folder, delete_unlisted_folders, read_folder_messages, stored_folder,
     upsert_folders, write_mailbox,
 };
-use mailbag_domain::{AccountId, Failure, Folder, FolderMembership, FolderRef, Message};
+use mailbag_domain::{AccountId, Failure, Folder, FolderRef, Message};
 use open::{configure_connection, create_schema, open_store};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::{
@@ -51,14 +51,6 @@ pub enum StoreWrite {
     /// The load was cancelled before the store took its result, so nothing
     /// was written.
     LoadCancelled,
-}
-
-/// A folder as the store holds it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StoredFolder {
-    pub folder: Folder,
-    /// Whether a load of it completed (specs/007-mail-storage FR-006).
-    pub loaded: bool,
 }
 
 impl Store {
@@ -120,7 +112,7 @@ impl Store {
     pub fn replace_mailbox(
         &self,
         folder: &FolderRef,
-        messages: &[(Message, FolderMembership)],
+        messages: &[Message],
         load_cancelled: impl FnOnce() -> bool,
     ) -> Result<StoreWrite, Failure> {
         self.with_connection(StoreOperation::Write, |connection| {
@@ -137,11 +129,10 @@ impl Store {
     /// The account's stored folders in no particular order; the window sorts
     /// them (specs/008-folders/research.md §7). Empty when no folder list was
     /// stored.
-    pub fn read_folders(&self, account: &AccountId) -> Result<Vec<StoredFolder>, Failure> {
+    pub fn read_folders(&self, account: &AccountId) -> Result<Vec<Folder>, Failure> {
         self.with_connection(StoreOperation::Read, |connection| {
             let mut select = connection.prepare(
-                "SELECT identity, name, parent, attributes, role, selectable, loaded \
-                 FROM folder WHERE account = ?1",
+                "SELECT identity, name, parent, role, selectable FROM folder WHERE account = ?1",
             )?;
             let folders = select
                 .query_map([account.as_str()], stored_folder)?
@@ -177,7 +168,7 @@ impl Store {
         self.with_connection(StoreOperation::Write, |connection| {
             let transaction = connection.transaction()?;
             let stored_accounts: Vec<String> = transaction
-                .prepare("SELECT account FROM folder UNION SELECT account FROM message")?
+                .prepare("SELECT DISTINCT account FROM folder")?
                 .query_map([], |row| row.get(0))?
                 .collect::<rusqlite::Result<_>>()?;
             // Only nonempty identifiers are ever stored.

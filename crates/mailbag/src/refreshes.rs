@@ -84,8 +84,7 @@ impl Refreshes {
 
     /// Records how the load ended under the account it was started for, and
     /// leaves loading so the refresh actions become available again. The
-    /// result of a load cancelled by an exclusion is not recorded; a folder
-    /// list without any folder is a completed load that stored nothing.
+    /// result of a load cancelled by an exclusion is not recorded.
     pub fn finish_load(&mut self, account_id: &AccountId, result: LoadResult) {
         let Some(running) = self
             .running_load
@@ -104,7 +103,6 @@ impl Refreshes {
                 return;
             }
             LoadResult::Stored { incomplete } => RefreshOutcome::Stored(incomplete),
-            LoadResult::EmptyFolderList => RefreshOutcome::Stored(None),
             LoadResult::Failed(failure) => RefreshOutcome::Failed(failure),
         };
         self.outcomes

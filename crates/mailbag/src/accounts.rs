@@ -56,8 +56,9 @@ pub enum AccountPage {
     ReadFailed(ErrorCause),
     NoAccounts,
     NoEligibleAccounts,
-    SelectMailbox,
-    SelectedAccount,
+    /// The accounts are shown; the window shows the selected mail or asks
+    /// for a selection.
+    AccountsShown,
 }
 
 /// What the user selected in the sidebar: an account whose folders are not
@@ -168,10 +169,8 @@ impl AccountList {
     pub fn page(&self) -> AccountPage {
         if let Some(error) = self.last_check.error() {
             AccountPage::ReadFailed(error.cause)
-        } else if self.selection.is_some() {
-            AccountPage::SelectedAccount
         } else if !self.visible_accounts.is_empty() {
-            AccountPage::SelectMailbox
+            AccountPage::AccountsShown
         } else if self.last_check == AccountCheckResult::NotChecked {
             AccountPage::Loading
         } else if self

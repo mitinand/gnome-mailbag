@@ -129,7 +129,7 @@ pub fn declare_failure(failure: &Failure, retried: RetriedOperation) -> Declared
             "Loading stopped",
             choose_by_load(
                 retried,
-                "Loading the folder list stopped before it finished.",
+                "Loading the mailbox list stopped before it finished.",
                 "Loading this mailbox stopped before it finished.",
             ),
             None,
@@ -209,7 +209,7 @@ pub fn declare_failure(failure: &Failure, retried: RetriedOperation) -> Declared
             "Refresh stopped",
             choose_by_load(
                 retried,
-                "Loading the folder list stopped because of an internal error.",
+                "Loading the mailbox list stopped because of an internal error.",
                 "Loading this mailbox stopped because of an internal error.",
             ),
             Some("If this happens again, report it with the technical details."),
@@ -344,7 +344,7 @@ fn failed_step_title(step: ServerStep) -> &'static str {
         ServerStep::Connect => "Server unreachable",
         ServerStep::SecureConnection => "Secure connection failed",
         ServerStep::SignIn => "Sign-in rejected",
-        ServerStep::ListFolders => "Folder list not received",
+        ServerStep::ListFolders => "Mailbox list not received",
         ServerStep::OpenMailbox => "Mailbox not opened",
         ServerStep::FetchMessages => "Message list not received",
         ServerStep::FetchText => "Message text not received",
@@ -359,7 +359,7 @@ fn failed_step_explanation(step: ServerStep) -> &'static str {
              no password was sent."
         }
         ServerStep::SignIn => "The mail server rejected sign-in.",
-        ServerStep::ListFolders => "The mail server did not send the folder list.",
+        ServerStep::ListFolders => "The mail server did not send the mailbox list.",
         ServerStep::OpenMailbox => "The mail server did not open this mailbox.",
         ServerStep::FetchMessages => "The mail server did not send this mailbox's messages.",
         ServerStep::FetchText => "The mail server did not send the text of these messages.",
@@ -374,7 +374,7 @@ fn waiting_step_explanation(step: ServerStep) -> &'static str {
         }
         ServerStep::SignIn => "The mail server stopped responding during sign-in.",
         ServerStep::ListFolders => {
-            "The mail server stopped responding while sending the folder list."
+            "The mail server stopped responding while sending the mailbox list."
         }
         ServerStep::OpenMailbox => "The mail server stopped responding while opening this mailbox.",
         ServerStep::FetchMessages => {

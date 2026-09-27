@@ -51,7 +51,6 @@ pub(crate) fn imap_folders(list: &MailboxList) -> Vec<Folder> {
                     false => utf7::decode(shown),
                 },
                 parent: parent.map(str::to_owned),
-                attributes: mailbox.attributes.clone(),
                 role: imap_role(mailbox),
                 selectable: !has_attribute(mailbox, "\\Noselect"),
             }
@@ -88,9 +87,9 @@ pub(crate) fn gmail_folders(list: &MailboxList) -> Vec<Folder> {
     folders
 }
 
-/// A Microsoft 365 account's folders. The attributes hold the well-known name
-/// that resolved to the folder, which gives its role; a parent the listing
-/// leaves out, such as the mailbox's root, puts the folder under the account.
+/// A Microsoft 365 account's folders. The well-known name that resolved to a
+/// folder gives its role; a parent the listing leaves out, such as the
+/// mailbox's root, puts the folder under the account.
 pub(crate) fn graph_folders(listed: Vec<GraphFolder>) -> Vec<Folder> {
     let identities: BTreeSet<String> = listed.iter().map(|folder| folder.id.clone()).collect();
     listed
@@ -101,10 +100,6 @@ pub(crate) fn graph_folders(listed: Vec<GraphFolder>) -> Vec<Folder> {
             parent: folder
                 .parent_id
                 .filter(|parent| identities.contains(parent)),
-            attributes: folder
-                .well_known
-                .map(|well_known| vec![well_known.name().to_owned()])
-                .unwrap_or_default(),
             role: folder.well_known.map(graph_role),
             selectable: true,
         })

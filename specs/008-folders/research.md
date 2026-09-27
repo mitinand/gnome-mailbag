@@ -63,11 +63,14 @@ several per mailbox and several mailboxes per attribute; RFC 8457 adds
 some. Graph v1.0 has no role field; `$select=wellKnownName` is refused
 (400), so roles come from `GET /me/mailFolders/{well-known}` (checked
 2026-09-27).
-**Decision**: every attribute a server lists is stored per folder; the
-providers map attributes and well-known names to the application's nine
+**Decision**: the providers map attributes and well-known names to the
+application's nine
 roles (spec FR-003); the first role mark wins; no name table. A server that
 advertises `SPECIAL-USE` is asked with `RETURN (SPECIAL-USE)`, since RFC
-6154 only lets a server include the attributes in a plain LIST.
+6154 only lets a server include the attributes in a plain LIST. The
+attributes themselves are not stored until a feature reads them
+(simplification review, 2026-09-27: nothing reads them, and a store
+structure change before the first release discards the store anyway).
 **Alternatives**: a name table with localized names (the maintainer:
 roles from the server only); Graph's beta `wellKnownName` (not in v1.0).
 
@@ -95,8 +98,10 @@ way to keep a local copy of all folders).
 **Decision**: one `message` row per account and provider identity
 (`gmail:<X-GM-MSGID>`, `graph:<id>`, `imap:<folder identity>/<uid>` for
 Generic IMAP, whose message has no identity beyond its place); a
-`membership` row per folder the message belongs to, carrying the UID and
-the position; a mailbox load replaces the folder's memberships and upserts
+`membership` row per folder the message belongs to, carrying the
+position; the IMAP UID joins it with synchronization, which stores
+UIDVALIDITY with it (simplification review, 2026-09-27); a mailbox load
+replaces the folder's memberships and upserts
 messages by identity (spec FR-004).
 **Rationale**: the target model of 007 FR-003, decided at clarification;
 Geary's schema (`MessageTable` + `MessageLocationTable` with the UID as
@@ -158,7 +163,8 @@ attributes; `X-GM-MSGID` is the message's identity across labels;
 one. Nothing documented identifies a label across a rename.
 **Decision**: the Gmail provider drops the `\Noselect` container whose
 children carry role attributes and lifts its children; memberships come
-from loads only, labels are stored with the message (spec US4, FR-004); a
+from loads only; labels arrive with the message and are stored by
+synchronization, which reads them (spec FR-004); a
 renamed label is a new folder. The container is found by its children's
 attributes, not by its name, which is localized.
 

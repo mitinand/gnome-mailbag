@@ -17,9 +17,9 @@ use crate::refreshes::{RefreshOutcome, Refreshes};
 use crate::sidebar_ui::{PageAction, SidebarUi, show_check_progress};
 use adw::{gio, glib, gtk, prelude::*};
 use goa_adapter::AccountUpdate;
-use mailbag_domain::{AccountId, Failure, FailureKind, FolderRef, Message, catch_panic};
+use mailbag_domain::{AccountId, Failure, FailureKind, Folder, FolderRef, Message, catch_panic};
 use mailbag_providers::{LoadResult, LoadTarget, LoadsMail, MailProvider};
-use mailbag_store::{Store, StoredFolder};
+use mailbag_store::Store;
 use std::{cell::RefCell, collections::BTreeSet, rc::Rc, sync::Arc};
 
 pub struct WindowUi {
@@ -354,12 +354,12 @@ impl WindowUi {
         self.render();
     }
 
-    /// Records how the load ended. A stored folder list is read again with
-    /// every other. A completed folder list leaves the selected mailbox's
-    /// rows as they were, so they are read only when the window does not
-    /// hold them: the load's start forgot a failed read of them (007
-    /// FR-013). A completed load of the selected mailbox replaced its stored
-    /// messages, which the window then reads.
+    /// Records how the load ended. A completed folder list is read again
+    /// with every other; it left the selected mailbox's rows as they were, so
+    /// they are read only when the window does not hold them: the load's
+    /// start forgot a failed read of them (007 FR-013). A completed load of
+    /// the selected mailbox replaced its stored messages, which the window
+    /// then reads.
     fn finish_load(
         self: &Rc<Self>,
         account_id: &AccountId,
@@ -367,14 +367,11 @@ impl WindowUi {
         result: LoadResult,
     ) {
         let stored = matches!(result, LoadResult::Stored { .. });
-        let completed = stored || matches!(result, LoadResult::EmptyFolderList);
         self.refreshes.borrow_mut().finish_load(account_id, result);
         let selected = self.selected_mailbox();
         match target {
-            LoadTarget::FolderList if completed => {
-                if stored {
-                    self.read_folder_lists();
-                }
+            LoadTarget::FolderList if stored => {
+                self.read_folder_lists();
                 let held = selected
                     .as_ref()
                     .is_some_and(|folder| self.shown_mailbox.borrow().holds(folder));
@@ -429,7 +426,7 @@ impl WindowUi {
     /// Shows each account's folders; the sidebar clears a selection that its
     /// new folders no longer show (specs/008-folders FR-010), and the window
     /// then forgets that mailbox's rows.
-    fn show_folder_lists(&self, lists: Vec<(AccountId, Vec<StoredFolder>)>) {
+    fn show_folder_lists(&self, lists: Vec<(AccountId, Vec<Folder>)>) {
         let mut sidebar = self.sidebar.borrow_mut();
         for (account, folders) in lists {
             if sidebar.show_folders(&account, folders) {
@@ -512,10 +509,7 @@ impl WindowUi {
         self.list_banner.set_revealed(false);
         // The account page comes first; it covers the list and the reader
         // without touching the account's mail.
-        if !matches!(
-            sidebar.page(),
-            AccountPage::SelectedAccount | AccountPage::SelectMailbox
-        ) {
+        if sidebar.page() != AccountPage::AccountsShown {
             self.show_account_page(&sidebar);
         } else {
             match shown_mail {
@@ -601,7 +595,7 @@ impl WindowUi {
             (StoredMailbox::Reading, _) => ShownMail::Reading,
             _ if loading.is_some() => ShownMail::Status {
                 title: match loading {
-                    Some(LoadTarget::FolderList) => "Loading folder list",
+                    Some(LoadTarget::FolderList) => "Loading mailbox list",
                     _ => "Loading mailbox",
                 },
                 description: None,

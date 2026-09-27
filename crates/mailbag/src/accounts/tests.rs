@@ -63,7 +63,7 @@ fn recognized_providers_define_support_without_imap_or_address_requirements() {
                 .problems
                 .is_empty()
         );
-        assert_eq!(accounts.page(), AccountPage::SelectMailbox);
+        assert_eq!(accounts.page(), AccountPage::AccountsShown);
         assert!(accounts.selected_account().is_none());
         let mut details = make_account_details(provider);
         details.mail_service_available = false;
@@ -179,7 +179,7 @@ fn failed_read_and_retry_preserve_rows_labels_selection_and_individual_problems(
     assert_eq!(accounts.visible_accounts(), &rows);
     assert_eq!(accounts.selected_account(), Some(&make_account_id("one")));
     assert!(accounts.retry_pending());
-    assert_eq!(accounts.page(), AccountPage::SelectedAccount);
+    assert_eq!(accounts.page(), AccountPage::AccountsShown);
     let mut failed = make_failed_list(&accepted);
     for retry_pending in [false, true] {
         failed.retry_pending = retry_pending;
@@ -208,7 +208,7 @@ fn failed_read_and_retry_preserve_rows_labels_selection_and_individual_problems(
         assert_eq!(accounts.retry_pending(), retry_pending);
     }
     accounts.apply_update(&accepted);
-    assert_eq!(accounts.page(), AccountPage::SelectedAccount);
+    assert_eq!(accounts.page(), AccountPage::AccountsShown);
     assert_eq!(
         accounts.visible_accounts()[&make_account_id("one")].problems,
         vec![AccountProblem::AttentionNeeded]
@@ -216,7 +216,7 @@ fn failed_read_and_retry_preserve_rows_labels_selection_and_individual_problems(
 }
 
 #[test]
-fn page_states_follow_loading_failure_empty_and_selection() {
+fn page_states_follow_loading_failure_and_the_shown_accounts() {
     let mut accounts = AccountList::default();
     assert_eq!(accounts.page(), AccountPage::Loading);
     let empty = make_checked_list(&[]);
@@ -231,9 +231,7 @@ fn page_states_follow_loading_failure_empty_and_selection() {
         "one",
         make_account_details(AccountProvider::Google),
     )]));
-    assert_eq!(accounts.page(), AccountPage::SelectMailbox);
-    accounts.select(Selection::Account(make_account_id("one")));
-    assert_eq!(accounts.page(), AccountPage::SelectedAccount);
+    assert_eq!(accounts.page(), AccountPage::AccountsShown);
 }
 
 /// A mailbox is selected with its account: a mailbox of an account without a
@@ -257,7 +255,6 @@ fn a_mailbox_selection_belongs_to_its_account() {
     accounts.select(inbox_of("one"));
     assert_eq!(accounts.selection(), Some(&inbox_of("one")));
     assert_eq!(accounts.selected_account(), Some(&make_account_id("one")));
-    assert_eq!(accounts.page(), AccountPage::SelectedAccount);
     accounts.apply_update(&make_checked_list(&[]));
     assert_eq!(accounts.selection(), None);
 }

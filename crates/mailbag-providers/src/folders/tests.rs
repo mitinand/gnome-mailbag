@@ -85,8 +85,6 @@ fn imap_roles_come_from_attributes_and_the_inbox_name_only() {
             None
         ]
     );
-    // Every attribute is kept as sent.
-    assert_eq!(folders[3].attributes, ["\\junk", "\\Trash"]);
 }
 
 #[test]
@@ -196,6 +194,4 @@ fn microsoft_365_roles_come_from_well_known_names_and_the_root_is_left_out() {
             ),
         ]
     );
-    assert_eq!(folders[1].attributes, ["deleteditems"]);
-    assert!(folders[2].attributes.is_empty());
 }

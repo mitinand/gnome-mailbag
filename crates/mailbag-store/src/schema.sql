@@ -14,7 +14,6 @@ CREATE TABLE folder (
     identity TEXT NOT NULL,
     name TEXT NOT NULL,
     parent TEXT,
-    attributes TEXT NOT NULL,
     role TEXT CHECK (role IN (
         'inbox',
         'starred',
@@ -54,8 +53,6 @@ CREATE TABLE message (
         'text_not_returned'
     )),
     content_detail TEXT,
-    -- Gmail's labels, one per line.
-    labels TEXT,
     UNIQUE (account, identity)
 ) STRICT;
 
@@ -64,7 +61,6 @@ CREATE TABLE message (
 CREATE TABLE membership (
     folder INTEGER NOT NULL REFERENCES folder (id) ON DELETE CASCADE,
     message INTEGER NOT NULL REFERENCES message (id) ON DELETE CASCADE,
-    uid INTEGER,
     position INTEGER NOT NULL,
     PRIMARY KEY (folder, message)
 ) STRICT;

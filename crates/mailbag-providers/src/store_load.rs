@@ -12,8 +12,7 @@ use crate::{
     failure::log_load_failure,
 };
 use mailbag_domain::{
-    AccountId, Failure, Folder, FolderMembership, FolderRef, IncompleteList, Message,
-    ReceivedContent,
+    AccountId, Failure, Folder, FolderRef, IncompleteList, Message, ReceivedContent,
 };
 use mailbag_store::{Store, StoreWrite};
 
@@ -33,7 +32,7 @@ pub(crate) fn store_folder_list(
             folders = 0,
             "folder list load finished"
         );
-        return LoadResult::EmptyFolderList;
+        return LoadResult::Stored { incomplete: None };
     }
     match store.replace_folders(account, &folders, load_cancelled) {
         Ok(StoreWrite::Stored) => {
@@ -57,20 +56,20 @@ pub(crate) fn store_mailbox(
     batch: ReceivedBatch,
     load_cancelled: impl FnOnce() -> bool,
 ) -> LoadResult {
-    let placed = placed_messages(batch.messages, &batch.folder);
-    let written = store.replace_mailbox(&batch.folder, &placed, load_cancelled);
-    mailbox_load_result(written, &batch.folder, &placed, batch.incomplete)
+    let messages = kept_messages(batch.messages, &batch.folder);
+    let written = store.replace_mailbox(&batch.folder, &messages, load_cancelled);
+    mailbox_load_result(written, &batch.folder, &messages, batch.incomplete)
 }
 
 fn mailbox_load_result(
     written: Result<StoreWrite, Failure>,
     folder: &FolderRef,
-    placed: &[(Message, FolderMembership)],
+    messages: &[Message],
     incomplete: Option<IncompleteList>,
 ) -> LoadResult {
     match written {
         Ok(StoreWrite::Stored) => {
-            log_received_batch(folder, placed, incomplete.as_ref());
+            log_received_batch(folder, messages, incomplete.as_ref());
             LoadResult::Stored { incomplete }
         }
         // The cancellation was recorded where it was requested.
@@ -84,36 +83,24 @@ fn failed_write(account: &AccountId, record_name: &'static str, failure: Failure
     LoadResult::Failed(failure)
 }
 
-/// The received messages as the application keeps them, in the load's order,
-/// each with its place in `folder`. A message's identity is Gmail's own
-/// identifier where the load read it, Microsoft Graph's immutable identifier,
-/// or, for Generic IMAP, whose message has no identity beyond its place, the
-/// folder and the UID (specs/008-folders FR-004).
-fn placed_messages(
-    received: Vec<ReceivedMessage>,
-    folder: &FolderRef,
-) -> Vec<(Message, FolderMembership)> {
-    (0..)
-        .zip(received)
-        .map(|(position, received)| {
-            let (identity, uid) = match (&received.gmail, &received.identity) {
-                (Some(gmail), MessageIdentity::ImapUid(uid)) => {
-                    (format!("gmail:{}", gmail.message_id), Some(*uid))
-                }
-                (None, MessageIdentity::ImapUid(uid)) => {
-                    (format!("imap:{}/{uid}", folder.identity), Some(*uid))
-                }
-                (_, MessageIdentity::GraphImmutableId(id)) => (format!("graph:{id}"), None),
-            };
-            let message = Message {
-                identity,
-                fields: received.fields,
-                received_unix: received.internal_date,
-                seen: received.seen,
-                content: received.content,
-                labels: received.gmail.map(|gmail| gmail.labels).unwrap_or_default(),
-            };
-            (message, FolderMembership { uid, position })
+/// The received messages as the application keeps them, in the load's order.
+/// A message's identity is Gmail's own identifier where the load read it,
+/// Microsoft Graph's immutable identifier, or, for Generic IMAP, whose
+/// message has no identity beyond its place, the folder and the UID
+/// (specs/008-folders FR-004).
+fn kept_messages(received: Vec<ReceivedMessage>, folder: &FolderRef) -> Vec<Message> {
+    received
+        .into_iter()
+        .map(|received| Message {
+            identity: match (&received.gmail, &received.identity) {
+                (Some(gmail), MessageIdentity::ImapUid(_)) => format!("gmail:{}", gmail.message_id),
+                (None, MessageIdentity::ImapUid(uid)) => format!("imap:{}/{uid}", folder.identity),
+                (_, MessageIdentity::GraphImmutableId(id)) => format!("graph:{id}"),
+            },
+            fields: received.fields,
+            received_unix: received.internal_date,
+            seen: received.seen,
+            content: received.content,
         })
         .collect()
 }
@@ -122,15 +109,15 @@ fn placed_messages(
 /// The folder's name stays at debug (specs/003-logging FR-010).
 fn log_received_batch(
     folder: &FolderRef,
-    placed: &[(Message, FolderMembership)],
+    messages: &[Message],
     incomplete: Option<&IncompleteList>,
 ) {
     let account = folder.account.as_str();
     // Content the reader does not show by design, and content that could not
     // be read, counted once over the batch.
-    let (unsupported, unreadable) = placed.iter().fold(
+    let (unsupported, unreadable) = messages.iter().fold(
         (0, 0),
-        |(unsupported, unreadable), (message, _)| match &message.content {
+        |(unsupported, unreadable), message| match &message.content {
             ReceivedContent::Text(_) => (unsupported, unreadable),
             ReceivedContent::Explained(explanation) if explanation.is_by_design() => {
                 (unsupported + 1, unreadable)
@@ -147,7 +134,7 @@ fn log_received_batch(
     );
     tracing::info!(
         account,
-        messages = placed.len(),
+        messages = messages.len(),
         unsupported,
         "mailbox load finished"
     );

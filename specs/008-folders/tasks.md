@@ -6,7 +6,7 @@ approved on 2026-09-27 (T001); portion 1 (T002–T010) committed on
 2026-09-27; portions 2 and 3 (T011–T023) committed on 2026-09-27. Before
 portion 4 the budget was raised and the empty list's hidden account and the
 folder-list read's own Retry were dropped (spec Clarifications); portion 4
-(T024–T033) implemented on 2026-09-27, awaiting review.
+(T024–T033) committed on 2026-09-27; T034 applied, awaiting review.
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -339,8 +339,9 @@ speak of the mailbox (US1–US7).
   and `store_inbox_until_folders`, the store's `replace_inbox` and
   `read_inbox`, and the `EmptyFolderList` arm refreshes.rs got in portion 3.
 - [x] T029 [US7] In crates/mailbag/src/failure_declarations.rs: wording for
-  `ServerStep::ListFolders` ("Folder list not received", "The mail server
-  did not send the folder list.", the timed-out variant), `OpenMailbox`
+  `ServerStep::ListFolders` ("Mailbox list not received", "The mail server
+  did not send the mailbox list.", the timed-out variant; renamed from
+  "folder list" at the simplification review), `OpenMailbox`
   ("Mailbox not opened", "The mail server did not open this mailbox."),
   `FetchMessages`/`FetchText` texts saying "this mailbox", `MailboxChanged`
   ("Mailbox changed", "The messages being loaded are no longer in this
@@ -379,8 +380,14 @@ speak of the mailbox (US1–US7).
 
 ## Phase 6: polish
 
-- [ ] T034 Run `simplify-review` on the branch diff in a fresh subagent;
-  apply what does not add scope, bring the rest to the maintainer.
+- [x] T034 Run `simplify-review` on the branch diff in a fresh subagent;
+  apply what does not add scope, bring the rest to the maintainer. Applied
+  on 2026-09-27 with the maintainer's decisions: attributes, labels and
+  UIDs no longer stored (spec Clarifications), the empty folder list
+  reported as a completed load, one account page for shown accounts, role
+  codes in the store and icons in the sidebar, `read_folders` returning
+  folders, and "mailbox list" in the interface; the load kind stays on the
+  failure record line.
 - [ ] T035 The manual checks of quickstart.md on the installed build
   (`scripts/build-flatpak.sh --install`); record the results in plan.md
   under a "Post-implementation" heading without sizes.

@@ -271,7 +271,8 @@ window shows and what the record says.
 
 - **FR-003 — Folders, identity and membership**: The target model below is
   built by [008](../008-folders/spec.md) (FR-004, FR-007), except the folder
-  state synchronization needs, which stays deferred (FR-014(a)); addressing
+  state synchronization needs and the IMAP UID each membership carries,
+  which stay deferred (FR-014(a)); addressing
   a message on its server waits for read and star (FR-014(c)). The target
   model: a folder is the unit of synchronization, belongs to one account, and
   carries its provider identity (an IMAP mailbox name, a Gmail label's folder,

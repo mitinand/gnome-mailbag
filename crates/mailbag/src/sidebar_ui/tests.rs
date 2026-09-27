@@ -103,15 +103,15 @@ fn sidebar_transitions() {
         .connect_selection_changed(move || counted.set(counted.get() + 1));
     let folders = || {
         vec![
-            stored("Zeta", None, None, true),
-            stored("Projects", None, None, false),
-            stored("Projects/Reports", Some("Projects"), None, true),
-            stored("beta", None, None, true),
-            stored("Ωμέγα", None, None, true),
-            stored("Sent", None, Some(FolderRole::Sent), true),
-            stored("Alpha", None, None, true),
-            stored("Bin", None, Some(FolderRole::Trash), true),
-            stored("INBOX", None, Some(FolderRole::Inbox), true),
+            folder("Zeta", None, None, true),
+            folder("Projects", None, None, false),
+            folder("Projects/Reports", Some("Projects"), None, true),
+            folder("beta", None, None, true),
+            folder("Ωμέγα", None, None, true),
+            folder("Sent", None, Some(FolderRole::Sent), true),
+            folder("Alpha", None, None, true),
+            folder("Bin", None, Some(FolderRole::Trash), true),
+            folder("INBOX", None, Some(FolderRole::Inbox), true),
         ]
     };
     // The selected account's folders appeared, so it is no longer selected.
@@ -178,22 +178,22 @@ fn sidebar_transitions() {
     let zeta_row = row_detail(&ui.borrow(), "Zeta", |node| node.widgets.root.clone());
     assert!(zeta_row.grab_focus());
     let mut with_gamma = folders();
-    with_gamma.push(stored("Gamma", None, None, true));
+    with_gamma.push(folder("Gamma", None, None, true));
     assert!(!ui.borrow_mut().show_folders(&id, with_gamma));
     dispatch_pending();
     let zeta = position_of_title(&ui.borrow(), "Zeta");
     assert_eq!(selection.selected(), zeta);
     assert!(contains_focus(&ui.borrow().tree));
-    let without_zeta: Vec<StoredFolder> = folders()
+    let without_zeta: Vec<Folder> = folders()
         .into_iter()
-        .filter(|stored| stored.folder.identity != "Zeta")
+        .filter(|folder| folder.identity != "Zeta")
         .collect();
     assert!(ui.borrow_mut().show_folders(&id, without_zeta));
     assert!(ui.borrow().accounts.selection().is_none());
 
     // An account whose server lists only containers stays selectable.
     ui.borrow_mut()
-        .show_folders(&second_id, vec![stored("Shared", None, None, false)]);
+        .show_folders(&second_id, vec![folder("Shared", None, None, false)]);
     activate(&tree, &ui, &other_account);
     assert_eq!(
         ui.borrow().accounts.selection(),
@@ -214,22 +214,18 @@ fn sidebar_transitions() {
     window.destroy();
 }
 
-fn stored(
+fn folder(
     identity: &str,
     parent: Option<&str>,
     role: Option<FolderRole>,
     selectable: bool,
-) -> StoredFolder {
-    StoredFolder {
-        folder: Folder {
-            identity: identity.to_owned(),
-            name: identity.rsplit('/').next().unwrap().to_owned(),
-            parent: parent.map(str::to_owned),
-            attributes: Vec::new(),
-            role,
-            selectable,
-        },
-        loaded: false,
+) -> Folder {
+    Folder {
+        identity: identity.to_owned(),
+        name: identity.rsplit('/').next().unwrap().to_owned(),
+        parent: parent.map(str::to_owned),
+        role,
+        selectable,
     }
 }
 
