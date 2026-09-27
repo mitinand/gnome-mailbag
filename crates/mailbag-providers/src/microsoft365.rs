@@ -1,29 +1,45 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The Microsoft 365 load: one request to Microsoft Graph for the newest Inbox
-//! messages with their text, turned into the batch every provider delivers.
-//! The service renders the text itself, so no MIME is read
-//! (specs/005-microsoft-graph-integration/spec.md FR-005).
+//! The Microsoft 365 loads: the folder list, and one request to Microsoft
+//! Graph for the newest messages of one folder with their text, turned into
+//! the batch every provider delivers. The service renders the text itself,
+//! so no MIME is read (specs/005-microsoft-graph-integration/spec.md FR-005).
 
-use crate::batch::{BATCH_SIZE, MessageIdentity, ReceivedBatch, ReceivedMessage};
+use crate::{
+    batch::{BATCH_SIZE, MessageIdentity, ReceivedBatch, ReceivedMessage},
+    folders::graph_folders,
+};
 use goa_adapter::GraphAccess;
 use mailbag_content::display_names;
-use mailbag_domain::{DisplayFields, IncompleteList, ReceivedContent};
-use mailbag_graph::{GraphError, GraphMessage, Mailbox, list_mailbox_messages};
+use mailbag_domain::{DisplayFields, Folder, FolderRef, IncompleteList, ReceivedContent};
+use mailbag_graph::{GraphError, GraphMessage, Mailbox, list_folders, list_mailbox_messages};
 
-pub(crate) async fn load_microsoft365_inbox(
+pub(crate) async fn list_microsoft365_folders(
     access: GraphAccess,
     service_url: &str,
+) -> Result<Vec<Folder>, GraphError> {
+    let listed = list_folders(service_url, &access.access_token).await?;
+    Ok(graph_folders(listed))
+}
+
+pub(crate) async fn load_microsoft365_mailbox(
+    access: GraphAccess,
+    service_url: &str,
+    folder: FolderRef,
 ) -> Result<ReceivedBatch, GraphError> {
-    // The well-known name serves as the Inbox's id in any language.
-    let page =
-        list_mailbox_messages(service_url, &access.access_token, "inbox", BATCH_SIZE).await?;
-    // A full batch is complete however many messages the Inbox holds; only a
-    // page the service cut short while offering more is not (spec FR-003).
+    let page = list_mailbox_messages(
+        service_url,
+        &access.access_token,
+        &folder.identity,
+        BATCH_SIZE,
+    )
+    .await?;
+    // A full batch is complete however many messages the folder holds; only
+    // a page the service cut short while offering more is not (spec FR-003).
     let cut_short = page.more_available && page.messages.len() < BATCH_SIZE as usize;
     Ok(ReceivedBatch {
-        account_id: access.account_id,
+        folder,
         messages: page.messages.into_iter().map(received_message).collect(),
         incomplete: cut_short.then_some(IncompleteList::MoreAvailable),
     })

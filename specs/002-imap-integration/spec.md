@@ -3,7 +3,8 @@
 **Feature**: `002-imap-integration`
 **Created**: 2026-09-16
 **Revised**: 2026-09-19
-**Status**: Approved by the maintainer 2026-09-19
+**Status**: Approved by the maintainer 2026-09-19; FR-002, FR-003 and FR-012
+amended on 2026-09-27 by [Folders](../008-folders/spec.md)
 **Input**: On an explicit refresh, load recent Inbox message metadata and plain-text body parts into
 memory without attachment contents, fill the message list, and open the received
 text without another mail request.
@@ -208,6 +209,9 @@ has no network failure or server-identity reconciliation of its own.
   text MUST NOT prevent other rows from appearing.
   The count and ordering are provisional for later features, but fixed for
   this stage's acceptance.
+  *Amended 2026-09-27 by [Folders](../008-folders/spec.md): a load reads the folder
+  the user selected, by its identity, rather than the Inbox; the batch is
+  that folder's newest 100 messages (008 FR-007, FR-010).*
 - **FR-003 — Loading and refresh**: Only activating Refresh Inbox MUST start a
   load. It MUST clear the selected account's list and reader, obtain a batch
   including message content and show it when complete. Selecting an account
@@ -219,6 +223,9 @@ has no network failure or server-identity reconciliation of its own.
   whole batch over one refused message is not an acceptable answer either.
   Not loaded, loading, a successful empty result, an incomplete result and
   failure MUST be distinguishable.
+  *Amended 2026-09-27 by [Folders](../008-folders/spec.md): Refresh Mailbox loads the
+  selected folder and Refresh Account the account's folder list; selecting
+  an account or a folder never starts a load (008 FR-001, FR-010).*
 - **FR-004 — Received text**: Mailbag MUST obtain message metadata and the
   description of its parts, then download the plain-text body parts needed for
   reading during batch loading. It MUST NOT download
@@ -286,6 +293,9 @@ has no network failure or server-identity reconciliation of its own.
   accounts remain ineligible.*
   *Amended 2026-09-23 by [Microsoft 365 integration](../005-microsoft-graph-integration/spec.md):
   Microsoft 365 accounts are eligible under that feature's rules.*
+  *Amended 2026-09-27 by [Folders](../008-folders/spec.md): the item becomes Refresh
+  Mailbox, which loads the selected folder, with Refresh Account beside it
+  (008 FR-001, FR-010).*
 - **FR-013 — Installed permissions**: Network access MUST be the only added
   permission beyond the baseline in [F01 FR-016](../001-goa-account-observation/spec.md#requirements).
   The installed application MUST support this feature without added filesystem

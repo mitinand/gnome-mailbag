@@ -3,7 +3,8 @@
 **Feature**: `008-folders`
 **Created**: 2026-09-27 · **Branch**: `claude/folders` · **Status**: Documents
 approved on 2026-09-27 (T001); portion 1 (T002–T010) committed on
-2026-09-27; portion 2 (T011–T016) implemented on 2026-09-27, awaiting review.
+2026-09-27; portion 2 (T011–T016) committed on 2026-09-27; portion 3
+(T017–T023) implemented on 2026-09-27, awaiting review.
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -198,12 +199,12 @@ window still calls the old entry point until portion 4 through a temporary
 adapter in `mailbag-providers` that loads the Inbox by identity, removed in
 portion 4.
 
-- [ ] T017 Amend the documents first: specs/002-imap-integration/spec.md
+- [x] T017 Amend the documents first: specs/002-imap-integration/spec.md
   (FR-002, FR-003, FR-012: a named folder, Refresh Mailbox),
   specs/004-gmail-integration/spec.md (FR-003 a named label, FR-005 labels
   as memberships built as 008 FR-004 says), specs/005-microsoft-graph-integration/spec.md
   (FR-003 a named folder, FR-006 consistent with 008 FR-004).
-- [ ] T018 [US1] [US2] [US4] In crates/mailbag-providers/src/folders.rs
+- [x] T018 [US1] [US2] [US4] In crates/mailbag-providers/src/folders.rs
   (new): `imap_folders(list: MailboxList) -> Vec<Folder>` (name decoded with
   `utf7::decode` unless `utf8_names`; parent by delimiter when the parent is
   listed, else none; `\Noselect` → not selectable; role by the first role
@@ -218,7 +219,7 @@ portion 4.
   parent is in the list); unit tests for each with the edge cases of the
   spec (partial marks, two marks, two folders one role, missing parent,
   the container, a well-known 404).
-- [ ] T019 [US1] [US4] In crates/mailbag-providers/src/batch.rs, lib.rs,
+- [x] T019 [US1] [US4] In crates/mailbag-providers/src/batch.rs, lib.rs,
   worker.rs: `LoadTarget { FolderList, Mailbox(FolderRef) }`;
   `LoadsMail::start_load(account, provider, target, report)` replacing
   `LoadsInbox`; `LoadKind` carries the target; `run_load` runs
@@ -227,7 +228,7 @@ portion 4.
   `MessageIdentity::ImapUid`) and Gmail labels; `LoadResult` gains
   `EmptyFolderList` (a completed list without any folder, nothing written;
   spec FR-001).
-- [ ] T020 [US1] [US4] In crates/mailbag-providers/src/imap.rs, gmail.rs,
+- [x] T020 [US1] [US4] In crates/mailbag-providers/src/imap.rs, gmail.rs,
   imap_batch.rs, microsoft365.rs: `list_imap_folders(access)`,
   `list_gmail_folders(access)` (Gmail options as today),
   `list_microsoft365_folders(access, service_url)`; `load_imap_mailbox(access,
@@ -235,7 +236,7 @@ portion 4.
   `load_microsoft365_mailbox(access, service_url, identity)` as today's Inbox
   loads with the named folder; message identities `imap:<folder>/<uid>`,
   `gmail:<X-GM-MSGID>`, `graph:<id>`.
-- [ ] T021 [US1] [US4] [US7] In crates/mailbag-providers/src/store_load.rs:
+- [x] T021 [US1] [US4] [US7] In crates/mailbag-providers/src/store_load.rs:
   `store_folder_list(store, account, folders, load_cancelled)` returning
   `LoadResult::EmptyFolderList` without a write when `folders` is empty and
   calling `replace_folders` otherwise, and `store_mailbox(store, batch,
@@ -244,7 +245,7 @@ portion 4.
   window; record lines "folder list load finished" with the count
   and "mailbox load finished" with the folder's identity at debug and the
   counts at info; `log_load_failure` names the target.
-- [ ] T022 [P] [US1] [US2] [US4] [US7] Tests in
+- [x] T022 [P] [US1] [US2] [US4] [US7] Tests in
   crates/mailbag-providers/src/tests.rs: each provider's folder-list load
   against its scripted server stores the folders with roles (Gmail: the
   container dropped); a cut LIST fails the load and stores nothing; a
@@ -253,7 +254,7 @@ portion 4.
   second page failure stores nothing; an empty completed list stores
   nothing and reports `EmptyFolderList`; cancellation during a folder-list
   load writes nothing.
-- [ ] T023 STOP: run ./scripts/check.sh and git diff --check; compare the
+- [x] T023 STOP: run ./scripts/check.sh and git diff --check; compare the
   size with plan.md's table (providers ~150); report, suggest the commit and
   wait before portion 4.
 

@@ -7,19 +7,38 @@
 //! crosses as the domain's `Failure`.
 
 use goa_adapter::AccessError;
-use mailbag_domain::{AccountId, DisplayFields, Failure, IncompleteList, ReceivedContent};
+use mailbag_domain::{DisplayFields, Failure, FolderRef, IncompleteList, ReceivedContent};
 use mailbag_graph::GraphError;
 use mailbag_imap::{GmailRow, ImapError};
 use std::fmt;
 
-/// How many of the newest Inbox messages one load delivers, for every
+/// How many of the newest messages of a folder one load delivers, for every
 /// provider (specs/002-imap-integration FR-002).
 pub(crate) const BATCH_SIZE: u32 = 100;
 
-/// One account's Inbox as a single load received it.
+/// What a load reads (specs/008-folders FR-001, FR-010).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LoadTarget {
+    /// The account's folder list, which Refresh Account loads.
+    FolderList,
+    /// One folder's newest messages, which Refresh Mailbox loads.
+    Mailbox(FolderRef),
+}
+
+impl LoadTarget {
+    /// What the record calls the load; the folder's name stays out of it.
+    pub(crate) fn record_name(&self) -> &'static str {
+        match self {
+            Self::FolderList => "folder list",
+            Self::Mailbox(_) => "mailbox",
+        }
+    }
+}
+
+/// One folder's messages as a single load received them.
 #[derive(Debug)]
 pub(crate) struct ReceivedBatch {
-    pub(crate) account_id: AccountId,
+    pub(crate) folder: FolderRef,
     /// Newest first, at most `BATCH_SIZE`.
     pub(crate) messages: Vec<ReceivedMessage>,
     /// Why messages are missing from this batch. `None` when it is complete.
@@ -41,7 +60,7 @@ pub(crate) struct ReceivedMessage {
 /// How the message's provider identifies it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum MessageIdentity {
-    /// The IMAP UID in the Inbox the load read.
+    /// The IMAP UID in the folder the load read.
     ImapUid(u32),
     /// Microsoft Graph's identifier, which survives moves between folders.
     GraphImmutableId(String),
@@ -67,11 +86,15 @@ pub(crate) enum LoadFailure {
 /// How one load ended.
 #[derive(Debug)]
 pub enum LoadResult {
-    /// The load's messages are the account's stored Inbox now; `incomplete`
-    /// says why messages the Inbox offered are missing.
+    /// The folder list or the folder's messages are stored now; `incomplete`
+    /// says why messages the folder offered are missing, and is `None` for a
+    /// folder list.
     Stored {
         incomplete: Option<IncompleteList>,
     },
+    /// The folder list completed without any folder, so nothing was stored
+    /// (specs/008-folders FR-001).
+    EmptyFolderList,
     Failed(Failure),
     /// Cancelled by a confirmed exclusion or by quitting; the connection is
     /// closed, so the next refresh may start.

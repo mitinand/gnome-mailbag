@@ -5,7 +5,8 @@
 **Status**: Implemented on `claude/graph` and accepted live by the
 maintainer 2026-09-24; approved 2026-09-23 with the plan after the
 feature-start sizing, a read-only probe against the service and the
-specification challenge (see Clarifications)
+specification challenge (see Clarifications); FR-003 and FR-006 amended
+on 2026-09-27 by [Folders](../008-folders/spec.md)
 **Input**: On an explicit refresh, load recent Inbox message metadata and text
 of the selected Microsoft 365 account into memory, the way
 [IMAP integration](../002-imap-integration/spec.md) does for a Generic IMAP
@@ -284,6 +285,10 @@ the service delivers display fields and text as ready values in one answer.
   fetch further pages at this stage and MUST NOT retry a request
   automatically for any reason. The IMAP integration's FR-004 (received
   text) is replaced for this provider by FR-005 below.
+  *Amended 2026-09-27 by [Folders](../008-folders/spec.md): a load reads the folder
+  the user selected, by its identifier; obtaining the folder list is a load
+  of its own, the listing's pages plus one request per well-known name (008
+  FR-001, FR-012).*
 - **FR-004 — Microsoft 365 identity**: Each received message MUST carry the
   service's immutable identifier, asked for on every request that returns
   messages. The identity of a Microsoft 365 message is that identifier, which
@@ -310,6 +315,10 @@ the service delivers display fields and text as ready values in one answer.
   service defines one, never by their localized display name; this stage
   addresses the Inbox by its role and lists no folders. This rule produces no
   mechanism in this feature.
+  *Amended 2026-09-27 by [Folders](../008-folders/spec.md): folders are listed and
+  addressed by their identifiers; well-known names give their roles, never
+  display names (008 FR-003); a message has exactly one membership (008
+  FR-004).*
 - **FR-007 — Microsoft 365 is a separate provider**: Microsoft 365's rules
   MUST live in a provider of its own, next to the Generic IMAP and Gmail
   providers, over a service-access layer of its own that shares no code with

@@ -3,16 +3,16 @@
 
 use super::*;
 use crate::batch::{MessageIdentity, ReceivedBatch, ReceivedMessage};
-use crate::gmail::load_gmail_inbox;
-use crate::imap::load_imap_inbox;
-use crate::microsoft365::load_microsoft365_inbox;
-use crate::store_load::store_batch;
+use crate::gmail::load_gmail_mailbox;
+use crate::imap::load_imap_mailbox;
+use crate::microsoft365::load_microsoft365_mailbox;
+use crate::store_load::{store_folder_list, store_mailbox};
 use crate::test_record::CapturedRecord;
-use crate::worker::{LoadKind, MailWorker, report_outcome};
+use crate::worker::{LoadJob, LoadKind, MailWorker, report_outcome};
 use goa_adapter::{GraphAccess, ImapAccess, ImapCredential, ImapEncryption};
 use mailbag_domain::{
-    AccountId, ContentExplanation, DisplayFields, Failure, FailureKind, IncompleteList, Message,
-    ReceivedContent,
+    AccountId, ContentExplanation, DisplayFields, Failure, FailureKind, Folder, FolderRef,
+    FolderRole, IncompleteList, Message, ReceivedContent,
 };
 use mailbag_graph::{GraphError, test_server as graph_service};
 use mailbag_imap::{
@@ -43,21 +43,45 @@ fn plain_messages(count: u32) -> Vec<FixtureMessage> {
         .collect()
 }
 
-/// Runs the Generic IMAP load sequence to its end, without the worker and the
-/// store.
+/// The folder `identity` of the test account.
+fn folder_of(account: &str, identity: &str) -> FolderRef {
+    FolderRef {
+        account: AccountId::try_from(account).unwrap(),
+        identity: identity.to_owned(),
+    }
+}
+
+/// Runs the Generic IMAP load sequence of the Inbox to its end, without the
+/// worker and the store.
 fn load_inbox(fixture: &ImapFixture) -> Result<ReceivedBatch, ImapError> {
-    run_on_context(load_imap_inbox(account_access(fixture)))
+    let inbox = folder_of("synthetic-account", "INBOX");
+    run_on_context(load_imap_mailbox(account_access(fixture), inbox))
 }
 
-/// Runs the Gmail load sequence to its end, without the worker and the store.
+/// Runs the Gmail load sequence of the Inbox to its end, without the worker
+/// and the store.
 fn load_gmail(fixture: &ImapFixture) -> Result<ReceivedBatch, ImapError> {
-    run_on_context(load_gmail_inbox(gmail_access(fixture)))
+    let inbox = folder_of("synthetic-account", "INBOX");
+    run_on_context(load_gmail_mailbox(gmail_access(fixture), inbox))
 }
 
-/// Runs one load on a new worker to its end and its write into `store`, as the
-/// window would.
+/// Runs one Inbox load on a new worker to its end and its write into `store`,
+/// as the window starts it until it knows folders.
 fn load_with_kind(kind: LoadKind, store: &Arc<Store>) -> LoadResult {
     run_on_context(finish_load(&MailWorker::new(store.clone()), kind))
+}
+
+/// Runs one load of `target` on a new worker to its end and its write into
+/// `store`.
+fn load_target(kind: LoadKind, target: LoadTarget, store: &Arc<Store>) -> LoadResult {
+    let worker = MailWorker::new(store.clone());
+    run_on_context(async {
+        let (sender, outcomes) = async_channel::bounded(1);
+        let _handle = worker.start_load(kind, LoadJob::Load(target), move |outcome| {
+            sender.try_send(outcome).ok();
+        });
+        outcomes.recv().await.expect("the load reports its outcome")
+    })
 }
 
 /// The messages a load stored for the account.
@@ -72,7 +96,7 @@ fn stored_messages(store: &Store, account: &str) -> Vec<Message> {
 /// Runs one load on `worker` and waits for its outcome.
 async fn finish_load(worker: &MailWorker, kind: LoadKind) -> LoadResult {
     let (sender, outcomes) = async_channel::bounded(1);
-    let _handle = worker.load_inbox(kind, move |outcome| {
+    let _handle = worker.start_load(kind, LoadJob::InboxUntilFolders, move |outcome| {
         sender.try_send(outcome).ok();
     });
     outcomes.recv().await.expect("the load reports its outcome")
@@ -122,10 +146,7 @@ fn batches_hold_the_newest_hundred_messages_with_their_text() {
             .map(|message| message.identity.clone())
             .collect();
         assert_eq!(identities, expected, "{count} messages");
-        assert_eq!(
-            batch.account_id,
-            AccountId::try_from("synthetic-account").unwrap()
-        );
+        assert_eq!(batch.folder, folder_of("synthetic-account", "INBOX"));
         for (message, number) in batch.messages.iter().zip((1..=count).rev()) {
             assert_eq!(text_of(&message.content).trim(), format!("Text {number}"));
             assert_eq!(
@@ -213,8 +234,9 @@ fn a_cancelled_load_closes_its_connection_before_it_ends() {
     run_on_context(async {
         let worker = MailWorker::new(Arc::new(Store::in_memory()));
         let (sender, outcomes) = async_channel::bounded(1);
-        let handle = worker.load_inbox(
+        let handle = worker.start_load(
             LoadKind::GenericImap(account_access(&fixture)),
+            LoadJob::InboxUntilFolders,
             move |outcome| {
                 sender.try_send(outcome).ok();
             },
@@ -275,7 +297,7 @@ fn a_stopped_worker_ends_the_load_with_a_visible_failure() {
         let account_id = AccountId::try_from("synthetic-account").unwrap();
         for reported in [Some(outcome), None] {
             let mut outcome = None;
-            report_outcome(account_id.clone(), reported, |result| {
+            report_outcome(account_id.clone(), "mailbox", reported, |result| {
                 outcome = Some(result)
             })
             .await;
@@ -336,8 +358,9 @@ fn the_next_load_starts_a_new_worker_after_one_stopped() {
         *worker.loads.borrow_mut() = Some(loads);
 
         let (sender, outcomes) = async_channel::bounded(1);
-        let _handle = worker.load_inbox(
+        let _handle = worker.start_load(
             LoadKind::GenericImap(account_access(&fixture)),
+            LoadJob::InboxUntilFolders,
             move |outcome| {
                 sender.try_send(outcome).ok();
             },
@@ -477,7 +500,8 @@ async fn load_with_online_accounts(
     let access = access?;
     let (finished, outcomes) = async_channel::bounded(1);
     let worker = MailWorker::new(Arc::new(Store::in_memory()));
-    let _load = worker.load_inbox(LoadKind::GenericImap(access), move |outcome| {
+    let job = LoadJob::InboxUntilFolders;
+    let _load = worker.start_load(LoadKind::GenericImap(access), job, move |outcome| {
         finished.try_send(outcome).ok();
     });
     Ok(outcomes.recv().await.expect("the load reports its outcome"))
@@ -713,17 +737,15 @@ fn load_microsoft365(
     else {
         unreachable!("a Microsoft 365 load")
     };
-    run_on_context(load_microsoft365_inbox(access, &service_url))
+    let inbox = folder_of("synthetic-microsoft365", "inbox");
+    run_on_context(load_microsoft365_mailbox(access, &service_url, inbox))
 }
 
 #[test]
 fn a_microsoft_365_load_publishes_the_services_messages_and_text() {
     let service = graph_service::ScriptedService::start(graph_service::ScriptedAnswer::inbox(3));
     let batch = received_batch(load_microsoft365(&service));
-    assert_eq!(
-        batch.account_id,
-        AccountId::try_from("synthetic-microsoft365").unwrap()
-    );
+    assert_eq!(batch.folder, folder_of("synthetic-microsoft365", "inbox"));
     assert_eq!(batch.incomplete, None);
     let summary: Vec<_> = batch
         .messages
@@ -868,8 +890,8 @@ fn each_providers_load_stores_its_messages_and_reports_them_stored() {
             LoadKind::GenericImap(account_access(&imap)),
             "synthetic-account",
             vec![
-                ("uid:20".to_owned(), text("Text 2")),
-                ("uid:10".to_owned(), text("Text 1")),
+                ("imap:INBOX/20".to_owned(), text("Text 2")),
+                ("imap:INBOX/10".to_owned(), text("Text 1")),
             ],
         ),
         (
@@ -938,28 +960,47 @@ fn a_store_that_cannot_be_opened_fails_the_load_with_one_error_line() {
     assert!(errors[0].contains("cause=MailNotSaved"), "{}", errors[0]);
 }
 
+/// A store that holds the account's Inbox as its one folder, not loaded.
+fn store_with_inbox(inbox: &FolderRef) -> Store {
+    let store = Store::in_memory();
+    let folder = Folder {
+        identity: inbox.identity.clone(),
+        name: inbox.identity.clone(),
+        parent: None,
+        attributes: Vec::new(),
+        role: None,
+        selectable: true,
+    };
+    store
+        .replace_folders(&inbox.account, &[folder], || false)
+        .unwrap();
+    store
+}
+
 #[test]
 fn a_load_cancelled_before_its_write_stores_nothing() {
-    let store = Store::in_memory();
-    let account = AccountId::try_from("synthetic-account").unwrap();
+    let inbox = folder_of("synthetic-account", "INBOX");
+    let store = store_with_inbox(&inbox);
     let batch = ReceivedBatch {
-        account_id: account.clone(),
+        folder: inbox.clone(),
         messages: vec![received_message(
             10,
             ReceivedContent::Text("Text".to_owned()),
         )],
         incomplete: None,
     };
-    let outcome = store_batch(&store, batch, || true);
+    let outcome = store_mailbox(&store, batch, || true);
     assert!(matches!(outcome, LoadResult::Cancelled), "{outcome:?}");
-    assert_eq!(store.read_inbox(&account), Ok(None));
+    assert_eq!(store.read_mailbox(&inbox), Ok(None));
 }
 
 #[test]
 fn unreadable_content_and_a_refused_list_each_warn_without_server_text() {
+    let inbox = folder_of("account_1726920000_0", "INBOX");
+    let store = store_with_inbox(&inbox);
     let record = CapturedRecord::start(tracing::Level::DEBUG);
     let batch = ReceivedBatch {
-        account_id: AccountId::try_from("account_1726920000_0").unwrap(),
+        folder: inbox,
         incomplete: Some(IncompleteList::ServerRefused {
             reply: "private refusal text".to_owned(),
             code: Some("LIMIT".to_owned()),
@@ -977,11 +1018,252 @@ fn unreadable_content_and_a_refused_list_each_warn_without_server_text() {
             ),
         ],
     };
-    store_batch(&Store::in_memory(), batch, || false);
+    store_mailbox(&store, batch, || false);
     let text = record.text();
     let warnings = record.lines_at("WARN");
     assert_eq!(warnings.len(), 2, "{text}");
     assert!(warnings[0].contains("messages=1"), "{}", warnings[0]);
     assert!(warnings[1].contains(r#"code="LIMIT""#), "{}", warnings[1]);
     assert!(!text.contains("private refusal text"), "{text}");
+}
+
+/// Each stored folder's identity, shown name, parent and role, by identity.
+fn stored_folders(
+    store: &Store,
+    account: &str,
+) -> Vec<(String, String, Option<String>, Option<FolderRole>)> {
+    let account = AccountId::try_from(account).unwrap();
+    let mut folders: Vec<_> = store
+        .read_folders(&account)
+        .expect("the store reads")
+        .into_iter()
+        .map(|stored| {
+            let folder = stored.folder;
+            (folder.identity, folder.name, folder.parent, folder.role)
+        })
+        .collect();
+    folders.sort_by(|left, right| left.0.cmp(&right.0));
+    folders
+}
+
+fn stored(
+    identity: &str,
+    name: &str,
+    parent: Option<&str>,
+    role: Option<FolderRole>,
+) -> (String, String, Option<String>, Option<FolderRole>) {
+    (
+        identity.to_owned(),
+        name.to_owned(),
+        parent.map(str::to_owned),
+        role,
+    )
+}
+
+#[test]
+fn each_providers_folder_list_load_stores_its_folders_with_their_roles() {
+    let imap = ImapFixture::start(FixtureSetup {
+        mailboxes: vec![
+            ("\\HasNoChildren", "/", "INBOX"),
+            ("\\HasNoChildren \\Sent", "/", "Sent Messages"),
+            ("\\HasChildren \\Noselect", "/", "Projects"),
+            ("\\HasNoChildren", "/", "Projects/Reports"),
+        ],
+        ..FixtureSetup::default()
+    });
+    let gmail = ImapFixture::start(FixtureSetup {
+        access_token: Some(TEST_ACCESS_TOKEN.to_owned()),
+        mailboxes: vec![
+            ("\\HasNoChildren", "/", "INBOX"),
+            ("\\HasChildren \\Noselect", "/", "[Gmail]"),
+            ("\\HasNoChildren \\Sent", "/", "[Gmail]/Sent Mail"),
+            ("\\HasNoChildren", "/", "Work"),
+        ],
+        ..FixtureSetup::default()
+    });
+    let service = graph_service::ScriptedService::start_with_folders(
+        graph_service::ScriptedAnswer::inbox(1),
+        graph_service::ScriptedFolders {
+            pages: vec![Ok(vec![
+                graph_service::folder_entry("inbox-id", "Incoming", "root-id"),
+                graph_service::folder_entry("projects-id", "Projects", "root-id"),
+            ])],
+            well_known: vec![(
+                "inbox",
+                graph_service::ScriptedAnswer::folder_id("inbox-id"),
+            )],
+        },
+    );
+    let loads = [
+        (
+            LoadKind::GenericImap(account_access(&imap)),
+            "synthetic-account",
+            vec![
+                stored("INBOX", "INBOX", None, Some(FolderRole::Inbox)),
+                stored("Projects", "Projects", None, None),
+                stored("Projects/Reports", "Reports", Some("Projects"), None),
+                stored(
+                    "Sent Messages",
+                    "Sent Messages",
+                    None,
+                    Some(FolderRole::Sent),
+                ),
+            ],
+        ),
+        (
+            LoadKind::Gmail(gmail_access(&gmail)),
+            "synthetic-account",
+            vec![
+                stored("INBOX", "INBOX", None, Some(FolderRole::Inbox)),
+                stored("Work", "Work", None, None),
+                stored(
+                    "[Gmail]/Sent Mail",
+                    "Sent Mail",
+                    None,
+                    Some(FolderRole::Sent),
+                ),
+            ],
+        ),
+        (
+            microsoft365_kind(&service),
+            "synthetic-microsoft365",
+            vec![
+                stored("inbox-id", "Incoming", None, Some(FolderRole::Inbox)),
+                stored("projects-id", "Projects", None, None),
+            ],
+        ),
+    ];
+    for (kind, account, expected) in loads {
+        let store = Arc::new(Store::in_memory());
+        let outcome = load_target(kind, LoadTarget::FolderList, &store);
+        assert!(
+            matches!(outcome, LoadResult::Stored { incomplete: None }),
+            "{account}: {outcome:?}"
+        );
+        assert_eq!(stored_folders(&store, account), expected, "{account}");
+    }
+}
+
+#[test]
+fn a_folder_list_that_is_cut_short_or_fails_a_page_changes_nothing_stored() {
+    let cut = ImapFixture::start(FixtureSetup {
+        mailboxes: vec![("\\HasNoChildren", "/", "INBOX")],
+        list_completion: None,
+        ..FixtureSetup::default()
+    });
+    let failing_page = graph_service::ScriptedService::start_with_folders(
+        graph_service::ScriptedAnswer::inbox(1),
+        graph_service::ScriptedFolders {
+            pages: vec![
+                Ok(vec![graph_service::folder_entry(
+                    "inbox-id", "Incoming", "root-id",
+                )]),
+                Err(graph_service::ScriptedAnswer::throttled()),
+            ],
+            well_known: Vec::new(),
+        },
+    );
+    let loads = [
+        (
+            LoadKind::GenericImap(account_access(&cut)),
+            folder_of("synthetic-account", "INBOX"),
+        ),
+        (
+            microsoft365_kind(&failing_page),
+            folder_of("synthetic-microsoft365", "inbox"),
+        ),
+    ];
+    for (kind, earlier) in loads {
+        let store = Arc::new(store_with_inbox(&earlier));
+        let before = stored_folders(&store, earlier.account.as_str());
+        let outcome = load_target(kind, LoadTarget::FolderList, &store);
+        assert!(matches!(outcome, LoadResult::Failed(_)), "{outcome:?}");
+        assert_eq!(stored_folders(&store, earlier.account.as_str()), before);
+    }
+}
+
+#[test]
+fn a_completed_list_without_any_folder_stores_nothing_and_says_so() {
+    // The default server lists no mailbox.
+    let fixture = ImapFixture::start(FixtureSetup::default());
+    let store = Arc::new(Store::in_memory());
+    let outcome = load_target(
+        LoadKind::GenericImap(account_access(&fixture)),
+        LoadTarget::FolderList,
+        &store,
+    );
+    assert!(
+        matches!(outcome, LoadResult::EmptyFolderList),
+        "{outcome:?}"
+    );
+    assert_eq!(stored_folders(&store, "synthetic-account"), []);
+}
+
+#[test]
+fn a_folder_list_load_cancelled_before_its_write_stores_nothing() {
+    let store = Store::in_memory();
+    let account = AccountId::try_from("synthetic-account").unwrap();
+    let folder = Folder {
+        identity: "INBOX".to_owned(),
+        name: "INBOX".to_owned(),
+        parent: None,
+        attributes: Vec::new(),
+        role: Some(FolderRole::Inbox),
+        selectable: true,
+    };
+    let outcome = store_folder_list(&store, &account, vec![folder], || true);
+    assert!(matches!(outcome, LoadResult::Cancelled), "{outcome:?}");
+    assert_eq!(stored_folders(&store, "synthetic-account"), []);
+}
+
+#[test]
+fn a_mailbox_load_stores_the_messages_of_the_folder_it_names() {
+    let fixture = ImapFixture::start(FixtureSetup {
+        mailboxes: vec![("\\HasNoChildren", "/", "INBOX"), ("", "/", "Work")],
+        messages: plain_messages(2),
+        ..FixtureSetup::default()
+    });
+    let store = Arc::new(Store::in_memory());
+    let kind = || LoadKind::GenericImap(account_access(&fixture));
+    load_target(kind(), LoadTarget::FolderList, &store);
+    let work = folder_of("synthetic-account", "Work");
+    let outcome = load_target(kind(), LoadTarget::Mailbox(work.clone()), &store);
+    assert!(matches!(outcome, LoadResult::Stored { .. }), "{outcome:?}");
+    let stored = store.read_mailbox(&work).unwrap().expect("a loaded folder");
+    let identities: Vec<&str> = stored
+        .iter()
+        .map(|message| message.identity.as_str())
+        .collect();
+    assert_eq!(identities, ["imap:Work/20", "imap:Work/10"]);
+    assert_eq!(
+        store.read_mailbox(&folder_of("synthetic-account", "INBOX")),
+        Ok(None)
+    );
+    assert_eq!(fixture.log().examined_mailboxes, ["Work"]);
+}
+
+#[test]
+fn a_gmail_message_under_two_loaded_labels_is_one_message_in_both() {
+    let fixture = ImapFixture::start(FixtureSetup {
+        access_token: Some(TEST_ACCESS_TOKEN.to_owned()),
+        mailboxes: vec![("", "/", "Work"), ("", "/", "Travel")],
+        messages: vec![
+            FixtureMessage::plain_text(10, "Text").with_gmail_attributes(1_000, &["Travel"]),
+        ],
+        ..FixtureSetup::default()
+    });
+    let store = Arc::new(Store::in_memory());
+    let kind = || LoadKind::Gmail(gmail_access(&fixture));
+    load_target(kind(), LoadTarget::FolderList, &store);
+    let (work, travel) = (
+        folder_of("synthetic-account", "Work"),
+        folder_of("synthetic-account", "Travel"),
+    );
+    for label in [&work, &travel] {
+        load_target(kind(), LoadTarget::Mailbox(label.clone()), &store);
+    }
+    let in_work = store.read_mailbox(&work).unwrap().expect("a loaded label");
+    assert_eq!(in_work[0].identity, "gmail:1000");
+    assert_eq!(in_work[0].labels, ["Travel"]);
+    assert_eq!(store.read_mailbox(&travel), Ok(Some(in_work)));
 }

@@ -158,8 +158,9 @@ pub struct FolderMembership {
 #[derive(Clone, PartialEq, Eq)]
 pub struct Message {
     /// The message's identity within its account, by which the store keeps
-    /// it once however many folders list it: `uid:<n>`, `gmail:<X-GM-MSGID>`
-    /// or `graph:<immutable id>`.
+    /// it once however many folders list it: `gmail:<X-GM-MSGID>`,
+    /// `graph:<immutable id>`, or `imap:<folder identity>/<uid>` for a
+    /// Generic IMAP message, which has no identity beyond its place.
     pub identity: String,
     pub fields: DisplayFields,
     /// The received date as seconds since the Unix epoch.

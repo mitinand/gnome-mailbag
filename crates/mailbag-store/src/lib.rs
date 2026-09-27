@@ -170,7 +170,7 @@ impl Store {
         })
     }
 
-    /// Until the loads know folders: stores the account's Inbox load as the
+    /// Until the window knows folders: stores the account's Inbox load as the
     /// one folder `INBOX`.
     pub fn replace_inbox(
         &self,
@@ -266,7 +266,7 @@ impl Store {
     }
 }
 
-/// The Inbox's reserved name (RFC 3501 §5.1), until the loads know folders.
+/// The Inbox's reserved name (RFC 3501 §5.1), until the window knows folders.
 const INBOX: &str = "INBOX";
 
 fn inbox_of(account: &AccountId) -> FolderRef {

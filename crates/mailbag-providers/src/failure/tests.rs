@@ -215,13 +215,14 @@ fn a_load_given_up_is_one_error_line_naming_its_kind() {
     let account = AccountId::try_from("account_1726920000_1").expect("synthetic account id");
     for (failure, fields) in failures {
         let record = CapturedRecord::start(tracing::Level::DEBUG);
-        let result = failure.give_up(&account);
+        let result = failure.give_up(&account, "mailbox");
         assert!(matches!(result, LoadResult::Failed(_)), "{result:?}");
         let text = record.text();
         let errors = record.lines_at("ERROR");
         assert_eq!(errors.len(), 1, "{text}");
         assert!(
-            errors[0].contains("Inbox load failed")
+            errors[0].contains("load failed")
+                && errors[0].contains(r#"load="mailbox""#)
                 && errors[0].contains(r#"account="account_1726920000_1""#)
                 && errors[0].contains(fields),
             "{fields}: {}",

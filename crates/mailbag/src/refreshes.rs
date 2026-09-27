@@ -80,6 +80,9 @@ impl Refreshes {
         let outcome = match result {
             // The cancellation was recorded where it was requested.
             LoadResult::Cancelled => return,
+            // Only a folder-list load reports it, and the window starts none
+            // until it knows folders.
+            LoadResult::EmptyFolderList => return,
             _ if running.cancellation.is_none() => {
                 tracing::info!(
                     account = account_id.as_str(),

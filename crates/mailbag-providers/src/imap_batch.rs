@@ -10,7 +10,7 @@ use goa_adapter::{ImapAccess, ImapCredential, ImapEncryption};
 use mailbag_content::{
     MimePart, TextSelection, decode_display_fields, decode_message_text, select_text_parts,
 };
-use mailbag_domain::{AccountId, IncompleteList, ReceivedContent};
+use mailbag_domain::{FolderRef, IncompleteList, ReceivedContent};
 use mailbag_imap::{
     Credential, Encryption, ImapAccount, ImapError, ImapFailure, MailboxReader, MessageList,
     MessagePart, MessageText, TextParts, TextRequest,
@@ -38,7 +38,7 @@ pub(crate) fn imap_account(access: ImapAccess) -> ImapAccount {
 pub(crate) async fn load_batch_from_rows(
     reader: &mut MailboxReader,
     listed: MessageList,
-    account_id: AccountId,
+    folder: FolderRef,
 ) -> Result<ReceivedBatch, ImapError> {
     let rows = listed.rows;
     let window = rows.len();
@@ -68,7 +68,7 @@ pub(crate) async fn load_batch_from_rows(
     reader
         .fetch_text(requests, |uid, text| {
             let _message = tracing::debug_span!("message", uid).entered();
-            // A message absent here disappeared from the Inbox during the load.
+            // A message absent here disappeared from the folder during the load.
             if let Some(content) = received_text(&text) {
                 texts.insert(uid, content);
             }
@@ -102,12 +102,12 @@ pub(crate) async fn load_batch_from_rows(
         .collect();
     // Every message of a window that was not empty disappeared, for example
     // because another client moved them. Older mail outside the window may
-    // still be there, so this is not an empty Inbox.
+    // still be there, so this is not an empty folder.
     if messages.is_empty() && window > 0 {
         return Err(ImapFailure::MailboxChanged.into());
     }
     Ok(ReceivedBatch {
-        account_id,
+        folder,
         messages,
         incomplete: listed.refusal.map(|refusal| IncompleteList::ServerRefused {
             reply: refusal.text,
@@ -140,7 +140,7 @@ fn text_parts(root: &MessagePart, sections: &[Vec<u32>]) -> TextParts {
 }
 
 /// One message's received text, or why there is none. `None` means the
-/// message disappeared from the Inbox.
+/// message disappeared from the folder.
 fn received_text(text: &MessageText) -> Option<ReceivedContent> {
     Some(match text {
         MessageText::Received(parts) => {

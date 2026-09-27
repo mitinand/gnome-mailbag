@@ -18,14 +18,16 @@ use mailbag_graph::{GraphError, GraphFailure};
 use mailbag_imap::{ImapFailure, ImapStep};
 
 impl LoadFailure {
-    /// Ends the load: writes its one error line and hands the failure on.
-    pub(crate) fn give_up(self, account: &AccountId) -> LoadResult {
+    /// Ends the load: writes its one error line, naming the load by
+    /// `record_name`, and hands the failure on.
+    pub(crate) fn give_up(self, account: &AccountId, record_name: &'static str) -> LoadResult {
         let alerts = match &self {
             Self::Imap(error) => error.alerts.len(),
             _ => 0,
         };
         log_load_failure(
             account,
+            record_name,
             self.failure_kind(),
             self.status(),
             self.server_code(),
@@ -202,11 +204,13 @@ fn server_step(step: ImapStep) -> ServerStep {
     }
 }
 
-/// The single error line of a load that was given up: the failure's kind, the
-/// mail service's status, the server's or the service's error code and the
-/// number of alerts, never the server's text.
+/// The single error line of a load that was given up: which load, the
+/// failure's kind, the mail service's status, the server's or the service's
+/// error code and the number of alerts, never the server's text or a
+/// folder's name.
 pub(crate) fn log_load_failure(
     account: &AccountId,
+    load: &'static str,
     kind: FailureKind,
     status: Option<u32>,
     code: Option<&str>,
@@ -214,12 +218,13 @@ pub(crate) fn log_load_failure(
 ) {
     tracing::error!(
         account = account.as_str(),
+        load,
         // Named by the domain's enumeration, never by server text, so it is
         // written without quotes, as the record has always named it.
         cause = ?kind,
         status,
         code,
         alerts = Some(alerts).filter(|alerts| *alerts > 0),
-        "Inbox load failed"
+        "load failed"
     );
 }
