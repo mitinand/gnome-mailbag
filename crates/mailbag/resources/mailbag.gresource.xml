@@ -5,5 +5,10 @@
   <gresource prefix="/io/github/mitinand/Mailbag">
     <file alias="icons/scalable/places/mailbag-account-google-symbolic.svg">icons/scalable/places/goa-account-google-symbolic.svg</file>
     <file>icons/scalable/places/mailbag-account-ms365-symbolic.svg</file>
+    <file>icons/scalable/places/mailbag-folder-archive-symbolic.svg</file>
+    <file>icons/scalable/places/mailbag-folder-important-symbolic.svg</file>
+    <file>icons/scalable/places/mailbag-folder-inbox-symbolic.svg</file>
+    <file>icons/scalable/places/mailbag-folder-sent-symbolic.svg</file>
+    <file>icons/scalable/places/mailbag-folder-starred-symbolic.svg</file>
   </gresource>
 </gresources>

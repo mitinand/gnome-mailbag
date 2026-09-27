@@ -3,7 +3,7 @@
 
 use super::{expect_failure, open_reader, plain_messages, run};
 use crate::{
-    Credential, Encryption, ImapAccount, ImapFailure, ImapStep, InboxReader, OpenOptions,
+    Credential, Encryption, ImapAccount, ImapFailure, ImapStep, MailboxReader, OpenOptions,
     ServerReply,
     test_server::{FixtureSetup, ImapFixture, StartTlsBehavior},
 };
@@ -17,7 +17,7 @@ fn starttls(behavior: StartTlsBehavior) -> FixtureSetup {
 }
 
 #[test]
-fn both_encryption_modes_sign_in_and_examine_the_inbox() {
+fn both_encryption_modes_sign_in_and_examine_a_mailbox() {
     for encryption in [Encryption::ImplicitTls, Encryption::StartTls] {
         let fixture = ImapFixture::start(FixtureSetup {
             encryption,
@@ -27,12 +27,13 @@ fn both_encryption_modes_sign_in_and_examine_the_inbox() {
         drop(open_reader(&fixture));
         let log = fixture.log();
         let expected: &[&str] = match encryption {
-            Encryption::ImplicitTls => &["CAPABILITY", "AUTHENTICATE", "EXAMINE"],
+            Encryption::ImplicitTls => &["CAPABILITY", "AUTHENTICATE", "CAPABILITY", "EXAMINE"],
             Encryption::StartTls => &[
                 "plaintext CAPABILITY",
                 "plaintext STARTTLS",
                 "CAPABILITY",
                 "AUTHENTICATE",
+                "CAPABILITY",
                 "EXAMINE",
             ],
         };
@@ -42,17 +43,18 @@ fn both_encryption_modes_sign_in_and_examine_the_inbox() {
 }
 
 #[test]
-fn an_interrupted_examine_does_not_confirm_an_empty_inbox() {
+fn an_interrupted_examine_does_not_confirm_an_empty_mailbox() {
     let fixture = ImapFixture::start(FixtureSetup {
         messages: plain_messages(1),
         close_during_examine: true,
         ..FixtureSetup::default()
     });
-    let error = expect_failure(run(InboxReader::open(
+    let error = expect_failure(run(MailboxReader::open(
         fixture.account(),
         OpenOptions::default(),
+        "INBOX",
     )));
-    assert_eq!(error.failure, ImapFailure::Failed(ImapStep::OpenInbox));
+    assert_eq!(error.failure, ImapFailure::Failed(ImapStep::OpenMailbox));
     assert!(fixture.log().fetches.is_empty());
 }
 
@@ -72,9 +74,10 @@ fn capability_alerts_explain_a_rejected_command_or_missing_sign_in_method() {
             capability_reply: Some(format!("* OK [ALERT] Maintenance tonight\r\n{reply}")),
             ..FixtureSetup::default()
         });
-        let error = expect_failure(run(InboxReader::open(
+        let error = expect_failure(run(MailboxReader::open(
             fixture.account(),
             OpenOptions::default(),
+            "INBOX",
         )));
         assert_eq!(error.failure, failure);
         assert_eq!(error.alerts, ["Maintenance tonight"]);
@@ -91,9 +94,10 @@ fn missing_rejected_or_preauth_starttls_fails_before_credentials() {
         StartTlsBehavior::PreauthGreeting,
     ] {
         let fixture = ImapFixture::start(starttls(behavior));
-        let error = expect_failure(run(InboxReader::open(
+        let error = expect_failure(run(MailboxReader::open(
             fixture.account(),
             OpenOptions::default(),
+            "INBOX",
         )));
         assert_eq!(
             error.failure,
@@ -111,7 +115,11 @@ fn plaintext_sent_after_the_starttls_reply_is_discarded() {
         ..starttls(StartTlsBehavior::InjectAfterReply)
     });
     let account = fixture.account_with_password("wrong password");
-    let error = expect_failure(run(InboxReader::open(account, OpenOptions::default())));
+    let error = expect_failure(run(MailboxReader::open(
+        account,
+        OpenOptions::default(),
+        "INBOX",
+    )));
     // The sign-in happened over TLS; the injected ALERT was never read.
     assert_eq!(error.failure, ImapFailure::Failed(ImapStep::SignIn));
     assert_eq!(error.alerts, ["Rejected over TLS"]);
@@ -126,9 +134,10 @@ fn certificate_failures_stop_before_credentials() {
                 certificate,
                 ..FixtureSetup::default()
             });
-            let error = expect_failure(run(InboxReader::open(
+            let error = expect_failure(run(MailboxReader::open(
                 fixture.account(),
                 OpenOptions::default(),
+                "INBOX",
             )));
             assert_eq!(
                 error.failure,
@@ -154,9 +163,10 @@ fn plain_sign_in_carries_non_ascii_credentials() {
         encryption: Encryption::ImplicitTls,
     };
     // The server accepts only the exact credentials.
-    drop(super::expect_success(run(InboxReader::open(
+    drop(super::expect_success(run(MailboxReader::open(
         account,
         OpenOptions::default(),
+        "INBOX",
     ))));
     assert!(fixture.log().commands.contains(&"AUTHENTICATE".to_owned()));
 }
@@ -177,7 +187,11 @@ fn login_is_used_only_without_plain() {
 fn a_rejected_sign_in_is_not_retried_with_another_method() {
     let fixture = ImapFixture::start(FixtureSetup::default());
     let account = fixture.account_with_password("wrong password");
-    let error = expect_failure(run(InboxReader::open(account, OpenOptions::default())));
+    let error = expect_failure(run(MailboxReader::open(
+        account,
+        OpenOptions::default(),
+        "INBOX",
+    )));
     assert_eq!(error.failure, ImapFailure::Failed(ImapStep::SignIn));
     let log = fixture.log();
     assert_eq!(log.commands, ["CAPABILITY", "AUTHENTICATE"]);
@@ -199,9 +213,10 @@ fn login_sends_non_ascii_credentials_as_literals() {
         encryption: Encryption::ImplicitTls,
     };
     // The server accepts only the exact credentials.
-    drop(super::expect_success(run(InboxReader::open(
+    drop(super::expect_success(run(MailboxReader::open(
         account,
         OpenOptions::default(),
+        "INBOX",
     ))));
     assert!(fixture.log().commands.contains(&"LOGIN".to_owned()));
 }
@@ -226,7 +241,11 @@ fn a_rejected_sign_in_keeps_the_server_text_and_code() {
             ..FixtureSetup::default()
         });
         let account = fixture.account_with_password("wrong password");
-        let error = expect_failure(run(InboxReader::open(account, OpenOptions::default())));
+        let error = expect_failure(run(MailboxReader::open(
+            account,
+            OpenOptions::default(),
+            "INBOX",
+        )));
         assert_eq!(error.failure, ImapFailure::Failed(ImapStep::SignIn));
         assert_eq!(
             error.server_reply,
@@ -245,9 +264,10 @@ fn a_bye_greeting_keeps_the_server_text() {
         greeting: format!("* BYE {text}"),
         ..FixtureSetup::default()
     });
-    let error = expect_failure(run(InboxReader::open(
+    let error = expect_failure(run(MailboxReader::open(
         fixture.account(),
         OpenOptions::default(),
+        "INBOX",
     )));
     assert_eq!(error.failure, ImapFailure::Failed(ImapStep::Connect));
     assert_eq!(
@@ -266,9 +286,10 @@ fn login_disabled_without_plain_leaves_no_sign_in_method() {
         login_disabled: true,
         ..FixtureSetup::default()
     });
-    let error = expect_failure(run(InboxReader::open(
+    let error = expect_failure(run(MailboxReader::open(
         fixture.account(),
         OpenOptions::default(),
+        "INBOX",
     )));
     assert_eq!(error.failure, ImapFailure::NoSignInMethod);
     assert_eq!(fixture.log().credentials_received, 0);
@@ -284,7 +305,11 @@ fn utf8_texts_and_alerts_of_a_rejected_sign_in_are_kept() {
         ..FixtureSetup::default()
     });
     let account = fixture.account_with_password("wrong password");
-    let error = expect_failure(run(InboxReader::open(account, OpenOptions::default())));
+    let error = expect_failure(run(MailboxReader::open(
+        account,
+        OpenOptions::default(),
+        "INBOX",
+    )));
     assert_eq!(error.failure, ImapFailure::Failed(ImapStep::SignIn));
     assert_eq!(
         error.server_reply,
@@ -333,9 +358,10 @@ fn capability_names_are_read_in_any_case() {
         messages: plain_messages(1),
         ..FixtureSetup::default()
     });
-    let error = expect_failure(run(InboxReader::open(
+    let error = expect_failure(run(MailboxReader::open(
         login_disabled.account(),
         OpenOptions::default(),
+        "INBOX",
     )));
     assert_eq!(error.failure, ImapFailure::NoSignInMethod);
     assert_eq!(login_disabled.log().credentials_received, 0);

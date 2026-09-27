@@ -4,7 +4,10 @@
 **Created**: 2026-09-25
 **Status**: Implemented and accepted on the installed build on 2026-09-26
 ([plan](plan.md), Post-implementation). Challenged 2026-09-25; FR-013
-aligned on 2026-09-26 with 006 as corrected that day. The decisions taken at sizing and at the
+aligned on 2026-09-26 with 006 as corrected that day. FR-002, FR-003 and
+FR-014(b) amended on 2026-09-27 by [008](../008-folders/spec.md), which
+builds the target model of FR-003 except the IMAP UID and the folder state
+that synchronization needs; built and accepted with it the same day. The decisions taken at sizing and at the
 specification challenge are recorded under Clarifications.
 **Input**: Every piece of mail the window shows comes from a local store and
 from nowhere else. A load writes what it received into the store; the window
@@ -255,7 +258,9 @@ window shows and what the record says.
   Online Accounts (001); a load's state and its failure stay in memory and are
   never stored (006 FR-007).
 - **FR-002 — What is stored**: For each account, identified by its Online
-  Accounts ID, the store holds its Inbox as the latest completed load left it.
+  Accounts ID, the store holds its folders as the latest completed folder
+  list left them and, for each folder, its messages as its latest completed
+  load left them ([008](../008-folders/spec.md) FR-007).
   For each message: its provider identity (FR-003), the list fields (subject,
   sender, recipients, received date), its read state as the server last
   reported it, and its reader content, which is either the received text in
@@ -265,13 +270,12 @@ window shows and what the record says.
 
 **Data model**
 
-- **FR-003 — Folders, identity and membership**: Built now: each account has
-  at most one stored folder, its Inbox, and every stored message belongs to
-  it. A message keeps the identity its load reports (an IMAP UID, Gmail's
-  message identifier, Microsoft 365's immutable identifier) as a value for the
-  record; nothing addresses a stored message by it.
-  The target model, deferred with the features that first read it (FR-014(b),
-  (c)): a folder is the unit of synchronization, belongs to one account, and
+- **FR-003 — Folders, identity and membership**: The target model below is
+  built by [008](../008-folders/spec.md) (FR-004, FR-007), except the folder
+  state synchronization needs and the IMAP UID each membership carries,
+  which stay deferred (FR-014(a)); addressing
+  a message on its server waits for read and star (FR-014(c)). The target
+  model: a folder is the unit of synchronization, belongs to one account, and
   carries its provider identity (an IMAP mailbox name, a Gmail label's folder,
   a Microsoft 365 folder) and its own state; for IMAP that state includes
   UIDVALIDITY. A message has the identity its provider defines: Gmail's
@@ -365,11 +369,10 @@ window shows and what the record says.
   delta queries), with the folder state they need (the last UID, the highest
   modification sequence, the delta link); a list that shows a whole folder.
   Until then a load delivers the newest 100 and replaces the stored folder.
-  (b) *Folders and labels*: other folders, their discovery, roles, counts,
-  navigation and the combined Inbox; the folder with its provider identity
-  and membership as a relation (FR-003); for Gmail, All Mail plus Trash and
-  Spam as the synchronized folders and labels as memberships
-  (Clarifications).
+  (b) *Folders and labels*: built by [008](../008-folders/spec.md) except
+  what its FR-013 defers, among them counts, the combined Inbox, and for
+  Gmail All Mail plus Trash and Spam as the synchronized folders with labels
+  becoming memberships (Clarifications).
   (c) *Read and star*: a message addressed on its server by its identity and,
   for IMAP, by its UID with the folder's UIDVALIDITY (FR-003); local changes,
   their durability before the server confirms them, and a store changed by

@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::*;
+use crate::accounts::Selection;
 use crate::failure_declarations::{declare_content, declare_failure, declare_short_list};
+use crate::failure_dialog::RetriedOperation;
 use crate::test_directory::TestDirectory;
 use crate::window_ui::WindowUi;
 use goa_adapter::{
@@ -10,10 +12,11 @@ use goa_adapter::{
     ErrorCause,
 };
 use mailbag_domain::{
-    AccountId, ContentExplanation, Failure, FailureKind, IncompleteList, RemoteSource, RemoteText,
+    AccountId, ContentExplanation, Failure, FailureKind, Folder, FolderRef, FolderRole,
+    IncompleteList, RemoteSource, RemoteText, ServerStep,
 };
-use mailbag_providers::{CancelsLoadOnDrop, LoadResult, LoadsInbox, MailProvider};
-use mailbag_store::{InboxWrite, Store};
+use mailbag_providers::{CancelsLoadOnDrop, LoadResult, LoadTarget, LoadsMail, MailProvider};
+use mailbag_store::{Store, StoreWrite};
 use std::{
     cell::Cell,
     sync::Arc,
@@ -24,6 +27,7 @@ use std::{
 struct StartedLoad {
     account_id: AccountId,
     provider: MailProvider,
+    target: LoadTarget,
     report: Box<dyn FnOnce(LoadResult)>,
     /// Set when the window drops the load's step, which cancels it.
     cancelled: Rc<Cell<bool>>,
@@ -31,7 +35,8 @@ struct StartedLoad {
 
 /// Reports the load results the test chooses, so the window is exercised
 /// without Online Accounts and without a mail server. A completed load writes
-/// its messages into the window's store, as the mail worker does.
+/// its folder list or its messages into the window's store, as the mail
+/// worker does.
 struct ScriptedLoader {
     started_loads: RefCell<Vec<StartedLoad>>,
     cancelled_loads: Rc<Cell<usize>>,
@@ -54,17 +59,19 @@ impl Drop for CountedStep {
     }
 }
 
-impl LoadsInbox for ScriptedLoader {
+impl LoadsMail for ScriptedLoader {
     fn start_load(
         &self,
         account_id: &AccountId,
         provider: MailProvider,
+        target: LoadTarget,
         report: Box<dyn FnOnce(LoadResult)>,
     ) -> Box<dyn CancelsLoadOnDrop> {
         let cancelled = Rc::new(Cell::new(false));
         self.started_loads.borrow_mut().push(StartedLoad {
             account_id: account_id.clone(),
             provider,
+            target,
             report,
             cancelled: cancelled.clone(),
         });
@@ -76,17 +83,18 @@ impl LoadsInbox for ScriptedLoader {
 }
 
 /// The window owns its loader, while the test keeps a handle to the same one.
-/// `LoadsInbox` now lives in another crate, so `Rc` itself cannot carry it.
+/// `LoadsMail` lives in another crate, so `Rc` itself cannot carry it.
 struct SharedLoader(Rc<ScriptedLoader>);
 
-impl LoadsInbox for SharedLoader {
+impl LoadsMail for SharedLoader {
     fn start_load(
         &self,
         account_id: &AccountId,
         provider: MailProvider,
+        target: LoadTarget,
         report: Box<dyn FnOnce(LoadResult)>,
     ) -> Box<dyn CancelsLoadOnDrop> {
-        self.0.start_load(account_id, provider, report)
+        self.0.start_load(account_id, provider, target, report)
     }
 }
 
@@ -119,33 +127,64 @@ impl ScriptedLoader {
             .map(|started| started.provider)
     }
 
-    /// Ends the running load the way the worker would.
-    fn report(&self, result: LoadResult) {
-        let started = self
-            .started_loads
-            .borrow_mut()
-            .pop()
-            .expect("a load is running");
-        (started.report)(result);
+    /// What the running load loads.
+    fn loading_target(&self) -> Option<LoadTarget> {
+        self.started_loads
+            .borrow()
+            .last()
+            .map(|started| started.target.clone())
     }
 
-    /// Ends the running load as a completed one, as the worker does: its
-    /// messages become the account's stored Inbox, unless the load was
-    /// cancelled before the store took them.
-    fn report_stored(&self, messages: &[Message], incomplete: Option<IncompleteList>) {
-        let started = self
-            .started_loads
+    fn take_running_load(&self) -> StartedLoad {
+        self.started_loads
             .borrow_mut()
             .pop()
-            .expect("a load is running");
+            .expect("a load is running")
+    }
+
+    /// Ends the running load the way the worker would.
+    fn report(&self, result: LoadResult) {
+        (self.take_running_load().report)(result);
+    }
+
+    /// Ends the running folder-list load as a completed one, as the worker
+    /// does: a list with folders becomes the account's stored list, unless
+    /// the load was cancelled before the store took it; an empty one stores
+    /// nothing.
+    fn report_folders(&self, folders: &[Folder]) {
+        let started = self.take_running_load();
+        assert_eq!(started.target, LoadTarget::FolderList);
+        if folders.is_empty() {
+            (started.report)(LoadResult::Stored { incomplete: None });
+            return;
+        }
         let write = self
             .store
-            .replace_inbox(&started.account_id, messages, || started.cancelled.get())
+            .replace_folders(&started.account_id, folders, || started.cancelled.get())
+            .expect("the test store takes the folder list");
+        (started.report)(stored_or_cancelled(write, None));
+    }
+
+    /// Ends the running mailbox load as a completed one, as the worker does:
+    /// its messages become the folder's stored ones, unless the load was
+    /// cancelled before the store took them.
+    fn report_stored(&self, messages: &[Message], incomplete: Option<IncompleteList>) {
+        let started = self.take_running_load();
+        let LoadTarget::Mailbox(folder) = &started.target else {
+            panic!("a mailbox load is running");
+        };
+        let write = self
+            .store
+            .replace_mailbox(folder, messages, || started.cancelled.get())
             .expect("the test store takes the load");
-        (started.report)(match write {
-            InboxWrite::Stored => LoadResult::Stored { incomplete },
-            InboxWrite::LoadCancelled => LoadResult::Cancelled,
-        });
+        (started.report)(stored_or_cancelled(write, incomplete));
+    }
+}
+
+fn stored_or_cancelled(write: StoreWrite, incomplete: Option<IncompleteList>) -> LoadResult {
+    match write {
+        StoreWrite::Stored => LoadResult::Stored { incomplete },
+        StoreWrite::LoadCancelled => LoadResult::Cancelled,
     }
 }
 
@@ -179,6 +218,42 @@ fn imap_and_google_accounts() -> AccountUpdate {
         ("synthetic-generic", AccountProvider::ImapSmtp, "Generic"),
         ("synthetic-google", AccountProvider::Google, "Google"),
     ])
+}
+
+fn folder(identity: &str, role: Option<FolderRole>) -> Folder {
+    Folder {
+        identity: identity.to_owned(),
+        name: identity.to_owned(),
+        parent: None,
+        role,
+        selectable: true,
+    }
+}
+
+/// The Inbox and one folder of the user's.
+fn inbox_and_projects() -> Vec<Folder> {
+    vec![
+        folder("INBOX", Some(FolderRole::Inbox)),
+        folder("Projects", None),
+    ]
+}
+
+fn folder_of(account: &AccountId, identity: &str) -> FolderRef {
+    FolderRef {
+        account: account.clone(),
+        identity: identity.to_owned(),
+    }
+}
+
+/// Stores the account's folders and `messages` in its Inbox, as loads of
+/// an earlier run did.
+fn store_mail(store: &Store, account: &AccountId, messages: &[Message]) {
+    store
+        .replace_folders(account, &inbox_and_projects(), || false)
+        .expect("the test store takes the folder list");
+    store
+        .replace_mailbox(&folder_of(account, "INBOX"), messages, || false)
+        .expect("the test store takes the messages");
 }
 
 fn two_messages() -> Vec<Message> {
@@ -255,6 +330,15 @@ fn rejected_sign_in() -> Failure {
     }
 }
 
+/// A failure without words of the server.
+fn failure_of(kind: FailureKind) -> Failure {
+    Failure {
+        kind,
+        remote_texts: Vec::new(),
+        details: format!("Failure: {kind:?}"),
+    }
+}
+
 /// A window over `store`, with its scripted loader and its widgets.
 fn open_window(
     store: Arc<Store>,
@@ -267,16 +351,16 @@ fn open_window(
     (window, ui, loader, WindowWidgets { builder })
 }
 
-/// Runs the window's pending work and waits for its read of the store,
-/// which runs on GIO's thread pool.
+/// Runs the window's pending work and waits for its reads of the store,
+/// which run on GIO's thread pool.
 fn settle(ui: &WindowUi) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         dispatch_pending();
-        if !ui.reads_stored_inbox() {
+        if !ui.reads_stored_mail() {
             return;
         }
-        assert!(Instant::now() < deadline, "the stored Inbox was not read");
+        assert!(Instant::now() < deadline, "the stored mail was not read");
         std::thread::sleep(Duration::from_millis(1));
     }
 }
@@ -428,12 +512,23 @@ impl WindowWidgets {
         (title.title().to_string(), title.subtitle().to_string())
     }
 
-    fn select_account(&self, position: u32) {
+    /// Activates the sidebar row of the account, or of one of its folders,
+    /// as a click does.
+    fn select(&self, ui: &WindowUi, account: &AccountId, folder: Option<&str>) {
+        let position = ui
+            .sidebar()
+            .borrow()
+            .position_of_row(account, folder)
+            .expect("the row is shown");
         self.builder
             .object::<gtk::ListView>("folder_tree")
             .expect("folder_tree")
             .emit_by_name::<()>("activate", &[&position]);
     }
+}
+
+fn selection_of(ui: &WindowUi) -> Option<Selection> {
+    ui.sidebar().borrow().selection().cloned()
 }
 
 fn description_of(status: &adw::StatusPage) -> String {
@@ -456,6 +551,13 @@ fn shows_unread_dot(row: &gtk::ListBoxRow) -> bool {
         .into_iter()
         .filter(|image| image.icon_name().as_deref() == Some("media-record-symbolic"))
         .any(|dot| dot.is_visible())
+}
+
+/// Whether the failure dialog offers a shown button with this action.
+fn dialog_offers(dialog: &adw::Dialog, action_name: &str) -> bool {
+    descendants::<gtk::Button>(&dialog.clone().upcast())
+        .iter()
+        .any(|button| button.is_visible() && button.action_name().as_deref() == Some(action_name))
 }
 
 fn descendants<T: IsA<gtk::Widget>>(widget: &gtk::Widget) -> Vec<T> {
@@ -488,61 +590,60 @@ fn mail_ui_transitions() {
     let directory = TestDirectory::new();
     let store_path = directory.store_path();
     let (window, ui, loader, widgets) = open_window(Arc::new(Store::at(store_path.clone())));
-    let refresh = ui.refresh_action().clone();
+    let refresh_mailbox = ui.refresh_mailbox_action().clone();
+    let refresh_account = ui.refresh_account_action().clone();
     settle(&ui);
 
-    // Without a selection the account page decides what the list area shows.
+    // Without a selection the list asks for a mailbox and nothing refreshes.
     ui.apply_account_update(&imap_and_google_accounts());
     settle(&ui);
     assert_eq!(widgets.list_page(), "empty");
-    assert_eq!(widgets.status_title(), "Select an account");
+    assert_eq!(widgets.status_title(), "Select a mailbox");
     assert_eq!(widgets.status_button("status_retry_check"), None);
     assert_eq!(widgets.status_button("status_online_accounts"), None);
     assert_eq!(widgets.list_title(), ("Mailbag".to_owned(), String::new()));
-    assert!(!refresh.is_enabled());
+    assert!(!refresh_account.is_enabled());
+    assert!(!refresh_mailbox.is_enabled());
 
-    // Selecting shows that nothing is stored, and loads nothing.
-    let generic = account("synthetic-generic");
-    widgets.select_account(0);
+    // An account without a folder list shows that nothing is stored, as an
+    // unloaded folder does, and selecting it loads nothing (FR-009).
+    let (generic, google) = (account("synthetic-generic"), account("synthetic-google"));
+    widgets.select(&ui, &generic, None);
     settle(&ui);
     assert_eq!(loader.running_loads(), 0);
     assert_eq!(widgets.status_title(), "No mail loaded");
     assert!(
-        widgets.status_description().contains("Refresh Inbox"),
+        widgets.status_description().contains("Refresh Account"),
         "{}",
         widgets.status_description()
     );
-    assert_eq!(
-        widgets.list_title(),
-        ("Inbox".to_owned(), "Generic".to_owned())
-    );
-    assert!(refresh.is_enabled());
+    assert_eq!(widgets.list_title(), ("Generic".to_owned(), String::new()));
+    assert!(refresh_account.is_enabled());
+    assert!(!refresh_mailbox.is_enabled());
     assert!(!widgets.shows_load_feedback());
 
-    // A Google account is loadable too, and gets the same hint.
-    widgets.select_account(1);
+    // Refresh Account on a Google account asks for its folder list with the
+    // Gmail sequence, not the Generic IMAP one.
+    widgets.select(&ui, &google, None);
     settle(&ui);
-    assert!(refresh.is_enabled());
-    assert_eq!(widgets.status_title(), "No mail loaded");
-    assert!(widgets.status_description().contains("Refresh Inbox"));
-    // Refreshing it asks for the Gmail sequence, not the Generic IMAP one.
-    refresh.activate(None);
+    refresh_account.activate(None);
     settle(&ui);
     assert_eq!(loader.loading_provider(), Some(MailProvider::Gmail));
+    assert_eq!(loader.loading_target(), Some(LoadTarget::FolderList));
+    assert_eq!(widgets.status_title(), "Loading mailbox list");
 
     // With nothing stored, a failed load takes the list's place with its
     // declaration; the server's words stay in the failure dialog.
-    let rejected = declare_failure(&rejected_sign_in());
+    let rejected = declare_failure(&rejected_sign_in(), RetriedOperation::RefreshAccount);
     loader.report(LoadResult::Failed(rejected_sign_in()));
     settle(&ui);
     assert_eq!(widgets.list_page(), "failed");
     assert_eq!(widgets.failure_title(), rejected.title);
     // The page reads its description as markup, so the text arrives escaped.
     let description = widgets.failure_description();
-    for paragraph in [
-        rejected.explanation.as_str(),
-        rejected.advice.expect("sign-in advice"),
-    ] {
+    let advice = rejected.advice.expect("sign-in advice");
+    assert!(advice.contains("Refresh Account"), "{advice}");
+    for paragraph in [rejected.explanation.as_str(), advice] {
         let escaped = glib::markup_escape_text(paragraph);
         assert!(description.contains(escaped.as_str()), "{description}");
     }
@@ -555,7 +656,7 @@ fn mail_ui_transitions() {
         Some(("Online Accounts".to_owned(), "app.accounts".to_owned()))
     );
     assert!(widgets.status_button("failure_details").is_some());
-    assert!(refresh.is_enabled());
+    assert!(refresh_account.is_enabled());
     click(&widgets, "failure_details");
     // The dialog shows the paragraphs, one block per remote text and the
     // technical details, in the spec's order, and the action.
@@ -571,8 +672,7 @@ fn mail_ui_transitions() {
         shown_texts.contains(&rejected.explanation),
         "{shown_texts:?}"
     );
-    let advice = rejected.advice.expect("sign-in advice").to_owned();
-    assert!(shown_texts.contains(&advice), "{shown_texts:?}");
+    assert!(shown_texts.contains(&advice.to_owned()), "{shown_texts:?}");
     let headings: Vec<String> = labels
         .iter()
         .filter(|label| label.has_css_class("heading"))
@@ -586,12 +686,7 @@ fn mail_ui_transitions() {
             "Technical details"
         ]
     );
-    assert!(
-        descendants::<gtk::Button>(&dialog.clone().upcast())
-            .iter()
-            .any(|button| button.is_visible()
-                && button.label().as_deref() == Some("Online Accounts"))
-    );
+    assert!(dialog_offers(&dialog, "app.accounts"));
     // A closed dialog is released with its widgets; the accessibility layer
     // lets go of it a few milliseconds after the window does.
     let closed_dialog = dialog.downgrade();
@@ -606,38 +701,83 @@ fn mail_ui_transitions() {
 
     // A failure nothing the user does can change offers no action, only
     // Details.
-    refresh.activate(None);
+    refresh_account.activate(None);
     settle(&ui);
-    assert_eq!(widgets.status_title(), "Loading Inbox");
-    loader.report(LoadResult::Failed(Failure {
-        kind: FailureKind::NoSignInMethod,
-        remote_texts: Vec::new(),
-        details: "Failure: NoSignInMethod".to_owned(),
-    }));
+    assert_eq!(widgets.status_title(), "Loading mailbox list");
+    loader.report(LoadResult::Failed(failure_of(FailureKind::NoSignInMethod)));
     settle(&ui);
     assert_eq!(widgets.status_button("failure_action"), None);
     assert!(widgets.status_button("failure_details").is_some());
 
-    // A refresh loads once, with the spinner and without a second attempt.
-    widgets.select_account(0);
+    // A folder list that did not arrive is retried with Refresh Account.
+    refresh_account.activate(None);
     settle(&ui);
-    refresh.activate(None);
-    refresh.activate(None);
+    loader.report(LoadResult::Failed(failure_of(
+        FailureKind::ServerNotResponding(ServerStep::ListFolders),
+    )));
+    settle(&ui);
+    assert_eq!(
+        widgets.status_button("failure_action"),
+        Some(("Retry".to_owned(), "app.refresh-account".to_owned()))
+    );
+
+    // A refresh loads once, with the spinner and without a second attempt.
+    widgets.select(&ui, &generic, None);
+    settle(&ui);
+    refresh_account.activate(None);
+    refresh_account.activate(None);
     settle(&ui);
     assert_eq!(loader.running_loads(), 1);
     assert_eq!(loader.loading_account().as_ref(), Some(&generic));
     assert_eq!(loader.loading_provider(), Some(MailProvider::GenericImap));
-    assert_eq!(widgets.status_title(), "Loading Inbox");
+    assert_eq!(widgets.status_title(), "Loading mailbox list");
     assert_eq!(widgets.list_page(), "empty");
     assert!(widgets.shows_load_feedback());
-    assert!(!refresh.is_enabled());
+    assert!(!refresh_account.is_enabled());
 
-    // A completed load's stored Inbox fills the list, newest first.
+    // The stored folder list makes the account a heading, which is no
+    // longer selected and cannot be (FR-009, FR-010).
+    loader.report_folders(&inbox_and_projects());
+    settle(&ui);
+    assert_eq!(selection_of(&ui), None);
+    assert_eq!(widgets.status_title(), "Select a mailbox");
+    assert!(!widgets.shows_load_feedback());
+    assert!(!refresh_account.is_enabled());
+    widgets.select(&ui, &generic, None);
+    settle(&ui);
+    assert_eq!(selection_of(&ui), None);
+
+    // A folder never loaded shows that nothing is stored.
+    let inbox = folder_of(&generic, "INBOX");
+    widgets.select(&ui, &generic, Some("INBOX"));
+    settle(&ui);
+    assert_eq!(loader.running_loads(), 0);
+    assert_eq!(widgets.status_title(), "No mail loaded");
+    assert_eq!(
+        widgets.list_title(),
+        ("Inbox".to_owned(), "Generic".to_owned())
+    );
+    assert!(refresh_mailbox.is_enabled());
+    assert!(refresh_account.is_enabled());
+
+    // Refresh Mailbox loads the selected folder, with the spinner.
+    refresh_mailbox.activate(None);
+    settle(&ui);
+    assert_eq!(
+        loader.loading_target(),
+        Some(LoadTarget::Mailbox(inbox.clone()))
+    );
+    assert_eq!(widgets.status_title(), "Loading mailbox");
+    assert!(widgets.shows_load_feedback());
+    assert!(!refresh_mailbox.is_enabled());
+    assert!(!refresh_account.is_enabled());
+
+    // A completed load's stored mailbox fills the list, newest first.
     loader.report_stored(&two_messages(), None);
     settle(&ui);
     assert_eq!(widgets.list_page(), "messages");
     assert!(!widgets.shows_load_feedback());
-    assert!(refresh.is_enabled());
+    assert!(refresh_mailbox.is_enabled());
     let rows = widgets.rows();
     assert_eq!(rows.len(), 2);
     assert!(
@@ -674,21 +814,22 @@ fn mail_ui_transitions() {
     settle(&ui);
     assert_eq!(widgets.rows().len(), 2);
     assert_eq!(widgets.reader_page(), "message");
-    // So does selecting the account on screen again.
-    widgets.select_account(0);
+    // So does selecting the folder on screen again.
+    widgets.select(&ui, &generic, Some("INBOX"));
     settle(&ui);
     assert_eq!(widgets.rows().len(), 2);
     assert_eq!(widgets.reader_page(), "message");
 
     // During a refresh the stored rows stay with the spinner (US2).
-    refresh.activate(None);
+    refresh_mailbox.activate(None);
     settle(&ui);
     assert_eq!(widgets.rows().len(), 2);
     assert_eq!(widgets.list_page(), "messages");
     assert!(widgets.shows_load_feedback());
 
     // A list the server refused to finish replaces the rows and closes the
-    // reader; the banner stays while that list is on screen.
+    // reader; the banner stays while that list is on screen, and another
+    // folder does not show it.
     let refusal = IncompleteList::ServerRefused {
         reply: "Some messages could not be FETCHed".to_owned(),
         code: None,
@@ -700,10 +841,11 @@ fn mail_ui_transitions() {
     assert_eq!(widgets.reader_page(), "unselected");
     let short_list_title = Some(declare_short_list(&refusal).title.to_owned());
     assert_eq!(widgets.banner_title(), short_list_title);
-    widgets.select_account(1);
+    widgets.select(&ui, &generic, Some("Projects"));
     settle(&ui);
     assert_eq!(widgets.banner_title(), None);
-    widgets.select_account(0);
+    assert_eq!(widgets.status_title(), "No mail loaded");
+    widgets.select(&ui, &generic, Some("INBOX"));
     settle(&ui);
     assert_eq!(widgets.banner_title(), short_list_title);
     assert_eq!(widgets.rows().len(), 1);
@@ -714,7 +856,7 @@ fn mail_ui_transitions() {
 
     // A message the sender never wrapped opens without freezing the window,
     // and ordinary text keeps word wrapping.
-    refresh.activate(None);
+    refresh_mailbox.activate(None);
     settle(&ui);
     loader.report_stored(&unwrapped_and_ordinary_messages(), None);
     settle(&ui);
@@ -757,10 +899,11 @@ fn mail_ui_transitions() {
     // A failed refresh keeps the stored rows and the open message under the
     // banner that names the failure; its button opens the failure dialog
     // (US3).
-    refresh.activate(None);
+    refresh_mailbox.activate(None);
     settle(&ui);
     loader.report(LoadResult::Failed(rejected_sign_in()));
     settle(&ui);
+    let rejected = declare_failure(&rejected_sign_in(), RetriedOperation::RefreshMailbox);
     assert_eq!(widgets.list_page(), "messages");
     assert_eq!(widgets.rows().len(), 3);
     assert_eq!(widgets.reader_page(), "message");
@@ -771,27 +914,27 @@ fn mail_ui_transitions() {
     dialog.force_close();
     // The banner is there again after another account and back, with the same
     // rows (US3).
-    widgets.select_account(1);
+    widgets.select(&ui, &google, None);
     settle(&ui);
-    widgets.select_account(0);
+    widgets.select(&ui, &generic, Some("INBOX"));
     settle(&ui);
     assert_eq!(widgets.rows().len(), 3);
     assert_eq!(widgets.banner_title(), Some(rejected.title.to_owned()));
 
-    // A repeated refresh that switches accounts keeps loading for its own one.
-    refresh.activate(None);
+    // A refresh keeps loading for its own mailbox when the user selects
+    // another account.
+    refresh_mailbox.activate(None);
     settle(&ui);
-    widgets.select_account(1);
+    widgets.select(&ui, &google, None);
     settle(&ui);
     assert_eq!(widgets.list_page(), "failed");
     assert!(widgets.shows_load_feedback());
-    // The load continues for the account it was started for.
     assert_eq!(loader.loading_account().as_ref(), Some(&generic));
     loader.report_stored(&two_messages(), None);
     settle(&ui);
     assert_eq!(widgets.list_page(), "failed");
     assert!(widgets.rows().is_empty());
-    widgets.select_account(0);
+    widgets.select(&ui, &generic, Some("INBOX"));
     settle(&ui);
     assert_eq!(widgets.list_page(), "messages");
     assert_eq!(widgets.rows().len(), 2);
@@ -814,21 +957,22 @@ fn mail_ui_transitions() {
     assert_eq!(widgets.list_page(), "messages");
     assert_eq!(widgets.rows().len(), 2);
 
-    // An empty Inbox is said so only after a completed load stored it.
-    widgets.select_account(1);
+    // An empty mailbox is said so only after a completed load stored it.
+    widgets.select(&ui, &generic, Some("Projects"));
     settle(&ui);
-    refresh.activate(None);
+    assert_eq!(widgets.status_title(), "No mail loaded");
+    refresh_mailbox.activate(None);
     settle(&ui);
     loader.report_stored(&[], None);
     settle(&ui);
-    assert_eq!(widgets.status_title(), "Inbox is empty");
+    assert_eq!(widgets.status_title(), "Mailbox is empty");
     assert_eq!(widgets.banner_title(), None);
     // A service that offered more than it sent leaves the notice over it.
-    refresh.activate(None);
+    refresh_mailbox.activate(None);
     settle(&ui);
     loader.report_stored(&[], Some(IncompleteList::MoreAvailable));
     settle(&ui);
-    assert_eq!(widgets.status_title(), "Inbox is empty");
+    assert_eq!(widgets.status_title(), "Mailbox is empty");
     assert_eq!(
         widgets.banner_title(),
         Some(
@@ -838,8 +982,9 @@ fn mail_ui_transitions() {
         )
     );
 
-    // A new window over the same store shows the same rows and content and
-    // starts no load; an account never loaded has no mail (US1, FR-006).
+    // A new window over the same store shows the same folders, rows and
+    // content and starts no load; an account never loaded has no mail (US1,
+    // FR-006).
     let (restarted_window, restarted, restarted_loader, restarted_widgets) =
         open_window(Arc::new(Store::at(store_path)));
     restarted.apply_account_update(&accounts_update(&[
@@ -851,7 +996,8 @@ fn mail_ui_transitions() {
             "Microsoft",
         ),
     ]));
-    restarted_widgets.select_account(0);
+    settle(&restarted);
+    restarted_widgets.select(&restarted, &generic, Some("INBOX"));
     settle(&restarted);
     let restored_rows = restarted_widgets.rows();
     assert_eq!(restored_rows.len(), 2);
@@ -869,19 +1015,19 @@ fn mail_ui_transitions() {
         .content_status()
         .expect("the reader's status page");
     assert_eq!(restored_status.title(), content_failure.title);
-    restarted_widgets.select_account(1);
+    restarted_widgets.select(&restarted, &generic, Some("Projects"));
     settle(&restarted);
-    assert_eq!(restarted_widgets.status_title(), "Inbox is empty");
-    restarted_widgets.select_account(2);
+    assert_eq!(restarted_widgets.status_title(), "Mailbox is empty");
+    restarted_widgets.select(&restarted, &account("synthetic-microsoft365"), None);
     settle(&restarted);
     assert_eq!(restarted_widgets.status_title(), "No mail loaded");
     assert_eq!(restarted_loader.running_loads(), 0);
     restarted_window.destroy();
 
     // A confirmed exclusion cancels the account's load and hides its mail.
-    widgets.select_account(0);
+    widgets.select(&ui, &generic, Some("INBOX"));
     settle(&ui);
-    refresh.activate(None);
+    refresh_mailbox.activate(None);
     settle(&ui);
     let cancelled_before_exclusion = loader.cancelled_loads.get();
     let mut without_generic = imap_and_google_accounts();
@@ -911,8 +1057,161 @@ fn mail_ui_transitions() {
     window.destroy();
 }
 
-/// A stored Inbox that cannot be read shows the failure page, whose Retry
-/// reads it again; a refresh then shows its own outcome (US5, FR-013).
+/// Each folder keeps its own rows and the outcome of its own load; a
+/// folder list's outcome belongs to the whole account, and a new list clears
+/// a selection it no longer shows (US1, US5, US7).
+#[test]
+#[ignore = "requires a graphical GTK session"]
+fn mailbox_navigation() {
+    adw::init().expect("GTK display");
+    let store = Arc::new(Store::in_memory());
+    let generic = account("synthetic-generic");
+    let inbox = folder_of(&generic, "INBOX");
+    store_mail(&store, &generic, &two_messages());
+    let (window, ui, loader, widgets) = open_window(store.clone());
+    let refresh_mailbox = ui.refresh_mailbox_action().clone();
+    let refresh_account = ui.refresh_account_action().clone();
+    ui.apply_account_update(&imap_and_google_accounts());
+    settle(&ui);
+
+    // Refresh Mailbox stores and shows one folder's rows; another folder's
+    // rows stay as they were.
+    widgets.select(&ui, &generic, Some("Projects"));
+    settle(&ui);
+    refresh_mailbox.activate(None);
+    settle(&ui);
+    let mut report = two_messages().remove(0);
+    report.identity = "uid:30".to_owned();
+    report.fields.subject = Some("Report subject".to_owned());
+    loader.report_stored(&[report], None);
+    settle(&ui);
+    assert_eq!(widgets.rows().len(), 1);
+    assert!(row_texts(&widgets.rows()[0]).contains("Report subject"));
+    assert_eq!(
+        widgets.list_title(),
+        ("Projects".to_owned(), "Generic".to_owned())
+    );
+    widgets.select(&ui, &generic, Some("INBOX"));
+    // While the store is read, the rows of the mailbox left are gone.
+    assert!(widgets.rows().is_empty());
+    settle(&ui);
+    assert_eq!(widgets.rows().len(), 2);
+    assert!(row_texts(&widgets.rows()[0]).contains("Second subject"));
+
+    // A folder list without any folder changes nothing shown (FR-001).
+    refresh_account.activate(None);
+    settle(&ui);
+    assert_eq!(widgets.rows().len(), 2);
+    assert!(widgets.shows_load_feedback());
+    loader.report_folders(&[]);
+    settle(&ui);
+    assert_eq!(selection_of(&ui), Some(Selection::Mailbox(inbox.clone())));
+    assert_eq!(widgets.rows().len(), 2);
+    assert_eq!(widgets.banner_title(), None);
+    let sidebar = ui.sidebar().clone();
+    assert!(
+        sidebar
+            .borrow()
+            .position_of_row(&generic, Some("Projects"))
+            .is_some()
+    );
+
+    // A failed folder list leaves the shown rows under a banner whose Retry
+    // repeats Refresh Account; the outcome belongs to every folder of the
+    // account (FR-010).
+    refresh_account.activate(None);
+    settle(&ui);
+    let not_listed = failure_of(FailureKind::ServerNotResponding(ServerStep::ListFolders));
+    loader.report(LoadResult::Failed(not_listed.clone()));
+    settle(&ui);
+    let not_listed_title = declare_failure(&not_listed, RetriedOperation::RefreshAccount).title;
+    assert_eq!(widgets.rows().len(), 2);
+    assert_eq!(widgets.banner_title().as_deref(), Some(not_listed_title));
+    widgets.banner().emit_by_name::<()>("button-clicked", &[]);
+    let dialog = window.visible_dialog().expect("the failure dialog");
+    assert!(dialog_offers(&dialog, "app.refresh-account"));
+    dialog.force_close();
+    widgets.select(&ui, &generic, Some("Projects"));
+    settle(&ui);
+    assert_eq!(widgets.rows().len(), 1);
+    assert_eq!(widgets.banner_title().as_deref(), Some(not_listed_title));
+
+    // A mailbox that did not open leaves its rows under a banner whose Retry
+    // repeats Refresh Mailbox; that outcome belongs to this folder only.
+    refresh_mailbox.activate(None);
+    settle(&ui);
+    let not_opened = failure_of(FailureKind::ServerStepFailed(ServerStep::OpenMailbox));
+    loader.report(LoadResult::Failed(not_opened.clone()));
+    settle(&ui);
+    let not_opened_title = declare_failure(&not_opened, RetriedOperation::RefreshMailbox).title;
+    assert_eq!(not_opened_title, "Mailbox not opened");
+    assert_eq!(widgets.rows().len(), 1);
+    assert_eq!(widgets.banner_title().as_deref(), Some(not_opened_title));
+    widgets.banner().emit_by_name::<()>("button-clicked", &[]);
+    let dialog = window.visible_dialog().expect("the failure dialog");
+    assert!(dialog_offers(&dialog, "app.refresh-mailbox"));
+    dialog.force_close();
+    widgets.select(&ui, &generic, Some("INBOX"));
+    settle(&ui);
+    assert_eq!(widgets.rows().len(), 2);
+    assert_eq!(widgets.banner_title(), None);
+
+    // A folder gone from a new list is no longer selected, and its stored
+    // rows are gone with it (FR-001, FR-010).
+    refresh_account.activate(None);
+    settle(&ui);
+    loader.report_folders(&[folder("Projects", None)]);
+    settle(&ui);
+    assert_eq!(selection_of(&ui), None);
+    assert_eq!(widgets.status_title(), "Select a mailbox");
+    assert!(widgets.rows().is_empty());
+    assert!(
+        sidebar
+            .borrow()
+            .position_of_row(&generic, Some("INBOX"))
+            .is_none()
+    );
+    assert_eq!(store.read_mailbox(&inbox).expect("the store reads"), None);
+
+    // Two Gmail labels hold the same messages. A load of one label that
+    // changes a message shows the change in the other label on screen; a
+    // load that changes nothing keeps its open message (FR-004).
+    let google = account("synthetic-google");
+    widgets.select(&ui, &google, None);
+    settle(&ui);
+    refresh_account.activate(None);
+    settle(&ui);
+    loader.report_folders(&inbox_and_projects());
+    settle(&ui);
+    for label in ["INBOX", "Projects"] {
+        store
+            .replace_mailbox(&folder_of(&google, label), &two_messages(), || false)
+            .expect("the test store takes the messages");
+    }
+    let mut read_elsewhere = two_messages();
+    read_elsewhere[0].seen = true;
+    // The first load marks a message read: the Inbox on screen shows it and,
+    // its list changed, closes the open message; the second changes nothing.
+    for (load_changes, reader_page) in [("a read", "unselected"), ("nothing", "message")] {
+        widgets.select(&ui, &google, Some("Projects"));
+        settle(&ui);
+        refresh_mailbox.activate(None);
+        settle(&ui);
+        widgets.select(&ui, &google, Some("INBOX"));
+        settle(&ui);
+        widgets.rows()[1].emit_by_name::<()>("activate", &[]);
+        settle(&ui);
+        loader.report_stored(&read_elsewhere, None);
+        settle(&ui);
+        assert!(!shows_unread_dot(&widgets.rows()[0]), "{load_changes}");
+        assert_eq!(widgets.reader_page(), reader_page, "{load_changes}");
+    }
+    window.destroy();
+}
+
+/// Stored mail that cannot be read shows the failure page, whose Retry reads
+/// the folder lists and the shown mailbox again; a refresh then shows its
+/// own outcome (007 FR-013, 008 FR-008).
 #[test]
 #[ignore = "requires a graphical GTK session"]
 fn a_store_that_cannot_be_read() {
@@ -921,53 +1220,79 @@ fn a_store_that_cannot_be_read() {
     // A file stands where the store's directory would be created.
     let blocking_file = directory.0.join("mailbag");
     std::fs::write(&blocking_file, "not a directory").unwrap();
-    let (window, ui, loader, widgets) =
-        open_window(Arc::new(Store::at(blocking_file.join("mail.sqlite"))));
+    let store_path = directory.store_path();
+    let (window, ui, loader, widgets) = open_window(Arc::new(Store::at(store_path.clone())));
+    let generic = account("synthetic-generic");
+    let read_again = Some(("Retry".to_owned(), "app.read-stored-mail".to_owned()));
+
+    // Folder lists that cannot be read take the list's place, even before
+    // anything is selected.
     ui.apply_account_update(&imap_and_google_accounts());
-    widgets.select_account(0);
     settle(&ui);
     assert_eq!(widgets.list_page(), "failed");
-    assert_eq!(
-        widgets.status_button("failure_action"),
-        Some(("Retry".to_owned(), "app.read-stored-inbox".to_owned()))
-    );
+    assert_eq!(widgets.status_button("failure_action"), read_again);
     click(&widgets, "failure_details");
     let dialog = window.visible_dialog().expect("the failure dialog");
-    assert!(
-        descendants::<gtk::Button>(&dialog.clone().upcast())
-            .iter()
-            .any(|button| button.is_visible()
-                && button.action_name().as_deref() == Some("app.read-stored-inbox"))
-    );
+    assert!(dialog_offers(&dialog, "app.read-stored-mail"));
     dialog.force_close();
 
     // A refresh shows its own outcome instead of the failed read.
-    ui.refresh_action().activate(None);
+    widgets.select(&ui, &generic, None);
     settle(&ui);
-    assert_eq!(widgets.status_title(), "Loading Inbox");
+    assert_eq!(widgets.status_button("failure_action"), read_again);
+    ui.refresh_account_action().activate(None);
+    settle(&ui);
+    assert_eq!(widgets.status_title(), "Loading mailbox list");
     loader.report(LoadResult::Failed(rejected_sign_in()));
     settle(&ui);
-    assert_eq!(
-        widgets.failure_title(),
-        declare_failure(&rejected_sign_in()).title
-    );
+    let rejected = declare_failure(&rejected_sign_in(), RetriedOperation::RefreshAccount);
+    assert_eq!(widgets.failure_title(), rejected.title);
     assert_eq!(
         widgets.status_button("failure_action"),
         Some(("Online Accounts".to_owned(), "app.accounts".to_owned()))
     );
 
-    // Retry reads the stored Inbox again: once the store can be opened, the
-    // account shows that nothing is stored.
-    widgets.select_account(1);
+    // A mailbox the sidebar still shows cannot be read either. This store
+    // never opened, so the folders are given to the sidebar directly.
+    ui.sidebar()
+        .borrow_mut()
+        .show_folders(&generic, inbox_and_projects());
+    widgets.select(&ui, &generic, Some("INBOX"));
     settle(&ui);
-    assert_eq!(
-        widgets.status_button("failure_action"),
-        Some(("Retry".to_owned(), "app.read-stored-inbox".to_owned()))
-    );
+    assert_eq!(widgets.status_button("failure_action"), read_again);
+
+    // Once the store can be opened, Retry reads the folder lists and the
+    // shown mailbox: its rows come.
     std::fs::remove_file(&blocking_file).unwrap();
-    ui.read_stored_inbox_action().activate(None);
+    store_mail(&Store::at(store_path), &generic, &two_messages());
+    ui.read_stored_mail_action().activate(None);
     settle(&ui);
-    assert_eq!(widgets.status_title(), "No mail loaded");
+    assert_eq!(widgets.list_page(), "messages");
+    assert_eq!(widgets.rows().len(), 2);
+    window.destroy();
+
+    // A completed Refresh Account reads a mailbox whose read failed again,
+    // so it is not shown as never loaded: here a second store becomes usable
+    // while the load runs.
+    let later = TestDirectory::new();
+    let blocking_file = later.0.join("mailbag");
+    std::fs::write(&blocking_file, "not a directory").unwrap();
+    let (window, ui, loader, widgets) = open_window(Arc::new(Store::at(later.store_path())));
+    ui.apply_account_update(&imap_and_google_accounts());
+    settle(&ui);
+    ui.sidebar()
+        .borrow_mut()
+        .show_folders(&generic, inbox_and_projects());
+    widgets.select(&ui, &generic, Some("INBOX"));
+    settle(&ui);
+    assert_eq!(widgets.status_button("failure_action"), read_again);
+    ui.refresh_account_action().activate(None);
+    settle(&ui);
+    std::fs::remove_file(&blocking_file).unwrap();
+    store_mail(&Store::at(later.store_path()), &generic, &two_messages());
+    loader.report_folders(&inbox_and_projects());
+    settle(&ui);
+    assert_eq!(widgets.rows().len(), 2);
     window.destroy();
 }
 
@@ -982,15 +1307,13 @@ fn stored_mail_leaves_with_its_account() {
     let store = Arc::new(Store::in_memory());
     let (generic, google) = (account("synthetic-generic"), account("synthetic-google"));
     for account_id in [&generic, &google] {
-        store
-            .replace_inbox(account_id, &two_messages(), || false)
-            .unwrap();
+        store_mail(&store, account_id, &two_messages());
     }
-    let has_stored_inbox = |account_id: &AccountId| {
-        store
-            .read_inbox(account_id)
+    let has_stored_mail = |account_id: &AccountId| {
+        !store
+            .read_folders(account_id)
             .expect("the store reads")
-            .is_some()
+            .is_empty()
     };
     let only_generic =
         || accounts_update(&[("synthetic-generic", AccountProvider::ImapSmtp, "Generic")]);
@@ -1009,8 +1332,8 @@ fn stored_mail_leaves_with_its_account() {
     // its mail.
     let (window, ui, _loader, widgets) = open_window(store.clone());
     ui.apply_account_update(&only_generic());
-    wait_until(|| !has_stored_inbox(&google));
-    assert!(has_stored_inbox(&generic));
+    wait_until(|| !has_stored_mail(&google));
+    assert!(has_stored_mail(&generic));
 
     // A failed read, an answer not yet checked and a missing Mail service
     // delete nothing.
@@ -1023,18 +1346,21 @@ fn stored_mail_leaves_with_its_account() {
         details.mail_service_available = false
     }));
     let_deletions_run();
-    assert!(has_stored_inbox(&generic));
+    assert!(has_stored_mail(&generic));
 
     // Mail turned off deletes the account's mail, and the window forgets what
-    // it read: with Mail on again the account has none.
-    widgets.select_account(0);
+    // it read: with Mail on again the account has no folders and no mail.
+    ui.apply_account_update(&only_generic());
+    settle(&ui);
+    widgets.select(&ui, &generic, Some("INBOX"));
     settle(&ui);
     assert_eq!(widgets.rows().len(), 2);
     let mail_off = with_generic(|details| details.mail_enabled = false);
     ui.apply_account_update(&mail_off);
-    wait_until(|| !has_stored_inbox(&generic));
+    wait_until(|| !has_stored_mail(&generic));
     ui.apply_account_update(&only_generic());
-    widgets.select_account(0);
+    settle(&ui);
+    widgets.select(&ui, &generic, None);
     settle(&ui);
     assert!(widgets.rows().is_empty());
     assert_eq!(widgets.status_title(), "No mail loaded");

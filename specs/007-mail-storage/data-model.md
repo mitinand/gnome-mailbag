@@ -1,5 +1,9 @@
 # Data Model: Mail Storage
 
+**Replaced** on 2026-09-27 by [008's data model](../008-folders/data-model.md),
+which builds the target model of the spec's FR-003 with the tables `folder`,
+`message` and `membership`; this page records the structure 007 built.
+
 The persisted form of the store as built now (spec FR-002, FR-003). A row of
 `message` is the domain's `Message` (`mailbag-domain`), keyed by the
 domain's `AccountId`; the content codes store the domain's

@@ -384,7 +384,9 @@
                   <object class="GtkScrolledWindow">
                     <property name="child">
                       <object class="GtkListView" id="folder_tree">
-                        <property name="single-click-activate">true</property>
+                        <!-- Tab leaves the tree after the current row; the
+                             arrow keys move between rows. -->
+                        <property name="tab-behavior">item</property>
                         <style>
                           <class name="navigation-sidebar"/>
                         </style>
@@ -548,8 +550,12 @@
         <attribute name="label" translatable="yes">_Synchronization Status</attribute>
       </item>
       <item>
-        <attribute name="action">app.refresh-inbox</attribute>
-        <attribute name="label" translatable="yes">_Refresh Inbox</attribute>
+        <attribute name="action">app.refresh-mailbox</attribute>
+        <attribute name="label" translatable="yes">_Refresh Mailbox</attribute>
+      </item>
+      <item>
+        <attribute name="action">app.refresh-account</attribute>
+        <attribute name="label" translatable="yes">Refresh _Account</attribute>
       </item>
     </section>
     <section>

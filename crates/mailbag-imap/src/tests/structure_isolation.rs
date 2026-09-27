@@ -3,7 +3,8 @@
 
 use super::{expect_failure, expect_success, open_reader, run, wait_until};
 use crate::{
-    ImapFailure, ImapStep, InboxReader, MessageText, OpenOptions, RowItems, TextParts, TextRequest,
+    ImapFailure, ImapStep, MailboxReader, MessageText, OpenOptions, RowItems, TextParts,
+    TextRequest,
     test_server::{FaultKind, FaultyCommand, FixtureMessage, FixtureSetup, ImapFixture},
 };
 
@@ -117,7 +118,7 @@ fn a_changed_uidvalidity_on_reconnection_stops_the_load() {
     });
     let mut reader = open_reader(&fixture);
     let error = expect_failure(run(reader.fetch_structures(&[20, 10])));
-    assert_eq!(error.failure, ImapFailure::InboxChanged);
+    assert_eq!(error.failure, ImapFailure::MailboxChanged);
 }
 
 #[test]
@@ -147,9 +148,10 @@ fn network_failures_timeouts_and_the_response_limit_are_not_isolated() {
         });
         let error = expect_failure(run(async {
             let mut reader = expect_success(
-                InboxReader::open_with_short_socket_timeout(
+                MailboxReader::open_with_short_socket_timeout(
                     fixture.account(),
                     OpenOptions::default(),
+                    "INBOX",
                     1,
                 )
                 .await,

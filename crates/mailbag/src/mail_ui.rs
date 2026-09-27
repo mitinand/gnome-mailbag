@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Shows one account's stored mail in the approved list and reader.
+//! Shows one mailbox's stored mail in the approved list and reader.
 //!
 //! Opening a message uses the text read with the list; it sends no request
 //! and changes nothing on the server.
@@ -51,14 +51,14 @@ pub struct MailUi {
     content_status: adw::StatusPage,
     content_action: gtk::Button,
     sender_avatar: adw::Avatar,
-    /// Whose stored Inbox the rows were built from, and that Inbox, to rebuild
-    /// them only when the shown account or its mail changed.
-    listed_inbox: RefCell<Option<(AccountId, Rc<[Message]>)>>,
+    /// Whose stored mailbox the rows were built from, and its messages, to
+    /// rebuild them only when the shown mailbox or its mail changed.
+    listed_mailbox: RefCell<Option<(AccountId, Rc<[Message]>)>>,
 }
 
-/// One row's message: the stored Inbox it belongs to and its place in it.
+/// One row's message: the stored mailbox it belongs to and its place in it.
 struct ListedMessage {
-    inbox: Rc<[Message]>,
+    mailbox: Rc<[Message]>,
     position: usize,
 }
 
@@ -95,7 +95,7 @@ impl MailUi {
             content_status: reader.content_status,
             content_action: reader.content_action,
             sender_avatar: reader.avatar,
-            listed_inbox: RefCell::new(None),
+            listed_mailbox: RefCell::new(None),
         });
         let weak = Rc::downgrade(&mail);
         messages.connect_row_activated(move |_, row| {
@@ -107,56 +107,56 @@ impl MailUi {
         mail
     }
 
-    /// Shows the rows of an account's stored Inbox, keeping the open message
-    /// when the same read's Inbox is shown again.
-    pub fn show_inbox(&self, account_id: &AccountId, inbox: &Rc<[Message]>) {
-        let already_shown = self
-            .listed_inbox
-            .borrow()
-            .as_ref()
-            .is_some_and(|(_, listed)| Rc::ptr_eq(listed, inbox));
-        if already_shown {
+    /// Shows the rows of a stored mailbox, keeping the list and the open
+    /// message when the rows on screen are the same: the same read, or a new
+    /// read after a load that left them as they were.
+    pub fn show_rows(&self, account_id: &AccountId, mailbox: &Rc<[Message]>) {
+        let mut listed = self.listed_mailbox.borrow_mut();
+        if let Some((listed_account, listed_mailbox)) = listed.as_mut()
+            && listed_account == account_id
+            && (Rc::ptr_eq(listed_mailbox, mailbox) || listed_mailbox[..] == mailbox[..])
+        {
+            // Later renders compare pointers only.
+            *listed_mailbox = mailbox.clone();
             return;
         }
+        drop(listed);
         self.rows.remove_all();
-        for position in 0..inbox.len() {
+        for position in 0..mailbox.len() {
             self.rows.append(&glib::BoxedAnyObject::new(ListedMessage {
-                inbox: inbox.clone(),
+                mailbox: mailbox.clone(),
                 position,
             }));
         }
-        *self.listed_inbox.borrow_mut() = Some((account_id.clone(), inbox.clone()));
+        *self.listed_mailbox.borrow_mut() = Some((account_id.clone(), mailbox.clone()));
         self.close_reader();
     }
 
-    /// Empties the list and the reader, as an account without stored mail
+    /// Empties the list and the reader, as a mailbox without stored rows
     /// does.
     pub fn clear(&self) {
-        if self.listed_inbox.borrow().is_none() {
+        if self.listed_mailbox.borrow().is_none() {
             return;
         }
         self.rows.remove_all();
-        *self.listed_inbox.borrow_mut() = None;
+        *self.listed_mailbox.borrow_mut() = None;
         self.close_reader();
     }
 
-    /// Names the account whose Inbox the list shows.
-    pub fn show_account(&self, label: Option<String>) {
-        match label {
-            Some(label) => {
-                self.list_title.set_title("Inbox");
-                self.list_title.set_subtitle(&label);
-                self.list_page.set_title("Inbox");
-            }
-            None => {
-                self.list_title.set_title("Mailbag");
-                self.list_title.set_subtitle("");
-                self.list_page.set_title("Mailbag");
-            }
-        }
+    /// Names what the list shows: the mailbox and its account, an account
+    /// without a folder list, or nothing selected.
+    pub fn show_title(&self, mailbox: Option<&str>, account: Option<&str>) {
+        let (title, subtitle) = match (mailbox, account) {
+            (Some(mailbox), Some(account)) => (mailbox, account),
+            (None, Some(account)) => (account, ""),
+            _ => ("Mailbag", ""),
+        };
+        self.list_title.set_title(title);
+        self.list_title.set_subtitle(subtitle);
+        self.list_page.set_title(title);
     }
 
-    /// Opens the row's message from the stored Inbox on screen.
+    /// Opens the row's message from the stored mailbox on screen.
     fn open_message(&self, row_position: i32) {
         let Some(listed) = self.rows.item(row_position as u32) else {
             return;
@@ -165,10 +165,10 @@ impl MailUi {
             .downcast::<glib::BoxedAnyObject>()
             .expect("message row item");
         let listed = listed.borrow::<ListedMessage>();
-        let message = &listed.inbox[listed.position];
+        let message = &listed.mailbox[listed.position];
         tracing::debug!(
             account = self
-                .listed_inbox
+                .listed_mailbox
                 .borrow()
                 .as_ref()
                 .map(|(account_id, _)| account_id.as_str()),
@@ -211,7 +211,7 @@ impl MailUi {
         show_action_button(
             &self.content_action,
             failure.action,
-            RetriedOperation::RefreshInbox,
+            RetriedOperation::RefreshMailbox,
         );
     }
 
@@ -312,7 +312,7 @@ fn build_message_row(listed: &glib::Object) -> gtk::ListBoxRow {
         .downcast_ref::<glib::BoxedAnyObject>()
         .expect("message row item");
     let listed = listed.borrow::<ListedMessage>();
-    let message = &listed.inbox[listed.position];
+    let message = &listed.mailbox[listed.position];
     let builder = gtk::Builder::from_string(include_str!("../resources/ui/message-row.ui"));
     let row: gtk::ListBoxRow = builder.object("row").expect("message-row.ui: row");
     label(&builder, "sender").set_text(&sender_text(&message.fields));

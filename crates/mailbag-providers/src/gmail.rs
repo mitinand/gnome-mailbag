@@ -1,25 +1,38 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The Gmail load: the same steps as a Generic IMAP load, with the three
-//! things Gmail offers beyond RFC 3501 — UTF-8 names, a named client, and its
-//! own message identifier and labels on every row.
+//! The Gmail loads: the same steps as the Generic IMAP loads, with what Gmail
+//! offers beyond RFC 3501 that they ask for — a named client, its own message
+//! identifier and labels on every row — and without the container its system
+//! labels are listed under.
 
 use crate::{
     batch::{BATCH_SIZE, ReceivedBatch},
+    folders::gmail_folders,
     imap_batch::{imap_account, load_batch_from_rows},
 };
 use goa_adapter::ImapAccess;
-use mailbag_imap::{ClientIdentity, ImapError, InboxReader, MessageRow, OpenOptions, RowItems};
+use mailbag_domain::{Folder, FolderRef};
+use mailbag_imap::{
+    ClientIdentity, ImapError, MailboxReader, MessageRow, OpenOptions, RowItems, list_mailboxes,
+};
 
-pub(crate) async fn load_gmail_inbox(access: ImapAccess) -> Result<ReceivedBatch, ImapError> {
-    let account_id = access.account_id.clone();
-    let mut reader = InboxReader::open(imap_account(access), gmail_options()).await?;
+pub(crate) async fn list_gmail_folders(access: ImapAccess) -> Result<Vec<Folder>, ImapError> {
+    let listed = list_mailboxes(imap_account(access), gmail_options()).await?;
+    Ok(gmail_folders(&listed))
+}
+
+pub(crate) async fn load_gmail_mailbox(
+    access: ImapAccess,
+    folder: FolderRef,
+) -> Result<ReceivedBatch, ImapError> {
+    let mut reader =
+        MailboxReader::open(imap_account(access), gmail_options(), &folder.identity).await?;
     let listed = reader
         .fetch_rows(RowItems::WithGmailAttributes, BATCH_SIZE)
         .await?;
     log_gmail_rows(&listed.rows);
-    load_batch_from_rows(&mut reader, listed, account_id).await
+    load_batch_from_rows(&mut reader, listed, folder).await
 }
 
 /// What Gmail is asked for beyond a Generic IMAP sign-in. Google asks clients
@@ -27,7 +40,6 @@ pub(crate) async fn load_gmail_inbox(access: ImapAccess) -> Result<ReceivedBatch
 /// (specs/004-gmail-integration/research.md §6).
 fn gmail_options() -> OpenOptions {
     OpenOptions {
-        readable_names: true,
         client_identity: Some(ClientIdentity {
             name: "Mailbag".to_owned(),
             version: env!("CARGO_PKG_VERSION").to_owned(),

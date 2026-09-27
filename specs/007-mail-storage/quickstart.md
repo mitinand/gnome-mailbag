@@ -27,12 +27,12 @@ flatpak run --command=sqlite3 io.github.mitinand.Mailbag ~/.var/app/io.github.mi
 
 | Step | How | Expected |
 |---|---|---|
-| 1. Stored mail without a network (US1) | Refresh each account's Inbox; quit; turn the network off; start; select each account; open a few messages, one without plain text among them | The same rows, read states and texts as before quitting; no load starts |
-| 2. A refresh replaces the Inbox (US2) | Network on; send yourself a message; refresh | The rows stay with the spinner during the load; the new message appears; the reader closes |
+| 1. Stored mail without a network (US1) | On each account choose Refresh Account, then Refresh Mailbox on its Inbox; quit; turn the network off; start; select each account's Inbox; open a few messages, one without plain text among them | The same rows, read states and texts as before quitting; no load starts |
+| 2. A refresh replaces the Inbox (US2) | Network on; send yourself a message; Refresh Mailbox on the Inbox | The rows stay with the spinner during the load; the new message appears; the reader closes |
 | 3. A failed refresh keeps the mail (US3) | Network off; refresh | The rows stay; the banner says the server is unreachable; its dialog has Retry; after a restart the rows are there without a banner |
 | 4. An account leaves (US4) | Turn Mail off for one account in Online Accounts; then query the store | The account disappears, as 001 describes; the query shows no row for it; turning Mail on and refreshing brings its mail back |
 | 5. A damaged store (US5) | Quit; overwrite the store: `head -c 8192 /dev/urandom > <store path>`; start with `--log-level=info` | One warning line says the store was discarded as not a store; every account says that no mail is loaded until refreshed |
-| 6. No visible wait (FR-011, SC-007) | Select an account with about 100 stored messages; switch between accounts; refresh one while scrolling its list | The rows appear without a visible wait; the list keeps scrolling while the load's result is written |
+| 6. No visible wait (FR-011, SC-007) | Select a mailbox with about 100 stored messages; switch between mailboxes; refresh one while scrolling its list | The rows appear without a visible wait; the list keeps scrolling while the load's result is written |
 | 7. Privacy (FR-009) | `stat -c %a ~/.var/app/io.github.mitinand.Mailbag/data/mailbag` | `700` |
 | 8. The record (SC-008) | Start with `--log-level=debug`, refresh, turn Mail off for one account and on again, quit | No subject, sender, text, password or token in the record; the deletion is named by the account's identifier only |
 

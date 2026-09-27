@@ -3,6 +3,7 @@
 
 mod acquisition;
 mod gmail;
+mod mailboxes;
 mod record;
 mod sections;
 mod secure_session;
@@ -12,7 +13,7 @@ mod test_record;
 mod timeouts;
 
 use crate::{
-    Credential, Encryption, ImapAccount, ImapError, ImapFailure, ImapStep, InboxReader,
+    Credential, Encryption, ImapAccount, ImapError, ImapFailure, ImapStep, MailboxReader,
     OpenOptions, RowItems,
     test_server::{FixtureMessage, FixtureSetup, ImapFixture, StartTlsBehavior},
 };
@@ -47,10 +48,11 @@ fn plain_messages(count: u32) -> Vec<FixtureMessage> {
         .collect()
 }
 
-fn open_reader(fixture: &ImapFixture) -> InboxReader {
-    expect_success(run(InboxReader::open(
+fn open_reader(fixture: &ImapFixture) -> MailboxReader {
+    expect_success(run(MailboxReader::open(
         fixture.account(),
         OpenOptions::default(),
+        "INBOX",
     )))
 }
 
@@ -212,7 +214,11 @@ fn host_trust_decides_the_connection() {
         credential: Credential::Password("acceptance".to_owned()),
         encryption,
     };
-    let opened = run(InboxReader::open(account, OpenOptions::default()));
+    let opened = run(MailboxReader::open(
+        account,
+        OpenOptions::default(),
+        "INBOX",
+    ));
     match std::env::var("MAILBAG_IMAP_EXPECT").as_deref() {
         Ok("success") | Err(_) => {
             let mut reader = expect_success(opened);

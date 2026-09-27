@@ -1,0 +1,46 @@
+mailbag-folder-archive-symbolic.svg
+Author: Jakub Steiner (GNOME)
+License: CC0-1.0, as the file's own metadata states (see
+LICENSES/CC0-1.0.txt in the source tree)
+Source: the icon `box` of the GNOME icon-development-kit
+(https://gitlab.gnome.org/Teams/Design/icon-development-kit), as the Icon
+Library application 0.0.23 ships it
+Changes: none; the file name gives it an application-specific name.
+
+mailbag-folder-important-symbolic.svg
+Author: Jakub Steiner (GNOME)
+License: CC0-1.0, as the file's own metadata states (see
+LICENSES/CC0-1.0.txt in the source tree)
+Source: the icon `mail-important` of the GNOME icon-development-kit
+(https://gitlab.gnome.org/Teams/Design/icon-development-kit), as the Icon
+Library application 0.0.23 ships it
+Changes: none; the file name gives it an application-specific name.
+
+mailbag-folder-inbox-symbolic.svg
+Author: Jakub Steiner (GNOME)
+License: CC0-1.0, as the file's own metadata states (see
+LICENSES/CC0-1.0.txt in the source tree)
+Source: the icon `inbox` of the GNOME icon-development-kit
+(https://gitlab.gnome.org/Teams/Design/icon-development-kit), as the Icon
+Library application 0.0.23 ships it
+Changes: the file name gives it an application-specific name, and its path
+carries the classes `transparent-fill foreground-stroke`, so that GTK's icon
+theme draws the outline as the source means it instead of filling it.
+
+mailbag-folder-sent-symbolic.svg
+Author: Jakub Steiner (GNOME)
+License: CC0-1.0, as the file's own metadata states (see
+LICENSES/CC0-1.0.txt in the source tree)
+Source: the icon `paper-plane` of the GNOME icon-development-kit
+(https://gitlab.gnome.org/Teams/Design/icon-development-kit), as the Icon
+Library application 0.0.23 ships it
+Changes: none; the file name gives it an application-specific name.
+
+mailbag-folder-starred-symbolic.svg
+Author: Jakub Steiner (GNOME)
+License: CC0-1.0, as the file's own metadata states (see
+LICENSES/CC0-1.0.txt in the source tree)
+Source: the icon `star` of the GNOME icon-development-kit
+(https://gitlab.gnome.org/Teams/Design/icon-development-kit), as the Icon
+Library application 0.0.23 ships it
+Changes: none; the file name gives it an application-specific name.

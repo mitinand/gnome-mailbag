@@ -9,14 +9,25 @@
   <object class="GtkBox" id="folder_row">
     <property name="orientation">vertical</property>
     <child>
-      <object class="GtkSeparator" id="group_separator">
+      <!-- Space that sets an account apart from the one above it: the
+           platform's spacer, one and a half times its height. -->
+      <object class="GtkSeparator" id="account_spacing">
+        <property name="height-request">18</property>
+        <property name="orientation">vertical</property>
         <property name="visible">false</property>
+        <style>
+          <class name="spacer"/>
+        </style>
       </object>
     </child>
     <child>
+      <!-- The keyboard focus rests on the tree's row; the tree passes the
+           expander's keys on. -->
       <object class="GtkTreeExpander" id="folder_expander">
+        <property name="focusable">false</property>
         <property name="child">
           <object class="AdwActionRow" id="folder_details">
+            <property name="focusable">false</property>
             <property name="hexpand">true</property>
             <property name="title"/>
             <property name="title-lines">1</property>
@@ -24,6 +35,9 @@
             <child type="prefix">
               <object class="GtkImage" id="folder_icon">
                 <property name="icon-name">mail-unread-symbolic</property>
+                <!-- Raises the icon by 1 px: the platform's row centers it
+                     1.5 px below the middle of the name. -->
+                <property name="margin-bottom">2</property>
                 <property name="pixel-size">16</property>
               </object>
             </child>

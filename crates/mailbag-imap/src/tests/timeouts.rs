@@ -3,7 +3,7 @@
 
 use super::{expect_success, run, wait_until};
 use crate::{
-    ImapFailure, ImapStep, InboxReader, OpenOptions, TextParts, TextRequest,
+    ImapFailure, ImapStep, MailboxReader, OpenOptions, TextParts, TextRequest,
     test_server::{FaultKind, FaultyCommand, FixtureMessage, FixtureSetup, ImapFixture},
 };
 use futures_util::future::{self, Either};
@@ -20,11 +20,12 @@ fn text_fixture(fault: FaultKind) -> ImapFixture {
     })
 }
 
-/// Opens the Inbox and reads the text of message 10.
+/// Opens the mailbox and reads the text of message 10.
 async fn read_text(fixture: &ImapFixture) -> Result<(), crate::ImapError> {
-    let mut reader = InboxReader::open_with_short_socket_timeout(
+    let mut reader = MailboxReader::open_with_short_socket_timeout(
         fixture.account(),
         OpenOptions::default(),
+        "INBOX",
         SHORT_SOCKET_TIMEOUT,
     )
     .await?;

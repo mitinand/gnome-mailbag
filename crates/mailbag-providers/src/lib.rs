@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Loads one account's Inbox from its provider and writes it into the store.
-//! This crate joins Online Accounts, the protocol crates, the content crate
-//! and the store; it owns no widget and no application state.
+//! Loads one account's folder list, or the newest messages of one of its
+//! folders, from its provider and writes them into the store. This crate
+//! joins Online Accounts, the protocol crates, the content crate and the
+//! store; it owns no widget and no application state.
 
 mod batch;
 mod failure;
+mod folders;
 mod gmail;
 mod imap;
 mod imap_batch;
@@ -21,7 +23,7 @@ mod test_record;
 #[cfg(test)]
 mod tests;
 
-pub use batch::{CancelsLoadOnDrop, LoadResult};
+pub use batch::{CancelsLoadOnDrop, LoadResult, LoadTarget};
 
 use batch::LoadFailure;
 use goa_adapter::{AccessError, AccessRequest, GoaAdapter, ImapAccess};
@@ -42,23 +44,24 @@ pub enum MailProvider {
 /// Where Microsoft 365 mail is read.
 const MICROSOFT_GRAPH: &str = "https://graph.microsoft.com/v1.0";
 
-/// Starts one account's Inbox load and reports how it ended. The window loads
-/// with Online Accounts and the mail worker; the graphical test reports
-/// results without a server.
-pub trait LoadsInbox {
+/// Starts one account's load of `target` and reports how it ended. The
+/// window loads with Online Accounts and the mail worker; the graphical test
+/// reports results without a server.
+pub trait LoadsMail {
     /// Reports the result once, on the calling GLib context. The returned
     /// step cancels the load when it is dropped.
     fn start_load(
         &self,
         account_id: &AccountId,
         provider: MailProvider,
+        target: LoadTarget,
         report: Box<dyn FnOnce(LoadResult)>,
     ) -> Box<dyn CancelsLoadOnDrop>;
 }
 
-/// Loads an Inbox with the account's Online Accounts settings and credential,
-/// and the mail worker that speaks to the server and writes what it received
-/// into the store.
+/// Loads with the account's Online Accounts settings and credential, and the
+/// mail worker that speaks to the server and writes what it received into
+/// the store.
 pub struct MailLoader {
     accounts: GoaAdapter,
     worker: Rc<MailWorker>,
@@ -73,11 +76,12 @@ impl MailLoader {
     }
 }
 
-impl LoadsInbox for MailLoader {
+impl LoadsMail for MailLoader {
     fn start_load(
         &self,
         account_id: &AccountId,
         provider: MailProvider,
+        target: LoadTarget,
         report: Box<dyn FnOnce(LoadResult)>,
     ) -> Box<dyn CancelsLoadOnDrop> {
         let transfer = Rc::new(RefCell::new(None));
@@ -85,14 +89,17 @@ impl LoadsInbox for MailLoader {
         let worker = self.worker.clone();
         let requested_account = account_id.clone();
         let start_transfer = move |access: Result<LoadKind, AccessError>| match access {
-            Ok(kind) => {
-                *started_transfer.borrow_mut() = Some(worker.load_inbox(kind, report));
-            }
             // The request was cancelled by an exclusion or by quitting.
             Err(AccessError::Cancelled) => report(LoadResult::Cancelled),
             // The load ends here, on GTK's context, before the worker is
             // involved.
-            Err(error) => report(LoadFailure::OnlineAccounts(error).give_up(&requested_account)),
+            Err(error) => report(
+                LoadFailure::OnlineAccounts(error)
+                    .give_up(&requested_account, target.record_name()),
+            ),
+            Ok(kind) => {
+                *started_transfer.borrow_mut() = Some(worker.start_load(kind, target, report));
+            }
         };
         let request = match provider {
             MailProvider::GenericImap => request_imap_load(

@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! A scripted Microsoft Graph service for tests, on its own thread and GLib
-//! context. It answers the Inbox list with one configured answer over plain
-//! HTTP on loopback and records the path, query and headers of every request.
-//! Its messages and addresses are synthetic.
+//! context. Over plain HTTP on loopback it answers any folder's message list
+//! with one configured answer, the folder listing page by page and the
+//! well-known folder names, and records the path, query and headers of every
+//! request. Its folders, messages and addresses are synthetic.
 
-use crate::{INBOX_PATH, service_thread::ServiceThread};
+use crate::service_thread::ServiceThread;
 use soup::prelude::*;
 use std::{
     io::Read,
@@ -21,7 +22,7 @@ pub const TEST_ACCESS_TOKEN: &str = "synthetic-graph-access-token";
 /// message arrived an hour earlier.
 const NEWEST_RECEIVED_UNIX: i64 = 1_790_150_400;
 
-/// The status and body the service answers the Inbox list with.
+/// The status and body the service answers a request with.
 #[derive(Clone, Debug)]
 pub struct ScriptedAnswer {
     pub status: u32,
@@ -44,6 +45,11 @@ impl ScriptedAnswer {
         }))
     }
 
+    /// The folder a well-known name resolves to.
+    pub fn folder_id(id: &str) -> Self {
+        Self::ok(serde_json::json!({ "id": id }))
+    }
+
     /// The service's answer to a token it does not accept.
     pub fn sign_in_refused() -> Self {
         Self::error(
@@ -59,6 +65,15 @@ impl ScriptedAnswer {
             429,
             "ApplicationThrottled",
             "Application is over its request limit.",
+        )
+    }
+
+    /// The service's answer for a folder it does not have.
+    fn not_found() -> Self {
+        Self::error(
+            404,
+            "ErrorItemNotFound",
+            "The specified object was not found in the store.",
         )
     }
 
@@ -82,6 +97,27 @@ impl ScriptedAnswer {
             body: answer.to_string().into_bytes(),
         }
     }
+}
+
+/// The folder listing the service answers with.
+#[derive(Clone, Debug, Default)]
+pub struct ScriptedFolders {
+    /// The listing's pages in order: each page's entries, or the answer that
+    /// refuses it. Every page but the last links to the next one.
+    pub pages: Vec<Result<Vec<serde_json::Value>, ScriptedAnswer>>,
+    /// The answers to well-known names, such as `folder_id` for a name the
+    /// mailbox has a folder for; any other name is answered with 404.
+    pub well_known: Vec<(&'static str, ScriptedAnswer)>,
+}
+
+/// A folder entry of the listing as the service writes it.
+pub fn folder_entry(id: &str, name: &str, parent_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "displayName": name,
+        "parentFolderId": parent_id,
+        "isHidden": false,
+    })
 }
 
 /// The immutable identifier of message `message_number` of `ScriptedAnswer::inbox`.
@@ -145,28 +181,28 @@ pub struct ScriptedService {
 }
 
 impl ScriptedService {
-    /// Listens on a free loopback port. Any path other than the Inbox list
-    /// gets 404.
-    pub fn start(answer: ScriptedAnswer) -> Self {
+    /// Listens on a free loopback port and answers every folder's message
+    /// list with `messages`. The mailbox has no folders.
+    pub fn start(messages: ScriptedAnswer) -> Self {
+        Self::start_with_folders(messages, ScriptedFolders::default())
+    }
+
+    /// As `start`, with a folder listing.
+    pub fn start_with_folders(messages: ScriptedAnswer, folders: ScriptedFolders) -> Self {
         let received = Arc::new(Mutex::new(Vec::new()));
         let service_received = received.clone();
         let (service, port) = ServiceThread::start(move |_, _| {
             let server: soup::Server = glib::Object::builder().build();
             server.add_handler(None, move |_, request, path, _| {
-                service_received
-                    .lock()
-                    .unwrap()
-                    .push(received_request(request, path));
-                if path == INBOX_PATH {
-                    request.set_status(answer.status, None);
-                    request.set_response(
-                        Some("application/json"),
-                        soup::MemoryUse::Copy,
-                        &answer.body,
-                    );
-                } else {
-                    request.set_status(404, None);
-                }
+                let received = received_request(request, path);
+                let answer = scripted_answer(&messages, &folders, &received, request);
+                service_received.lock().unwrap().push(received);
+                request.set_status(answer.status, None);
+                request.set_response(
+                    Some("application/json"),
+                    soup::MemoryUse::Copy,
+                    &answer.body,
+                );
             });
             server
                 .listen_local(0, soup::ServerListenOptions::IPV4_ONLY)
@@ -197,6 +233,52 @@ impl ScriptedService {
         StalledService {
             listener: TcpListener::bind("127.0.0.1:0").expect("listen on loopback"),
         }
+    }
+}
+
+/// The answer to one request: a folder's message list by any id, a page of
+/// the folder listing by the page number its link carries, or the folder
+/// behind a well-known name; 404 for anything else.
+fn scripted_answer(
+    messages: &ScriptedAnswer,
+    folders: &ScriptedFolders,
+    received: &ReceivedRequest,
+    request: &soup::ServerMessage,
+) -> ScriptedAnswer {
+    let Some(folder_path) = received.path.strip_prefix("/me/mailFolders/") else {
+        return ScriptedAnswer::not_found();
+    };
+    if folder_path.ends_with("/messages") {
+        return messages.clone();
+    }
+    if folder_path == "delta" {
+        let page_number: usize = received
+            .query
+            .split('&')
+            .find_map(|parameter| parameter.strip_prefix("$skiptoken="))
+            .map_or(0, |number| number.parse().expect("a page number"));
+        let entries = match &folders.pages[page_number] {
+            Ok(entries) => entries,
+            Err(refusal) => return refusal.clone(),
+        };
+        let address = request.uri().expect("a request has an address");
+        let service_url = format!("http://127.0.0.1:{}", address.port());
+        let mut page = serde_json::json!({ "value": entries });
+        let listing = format!("{service_url}/me/mailFolders/delta");
+        if page_number + 1 < folders.pages.len() {
+            page["@odata.nextLink"] = format!("{listing}?$skiptoken={}", page_number + 1).into();
+        } else {
+            page["@odata.deltaLink"] = format!("{listing}?$deltatoken=latest").into();
+        }
+        return ScriptedAnswer::ok(page);
+    }
+    match folders
+        .well_known
+        .iter()
+        .find(|(name, _)| *name == folder_path)
+    {
+        Some((_, answer)) => answer.clone(),
+        None => ScriptedAnswer::not_found(),
     }
 }
 

@@ -7,6 +7,10 @@ terms, a value of `mailbag-domain`; `mailbag` writes the wording, chooses
 the action and the channel. No protocol type reaches `mailbag`. The rules
 behind each field are in the [specification](../spec.md) (FR-001 to FR-005,
 FR-009); this contract fixes what each side provides and the shapes.
+Amended on 2026-09-27 by [Folders](../../008-folders/spec.md): the folder
+list is a step of its own, the Inbox's names become the mailbox's, and
+Retry chooses between Refresh Mailbox, Refresh Account and reading the
+stored mail again.
 
 ## The domain's types
 
@@ -45,12 +49,13 @@ pub enum ServerStep {
     Connect,
     SecureConnection,
     SignIn,
-    OpenInbox,
+    ListFolders,
+    OpenMailbox,
     FetchMessages,
     FetchText,
 }
 
-/// Why fewer messages arrived than the Inbox offered.
+/// Why fewer messages arrived than the folder offered.
 pub enum IncompleteList {
     /// The server refused to finish the message list.
     ServerRefused { reply: String, code: Option<String> },
@@ -90,7 +95,7 @@ chooses the kind; reading a protocol's codes happens there.
 | `ServerStepFailed(ServerStep)` | providers | Any other `ImapFailure::Failed(step)` |
 | `ServerNotResponding(ServerStep)` | providers | `ImapFailure::TimedOut(step)` |
 | `NoSignInMethod` | providers | `ImapFailure::NoSignInMethod` |
-| `InboxChanged` | providers | `ImapFailure::InboxChanged` |
+| `MailboxChanged` | providers | `ImapFailure::MailboxChanged` |
 | `ServiceUnreachable` | providers | `GraphFailure::ConnectionFailed` |
 | `ServiceNotResponding` | providers | `GraphFailure::TimedOut` |
 | `ServiceRejectedSignIn` | providers | `GraphFailure::Refused` with status 401 |
@@ -162,8 +167,8 @@ value, so a new variant without a declaration does not compile.
 
 | Carrier | Function | Channel in the window |
 |---|---|---|
-| A failed operation | `declare_failure(&Failure) -> DeclaredFailure` | The list's failure page when nothing is stored; over stored rows, the banner (007); Details or the banner's button opens the dialog |
-| A stored Inbox that cannot be read (added by [007](../../007-mail-storage/research.md#10-retrys-operation-for-a-failure-the-window-reads-itself)) | `declare_failure(&Failure)` | The list's failure page, whose Retry reads the stored Inbox again |
+| A failed operation | `declare_failure(&Failure, RetriedOperation) -> DeclaredFailure`, the operation Retry repeats | The list's failure page when nothing is stored; over stored rows, the banner (007); Details or the banner's button opens the dialog |
+| Stored mail that cannot be read, the folder lists or the shown mailbox (added by [007](../../007-mail-storage/research.md#10-retrys-operation-for-a-failure-the-window-reads-itself), amended by 008) | `declare_failure(&Failure, RetriedOperation::ReadStoredMail)` | The list's failure page, whose Retry reads the folder lists and the shown mailbox again |
 | A short list | `declare_short_list(&IncompleteList) -> DeclaredFailure` | The banner above the list; its button opens the dialog |
 | A message's content | `declare_content(&ReceivedContent) -> Option<DeclaredFailure>` (`None` for text) | The reader's status page in the body's place; no dialog |
 | A Settings launch | `LaunchError::message()` (in `mailbag`): one line, title and advice, no `DeclaredFailure`, since the toast shows nothing more | A toast |
@@ -203,10 +208,12 @@ nothing of this table.
 - `mailbag` depends on no protocol crate; `failure_declarations.rs` matches
   domain types only.
 - The action names: `Retry` runs the failed operation, which the window
-  chooses from the carrier as a `RetriedOperation`: a load's failure, a
-  short list and a message's content refresh the Inbox,
-  `app.refresh-inbox`; a stored Inbox that cannot be read is read again,
-  `app.read-stored-inbox` (amended by 007 on 2026-09-26). `OnlineAccounts`
+  chooses from the carrier as a `RetriedOperation`: a mailbox load's
+  failure, a short list and a message's content refresh the mailbox,
+  `app.refresh-mailbox`; a folder list's failure refreshes the account,
+  `app.refresh-account`; stored mail that cannot be read is read again,
+  `app.read-stored-mail` (amended by 007 on 2026-09-26 and by 008 on
+  2026-09-27). `OnlineAccounts`
   is `app.accounts`. `failure_dialog::show_action_button` in `mailbag` is
   the one place that maps them to a label and an action name. A declaration never names a
   widget or an action string.

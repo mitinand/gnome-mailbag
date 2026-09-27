@@ -3,7 +3,7 @@
 
 use crate::logging;
 use goa_adapter::{AccountCheckResult, AccountDetails, AccountProvider, AccountUpdate, ErrorCause};
-use mailbag_domain::AccountId;
+use mailbag_domain::{AccountId, FolderRef};
 use mailbag_providers::MailProvider;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -56,8 +56,27 @@ pub enum AccountPage {
     ReadFailed(ErrorCause),
     NoAccounts,
     NoEligibleAccounts,
-    SelectAccount,
-    SelectedAccount,
+    /// The accounts are shown; the window shows the selected mail or asks
+    /// for a selection.
+    AccountsShown,
+}
+
+/// What the user selected in the sidebar: an account whose folders are not
+/// known, or one of its mailboxes (specs/008-folders FR-009, FR-010).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Selection {
+    Account(AccountId),
+    Mailbox(FolderRef),
+}
+
+impl Selection {
+    /// The selected account, or the account of the selected mailbox.
+    pub fn account(&self) -> &AccountId {
+        match self {
+            Self::Account(account) => account,
+            Self::Mailbox(folder) => &folder.account,
+        }
+    }
 }
 
 /// Display information for one row. Its presence does not confirm mail access.
@@ -101,7 +120,8 @@ impl fmt::Debug for AccountHiddenNotice {
 /// changes the user actually sees.
 pub struct AccountList {
     visible_accounts: BTreeMap<AccountId, AccountRow>,
-    selected_id: Option<AccountId>,
+    /// The one owner of what the user selected.
+    selection: Option<Selection>,
     last_check: AccountCheckResult,
     retry_pending: bool,
     excluded_reasons: BTreeSet<ExclusionReason>,
@@ -111,7 +131,7 @@ impl Default for AccountList {
     fn default() -> Self {
         Self {
             visible_accounts: BTreeMap::new(),
-            selected_id: None,
+            selection: None,
             last_check: AccountCheckResult::NotChecked,
             retry_pending: false,
             excluded_reasons: BTreeSet::new(),
@@ -123,8 +143,12 @@ impl AccountList {
     pub fn visible_accounts(&self) -> &BTreeMap<AccountId, AccountRow> {
         &self.visible_accounts
     }
-    pub fn selected_id(&self) -> Option<&AccountId> {
-        self.selected_id.as_ref()
+    pub fn selection(&self) -> Option<&Selection> {
+        self.selection.as_ref()
+    }
+    /// The selected account, or the account of the selected mailbox.
+    pub fn selected_account(&self) -> Option<&AccountId> {
+        self.selection.as_ref().map(Selection::account)
     }
     pub fn retry_pending(&self) -> bool {
         self.retry_pending
@@ -132,19 +156,21 @@ impl AccountList {
     pub fn excluded_reasons(&self) -> &BTreeSet<ExclusionReason> {
         &self.excluded_reasons
     }
-    /// Select an existing row; ignore IDs without a visible row.
-    pub fn select_account(&mut self, id: AccountId) {
-        if self.visible_accounts.contains_key(&id) {
-            self.selected_id = Some(id);
+    /// Selects an account with a visible row, or one of its mailboxes;
+    /// ignores any other.
+    pub fn select(&mut self, selection: Selection) {
+        if self.visible_accounts.contains_key(selection.account()) {
+            self.selection = Some(selection);
         }
+    }
+    pub fn clear_selection(&mut self) {
+        self.selection = None;
     }
     pub fn page(&self) -> AccountPage {
         if let Some(error) = self.last_check.error() {
             AccountPage::ReadFailed(error.cause)
-        } else if self.selected_id.is_some() {
-            AccountPage::SelectedAccount
         } else if !self.visible_accounts.is_empty() {
-            AccountPage::SelectAccount
+            AccountPage::AccountsShown
         } else if self.last_check == AccountCheckResult::NotChecked {
             AccountPage::Loading
         } else if self
@@ -172,11 +198,10 @@ impl AccountList {
         let hidden_notices = self.hide_removed_or_disabled_accounts(&update.accounts);
         self.update_visible_accounts(&update.accounts);
         if self
-            .selected_id
-            .as_ref()
+            .selected_account()
             .is_some_and(|id| !self.visible_accounts.contains_key(id))
         {
-            self.selected_id = None;
+            self.selection = None;
         }
         self.assign_display_labels();
         hidden_notices

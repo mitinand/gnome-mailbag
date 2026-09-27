@@ -4,7 +4,6 @@
 use adw::{gio, glib, gtk, prelude::*};
 use std::{io::Write, ops::ControlFlow};
 
-mod account_ui;
 mod accounts;
 mod failure_declarations;
 mod failure_dialog;
@@ -12,6 +11,7 @@ mod logging;
 mod mail_ui;
 mod refreshes;
 mod settings;
+mod sidebar_ui;
 mod window_ui;
 
 #[cfg(test)]
@@ -205,10 +205,10 @@ fn connect_account_updates(builder: &gtk::Builder, window: &adw::Window) {
     *updated_window.borrow_mut() = std::rc::Rc::downgrade(&window_ui);
     let refresh_adapter = adapter.clone();
     window_ui
-        .accounts()
+        .sidebar()
         .borrow()
         .connect_retry_check(move || refresh_adapter.refresh_accounts());
-    let settings_ui = std::rc::Rc::downgrade(window_ui.accounts());
+    let settings_ui = std::rc::Rc::downgrade(window_ui.sidebar());
     let launcher = settings::SettingsLauncher::new(move |error| {
         if let Some(ui) = settings_ui.upgrade() {
             ui.borrow().show_settings_error(error);
@@ -217,14 +217,16 @@ fn connect_account_updates(builder: &gtk::Builder, window: &adw::Window) {
     let action_launcher = launcher.clone();
     let app = window.application().expect("application window");
     register_action(&app, "accounts", None, move || action_launcher.open());
-    app.add_action(window_ui.refresh_action());
-    app.add_action(window_ui.read_stored_inbox_action());
-    app.add_action(window_ui.accounts().borrow().retry_check_action());
+    app.add_action(window_ui.refresh_mailbox_action());
+    app.add_action(window_ui.refresh_account_action());
+    app.add_action(window_ui.read_stored_mail_action());
+    app.add_action(window_ui.sidebar().borrow().retry_check_action());
     let held_window = std::cell::RefCell::new(Some(window_ui));
     window.connect_destroy(move |_| {
         app.remove_action("accounts");
-        app.remove_action("refresh-inbox");
-        app.remove_action("read-stored-inbox");
+        app.remove_action("refresh-mailbox");
+        app.remove_action("refresh-account");
+        app.remove_action("read-stored-mail");
         app.remove_action("retry-accounts");
         if let Some(ui) = held_window.borrow_mut().take() {
             // The worker closes its connection on its own thread.

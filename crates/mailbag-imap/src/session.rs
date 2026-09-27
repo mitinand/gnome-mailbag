@@ -10,7 +10,7 @@ use async_imap::{
     Authenticator, Client, Session,
     error::{Error, StatusResponse},
     imap_proto::{Response, ResponseCode, Status},
-    types::{Capability, UnsolicitedResponse},
+    types::{Capabilities, Capability, UnsolicitedResponse},
 };
 use std::{borrow::Cow, collections::HashMap, io};
 
@@ -34,8 +34,24 @@ pub(crate) fn replace_sign_in_name(sign_in_name: &str, text: &str) -> String {
     replaced_text
 }
 
-/// A signed-in session with the Inbox open read-only.
-pub(crate) struct InboxSession {
+/// Seconds without progress after which connecting, TLS, a read or a write fails.
+pub(crate) const SOCKET_TIMEOUT_SECONDS: u32 = 30;
+
+/// A signed-in session before any mailbox command.
+pub(crate) struct SignedInSession {
+    pub(crate) session: Session<GioStream>,
+    /// What the server announced after sign-in, which can be more than it
+    /// announced before; it holds for this connection only.
+    pub(crate) capabilities: Capabilities,
+    /// Whether the server sends mailbox names in UTF-8 rather than in
+    /// modified UTF-7 (RFC 6855).
+    pub(crate) utf8_names: bool,
+    /// Dropped after `session`, closing the socket.
+    pub(crate) connection: ServerConnection,
+}
+
+/// A signed-in session with one mailbox open read-only.
+pub(crate) struct MailboxSession {
     pub(crate) session: Session<GioStream>,
     pub(crate) uid_validity: Option<u32>,
     pub(crate) message_count: u32,
@@ -176,14 +192,18 @@ impl ServerNotices {
     }
 }
 
-/// Connects securely, signs in, runs what `options` asks for and then
-/// EXAMINE INBOX. ALERT and BYE texts received over TLS are added to `notices`.
-pub(crate) async fn open_inbox(
+/// Connects securely, signs in, reads the capabilities the server announces
+/// after sign-in, enables UTF-8 names when it announces them and runs what
+/// `options` asks for. A failure after sign-in belongs to `opened_for`, the
+/// step the session is prepared for. ALERT and BYE texts received over TLS
+/// are added to `notices`.
+pub(crate) async fn sign_in_session(
     account: &ImapAccount,
     options: &OpenOptions,
     socket_timeout_seconds: u32,
     notices: &mut ServerNotices,
-) -> Result<InboxSession, StepFailure> {
+    opened_for: ImapStep,
+) -> Result<SignedInSession, StepFailure> {
     let (connection, identity) =
         transport::connect(&account.host, account.encryption, socket_timeout_seconds).await?;
     let client = match account.encryption {
@@ -204,27 +224,83 @@ pub(crate) async fn open_inbox(
         }
     };
     let mut session = sign_in(client, account, notices).await?;
-    if options.readable_names {
-        // RFC 5161 allows ENABLE only before a mailbox is selected.
-        offer_readable_names(&mut session, &account.login).await?;
-    }
+    // A server may announce more once signed in, as Gmail does (specs/
+    // 004-gmail-integration/research.md §2). The sign-in reply may carry the
+    // list, but the library does not return it, so it is asked for once.
+    let capabilities = session.capabilities().await;
+    notices.collect(&account.login);
+    let capabilities = capabilities.map_err(|error| command_failure(opened_for, &error))?;
+    tracing::debug!(
+        capabilities = capability_names(capabilities.iter()),
+        "server capabilities after sign-in"
+    );
+    // UTF8=ONLY includes UTF8=ACCEPT and still needs the ENABLE (RFC 6855
+    // §6); RFC 5161 allows ENABLE only before a mailbox is selected.
+    let utf8_names = if capabilities.has_str("UTF8=ACCEPT") || capabilities.has_str("UTF8=ONLY") {
+        enable_utf8_names(&mut session, &account.login, opened_for).await?
+    } else {
+        false
+    };
     if let Some(identity) = &options.client_identity {
-        identify_client(&mut session, identity, &account.login).await?;
+        identify_client(&mut session, identity, &account.login, opened_for).await?;
     }
     // Both commands answer with an untagged list, which belongs to the record
-    // before the Inbox is opened.
+    // before the first mailbox command.
     notices.collect(&account.login);
-    let examined = session.examine("INBOX").await;
-    notices.collect(&account.login);
-    let mailbox = examined.map_err(|error| command_failure(ImapStep::OpenInbox, &error))?;
-    tracing::info!(messages = mailbox.exists, "Inbox opened");
-    tracing::debug!(uid_validity = mailbox.uid_validity, "Inbox state");
-    Ok(InboxSession {
+    Ok(SignedInSession {
         session,
-        uid_validity: mailbox.uid_validity,
-        message_count: mailbox.exists,
+        capabilities,
+        utf8_names,
         connection,
     })
+}
+
+/// Opens `mailbox` read-only in a signed-in session.
+pub(crate) async fn examine_mailbox(
+    signed_in: SignedInSession,
+    mailbox: &str,
+    sign_in_name: &str,
+    notices: &mut ServerNotices,
+) -> Result<MailboxSession, StepFailure> {
+    let SignedInSession {
+        mut session,
+        connection,
+        ..
+    } = signed_in;
+    let examined = session.examine(mailbox).await;
+    notices.collect(sign_in_name);
+    let examined = examined.map_err(|error| command_failure(ImapStep::OpenMailbox, &error))?;
+    tracing::info!(messages = examined.exists, "mailbox opened");
+    tracing::debug!(
+        mailbox,
+        uid_validity = examined.uid_validity,
+        "mailbox state"
+    );
+    Ok(MailboxSession {
+        session,
+        uid_validity: examined.uid_validity,
+        message_count: examined.exists,
+        connection,
+    })
+}
+
+/// Signs in and opens `mailbox` read-only.
+pub(crate) async fn open_mailbox(
+    account: &ImapAccount,
+    options: &OpenOptions,
+    socket_timeout_seconds: u32,
+    notices: &mut ServerNotices,
+    mailbox: &str,
+) -> Result<MailboxSession, StepFailure> {
+    let signed_in = sign_in_session(
+        account,
+        options,
+        socket_timeout_seconds,
+        notices,
+        ImapStep::OpenMailbox,
+    )
+    .await?;
+    examine_mailbox(signed_in, mailbox, &account.login, notices).await
 }
 
 async fn read_greeting(
@@ -355,23 +431,29 @@ fn capability_names<'a>(capabilities: impl IntoIterator<Item = &'a Capability>) 
         .join(" ")
 }
 
-/// Offers UTF-8 mailbox and label names. A server that refuses keeps sending
-/// modified UTF-7, which the names then carry into the batch as they are.
-async fn offer_readable_names(
+/// Enables UTF-8 mailbox and label names and returns whether the server
+/// accepted. A server that refuses keeps sending modified UTF-7.
+async fn enable_utf8_names(
     session: &mut Session<GioStream>,
     sign_in_name: &str,
-) -> Result<(), StepFailure> {
+    opened_for: ImapStep,
+) -> Result<bool, StepFailure> {
     match session.run_command_and_check_ok("ENABLE UTF8=ACCEPT").await {
-        Ok(()) => tracing::debug!("the server accepted UTF-8 names"),
-        Err(Error::No(status) | Error::Bad(status)) => tracing::debug!(
-            code = status.code.as_deref(),
-            server_text = replace_sign_in_name(sign_in_name, &status.text),
-            "the server refused UTF-8 names"
-        ),
-        // A broken connection, not a refusal: the Inbox cannot follow.
-        Err(error) => return Err(command_failure(ImapStep::OpenInbox, &error)),
+        Ok(()) => {
+            tracing::debug!("the server accepted UTF-8 names");
+            Ok(true)
+        }
+        Err(Error::No(status) | Error::Bad(status)) => {
+            tracing::debug!(
+                code = status.code.as_deref(),
+                server_text = replace_sign_in_name(sign_in_name, &status.text),
+                "the server refused UTF-8 names"
+            );
+            Ok(false)
+        }
+        // A broken connection, not a refusal: the next step cannot follow.
+        Err(error) => Err(command_failure(opened_for, &error)),
     }
-    Ok(())
 }
 
 /// Names this client to the server, as Gmail asks clients to do. The server's
@@ -384,6 +466,7 @@ async fn identify_client(
     session: &mut Session<GioStream>,
     identity: &ClientIdentity,
     sign_in_name: &str,
+    opened_for: ImapStep,
 ) -> Result<(), StepFailure> {
     let identification = [
         ("name", &identity.name),
@@ -404,7 +487,7 @@ async fn identify_client(
             server_text = replace_sign_in_name(sign_in_name, &status.text),
             "the server refused the identification"
         ),
-        Err(error) => return Err(command_failure(ImapStep::OpenInbox, &error)),
+        Err(error) => return Err(command_failure(opened_for, &error)),
     }
     Ok(())
 }

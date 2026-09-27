@@ -3,8 +3,8 @@
 
 use super::{expect_failure, expect_success, open_reader, plain_messages, run};
 use crate::{
-    ImapFailure, ImapStep, InboxReader, MessagePart, OpenOptions, RowItems, ServerReply, TextParts,
-    TextRequest,
+    ImapFailure, ImapStep, MailboxReader, MessagePart, OpenOptions, RowItems, ServerReply,
+    TextParts, TextRequest,
     test_server::{
         FaultKind, FaultyCommand, FixtureMessage, FixtureSetup, ImapFixture, RecordedFetch,
     },
@@ -50,7 +50,7 @@ fn the_newest_hundred_messages_are_listed_by_descending_uid() {
 }
 
 #[test]
-fn an_empty_inbox_has_no_rows() {
+fn an_empty_mailbox_has_no_rows() {
     let fixture = ImapFixture::start(FixtureSetup::default());
     assert!(row_uids(&fixture).is_empty());
     assert!(fixture.log().fetches.is_empty());
@@ -137,13 +137,13 @@ fn examine_alerts_explain_a_later_text_failure() {
 }
 
 #[test]
-fn an_inbox_emptied_after_examine_is_not_reported_as_empty() {
+fn a_mailbox_emptied_after_examine_is_not_reported_as_empty() {
     let fixture = ImapFixture::start(FixtureSetup::default());
     let mut reader = open_reader(&fixture);
     // EXAMINE counted three messages that another client deleted before FETCH.
-    reader.inbox.message_count = 3;
+    reader.mailbox.message_count = 3;
     let error = expect_failure(run(reader.fetch_rows(RowItems::Standard, 100)));
-    assert_eq!(error.failure, ImapFailure::InboxChanged);
+    assert_eq!(error.failure, ImapFailure::MailboxChanged);
 }
 
 #[test]
@@ -249,9 +249,9 @@ fn a_message_that_disappears_during_the_load_is_left_out() {
     let mut reader = open_reader(&fixture);
     let structures = expect_success(run(reader.fetch_structures(&[30, 20, 10])));
     assert_eq!(structures.keys().copied().collect::<Vec<_>>(), [10, 30]);
-    // When every listed message disappears, the Inbox changed.
+    // When every listed message disappears, the mailbox changed.
     let error = expect_failure(run(reader.fetch_structures(&[20])));
-    assert_eq!(error.failure, ImapFailure::InboxChanged);
+    assert_eq!(error.failure, ImapFailure::MailboxChanged);
 }
 
 #[test]
@@ -334,6 +334,7 @@ fn loading_sends_only_read_only_commands() {
         [
             "CAPABILITY",
             "AUTHENTICATE",
+            "CAPABILITY",
             "EXAMINE",
             "FETCH",
             "UID FETCH",
@@ -348,7 +349,7 @@ fn loading_sends_only_read_only_commands() {
 
 /// An untagged NO is a warning: the tagged completion decides.
 #[test]
-fn a_warning_before_the_inbox_completion_does_not_fail_it() {
+fn a_warning_before_the_examine_completion_does_not_fail_it() {
     let fixture = ImapFixture::start(FixtureSetup {
         examine_completion: "* NO [ALERT] Mailbox is almost full\r\n\
                              {tag} OK [READ-ONLY] done\r\n"
@@ -365,19 +366,20 @@ fn a_warning_before_the_inbox_completion_does_not_fail_it() {
     );
 }
 
-/// A server that closes the connection while opening the Inbox says why.
+/// A server that closes the connection while opening a mailbox says why.
 #[test]
-fn a_bye_while_opening_the_inbox_keeps_its_reason() {
+fn a_bye_while_opening_a_mailbox_keeps_its_reason() {
     let fixture = ImapFixture::start(FixtureSetup {
         examine_completion: "* BYE Server is shutting down for maintenance\r\n".to_owned(),
         messages: plain_messages(1),
         ..FixtureSetup::default()
     });
-    let error = expect_failure(run(InboxReader::open(
+    let error = expect_failure(run(MailboxReader::open(
         fixture.account(),
         OpenOptions::default(),
+        "INBOX",
     )));
-    assert_eq!(error.failure, ImapFailure::Failed(ImapStep::OpenInbox));
+    assert_eq!(error.failure, ImapFailure::Failed(ImapStep::OpenMailbox));
     assert_eq!(
         error.server_reply,
         Some(ServerReply {

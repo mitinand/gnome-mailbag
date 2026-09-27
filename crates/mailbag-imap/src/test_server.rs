@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! A scripted IMAP server for tests, on its own thread and GLib context. It
-//! serves synthetic messages over loopback, can misbehave on purpose and
-//! records command names, UIDs, section names and how often credentials
-//! arrived, never the credentials or message text.
+//! serves synthetic mailboxes and messages over loopback, can misbehave on
+//! purpose and records command names, mailbox arguments, UIDs, section names
+//! and how often credentials arrived, never the credentials or message text.
 
 use crate::{Credential, Encryption, ImapAccount, service_thread::ServiceThread};
 use futures_util::io::{AsyncReadExt, AsyncWriteExt};
@@ -314,6 +314,9 @@ pub struct FixtureSetup {
     pub greeting: String,
     /// Optional TLS CAPABILITY replies; `{tag}` is replaced with the command tag.
     pub capability_reply: Option<String>,
+    /// Capabilities announced once a sign-in was attempted, as Gmail announces
+    /// its extensions only then, such as `UTF8=ACCEPT` or `SPECIAL-USE`.
+    pub capabilities_after_sign_in: Vec<&'static str>,
     pub offers_plain: bool,
     pub login_disabled: bool,
     /// Advertises `AUTH=XOAUTH2` and accepts this access token with the login
@@ -331,6 +334,14 @@ pub struct FixtureSetup {
     pub rejection: String,
     /// Answers ENABLE with BAD, as Gmail does once a mailbox is open.
     pub enable_refused: bool,
+    /// LIST replies as (attributes, delimiter, name). When any is scripted,
+    /// EXAMINE opens only these names; otherwise it opens any.
+    pub mailboxes: Vec<(&'static str, &'static str, &'static str)>,
+    /// LIST sends each name as a literal instead of a quoted string.
+    pub names_as_literals: bool,
+    /// LIST completion after the names; `{tag}` is replaced with the command
+    /// tag. `None` closes the connection instead.
+    pub list_completion: Option<String>,
     /// Answers ID with NO instead of its identification.
     pub id_refused: bool,
     pub messages: Vec<FixtureMessage>,
@@ -380,6 +391,7 @@ impl Default for FixtureSetup {
             starttls: StartTlsBehavior::Offered,
             greeting: "* OK Mailbag test server ready".to_owned(),
             capability_reply: None,
+            capabilities_after_sign_in: Vec::new(),
             offers_plain: true,
             login_disabled: false,
             access_token: None,
@@ -388,6 +400,9 @@ impl Default for FixtureSetup {
             lowercase_protocol_names: false,
             rejection: "{tag} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n".to_owned(),
             enable_refused: false,
+            mailboxes: Vec::new(),
+            names_as_literals: false,
+            list_completion: Some("{tag} OK LIST done\r\n".to_owned()),
             id_refused: false,
             messages: Vec::new(),
             uid_validity: 1,
@@ -422,6 +437,10 @@ pub struct FixtureLog {
     pub sign_in_mechanisms: Vec<String>,
     /// The field list of the ID command, as the client wrote it.
     pub client_identification: Option<String>,
+    /// The arguments of every LIST command, as the client wrote them.
+    pub list_arguments: Vec<String>,
+    /// The mailbox of every EXAMINE or SELECT command, unquoted.
+    pub examined_mailboxes: Vec<String>,
     /// Sign-in commands that carried credentials, with or without TLS.
     pub credentials_received: usize,
     /// Empty lines the client sent in answer to a challenge, as Google's
@@ -628,6 +647,7 @@ impl Server {
     }
 
     async fn serve_session(&self, io: &mut Io, connection_number: usize) -> ServeResult {
+        let mut sign_in_attempted = false;
         while let Some(command) = io.command().await? {
             let (tag, name, arguments) = split_command(&command);
             self.record(|log| log.commands.push(name.clone()));
@@ -637,6 +657,10 @@ impl Server {
                         io.send(reply.replace("{tag}", &tag)).await?;
                         continue;
                     }
+                    let announced_later: String = (self.setup.capabilities_after_sign_in.iter())
+                        .filter(|_| sign_in_attempted)
+                        .map(|capability| format!(" {capability}"))
+                        .collect();
                     let plain = if self.setup.offers_plain {
                         " AUTH=PLAIN"
                     } else {
@@ -656,11 +680,13 @@ impl Server {
                         (true, false) => " LOGINDISABLED",
                     };
                     io.send(format!(
-                        "* CAPABILITY IMAP4rev1{plain}{xoauth2}{disabled}\r\n{tag} OK done\r\n"
+                        "* CAPABILITY IMAP4rev1{plain}{xoauth2}{disabled}{announced_later}\r\n\
+                         {tag} OK done\r\n"
                     ))
                     .await?;
                 }
                 "AUTHENTICATE" => {
+                    sign_in_attempted = true;
                     let mechanism = arguments.to_ascii_uppercase();
                     self.record(|log| log.sign_in_mechanisms.push(mechanism));
                     if let Some(notice) = &self.setup.notice_before_sign_in {
@@ -707,7 +733,8 @@ impl Server {
                     }
                 }
                 "LOGIN" => {
-                    let accepted = match login_arguments(&arguments).as_slice() {
+                    sign_in_attempted = true;
+                    let accepted = match string_arguments(&arguments).as_slice() {
                         [login, password] => {
                             self.check_credentials(login.as_bytes(), password.as_bytes())
                         }
@@ -715,7 +742,33 @@ impl Server {
                     };
                     self.reply_to_sign_in(io, &tag, accepted).await?;
                 }
+                "LIST" => {
+                    self.record(|log| log.list_arguments.push(arguments.clone()));
+                    for (attributes, delimiter, name) in &self.setup.mailboxes {
+                        let name = if self.setup.names_as_literals {
+                            format!("{{{}}}\r\n{name}", name.len())
+                        } else {
+                            quoted(name)
+                        };
+                        io.send(format!("* LIST ({attributes}) \"{delimiter}\" {name}\r\n"))
+                            .await?;
+                    }
+                    let Some(completion) = &self.setup.list_completion else {
+                        io.stream.close().await?;
+                        return Ok(());
+                    };
+                    io.send(completion.replace("{tag}", &tag)).await?;
+                }
                 "EXAMINE" | "SELECT" => {
+                    let mailbox = string_arguments(&arguments).concat();
+                    self.record(|log| log.examined_mailboxes.push(mailbox.clone()));
+                    let scripted = &self.setup.mailboxes;
+                    if !scripted.is_empty() && !scripted.iter().any(|(_, _, name)| *name == mailbox)
+                    {
+                        io.send(format!("{tag} NO [NONEXISTENT] No such mailbox\r\n"))
+                            .await?;
+                        continue;
+                    }
                     if self.setup.close_during_examine {
                         io.send("* FLAGS (\\Seen)\r\n").await?;
                         io.stream.close().await?;
@@ -1122,9 +1175,15 @@ fn split_command(command: &[u8]) -> (String, String, String) {
     (tag, name, arguments)
 }
 
-/// The arguments of a LOGIN command: quoted strings, with `\"` and `\\`
-/// unescaped, and literals.
-fn login_arguments(arguments: &str) -> Vec<String> {
+/// A name as a quoted string, with `"` and `\` escaped.
+fn quoted(name: &str) -> String {
+    format!("\"{}\"", name.replace('\\', r"\\").replace('"', "\\\""))
+}
+
+/// The quoted strings and literals among a command's arguments, such as the
+/// login and password of LOGIN or the mailbox of EXAMINE, with `\"` and `\\`
+/// unescaped.
+fn string_arguments(arguments: &str) -> Vec<String> {
     let mut values = Vec::new();
     let mut rest = arguments;
     while let Some(start) = rest.find(['"', '{']) {

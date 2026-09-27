@@ -12,7 +12,7 @@ fn removal_and_disable_notify_once_and_superseded_toggles_stay_silent() {
     for selected in ["one", "two"] {
         let mut accounts = AccountList::default();
         accounts.apply_update(&enabled);
-        accounts.select_account(make_account_id(selected));
+        accounts.select(Selection::Account(make_account_id(selected)));
         let expected: Vec<_> = accounts
             .visible_accounts()
             .values()
@@ -31,12 +31,15 @@ fn removal_and_disable_notify_once_and_superseded_toggles_stay_silent() {
         let mut superseded = update.clone();
         superseded.accounts = enabled.accounts.clone();
         assert!(accounts.apply_update(&superseded).is_empty());
-        assert_eq!(accounts.selected_id(), Some(&make_account_id(selected)));
+        assert_eq!(
+            accounts.selected_account(),
+            Some(&make_account_id(selected))
+        );
         assert_eq!(accounts.apply_update(&update), expected);
-        assert!(accounts.selected_id().is_none());
+        assert!(accounts.selected_account().is_none());
         assert!(accounts.visible_accounts().is_empty());
         assert!(accounts.apply_update(&update).is_empty());
         assert!(accounts.apply_update(&enabled).is_empty());
-        assert!(accounts.selected_id().is_none());
+        assert!(accounts.selected_account().is_none());
     }
 }

@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::logging::{LogLevel, capture::start_record};
-use mailbag_domain::FailureKind;
+use mailbag_domain::{FailureKind, FolderRef};
 use std::{cell::Cell, rc::Rc};
 
 fn account(name: &str) -> AccountId {
@@ -38,15 +38,24 @@ fn counted_step(cancellations: &Rc<Cell<usize>>) -> Box<dyn CancelsLoadOnDrop> {
     Box::new(CountedStep(cancellations.clone()))
 }
 
-fn is_stored(outcome: Option<&RefreshOutcome>) -> bool {
-    matches!(outcome, Some(RefreshOutcome::Stored(None)))
+fn is_stored(outcome: Option<(&LoadTarget, &RefreshOutcome)>) -> bool {
+    matches!(outcome, Some((_, RefreshOutcome::Stored(None))))
 }
 
-/// Starts a load that has reached the mail worker.
+/// Starts a load of the account's folder list that has reached the mail
+/// worker.
 fn start_load(refreshes: &mut Refreshes, account_id: &AccountId) -> Rc<Cell<usize>> {
+    start_load_of(refreshes, account_id, LoadTarget::FolderList)
+}
+
+fn start_load_of(
+    refreshes: &mut Refreshes,
+    account_id: &AccountId,
+    target: LoadTarget,
+) -> Rc<Cell<usize>> {
     let cancellations = Rc::new(Cell::new(0));
     assert!(!refreshes.is_loading());
-    refreshes.begin_load(account_id, counted_step(&cancellations));
+    refreshes.begin_load(account_id, target, counted_step(&cancellations));
     cancellations
 }
 
@@ -64,10 +73,10 @@ fn a_refresh_keeps_the_previous_outcome_until_its_load_ends() {
     start_load(&mut refreshes, &id);
     refreshes.finish_load(&id, LoadResult::Failed(sign_in_failure()));
     start_load(&mut refreshes, &id);
-    assert!(refreshes.is_loading_account(&id));
+    assert_eq!(refreshes.loading_target(&id), Some(&LoadTarget::FolderList));
     assert!(matches!(
         refreshes.outcome_of(&id),
-        Some(RefreshOutcome::Failed(_))
+        Some((_, RefreshOutcome::Failed(_)))
     ));
     refreshes.finish_load(&id, stored());
     assert!(is_stored(refreshes.outcome_of(&id)));
@@ -75,19 +84,46 @@ fn a_refresh_keeps_the_previous_outcome_until_its_load_ends() {
 }
 
 #[test]
-fn refresh_inbox_is_unavailable_while_a_load_runs() {
+fn a_refresh_is_unavailable_while_a_load_runs() {
     let mut refreshes = Refreshes::default();
     let loading = account("loading-account");
     let other = account("other-account");
     let cancellations = start_load(&mut refreshes, &loading);
     assert!(refreshes.is_loading());
-    assert!(!refreshes.is_loading_account(&other));
+    assert_eq!(refreshes.loading_target(&other), None);
     assert_eq!(cancellations.get(), 0);
 
     refreshes.finish_load(&loading, stored());
     assert!(!refreshes.is_loading());
     start_load(&mut refreshes, &other);
     assert!(refreshes.is_loading());
+}
+
+/// An account keeps one outcome, of its latest load whatever it loaded,
+/// with what that load loaded (specs/008-folders FR-010).
+#[test]
+fn an_account_keeps_the_outcome_of_its_latest_load_with_its_target() {
+    let mut refreshes = Refreshes::default();
+    let id = account("generic-imap");
+    let inbox = LoadTarget::Mailbox(FolderRef {
+        account: id.clone(),
+        identity: "INBOX".to_owned(),
+    });
+    start_load_of(&mut refreshes, &id, inbox.clone());
+    assert_eq!(refreshes.loading_target(&id), Some(&inbox));
+    refreshes.finish_load(&id, LoadResult::Failed(sign_in_failure()));
+    assert!(matches!(
+        refreshes.outcome_of(&id),
+        Some((target, RefreshOutcome::Failed(_))) if *target == inbox
+    ));
+
+    // A later folder-list load of the account replaces the mailbox's failure.
+    start_load(&mut refreshes, &id);
+    refreshes.finish_load(&id, stored());
+    assert!(matches!(
+        refreshes.outcome_of(&id),
+        Some((LoadTarget::FolderList, RefreshOutcome::Stored(None)))
+    ));
 }
 
 #[test]
@@ -168,7 +204,7 @@ fn a_cancelled_load_is_one_info_line_whatever_follows() {
     let text = record.text();
     let cancelled: Vec<&str> = text
         .lines()
-        .filter(|line| line.contains("Inbox load cancelled"))
+        .filter(|line| line.contains("load cancelled"))
         .collect();
     assert_eq!(cancelled.len(), 2, "{text}");
     assert!(

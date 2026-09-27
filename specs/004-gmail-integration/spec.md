@@ -3,7 +3,9 @@
 **Feature**: `004-gmail-integration`
 **Created**: 2026-09-22
 **Revised**: 2026-09-23 after the specification challenge
-**Status**: Approved and implemented on `claude/gmail`; live acceptance by the maintainer 2026-09-23
+**Status**: Approved and implemented on `claude/gmail`; live acceptance by the maintainer 2026-09-23;
+FR-003 and FR-005 amended on 2026-09-27 by [Folders](../008-folders/spec.md),
+built and accepted with it the same day
 **Input**: On an explicit refresh, load recent Inbox message metadata and
 plain-text body parts of the selected Google account into memory, the way
 [IMAP integration](../002-imap-integration/spec.md) does for a Generic IMAP
@@ -224,6 +226,9 @@ server reason and are shown the way 002 shows any refusal (see Assumptions).
   way. Mailbag uses one connection per load and none between loads, and MUST
   NOT reconnect or retry automatically when Gmail ends a session or refuses
   because of its limits; Gmail's own reason is shown.
+  *Amended 2026-09-27 by [Folders](../008-folders/spec.md): a load reads the label
+  the user selected, as the IMAP integration's amended FR-002 and FR-003
+  say.*
 - **FR-004 — Gmail identity**: Each received message MUST carry Gmail's message
   identifier. The identity of a Gmail message is that identifier, which is the
   same in every folder the message belongs to and stable across runs; the
@@ -239,6 +244,12 @@ server reason and are shown the way 002 shows any refusal (see Assumptions).
   declines, names are recorded as sent. No decoder of the older name encoding
   is added. This stage records labels; it does not display, count or navigate
   them.
+  *Amended 2026-09-27 by [Folders](../008-folders/spec.md): labels are folders and
+  memberships are built as 008 FR-004 says: a message is stored once under
+  Gmail's identifier and belongs to each label whose load listed it; its
+  reported labels are stored by synchronization, which reads them. UTF-8 names are enabled when the server
+  announces them, and names that arrive in modified UTF-7 are decoded for
+  display (008 FR-005).*
 - **FR-006 — Gmail is a separate provider**: Gmail's rules MUST live in a
   provider of its own, next to the Generic IMAP provider, above the shared
   protocol layer, which knows no provider and reports only what the server

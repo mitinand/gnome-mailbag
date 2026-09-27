@@ -62,8 +62,8 @@ fn every_failure_value_has_its_kind() {
         ),
         // The same codes at another step say nothing about the credentials.
         (
-            imap_failure(Failed(ImapStep::OpenInbox), Some("AUTHENTICATIONFAILED")),
-            Kind::ServerStepFailed(ServerStep::OpenInbox),
+            imap_failure(Failed(ImapStep::OpenMailbox), Some("AUTHENTICATIONFAILED")),
+            Kind::ServerStepFailed(ServerStep::OpenMailbox),
         ),
         (
             imap_failure(Failed(ImapStep::FetchMessages), Some("UNAVAILABLE")),
@@ -82,8 +82,8 @@ fn every_failure_value_has_its_kind() {
             Kind::NoSignInMethod,
         ),
         (
-            imap_failure(ImapFailure::InboxChanged, None),
-            Kind::InboxChanged,
+            imap_failure(ImapFailure::MailboxChanged, None),
+            Kind::MailboxChanged,
         ),
         (
             refused(401, "InvalidAuthenticationToken"),
@@ -215,13 +215,14 @@ fn a_load_given_up_is_one_error_line_naming_its_kind() {
     let account = AccountId::try_from("account_1726920000_1").expect("synthetic account id");
     for (failure, fields) in failures {
         let record = CapturedRecord::start(tracing::Level::DEBUG);
-        let result = failure.give_up(&account);
+        let result = failure.give_up(&account, "mailbox");
         assert!(matches!(result, LoadResult::Failed(_)), "{result:?}");
         let text = record.text();
         let errors = record.lines_at("ERROR");
         assert_eq!(errors.len(), 1, "{text}");
         assert!(
-            errors[0].contains("Inbox load failed")
+            errors[0].contains("load failed")
+                && errors[0].contains(r#"load="mailbox""#)
                 && errors[0].contains(r#"account="account_1726920000_1""#)
                 && errors[0].contains(fields),
             "{fields}: {}",
