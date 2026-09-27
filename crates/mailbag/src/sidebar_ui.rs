@@ -332,11 +332,10 @@ impl SidebarUi {
                 .or_default()
                 .push(folder.clone());
         }
+        let tree_had_focus = contains_focus(&self.tree);
         self.changing_rows.set(true);
-        let removed_focus;
         {
             let node = item.borrow::<SidebarNode>();
-            removed_focus = focus_in_rows(&node.children);
             node.children.remove_all();
             fill_folders(&node.children, account, None, &by_parent);
             node.set_selectable(!openable);
@@ -356,7 +355,7 @@ impl SidebarUi {
         }
         self.show_selection();
         // The keyboard stays in the tree when its row is rebuilt away.
-        if removed_focus {
+        if tree_had_focus && !contains_focus(&self.tree) {
             focus_widget(&self.tree);
         }
         selection_gone
@@ -541,9 +540,9 @@ impl RowWidgets {
         // can be selected; the expander's arrow only expands, and Enter
         // activates through the tree (specs/008-folders FR-010).
         let click = gtk::GestureClick::new();
-        let clicked_row = expander.downgrade();
+        let row_expander = expander.downgrade();
         click.connect_released(move |_, _, _, _| {
-            let Some(expander) = clicked_row.upgrade() else {
+            let Some(expander) = row_expander.upgrade() else {
                 return;
             };
             if let Some(row) = expander.list_row() {
@@ -673,14 +672,6 @@ fn focus_widget(widget: &impl IsA<gtk::Widget>) {
     if let Some(root) = widget.root() {
         root.set_focus(Some(widget));
     }
-}
-
-/// Whether the keyboard focus is on one of these rows or their subfolders.
-fn focus_in_rows(rows: &gio::ListStore) -> bool {
-    rows.iter::<glib::BoxedAnyObject>().flatten().any(|item| {
-        let node = item.borrow::<SidebarNode>();
-        contains_focus(&node.widgets.root) || focus_in_rows(&node.children)
-    })
 }
 
 fn contains_focus(widget: &impl IsA<gtk::Widget>) -> bool {

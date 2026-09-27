@@ -51,7 +51,9 @@ pub struct Folder {
     /// What the provider opens it by: the IMAP or Gmail mailbox name as the
     /// server sent it, the Microsoft 365 folder identifier.
     pub identity: String,
-    /// The name shown to the user.
+    /// The server's name for display: under a listed parent the part after
+    /// the parent's name and the delimiter, otherwise the whole name. The
+    /// window shows the reserved IMAP name INBOX as "Inbox".
     pub name: String,
     /// The parent's identity; `None` directly under the account.
     pub parent: Option<String>,

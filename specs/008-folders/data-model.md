@@ -14,7 +14,7 @@ discards the store at start (007 FR-012). The schema is one SQL text in
 | `id` | INTEGER, primary key | Row identity for memberships |
 | `account` | TEXT, not null | The Online Accounts ID |
 | `identity` | TEXT, not null | The provider's identity: the IMAP or Gmail mailbox name as sent, the Microsoft 365 folder identifier |
-| `name` | TEXT, not null | The name shown: decoded from modified UTF-7 when needed, the container prefix dropped on Gmail |
+| `name` | TEXT, not null | The server's name for display: under a listed parent the part after the parent's name and the delimiter, otherwise the whole name (so Gmail's system labels lose the container's prefix); decoded from modified UTF-7 when needed; INBOX kept as sent, the window shows it as "Inbox" |
 | `parent` | TEXT, null at the root | The parent's `identity` |
 | `role` | TEXT, null, one of `inbox starred important junk trash archive drafts sent all_mail` | The application role |
 | `selectable` | INTEGER, 0 or 1 | Whether the folder can be opened |

@@ -7,7 +7,12 @@ approved on 2026-09-27 (T001); portion 1 (T002–T010) committed on
 portion 4 the budget was raised and the empty list's hidden account and the
 folder-list read's own Retry were dropped (spec Clarifications); portion 4
 (T024–T033) committed on 2026-09-27; polish (T034–T037) done on
-2026-09-27; the feature is implemented and accepted.
+2026-09-27; the feature is implemented and accepted. The texts of done
+tasks describe the work as planned: the simplification review (T034) and
+the acceptance (plan, Post-implementation) changed what T012–T015, T018,
+T019, T021, T022, T026, T028 and T030 describe, and T005's tests use the
+RFC 3501 example instead of the names listed; the spec, the data model and
+the contract record what was built.
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -81,7 +86,8 @@ sites only renamed.
   bool, connection }` (`capabilities` is the post-sign-in list from one
   CAPABILITY command, since the fork's `authenticate` does not return the
   sign-in reply's list; ENABLE UTF8=ACCEPT sent only when it holds
-  `UTF8=ACCEPT` or `UTF8=ONLY`, RFC 6855 §6; `utf8_names` true only then)
+  `UTF8=ACCEPT` or `UTF8=ONLY`, RFC 6855 §6; `utf8_names` true only when the
+  server accepts it)
   and
   `examine_mailbox(signed_in, name) -> MailboxSession` (today's
   `InboxSession`; EXAMINE of the given name, step `OpenMailbox`); add `pub async fn list_mailboxes(account,

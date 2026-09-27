@@ -123,7 +123,7 @@ horizontal scrolling, OBJECTID, localized role names (spec FR-013).
 - `LoadsMail::start_load(account, provider, target: LoadTarget, report)`;
   `LoadTarget::FolderList | Mailbox(FolderRef)`.
 - `folders.rs`: `imap_folders(names, utf8_names) -> Vec<Folder>` (decode
-  names, parent by delimiter, `\Noselect` → not selectable, roles from
+  names, parent by delimiter, `\Noselect` or `\NonExistent` → not selectable, roles from
   attributes and INBOX, first role mark wins), `gmail_folders(...)` (the same,
   then the container whose children carry roles is dropped and its children
   lifted), `graph_folders(GraphFolder) -> Vec<Folder>` (roles by well-known
@@ -142,7 +142,7 @@ horizontal scrolling, OBJECTID, localized role names (spec FR-013).
 **`mailbag-store`**
 
 - `replace_folders(&self, account, folders: &[Folder], load_cancelled) ->
-  Result<InboxWrite, Failure>`: one transaction: delete `folder` rows of the
+  Result<StoreWrite, Failure>`: one transaction: delete `folder` rows of the
   account whose identity is not listed (memberships cascade), delete the
   account's messages left without a membership, update listed rows (name,
   parent, role, selectable; `loaded` kept), insert new rows.
@@ -266,7 +266,7 @@ GTK tests one per process.
 **Project Type**: desktop application.
 **Constraints**: no store access on GTK's thread; one load at a time; no
 thread or timer of the feature's own; the approved layout unchanged except
-the two form changes named in the spec.
+the form changes named in the spec's Assumptions.
 **Scale/Scope**: accounts with tens of folders and windows of 100 messages
 now; the model measured at a million messages (research §8).
 
@@ -287,8 +287,8 @@ now; the model measured at a million messages (research §8).
   read folder list fails the load and changes nothing; an unloaded folder
   says so; an empty list is never invented; failures go through 006.
 - **IV. One owner per business rule**: roles are mapped by the providers
-  (`folders.rs`), one function per provider; order and icons by the domain's
-  `FolderRole`; identity and memberships by the store's two writes; the
+  (`folders.rs`), one function per provider; order by the domain's
+  `FolderRole`, icons by the sidebar; identity and memberships by the store's two writes; the
   selection by the sidebar.
 - **V. Responsive, bounded work**: reads through GIO's pool, writes on the
   worker, one load at a time; Refresh Account adds one command on IMAP and
@@ -316,10 +316,10 @@ specs/008-folders/
 
 ```text
 crates/mailbag-domain/src/lib.rs          FolderRole, Folder, FolderRef
-crates/mailbag-imap/src/{lib,session,reader,utf7,test_server}.rs
+crates/mailbag-imap/src/{lib,session,reader,mailbox_list,utf7,test_server}.rs
 crates/mailbag-graph/src/{lib,reply,test_server}.rs
 crates/mailbag-providers/src/{lib,batch,worker,folders,imap,gmail,imap_batch,microsoft365,store_load}.rs
-crates/mailbag-store/src/{schema.sql,lib}.rs
+crates/mailbag-store/src/{schema.sql,lib,folders}.rs
 crates/mailbag/src/{main,window_ui,sidebar_ui,accounts,refreshes,mail_ui,failure_declarations,failure_dialog}.rs
 crates/mailbag/resources/ui/{mailbag,account-problem,folder-row}.ui
 crates/mailbag/resources/icons/scalable/places/mailbag-folder-{inbox,starred,important,archive,sent}-symbolic.svg

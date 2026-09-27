@@ -7,7 +7,8 @@ the code's; meanings are the spec's. Two words are used on purpose:
 `list_folders`, `replace_folders`, `read_folders`); *mailbox* names a folder
 opened for its messages and everything the user sees (`MailboxReader`,
 `LoadTarget::Mailbox`, `replace_mailbox`, `read_mailbox`, "Refresh
-Mailbox").
+Mailbox"). The IMAP crate keeps the protocol's word for its list:
+`list_mailboxes`, `MailboxList`, `MailboxName`, `ImapStep::ListMailboxes`.
 
 ## Domain types
 

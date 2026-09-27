@@ -204,6 +204,9 @@ fn sidebar_transitions() {
     let mut with_gamma = folders();
     with_gamma.push(folder("Gamma", None, None, true));
     assert!(!ui.borrow_mut().show_folders(&id, with_gamma));
+    // Checked before the window's own focus move after the next frame,
+    // which lands in the tree only sometimes.
+    assert!(contains_focus(&ui.borrow().tree));
     dispatch_pending();
     let zeta = position_of_title(&ui.borrow(), "Zeta");
     assert_eq!(selection.selected(), zeta);
@@ -296,7 +299,7 @@ fn activate(tree: &gtk::ListView, ui: &Rc<RefCell<SidebarUi>>, title: &str) {
     tree.emit_by_name::<()>("activate", &[&position]);
 }
 
-/// Clicks the name of the row titled `title`, as the pointer does.
+/// Emits the click gesture on the name of the row titled `title`.
 fn click_name(ui: &Rc<RefCell<SidebarUi>>, title: &str) {
     let name = row_detail(&ui.borrow(), title, |node| node.widgets.details.clone());
     let click = name

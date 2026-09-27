@@ -45,7 +45,8 @@ empty), so names stayed in modified UTF-7; a third advertises
 `UTF8=ACCEPT` and sends UTF-8 names after ENABLE (checked in 004).
 **Decision**: send ENABLE only when the post-sign-in CAPABILITY lists
 `UTF8=ACCEPT` or `UTF8=ONLY` (RFC 6855 §6: the latter includes the former
-and requires the ENABLE), and treat names as UTF-8 then; otherwise decode
+and requires the ENABLE), and treat names as UTF-8 when the server accepts
+the ENABLE; a refused ENABLE leaves them in modified UTF-7; otherwise decode
 modified
 UTF-7 (RFC 3501 §5.1.3) with a decoder of ~50 lines in `mailbag-imap`; a
 name that cannot be decoded is shown as sent. The raw name stays the

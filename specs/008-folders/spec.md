@@ -83,9 +83,9 @@ Mailbox, check its rows; restart with the server stopped and compare.
 Under each account the folders the server marks as system folders come first
 in a fixed order, each with its icon: Inbox, Starred, Important, Junk,
 Trash, Archive, Drafts, Sent, All Mail. They keep the names their server
-gives them. The user's own folders follow, in the order the system
-locale's collation gives them, whatever script their names use, with a plain
-folder icon. A folder the server does not mark
+gives them (the reserved name INBOX shown as "Inbox", FR-005). The user's
+own folders follow, in the order the system locale's collation gives them,
+whatever script their names use, with a plain folder icon. A folder the server does not mark
 is a plain folder, even when its name is "Drafts": roles come from the
 server only.
 **Independent Test**: scripted folder lists with role marks of each provider's
@@ -247,7 +247,7 @@ rows and the failure shown after each.
 | A server marks only some of its system folders (RFC 6154 makes every attribute optional) | The marked ones are system folders; the others are plain folders under their names | FR-003 |
 | A server sends folder names in modified UTF-7 instead of UTF-8 (RFC 3501 §5.1.3; RFC 6855 is optional) | The sidebar shows the readable names; opening the folder still works; a name that cannot be decoded is shown as sent | FR-005 |
 | A server would accept the request for UTF-8 names but does not announce the capability | The request is not sent and names are decoded; a server that announces the capability, answers OK and still sends modified UTF-7 is out of scope | FR-005 |
-| A folder carries two role marks | Its role is the first mark the server lists; every mark is kept | FR-003 |
+| A folder carries two role marks | Its role is the first mark the server lists; only the role is stored | FR-003 |
 | Two folders carry one role mark | Both keep the role, ordered by name; no folder is hidden | FR-003 |
 | A folder's name contains a double quote or a backslash | Listed, opened and shown like any other | FR-002 |
 | A folder's parent is not in the server's list (RFC 9051 §6.3.9.7) | The folder sits directly under the account | FR-006 |
@@ -327,7 +327,8 @@ rows and the failure shown after each.
   of indentation per level, ellipsized names with the full name in the
   tooltip. The standards set no depth limit, so the store and the tree take
   any depth; a capped indentation or horizontal scrolling stays a later
-  option (FR-013(g)).
+  option (FR-013(g)). *Changed at the acceptance: rows have no tooltip
+  (FR-006).*
 - Q: Does a selected account without a folder list get a page of its own? →
   A: No, and no text of its own either. It shows the existing "no mail
   loaded" page exactly as an unloaded folder does; only the general rename
@@ -530,7 +531,10 @@ rows and the failure shown after each.
   matched to another by guessing from its date, size or headers.
 - **FR-005 — Names**: A folder is shown under the name its server gives it,
   except the reserved IMAP name INBOX, in any case, which is shown as
-  "Inbox" (Clarifications, acceptance). When the server announces neither `UTF8=ACCEPT` nor
+  "Inbox" (Clarifications, acceptance). Under a listed parent a folder is
+  shown by the part of its name after the parent's name and the hierarchy
+  delimiter; a folder directly under the account keeps its whole name.
+  When the server announces neither `UTF8=ACCEPT` nor
   `UTF8=ONLY` (RFC 6855), names are decoded from modified UTF-7 for
   display; a name
   that cannot be decoded is shown as sent. The shown name is never used to
@@ -584,9 +588,10 @@ rows and the failure shown after each.
   be selected and can be collapsed; an account whose list holds only
   containers stays a selectable row, so Refresh Account stays available; it keeps its
   provider icon, its name and its problem button (001). Under it the
-  folders come in the fixed order Inbox, Starred, Important, Junk, Trash,
+  folders form the tree of FR-006; at every level the folders with a role
+  come first in the fixed order Inbox, Starred, Important, Junk, Trash,
   Archive, Drafts, Sent, All Mail, each with its role's icon, then the other
-  folders as a tree, ordered at each level by the system locale's collation
+  folders, ordered by the system locale's collation
   (the Unicode Collation Algorithm as the platform implements it, so names
   in any script sort consistently and never by code point), with a plain
   folder icon. A heading and a container do not react to the pointer as a
@@ -690,7 +695,7 @@ rows and the failure shown after each.
 - **SC-001**: After Refresh Account on a scripted account of each provider,
   the sidebar lists every folder the server listed, with the right nesting,
   the system folders first in the fixed order with their icons, under their
-  server names; a restart
+  server names (INBOX shown as "Inbox", FR-005); a restart
   with the server stopped shows the same (US1, US2, US3; FR-001, FR-003,
   FR-005, FR-006, FR-009).
 - **SC-002**: Selecting each listed folder shows its stored rows or "no mail
@@ -739,8 +744,9 @@ rows and the failure shown after each.
   arrangement. The form changes are: the main menu's "Refresh Inbox"
   becomes "Refresh Mailbox" and gains "Refresh Account"; the account row's
   problem button and its explanation move from code into a form. Decided at
-  the acceptance: the tree no longer activates a row on a single click
-  (FR-010), and the row's icon sits 1 px higher than the platform's row
+  the acceptance: the tree's own single-click activation is off, a click on
+  the row's name selects it and the expander arrow only expands (FR-010),
+  and the row's icon sits 1 px higher than the platform's row
   places it, closer to the middle of the name. Decided after the
   acceptance: space, not a line, sets every account but the first apart
   from the one above it; the form's hidden separator becomes the

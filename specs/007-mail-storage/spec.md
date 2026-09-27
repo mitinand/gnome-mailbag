@@ -370,9 +370,9 @@ window shows and what the record says.
   modification sequence, the delta link); a list that shows a whole folder.
   Until then a load delivers the newest 100 and replaces the stored folder.
   (b) *Folders and labels*: built by [008](../008-folders/spec.md) except
-  what it defers (its FR-013): counts, the combined Inbox, and for Gmail All
-  Mail plus Trash and Spam as the synchronized folders with labels becoming
-  memberships (Clarifications).
+  what its FR-013 defers, among them counts, the combined Inbox, and for
+  Gmail All Mail plus Trash and Spam as the synchronized folders with labels
+  becoming memberships (Clarifications).
   (c) *Read and star*: a message addressed on its server by its identity and,
   for IMAP, by its UID with the folder's UIDVALIDITY (FR-003); local changes,
   their durability before the server confirms them, and a store changed by
