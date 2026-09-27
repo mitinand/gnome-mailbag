@@ -358,8 +358,10 @@ impl WindowUi {
     /// with every other; it left the selected mailbox's rows as they were, so
     /// they are read only when the window does not hold them: the load's
     /// start forgot a failed read of them (007 FR-013). A completed load of
-    /// the selected mailbox replaced its stored messages, which the window
-    /// then reads.
+    /// a mailbox replaced its stored messages and updated those that other
+    /// mailboxes of its account hold too (a Gmail label, a message moved on
+    /// Microsoft 365), so the selected mailbox of that account is read again
+    /// (specs/008-folders FR-004).
     fn finish_load(
         self: &Rc<Self>,
         account_id: &AccountId,
@@ -379,7 +381,12 @@ impl WindowUi {
                     self.read_shown_mailbox();
                 }
             }
-            LoadTarget::Mailbox(folder) if stored && selected.as_ref() == Some(&folder) => {
+            LoadTarget::Mailbox(folder)
+                if stored
+                    && selected
+                        .as_ref()
+                        .is_some_and(|shown| shown.account == folder.account) =>
+            {
                 self.read_shown_mailbox()
             }
             _ => {}
@@ -490,6 +497,9 @@ impl WindowUi {
                 messages,
                 ..
             } => self.mail.show_rows(account_id, messages),
+            // The rows on screen stay until the read answers, so a read that
+            // finds them unchanged keeps the open message.
+            ShownMail::Reading => {}
             _ => self.mail.clear(),
         }
         let sidebar = self.sidebar.borrow();

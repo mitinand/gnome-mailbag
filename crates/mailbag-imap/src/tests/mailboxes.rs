@@ -93,18 +93,23 @@ fn a_list_cut_short_by_a_closed_connection_fails() {
 #[test]
 fn a_name_with_a_quote_and_a_backslash_opens_as_listed() {
     let name = r#"Say "hi" \ bye"#;
-    let fixture = ImapFixture::start(FixtureSetup {
-        mailboxes: vec![("\\HasNoChildren", "/", name)],
-        ..FixtureSetup::default()
-    });
-    let listed = expect_success(list_from(&fixture));
-    assert_eq!(listed.names[0].name, name);
-    drop(expect_success(run(MailboxReader::open(
-        fixture.account(),
-        OpenOptions::default(),
-        &listed.names[0].name,
-    ))));
-    assert_eq!(fixture.log().examined_mailboxes, [name]);
+    // A server may send a name as a quoted string or as a literal (RFC 9051
+    // §4.3).
+    for names_as_literals in [false, true] {
+        let fixture = ImapFixture::start(FixtureSetup {
+            mailboxes: vec![("\\HasNoChildren", "/", name)],
+            names_as_literals,
+            ..FixtureSetup::default()
+        });
+        let listed = expect_success(list_from(&fixture));
+        assert_eq!(listed.names[0].name, name, "literal: {names_as_literals}");
+        drop(expect_success(run(MailboxReader::open(
+            fixture.account(),
+            OpenOptions::default(),
+            &listed.names[0].name,
+        ))));
+        assert_eq!(fixture.log().examined_mailboxes, [name]);
+    }
 }
 
 #[test]

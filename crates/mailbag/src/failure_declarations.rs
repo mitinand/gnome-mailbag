@@ -182,7 +182,11 @@ pub fn declare_failure(failure: &Failure, retried: RetriedOperation) -> Declared
         ),
         FailureKind::ServiceNotResponding => (
             "Service not responding",
-            "The mail service stopped responding.",
+            choose_by_load(
+                retried,
+                "The mail service stopped responding while sending the mailbox list.",
+                "The mail service stopped responding.",
+            ),
             None,
             Some(FailureAction::Retry),
         ),
@@ -195,13 +199,21 @@ pub fn declare_failure(failure: &Failure, retried: RetriedOperation) -> Declared
         // Any other status: the general arm, with the status in the details.
         FailureKind::RequestRefused => (
             "Request failed",
-            "The mail service refused the request.",
+            choose_by_load(
+                retried,
+                "The mail service refused the request for the mailbox list.",
+                "The mail service refused the request.",
+            ),
             None,
             Some(FailureAction::Retry),
         ),
         FailureKind::UnexpectedAnswer => (
             "Unexpected answer",
-            "The mail service answered in an unexpected form.",
+            choose_by_load(
+                retried,
+                "The mail service sent the mailbox list in an unexpected form.",
+                "The mail service answered in an unexpected form.",
+            ),
             None,
             Some(FailureAction::Retry),
         ),
@@ -224,7 +236,11 @@ pub fn declare_failure(failure: &Failure, retried: RetriedOperation) -> Declared
         ),
         FailureKind::MailNotSaved => (
             "Mail not saved",
-            "The received messages could not be saved.",
+            choose_by_load(
+                retried,
+                "The received mailbox list could not be saved.",
+                "The received messages could not be saved.",
+            ),
             None,
             Some(FailureAction::Retry),
         ),

@@ -384,6 +384,9 @@
                   <object class="GtkScrolledWindow">
                     <property name="child">
                       <object class="GtkListView" id="folder_tree">
+                        <!-- Tab leaves the tree after the current row; the
+                             arrow keys move between rows. -->
+                        <property name="tab-behavior">item</property>
                         <style>
                           <class name="navigation-sidebar"/>
                         </style>

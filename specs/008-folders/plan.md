@@ -193,7 +193,9 @@ horizontal scrolling, OBJECTID, localized role names (spec FR-013).
   held no folder); after either, the selected mailbox is
   read when the window does not hold its rows, since the load's start forgot
   a failed read of them (007 FR-013); a completed mailbox load re-reads the
-  shown mailbox.
+  shown mailbox of its account, since the load also updated the messages
+  that mailbox holds with it (spec FR-004); the rows on screen stay while
+  a read runs, and rows a read finds unchanged keep the open message.
 - `read_folder_lists()` at start, after each complete account update and
   after a completed folder-list load: one read of every shown account's
   folders through GIO's pool, with one number so an older answer is
@@ -209,7 +211,9 @@ horizontal scrolling, OBJECTID, localized role names (spec FR-013).
   006 for the target's outcome; Retry by `RetriedOperation`.
 
 **`mailbag/src/failure_declarations.rs`**: wording for the two renamed kinds
-and the new step; "Refresh Inbox" → "Refresh Mailbox" everywhere.
+and the new step; "Refresh Inbox" → "Refresh Mailbox" everywhere; a
+failure whose Retry refreshes the account names the mailbox list where it
+has no step of its own (the mail service's texts, a list not saved).
 
 **`mailbag/src/main.rs`**: `app.refresh-mailbox`, `app.refresh-account`.
 
@@ -361,7 +365,20 @@ at the acceptance:
 Changed after the acceptance, on 2026-09-27: Inbox, Starred, Important,
 Archive and Sent take bundled outline icons (contracts/folders.md, Window),
 and space sets every account but the first apart from the one above it
-(spec, Assumptions).
+(spec, Assumptions). At the final checks the same day: a failed Refresh
+Account on Microsoft 365 and a folder list that could not be saved name the
+mailbox list (spec US7, FR-011); servers with the personal namespace
+`INBOX.` are recorded as an edge case, and showing their folders beside the
+Inbox is deferred (FR-013(i)). An external review on 2026-09-28 found that
+the sidebar kept removed rows in memory (the expander held its tree row,
+which held the row's widgets; released when a row is unbound), and that a
+mailbox on screen kept a message's old state after a load of another
+mailbox of its account changed it (now read again, FR-004), and that the
+keyboard could not expand or collapse a folder and its focus was not
+visible: the focus stayed on the row's box, outside the expander that takes
+those keys, and the platform outlines only the list's own row. The focus
+now rests on that row, the tree passes the expander's keys on, and Tab
+leaves the tree after the current row (spec, Assumptions).
 
 The record of step 9 at debug level: folder names appear in debug lines
 only; no subject, sender, text or credential; a failed load is one error

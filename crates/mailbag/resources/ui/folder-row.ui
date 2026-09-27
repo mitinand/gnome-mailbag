@@ -21,9 +21,13 @@
       </object>
     </child>
     <child>
+      <!-- The keyboard focus rests on the tree's row; the tree passes the
+           expander's keys on. -->
       <object class="GtkTreeExpander" id="folder_expander">
+        <property name="focusable">false</property>
         <property name="child">
           <object class="AdwActionRow" id="folder_details">
+            <property name="focusable">false</property>
             <property name="hexpand">true</property>
             <property name="title"/>
             <property name="title-lines">1</property>

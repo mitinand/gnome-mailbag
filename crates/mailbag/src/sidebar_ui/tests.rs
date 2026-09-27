@@ -182,14 +182,37 @@ fn sidebar_transitions() {
         }))
     );
 
-    // Collapsing the shown folder's parent clears the selection.
+    // Collapsing the shown folder's parent clears the selection. The
+    // keyboard collapses the row the arrow keys moved to: the focus rests on
+    // the tree's own row, which the platform outlines, and the tree passes
+    // the keys on to that row's expander.
     let changes_before = changes.get();
     let projects = tree_row(&ui.borrow(), "Projects");
-    projects.set_expanded(false);
+    let projects_item = row_detail(&ui.borrow(), "Projects", |node| node.widgets.root.parent());
+    assert!(projects_item.expect("a shown row").grab_focus());
     dispatch_pending();
+    let focus = gtk::prelude::RootExt::focus(&window).expect("the tree has the focus");
+    assert_eq!(focus.parent().as_ref(), Some(tree.upcast_ref()));
+    let expander = focused_expander(&tree).expect("the focused row's expander");
+    assert_eq!(
+        expander,
+        row_detail(&ui.borrow(), "Projects", |node| node
+            .widgets
+            .expander
+            .clone())
+    );
+    expander
+        .activate_action("listitem.collapse", None)
+        .expect("the expander's keys");
+    dispatch_pending();
+    assert!(!projects.is_expanded());
     assert!(ui.borrow().accounts.selection().is_none());
     assert_eq!(selection.selected(), gtk::INVALID_LIST_POSITION);
     assert_eq!(changes.get(), changes_before + 1);
+    // Tab leaves the tree after the row, not after every row.
+    window.child_focus(gtk::DirectionType::TabForward);
+    dispatch_pending();
+    assert!(!contains_focus(&ui.borrow().tree));
     // The same list again keeps the rows: the collapsed folder stays so.
     assert!(!ui.borrow_mut().show_folders(&id, folders()));
     assert!(!projects.is_expanded());
@@ -200,7 +223,7 @@ fn sidebar_transitions() {
     // is no longer selected.
     activate(&tree, &ui, "Zeta");
     let zeta_row = row_detail(&ui.borrow(), "Zeta", |node| node.widgets.root.clone());
-    assert!(zeta_row.grab_focus());
+    assert!(zeta_row.parent().expect("a shown row").grab_focus());
     let mut with_gamma = folders();
     with_gamma.push(folder("Gamma", None, None, true));
     assert!(!ui.borrow_mut().show_folders(&id, with_gamma));
@@ -211,6 +234,10 @@ fn sidebar_transitions() {
     let zeta = position_of_title(&ui.borrow(), "Zeta");
     assert_eq!(selection.selected(), zeta);
     assert!(contains_focus(&ui.borrow().tree));
+    // The rebuilt subtree's old rows are freed.
+    let old_zeta_row = zeta_row.downgrade();
+    drop(zeta_row);
+    assert!(released(&old_zeta_row));
     let without_zeta: Vec<Folder> = folders()
         .into_iter()
         .filter(|folder| folder.identity != "Zeta")
@@ -234,6 +261,8 @@ fn sidebar_transitions() {
             .borrow::<SidebarNode>()
             .widgets
             .root
+            .parent()
+            .expect("a shown row")
             .grab_focus()
     );
     update.accounts.remove(&id);
@@ -308,6 +337,19 @@ fn click_name(ui: &Rc<RefCell<SidebarUi>>, title: &str) {
         .find_map(|controller| controller.unwrap().downcast::<gtk::GestureClick>().ok())
         .expect("the name's click gesture");
     click.emit_by_name::<()>("released", &[&1_i32, &1_f64, &1_f64]);
+}
+
+/// Whether the object is freed once pending events ran; the accessibility
+/// bus may hold it for a few milliseconds.
+fn released<T: glib::object::ObjectType>(object: &glib::WeakRef<T>) -> bool {
+    for _ in 0..100 {
+        dispatch_pending();
+        if object.upgrade().is_none() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    false
 }
 
 fn dispatch_pending() {

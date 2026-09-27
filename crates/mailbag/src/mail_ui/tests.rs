@@ -1170,6 +1170,40 @@ fn mailbox_navigation() {
             .is_none()
     );
     assert_eq!(store.read_mailbox(&inbox).expect("the store reads"), None);
+
+    // Two Gmail labels hold the same messages. A load of one label that
+    // changes a message shows the change in the other label on screen; a
+    // load that changes nothing keeps its open message (FR-004).
+    let google = account("synthetic-google");
+    widgets.select(&ui, &google, None);
+    settle(&ui);
+    refresh_account.activate(None);
+    settle(&ui);
+    loader.report_folders(&inbox_and_projects());
+    settle(&ui);
+    for label in ["INBOX", "Projects"] {
+        store
+            .replace_mailbox(&folder_of(&google, label), &two_messages(), || false)
+            .expect("the test store takes the messages");
+    }
+    let mut read_elsewhere = two_messages();
+    read_elsewhere[0].seen = true;
+    // The first load marks a message read: the Inbox on screen shows it and,
+    // its list changed, closes the open message; the second changes nothing.
+    for (load_changes, reader_page) in [("a read", "unselected"), ("nothing", "message")] {
+        widgets.select(&ui, &google, Some("Projects"));
+        settle(&ui);
+        refresh_mailbox.activate(None);
+        settle(&ui);
+        widgets.select(&ui, &google, Some("INBOX"));
+        settle(&ui);
+        widgets.rows()[1].emit_by_name::<()>("activate", &[]);
+        settle(&ui);
+        loader.report_stored(&read_elsewhere, None);
+        settle(&ui);
+        assert!(!shows_unread_dot(&widgets.rows()[0]), "{load_changes}");
+        assert_eq!(widgets.reader_page(), reader_page, "{load_changes}");
+    }
     window.destroy();
 }
 

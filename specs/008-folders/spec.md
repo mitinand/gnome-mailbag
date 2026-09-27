@@ -16,6 +16,12 @@ the acceptance on the installed build, 2026-09-27: a mailbox marked as not
 existing is a container (FR-006), rows have no tooltip (FR-006), a heading
 and a container do not react to the pointer (FR-009), the expander only
 expands (FR-010), and the reserved name INBOX is shown as "Inbox" (FR-005).
+Amended at the final checks, 2026-09-27: where nested and system folders
+sit is stated (FR-005, FR-009), and showing the folders under a personal
+namespace prefix beside the Inbox is deferred (FR-013(i)). Amended after an
+external review, 2026-09-28: a Microsoft 365 message may keep its old
+folder's relation until that folder's next load (FR-004), and the tree's
+keyboard focus and Tab are decided (Assumptions).
 **Input**: Support for several mailboxes per account: their discovery, role
 recognition, nesting, storage and display in the sidebar. Deleting mailboxes
 is not built. Once mailboxes are shown, the account itself can no longer be
@@ -85,9 +91,9 @@ in a fixed order, each with its icon: Inbox, Starred, Important, Junk,
 Trash, Archive, Drafts, Sent, All Mail. They keep the names their server
 gives them (the reserved name INBOX shown as "Inbox", FR-005). The user's
 own folders follow, in the order the system locale's collation gives them,
-whatever script their names use, with a plain folder icon. A folder the server does not mark
-is a plain folder, even when its name is "Drafts": roles come from the
-server only.
+whatever script their names use, with a plain folder icon. A folder the
+server does not mark is a plain folder, even when its name is "Drafts":
+roles come from the server only.
 **Independent Test**: scripted folder lists with role marks of each provider's
 kind, including a server that marks only some system folders and one whose
 system folders have non-Latin names; check order, icons and names.
@@ -251,6 +257,7 @@ rows and the failure shown after each.
 | Two folders carry one role mark | Both keep the role, ordered by name; no folder is hidden | FR-003 |
 | A folder's name contains a double quote or a backslash | Listed, opened and shown like any other | FR-002 |
 | A folder's parent is not in the server's list (RFC 9051 §6.3.9.7) | The folder sits directly under the account | FR-006 |
+| The server keeps the user's folders under the Inbox, its personal namespace having the prefix `INBOX.` (RFC 2342) | The tree follows the server: the other folders sit under the Inbox, the system folders first among them by their marks; collapsing the Inbox hides them; showing them beside the Inbox is deferred | FR-006, FR-009, FR-013(i) |
 | A Microsoft 365 folder list is longer than one page | Every page is read before anything is stored | FR-001 |
 | The service has no folder for a well-known name (no Archive was ever created) | No folder gets that role; the load succeeds | FR-003 |
 | The folder list arrived but the folder does not open | A failed Refresh Mailbox; nothing stored changes, the folder stays listed | FR-011 |
@@ -513,8 +520,10 @@ rows and the failure shown after each.
   the message of that one place. A message belongs to folders through a
   relation that carries the message's position in the folder's list; the
   IMAP UID, valid only with the folder's UIDVALIDITY, joins the relation
-  with synchronization (FR-013(b)). A Generic IMAP or Microsoft 365 message has exactly one such
-  relation; a Gmail message has one per label whose load listed it. A folder
+  with synchronization (FR-013(b)). A Generic IMAP message has exactly one
+  such relation; a Microsoft 365 message is in one folder on the server,
+  and the store may keep its old folder's relation until that folder's next
+  load (below); a Gmail message has one per label whose load listed it. A folder
   shows exactly the messages its own loads listed, each once; nothing puts a
   message into a folder that was not loaded. A load of a folder replaces
   that folder's relations in one step, keeps a message the load listed
@@ -645,7 +654,7 @@ rows and the failure shown after each.
   every label (007 Clarifications); until then a folder holds what its own
   loads listed.
   (c) *Combined Inbox*: one list over every account's Inbox-role folder,
-  separated from the accounts by the group separator the folder row has.
+  set apart from the accounts by space, as the accounts are (Assumptions).
   (d) *Moves and deletes*: a single destination per role; roles by folder
   name where the server marks none; and the rule for views on IMAP: in a
   Starred, Important or All Mail folder there is no move and no delete,
@@ -663,6 +672,11 @@ rows and the failure shown after each.
   mail, and EMAILID as the message's identity, so one message in several
   folders is stored once, as on Gmail; waits for a supported server that
   offers the extension.
+  (i) *The personal namespace*: on a server whose personal namespace has a
+  prefix such as `INBOX.` (RFC 2342, NAMESPACE in RFC 9051 §6.3.10), the
+  folders under the prefix shown at the account's level beside the Inbox;
+  waits for a decision on how such a tree is shown, taken with a server
+  that uses one.
 
 ### Key Entities
 
@@ -753,6 +767,12 @@ rows and the failure shown after each.
   platform's spacer at one and a half times its height (18 px). The space
   belongs to the account's row, so an account row that can be selected
   (FR-009) is highlighted with it; accepted, since that row is rare.
+  Decided after the external review, 2026-09-28: the arrow keys move
+  between the tree's rows and Tab leaves the tree after the current row
+  (the tree's `tab-behavior` is `item`); the keyboard focus rests on the
+  tree's own row, which the platform outlines, and the tree passes the keys
+  that expand and collapse a row (`+`, `-`, `*`) to that row's expander.
+  The row's box and expander take no focus in the form.
 
 ## Amendments to earlier specifications
 

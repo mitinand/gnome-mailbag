@@ -115,6 +115,7 @@ impl SidebarUi {
             on_selection_changed: RefCell::new(None),
             changing_rows: changing_rows.clone(),
         }));
+        forward_expander_keys(&tree);
         let activating = Rc::downgrade(&ui);
         tree.connect_activate(move |_, position| {
             let Some(ui) = activating.upgrade() else {
@@ -272,14 +273,11 @@ impl SidebarUi {
             .filter(|id| !self.accounts.visible_accounts().contains_key(*id))
             .cloned()
             .collect();
-        let mut removed_focus = false;
+        let tree_had_focus = contains_focus(&self.tree);
         for id in removed {
             let item = self.account_nodes.remove(&id).unwrap();
             let node = item.borrow::<SidebarNode>();
             let problem = node.problem.as_ref().expect("an account row");
-            if contains_focus(&node.widgets.root) || contains_focus(&problem.popover) {
-                removed_focus = true;
-            }
             problem.popover.popdown();
             if let Some(position) = self.root.find(&item) {
                 self.root.remove(position);
@@ -297,7 +295,8 @@ impl SidebarUi {
         }
         self.changing_rows.set(false);
         self.show_selection();
-        if removed_focus {
+        // The keyboard stays in the tree when its account row is removed.
+        if tree_had_focus && !contains_focus(&self.tree) {
             focus_widget(&self.tree);
         }
         for notice in hidden_notices {
@@ -519,6 +518,11 @@ fn create_row_factory() -> gtk::SignalListItemFactory {
         if let Some(node) = node {
             let node = node.borrow::<SidebarNode>();
             node.bound_item.set(None);
+            // The tree's row holds this node, which holds the expander: the
+            // expander lets go of the row so a removed node is freed.
+            node.widgets
+                .expander
+                .set_list_row(None::<&gtk::TreeListRow>);
             if let Some(problem) = &node.problem {
                 problem.popover.popdown();
             }
@@ -532,9 +536,7 @@ impl RowWidgets {
     fn new() -> Self {
         let builder = gtk::Builder::from_string(include_str!("../resources/ui/folder-row.ui"));
         let root: gtk::Box = builder.object("folder_row").unwrap();
-        root.set_focusable(true);
         let details: adw::ActionRow = builder.object("folder_details").unwrap();
-        details.set_focusable(false);
         let expander: gtk::TreeExpander = builder.object("folder_expander").unwrap();
         // A click on the row's name activates it, which selects a row that
         // can be selected; the expander's arrow only expands, and Enter
@@ -634,8 +636,10 @@ impl SidebarNode {
             .collect::<Vec<_>>()
             .join("\n");
         if explanation.is_empty() {
-            if contains_focus(&problem.button) || contains_focus(&problem.popover) {
-                focus_widget(&self.widgets.root);
+            if (contains_focus(&problem.button) || contains_focus(&problem.popover))
+                && let Some(row) = self.widgets.root.parent()
+            {
+                focus_widget(&row);
             }
             problem.popover.popdown();
         }
@@ -666,6 +670,32 @@ pub fn show_check_progress(button: &gtk::Button, pending: bool) {
     } else {
         "Retry Check"
     });
+}
+
+/// The keyboard focus rests on the tree's own row, which the platform
+/// outlines; the keys that expand and collapse it are the expander's, so
+/// the tree passes them on (specs/008-folders, Assumptions).
+fn forward_expander_keys(tree: &gtk::ListView) {
+    let keys = gtk::EventControllerKey::new();
+    let key_tree = tree.downgrade();
+    keys.connect_key_pressed(move |keys, _, _, _| {
+        let expander = key_tree.upgrade().and_then(|tree| focused_expander(&tree));
+        match expander {
+            Some(expander) if keys.forward(&expander) => glib::Propagation::Stop,
+            _ => glib::Propagation::Proceed,
+        }
+    });
+    tree.add_controller(keys);
+}
+
+/// The expander of the tree's row that has the keyboard focus: the row
+/// holds folder-row.ui, whose last child is the expander.
+fn focused_expander(tree: &gtk::ListView) -> Option<gtk::TreeExpander> {
+    let focus = tree.root()?.focus()?;
+    if focus.parent().as_ref() != Some(tree.upcast_ref()) {
+        return None;
+    }
+    focus.first_child()?.last_child()?.downcast().ok()
 }
 
 fn focus_widget(widget: &impl IsA<gtk::Widget>) {

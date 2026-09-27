@@ -337,6 +337,8 @@ pub struct FixtureSetup {
     /// LIST replies as (attributes, delimiter, name). When any is scripted,
     /// EXAMINE opens only these names; otherwise it opens any.
     pub mailboxes: Vec<(&'static str, &'static str, &'static str)>,
+    /// LIST sends each name as a literal instead of a quoted string.
+    pub names_as_literals: bool,
     /// LIST completion after the names; `{tag}` is replaced with the command
     /// tag. `None` closes the connection instead.
     pub list_completion: Option<String>,
@@ -399,6 +401,7 @@ impl Default for FixtureSetup {
             rejection: "{tag} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n".to_owned(),
             enable_refused: false,
             mailboxes: Vec::new(),
+            names_as_literals: false,
             list_completion: Some("{tag} OK LIST done\r\n".to_owned()),
             id_refused: false,
             messages: Vec::new(),
@@ -742,11 +745,13 @@ impl Server {
                 "LIST" => {
                     self.record(|log| log.list_arguments.push(arguments.clone()));
                     for (attributes, delimiter, name) in &self.setup.mailboxes {
-                        io.send(format!(
-                            "* LIST ({attributes}) \"{delimiter}\" {}\r\n",
+                        let name = if self.setup.names_as_literals {
+                            format!("{{{}}}\r\n{name}", name.len())
+                        } else {
                             quoted(name)
-                        ))
-                        .await?;
+                        };
+                        io.send(format!("* LIST ({attributes}) \"{delimiter}\" {name}\r\n"))
+                            .await?;
                     }
                     let Some(completion) = &self.setup.list_completion else {
                         io.stream.close().await?;

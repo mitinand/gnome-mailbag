@@ -107,17 +107,20 @@ impl MailUi {
         mail
     }
 
-    /// Shows the rows of a stored mailbox, keeping the open message when the
-    /// same read's mailbox is shown again.
+    /// Shows the rows of a stored mailbox, keeping the list and the open
+    /// message when the rows on screen are the same: the same read, or a new
+    /// read after a load that left them as they were.
     pub fn show_rows(&self, account_id: &AccountId, mailbox: &Rc<[Message]>) {
-        let already_shown = self
-            .listed_mailbox
-            .borrow()
-            .as_ref()
-            .is_some_and(|(_, listed)| Rc::ptr_eq(listed, mailbox));
-        if already_shown {
+        let mut listed = self.listed_mailbox.borrow_mut();
+        if let Some((listed_account, listed_mailbox)) = listed.as_mut()
+            && listed_account == account_id
+            && (Rc::ptr_eq(listed_mailbox, mailbox) || listed_mailbox[..] == mailbox[..])
+        {
+            // Later renders compare pointers only.
+            *listed_mailbox = mailbox.clone();
             return;
         }
+        drop(listed);
         self.rows.remove_all();
         for position in 0..mailbox.len() {
             self.rows.append(&glib::BoxedAnyObject::new(ListedMessage {
