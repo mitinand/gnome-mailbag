@@ -755,7 +755,7 @@ fn mail_ui_transitions() {
     assert_eq!(widgets.status_title(), "No mail loaded");
     assert_eq!(
         widgets.list_title(),
-        ("INBOX".to_owned(), "Generic".to_owned())
+        ("Inbox".to_owned(), "Generic".to_owned())
     );
     assert!(refresh_mailbox.is_enabled());
     assert!(refresh_account.is_enabled());

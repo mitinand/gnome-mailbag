@@ -157,15 +157,18 @@ for ~50 lines with no requirement behind it).
 
 **Checked** (Google's documentation and the 004 probe): labels are
 mailboxes, renamed with the standard RENAME; the container the system
-labels live under is `\Noselect`; system labels carry SPECIAL-USE
-attributes; `X-GM-MSGID` is the message's identity across labels;
-`X-GM-LABELS` names the labels a message carries, leaving out the opened
-one. Nothing documented identifies a label across a rename.
-**Decision**: the Gmail provider drops the `\Noselect` container whose
-children carry role attributes and lifts its children; memberships come
-from loads only; labels arrive with the message and are stored by
-synchronization, which reads them (spec FR-004); a
-renamed label is a new folder. The container is found by its children's
+labels live under is `\Noselect` in a plain LIST and `\NonExistent`
+(which implies `\Noselect`, RFC 5258 §3) in a LIST with `RETURN
+(SPECIAL-USE)`, which Gmail offers after sign-in (checked on a live account
+on 2026-09-27); system labels carry SPECIAL-USE attributes; `X-GM-MSGID`
+is the message's identity across labels; `X-GM-LABELS` names the labels a
+message carries, leaving out the opened one. Nothing documented identifies
+a label across a rename.
+**Decision**: the Gmail provider drops the container that cannot be opened
+whose children carry role attributes and lifts its children; memberships
+come from loads only; labels arrive with the message and are stored by
+synchronization, which reads them (spec FR-004); a renamed label is a new
+folder. The container is found by its children's
 attributes, not by its name, which is localized.
 
 ## 11. Where a failed Refresh Account shows

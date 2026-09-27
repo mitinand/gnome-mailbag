@@ -9,7 +9,11 @@ longer hides the account (FR-001), and folder lists that cannot be read
 share the stored mail's Retry (FR-008). Amended at the simplification
 review on 2026-09-27: the server's attributes, Gmail's labels and IMAP UIDs
 are not stored until a feature reads them (FR-002 to FR-004, FR-007), and
-the interface calls the folder list the mailbox list (FR-011).
+the interface calls the folder list the mailbox list (FR-011). Amended at
+the acceptance on the installed build, 2026-09-27: a mailbox marked as not
+existing is a container (FR-006), rows have no tooltip (FR-006), a heading
+and a container do not react to the pointer (FR-009), the expander only
+expands (FR-010), and the reserved name INBOX is shown as "Inbox" (FR-005).
 **Input**: Support for several mailboxes per account: their discovery, role
 recognition, nesting, storage and display in the sidebar. Deleting mailboxes
 is not built. Once mailboxes are shown, the account itself can no longer be
@@ -429,6 +433,18 @@ rows and the failure shown after each.
   list*, since the user-visible word for a folder is mailbox: "Loading
   mailbox list", "Mailbox list not received".
 
+### Session 2026-09-27 (acceptance on the installed build)
+
+- Q: Does a server give the Inbox a readable name? → A: No. LIST names it
+  `INBOX`, on Gmail as on a Generic IMAP server (checked live on
+  2026-09-27); only Gmail's XLIST, deprecated since 2013, lists it under a
+  localized name, and XLIST is not part of the standards the application
+  supports. The reserved name INBOX is a word
+  of the protocol (RFC 9051 §5.1), not a name anyone chose, so it is shown
+  as "Inbox", as other mail clients do; Microsoft 365 names its Inbox
+  itself. This replaces the clarification's "no substitution for the
+  Inbox" (FR-005).
+
 ## Requirements
 
 ### Functional Requirements
@@ -511,7 +527,8 @@ rows and the failure shown after each.
   turns them into relations (FR-013(b)). No message is ever
   matched to another by guessing from its date, size or headers.
 - **FR-005 — Names**: A folder is shown under the name its server gives it,
-  the Inbox included. When the server announces neither `UTF8=ACCEPT` nor
+  except the reserved IMAP name INBOX, in any case, which is shown as
+  "Inbox" (Clarifications, acceptance). When the server announces neither `UTF8=ACCEPT` nor
   `UTF8=ONLY` (RFC 6855), names are decoded from modified UTF-7 for
   display; a name
   that cannot be decoded is shown as sent. The shown name is never used to
@@ -521,10 +538,12 @@ rows and the failure shown after each.
   hierarchy delimiter of IMAP, the parent folder of Microsoft 365), without
   a limit on depth anywhere: not in the store, not in the tree. The tree is
   the platform's own tree list: each level is indented by one expander
-  width, a name too long for the sidebar is shortened with an ellipsis, and
-  the row's tooltip carries the full name. A folder whose parent is not
-  listed sits directly under the account. A folder that cannot be
-  opened is shown as a container: it can be expanded and never selected.
+  width, and a name too long for the sidebar is shortened with an ellipsis.
+  A folder whose parent is not listed sits directly under the account. A
+  folder that cannot be opened is shown as a container: it can be expanded
+  and never selected. A mailbox the server marks `\Noselect`, or
+  `\NonExistent`, which implies it (RFC 5258 §3), cannot be opened; Gmail
+  marks its container either way, depending on how the list was asked for.
   On Gmail, the container the server lists its system labels under is not
   shown; its children are folders of the account.
 
@@ -568,11 +587,13 @@ rows and the failure shown after each.
   folders as a tree, ordered at each level by the system locale's collation
   (the Unicode Collation Algorithm as the platform implements it, so names
   in any script sort consistently and never by code point), with a plain
-  folder icon.
+  folder icon. A heading and a container do not react to the pointer as a
+  row that can be selected does.
 - **FR-010 — Selection and refresh**: Selecting a folder shows its stored
   rows and never loads (007). Refresh Mailbox loads the selected folder;
   Refresh Account loads the folder list of the selected account or of the
-  selected folder's account. The list's title names the folder and its
+  selected folder's account. A row's expander only expands or collapses
+  it; it never selects the row. The list's title names the folder and its
   account. Each account keeps the outcome of its latest load, of a mailbox or of
   its folder list: a mailbox's outcome shows over that mailbox only, a
   folder list's outcome shows whenever a mailbox of the account or the
@@ -715,7 +736,10 @@ rows and the failure shown after each.
   icon, title and hidden badge; this feature binds it and changes no widget
   arrangement. The form changes are: the main menu's "Refresh Inbox"
   becomes "Refresh Mailbox" and gains "Refresh Account"; the account row's
-  problem button and its explanation move from code into a form.
+  problem button and its explanation move from code into a form. Decided at
+  the acceptance: the tree no longer activates a row on a single click
+  (FR-010), and the row's icon sits 1 px higher than the platform's row
+  places it, closer to the middle of the name.
 
 ## Amendments to earlier specifications
 

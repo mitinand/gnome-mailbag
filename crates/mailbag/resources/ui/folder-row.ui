@@ -24,6 +24,9 @@
             <child type="prefix">
               <object class="GtkImage" id="folder_icon">
                 <property name="icon-name">mail-unread-symbolic</property>
+                <!-- Raises the icon by 1 px: the platform's row centers it
+                     1.5 px below the middle of the name. -->
+                <property name="margin-bottom">2</property>
                 <property name="pixel-size">16</property>
               </object>
             </child>

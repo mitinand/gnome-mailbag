@@ -39,6 +39,8 @@ struct SidebarNode {
     /// Whether activating the row selects it: a folder that can be opened,
     /// or an account without such a folder.
     selectable: Cell<bool>,
+    /// The tree's item that shows this row while it is bound.
+    bound_item: glib::WeakRef<gtk::ListItem>,
     children: gio::ListStore,
     /// The folder list an account's rows show, in identity order; empty for
     /// a folder.
@@ -328,11 +330,13 @@ impl SidebarUi {
                 .push(folder.clone());
         }
         self.changing_rows.set(true);
+        let removed_focus;
         {
             let node = item.borrow::<SidebarNode>();
+            removed_focus = focus_in_rows(&node.children);
             node.children.remove_all();
             fill_folders(&node.children, account, None, &by_parent);
-            node.selectable.set(!openable);
+            node.set_selectable(!openable);
             node.widgets
                 .expander
                 .set_hide_expander(node.children.n_items() == 0);
@@ -348,6 +352,10 @@ impl SidebarUi {
             self.accounts.clear_selection();
         }
         self.show_selection();
+        // The keyboard stays in the tree when its row is rebuilt away.
+        if removed_focus {
+            focus_widget(&self.tree);
+        }
         selection_gone
     }
 
@@ -485,7 +493,8 @@ fn create_row_factory() -> gtk::SignalListItemFactory {
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_bind(|_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("list item");
-        // Single-click activation otherwise also selects rows on hover.
+        // The tree marks the selection `AccountList` owns; a click alone
+        // never selects a row.
         item.set_selectable(false);
         let row = item
             .item()
@@ -494,6 +503,8 @@ fn create_row_factory() -> gtk::SignalListItemFactory {
         let node = row.item().and_downcast::<glib::BoxedAnyObject>().unwrap();
         let node = node.borrow::<SidebarNode>();
         node.widgets.expander.set_list_row(Some(&row));
+        item.set_activatable(node.selectable.get());
+        node.bound_item.set(Some(item));
         item.set_child(Some(&node.widgets.root));
     });
     factory.connect_unbind(|_, item| {
@@ -503,10 +514,12 @@ fn create_row_factory() -> gtk::SignalListItemFactory {
             .and_downcast::<gtk::TreeListRow>()
             .and_then(|row| row.item())
             .and_downcast::<glib::BoxedAnyObject>();
-        if let Some(node) = node
-            && let Some(problem) = &node.borrow::<SidebarNode>().problem
-        {
-            problem.popover.popdown();
+        if let Some(node) = node {
+            let node = node.borrow::<SidebarNode>();
+            node.bound_item.set(None);
+            if let Some(problem) = &node.problem {
+                problem.popover.popdown();
+            }
         }
         item.set_child(None::<&gtk::Widget>);
     });
@@ -520,9 +533,27 @@ impl RowWidgets {
         root.set_focusable(true);
         let details: adw::ActionRow = builder.object("folder_details").unwrap();
         details.set_focusable(false);
+        let expander: gtk::TreeExpander = builder.object("folder_expander").unwrap();
+        // A click on the row's name activates it, which selects a row that
+        // can be selected; the expander's arrow only expands, and Enter
+        // activates through the tree (specs/008-folders FR-010).
+        let click = gtk::GestureClick::new();
+        let clicked_row = expander.downgrade();
+        click.connect_released(move |_, _, _, _| {
+            let Some(expander) = clicked_row.upgrade() else {
+                return;
+            };
+            if let Some(row) = expander.list_row() {
+                let position = row.position().to_variant();
+                expander
+                    .activate_action("list.activate-item", Some(&position))
+                    .expect("the row is in the tree");
+            }
+        });
+        details.add_controller(click);
         Self {
             root,
-            expander: builder.object("folder_expander").unwrap(),
+            expander,
             details,
             icon: builder.object("folder_icon").unwrap(),
             badge: builder.object("folder_badge").unwrap(),
@@ -554,6 +585,7 @@ impl SidebarNode {
             key: Selection::Account(id.clone()),
             widgets,
             selectable: Cell::new(true),
+            bound_item: glib::WeakRef::new(),
             children: gio::ListStore::new::<glib::BoxedAnyObject>(),
             listed_folders: RefCell::default(),
             problem: Some(problem),
@@ -562,10 +594,7 @@ impl SidebarNode {
 
     fn folder(account: &AccountId, folder: &Folder) -> Self {
         let widgets = RowWidgets::new();
-        widgets.details.set_title(&folder.name);
-        // A name too long for the sidebar is shortened; the tooltip keeps it
-        // whole (specs/008-folders FR-006).
-        widgets.details.set_tooltip_text(Some(&folder.name));
+        widgets.details.set_title(shown_name(folder));
         widgets.icon.set_icon_name(Some(folder_icon(folder.role)));
         Self {
             key: Selection::Mailbox(FolderRef {
@@ -574,9 +603,20 @@ impl SidebarNode {
             }),
             widgets,
             selectable: Cell::new(folder.selectable),
+            bound_item: glib::WeakRef::new(),
             children: gio::ListStore::new::<glib::BoxedAnyObject>(),
             listed_folders: RefCell::default(),
             problem: None,
+        }
+    }
+
+    /// Whether activating the row selects it. A row that cannot be selected,
+    /// a heading or a container, does not react to the pointer
+    /// (specs/008-folders FR-009).
+    fn set_selectable(&self, selectable: bool) {
+        self.selectable.set(selectable);
+        if let Some(item) = self.bound_item.upgrade() {
+            item.set_activatable(selectable);
         }
     }
 
@@ -631,11 +671,30 @@ fn focus_widget(widget: &impl IsA<gtk::Widget>) {
     }
 }
 
+/// Whether the keyboard focus is on one of these rows or their subfolders.
+fn focus_in_rows(rows: &gio::ListStore) -> bool {
+    rows.iter::<glib::BoxedAnyObject>().flatten().any(|item| {
+        let node = item.borrow::<SidebarNode>();
+        contains_focus(&node.widgets.root) || focus_in_rows(&node.children)
+    })
+}
+
 fn contains_focus(widget: &impl IsA<gtk::Widget>) -> bool {
     widget
         .root()
         .and_then(|root| root.focus())
         .is_some_and(|focus| focus == *widget.as_ref() || focus.is_ancestor(widget))
+}
+
+/// The name a folder is shown under: its server's, except the reserved IMAP
+/// name INBOX, a word of the protocol rather than a name
+/// (specs/008-folders FR-005).
+fn shown_name(folder: &Folder) -> &str {
+    if folder.identity.eq_ignore_ascii_case("INBOX") {
+        "Inbox"
+    } else {
+        &folder.name
+    }
 }
 
 /// The icon of a folder with this role; the Inbox's is bundled with the

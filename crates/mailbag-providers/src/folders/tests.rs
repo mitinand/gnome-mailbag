@@ -137,7 +137,8 @@ fn imap_names_are_decoded_unless_the_server_sends_utf8() {
 fn gmails_system_label_container_is_left_out_and_its_labels_move_up() {
     let folders = gmail_folders(&list(vec![
         mailbox(&["\\HasNoChildren"], "INBOX"),
-        mailbox(&["\\HasChildren", "\\Noselect"], "[Gmail]"),
+        // As Gmail marks it in a LIST that asks for special-use attributes.
+        mailbox(&["\\HasChildren", "\\NonExistent"], "[Gmail]"),
         mailbox(&["\\All", "\\HasNoChildren"], "[Gmail]/All Mail"),
         mailbox(&["\\HasNoChildren", "\\Sent"], "[Gmail]/Sent Mail"),
         mailbox(&["\\HasChildren"], "[Gmail]/Sent Mail/Old"),

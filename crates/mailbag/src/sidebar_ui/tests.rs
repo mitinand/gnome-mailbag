@@ -111,7 +111,8 @@ fn sidebar_transitions() {
             folder("Sent", None, Some(FolderRole::Sent), true),
             folder("Alpha", None, None, true),
             folder("Bin", None, Some(FolderRole::Trash), true),
-            folder("INBOX", None, Some(FolderRole::Inbox), true),
+            // The reserved name, as the server may case it (RFC 9051 §5.1).
+            folder("inbox", None, Some(FolderRole::Inbox), true),
         ]
     };
     // The selected account's folders appeared, so it is no longer selected.
@@ -123,7 +124,7 @@ fn sidebar_transitions() {
     // which would put "beta" after "Zeta".
     let mut user_folders = vec!["Alpha", "Projects", "Zeta", "beta", "Ωμέγα"];
     user_folders.sort_by_key(|name| glib::CollationKey::from(name));
-    let mut expected = vec![other_account.as_str(), &heading, "INBOX", "Bin", "Sent"];
+    let mut expected = vec![other_account.as_str(), &heading, "Inbox", "Bin", "Sent"];
     for name in user_folders {
         expected.push(name);
         if name == "Projects" {
@@ -133,23 +134,33 @@ fn sidebar_transitions() {
     assert_eq!(shown_rows(&ui.borrow()), expected);
     let icon = |title| row_detail(&ui.borrow(), title, |node| node.widgets.icon.icon_name());
     assert_eq!(
-        icon("INBOX").as_deref(),
+        icon("Inbox").as_deref(),
         Some("mailbag-folder-inbox-symbolic")
     );
     assert_eq!(icon("Sent").as_deref(), Some("mail-send-symbolic"));
     assert_eq!(icon("Reports").as_deref(), Some("folder-symbolic"));
-    let tooltip = row_detail(&ui.borrow(), "Reports", |node| {
-        node.widgets.details.tooltip_text()
-    });
-    assert_eq!(tooltip.as_deref(), Some("Reports"));
 
-    // A heading and a container change nothing when activated; a folder
-    // that can be opened is selected.
+    // A heading and a container do not react to the pointer and change
+    // nothing when activated; a click on a folder's name selects it. The
+    // tree activates no row on a click of its own, so the expander's arrow
+    // only expands.
+    assert!(!tree.is_single_click_activate());
+    let reacts = |title: &str| {
+        row_detail(&ui.borrow(), title, |node| {
+            node.bound_item
+                .upgrade()
+                .expect("a shown row")
+                .is_activatable()
+        })
+    };
+    assert!(!reacts(&heading));
+    assert!(!reacts("Projects"));
+    assert!(reacts("Reports"));
     for title in [heading.as_str(), "Projects"] {
         activate(&tree, &ui, title);
         assert!(ui.borrow().accounts.selection().is_none(), "{title}");
     }
-    activate(&tree, &ui, "Reports");
+    click_name(&ui, "Reports");
     assert_eq!(
         ui.borrow().accounts.selection(),
         Some(&Selection::Mailbox(FolderRef {
@@ -194,6 +205,7 @@ fn sidebar_transitions() {
     // An account whose server lists only containers stays selectable.
     ui.borrow_mut()
         .show_folders(&second_id, vec![folder("Shared", None, None, false)]);
+    assert!(reacts(&other_account));
     activate(&tree, &ui, &other_account);
     assert_eq!(
         ui.borrow().accounts.selection(),
@@ -269,6 +281,17 @@ fn row_detail<T>(ui: &SidebarUi, title: &str, read: impl Fn(&SidebarNode) -> T) 
 fn activate(tree: &gtk::ListView, ui: &Rc<RefCell<SidebarUi>>, title: &str) {
     let position = position_of_title(&ui.borrow(), title);
     tree.emit_by_name::<()>("activate", &[&position]);
+}
+
+/// Clicks the name of the row titled `title`, as the pointer does.
+fn click_name(ui: &Rc<RefCell<SidebarUi>>, title: &str) {
+    let name = row_detail(&ui.borrow(), title, |node| node.widgets.details.clone());
+    let click = name
+        .observe_controllers()
+        .iter::<glib::Object>()
+        .find_map(|controller| controller.unwrap().downcast::<gtk::GestureClick>().ok())
+        .expect("the name's click gesture");
+    click.emit_by_name::<()>("released", &[&1_i32, &1_f64, &1_f64]);
 }
 
 fn dispatch_pending() {

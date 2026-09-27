@@ -52,7 +52,10 @@ pub(crate) fn imap_folders(list: &MailboxList) -> Vec<Folder> {
                 },
                 parent: parent.map(str::to_owned),
                 role: imap_role(mailbox),
-                selectable: !has_attribute(mailbox, "\\Noselect"),
+                // `\NonExistent` implies `\Noselect` (RFC 5258 §3); Gmail
+                // marks its container so when asked for special-use attributes.
+                selectable: !has_attribute(mailbox, "\\Noselect")
+                    && !has_attribute(mailbox, "\\NonExistent"),
             }
         })
         .collect()

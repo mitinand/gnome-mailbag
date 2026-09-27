@@ -384,7 +384,6 @@
                   <object class="GtkScrolledWindow">
                     <property name="child">
                       <object class="GtkListView" id="folder_tree">
-                        <property name="single-click-activate">true</property>
                         <style>
                           <class name="navigation-sidebar"/>
                         </style>

@@ -335,3 +335,28 @@ the async-imap and imap-proto forks pinned in Cargo.toml (fix branches, new revi
   005 spec (FR-003, FR-006).
 - Portion 4: 006 spec and contract (wording, `ListFolders`, Retry of
   Refresh Account); the roadmap note is local.
+
+## Post-implementation
+
+The manual checks of [quickstart.md](quickstart.md) ran on the installed
+Flatpak build on 2026-09-27; all nine steps pass after these fixes, found
+at the acceptance:
+
+- Gmail's system label container stayed in the tree: asked with `RETURN
+  (SPECIAL-USE)`, Gmail marks it `\NonExistent` rather than `\Noselect`, so
+  both now make a container (spec FR-006, research §10).
+- A heading or a container reacted to the pointer as a row that can be
+  selected; it no longer does (FR-009).
+- A click on a row's expander arrow selected the row, because the tree
+  activated rows on a single click; that is off, a click on the row's name
+  selects it and Enter still does (FR-010).
+- The tooltip repeated the name; it is gone (FR-006).
+- The reserved IMAP name INBOX is shown as "Inbox" (FR-005).
+- The keyboard focus could stay on a row that a rebuilt subtree removed;
+  the tree now takes it back.
+- The row's icon sits 1 px above the platform's position; the name and the
+  expander arrow keep the platform's placement, without a stylesheet.
+
+The record of step 9 at debug level: folder names appear in debug lines
+only; no subject, sender, text or credential; a failed load is one error
+line naming the account, the load and the cause.
