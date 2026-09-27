@@ -9,11 +9,12 @@ use crate::{
     imap_batch::{imap_account, load_batch_from_rows},
 };
 use goa_adapter::ImapAccess;
-use mailbag_imap::{ImapError, InboxReader, OpenOptions, RowItems};
+use mailbag_imap::{ImapError, MailboxReader, OpenOptions, RowItems};
 
 pub(crate) async fn load_imap_inbox(access: ImapAccess) -> Result<ReceivedBatch, ImapError> {
     let account_id = access.account_id.clone();
-    let mut reader = InboxReader::open(imap_account(access), OpenOptions::default()).await?;
+    let mut reader =
+        MailboxReader::open(imap_account(access), OpenOptions::default(), "INBOX").await?;
     let listed = reader.fetch_rows(RowItems::Standard, BATCH_SIZE).await?;
     load_batch_from_rows(&mut reader, listed, account_id).await
 }

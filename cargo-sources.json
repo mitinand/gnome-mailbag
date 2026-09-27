@@ -2,14 +2,14 @@
   {
     "type": "git",
     "url": "https://github.com/mitinand/async-imap",
-    "commit": "3c4cdde1cd5f4cbf264fe7fa18426c57dce8974d",
-    "dest": "flatpak-cargo/git/async-imap-3c4cdde"
+    "commit": "06497e037a11a1c8aa56dcea02cfaddb526fa7a4",
+    "dest": "flatpak-cargo/git/async-imap-06497e0"
   },
   {
     "type": "git",
     "url": "https://github.com/mitinand/imap-proto",
-    "commit": "caa2c81038d7674c46fb038f90ccf74034380c18",
-    "dest": "flatpak-cargo/git/imap-proto-caa2c81"
+    "commit": "9d175e67192cfee1506c94a67f4b7138f8634725",
+    "dest": "flatpak-cargo/git/imap-proto-9d175e6"
   },
   {
     "type": "archive",
@@ -66,7 +66,7 @@
   {
     "type": "shell",
     "commands": [
-      "cp -r --reflink=auto \"flatpak-cargo/git/async-imap-3c4cdde/.\" \"cargo/vendor/async-imap\""
+      "cp -r --reflink=auto \"flatpak-cargo/git/async-imap-06497e0/.\" \"cargo/vendor/async-imap\""
     ]
   },
   {
@@ -747,7 +747,7 @@
   {
     "type": "shell",
     "commands": [
-      "cp -r --reflink=auto \"flatpak-cargo/git/imap-proto-caa2c81/imap-proto\" \"cargo/vendor/imap-proto\""
+      "cp -r --reflink=auto \"flatpak-cargo/git/imap-proto-9d175e6/imap-proto\" \"cargo/vendor/imap-proto\""
     ]
   },
   {
@@ -1713,7 +1713,7 @@
   },
   {
     "type": "inline",
-    "contents": "[source.vendored-sources]\ndirectory = \"cargo/vendor\"\n\n[source.crates-io]\nreplace-with = \"vendored-sources\"\n\n[source.\"https://github.com/mitinand/async-imap\"]\ngit = \"https://github.com/mitinand/async-imap\"\nreplace-with = \"vendored-sources\"\nrev = \"3c4cdde1cd5f4cbf264fe7fa18426c57dce8974d\"\n\n[source.\"https://github.com/mitinand/imap-proto\"]\ngit = \"https://github.com/mitinand/imap-proto\"\nreplace-with = \"vendored-sources\"\nrev = \"caa2c81038d7674c46fb038f90ccf74034380c18\"\n",
+    "contents": "[source.vendored-sources]\ndirectory = \"cargo/vendor\"\n\n[source.crates-io]\nreplace-with = \"vendored-sources\"\n\n[source.\"https://github.com/mitinand/async-imap\"]\ngit = \"https://github.com/mitinand/async-imap\"\nreplace-with = \"vendored-sources\"\nrev = \"06497e037a11a1c8aa56dcea02cfaddb526fa7a4\"\n\n[source.\"https://github.com/mitinand/imap-proto\"]\ngit = \"https://github.com/mitinand/imap-proto\"\nreplace-with = \"vendored-sources\"\nrev = \"9d175e67192cfee1506c94a67f4b7138f8634725\"\n",
     "dest": "cargo",
     "dest-filename": "config.toml"
   }

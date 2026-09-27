@@ -2,7 +2,8 @@
 
 **Feature**: `008-folders`
 **Created**: 2026-09-27 · **Branch**: `claude/folders` · **Status**: Documents
-approved on 2026-09-27 (T001); implementation not started.
+approved on 2026-09-27 (T001); portion 1 (T002–T010) implemented on
+2026-09-27, awaiting review.
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -44,23 +45,23 @@ Goal: the protocol crates can list mailboxes and open a named one, with the
 two library defects fixed; the application behaves as before, its call
 sites only renamed.
 
-- [ ] T002 In the async-imap fork pinned in Cargo.toml, branch
+- [x] T002 In the async-imap fork pinned in Cargo.toml, branch
   `fix/list-completion-status` from `mailbag`: make `parse_names` in src/parse.rs end the stream with
   `Err(Error::No(..))` / `Err(Error::Bad(..))` when the LIST completion is NO
   or BAD and with `Err(Error::ConnectionLost)` when the stream ends before
   the completion, as `FetchResponses` does; unit tests for "one name then
   NO", "one name then BAD", "one name then EOF". Merge into `mailbag`, tag
   `mailbag-2026-09-27`, push (no upstream PR).
-- [ ] T003 [P] In the imap-proto fork pinned in Cargo.toml, branch
+- [x] T003 [P] In the imap-proto fork pinned in Cargo.toml, branch
   `fix/unescape-quoted` from `mailbag`: make `quoted` in imap-proto/src/parser/core.rs return the
   unescaped content (`\"` → `"`, `\\` → `\`), keeping a borrowed slice when
   nothing is escaped; adjust `quoted_utf8`, every parser that calls `quoted`
   (rfc3501/mod.rs among them) and the tests in core.rs and
   parser/tests.rs (a LIST with name `"a\"b\\c"` parses to `a"b\c`). Merge
   into `mailbag`, tag, push.
-- [ ] T004 Pin the new revisions in Cargo.toml `[patch.crates-io]`, update
+- [x] T004 Pin the new revisions in Cargo.toml `[patch.crates-io]`, update
   Cargo.lock, run scripts/generate-cargo-sources.sh for cargo-sources.json.
-- [ ] T005 [US1] [US2] In crates/mailbag-imap: add src/utf7.rs with
+- [x] T005 [US1] [US2] In crates/mailbag-imap: add src/utf7.rs with
   `decode(name: &str) -> String` (RFC 3501 §5.1.3 modified UTF-7: `&-` is
   `&`, `&…-` is modified base64 of UTF-16BE; anything undecodable leaves
   the name as sent) and its unit tests (ASCII unchanged, a Cyrillic name, a
@@ -70,7 +71,7 @@ sites only renamed.
   call sites in session.rs, reader.rs, fetch_responses.rs and tests, and
   the mechanical renames in crates/mailbag-providers (failure.rs, tests.rs)
   so the workspace keeps building.
-- [ ] T006 [US1] [US2] [US7] In crates/mailbag-imap/src/session.rs and
+- [x] T006 [US1] [US2] [US7] In crates/mailbag-imap/src/session.rs and
   lib.rs: split `open_inbox` into `sign_in_session(account, options,
   timeout, notices) -> SignedInSession { session, capabilities, utf8_names:
   bool, connection }` (`capabilities` is the post-sign-in list from one
@@ -87,14 +88,14 @@ sites only renamed.
   Vec<String>, delimiter: Option<String> }` into `MailboxList { names,
   utf8_names }`, a refused or cut LIST being `Failed(ListMailboxes)` with the
   server's reply; log the count at info and the names at debug (003 FR-010).
-- [ ] T007 [US1] In crates/mailbag-imap/src/reader.rs: rename `InboxReader`
+- [x] T007 [US1] In crates/mailbag-imap/src/reader.rs: rename `InboxReader`
   to `MailboxReader` with `open(account, options, mailbox: &str)` (and the
   short-timeout variant) that signs in and examines the named mailbox;
   `fetch_rows`, `fetch_structures`, `fetch_text` unchanged; update the
   crate's tests and doc comments to say mailbox, and the call sites in
   crates/mailbag-providers (imap.rs, gmail.rs, imap_batch.rs) to open
   "INBOX" by name so behaviour is unchanged.
-- [ ] T008 [US1] [US2] [US7] In crates/mailbag-imap/src/test_server.rs:
+- [x] T008 [US1] [US2] [US7] In crates/mailbag-imap/src/test_server.rs:
   script LIST replies (`FixtureSetup::mailboxes: Vec<(attributes, delimiter,
   name)>` sent as `* LIST (...) "d" name` lines, names quoted or as literals
   as configured, a configurable completion OK / NO / BAD / connection closed),
@@ -106,7 +107,7 @@ sites only renamed.
   round-trip from LIST to EXAMINE; ENABLE is sent with `UTF8=ACCEPT` and with `UTF8=ONLY` and not
   otherwise; the special-use return option is sent only with `SPECIAL-USE`;
   a named mailbox is examined and its rows fetched.
-- [ ] T009 [P] [US1] [US2] [US7] In crates/mailbag-graph/src/lib.rs and
+- [x] T009 [P] [US1] [US2] [US7] In crates/mailbag-graph/src/lib.rs and
   reply.rs: add `list_folders(service_url, token) -> Result<Vec<GraphFolder>,
   GraphError>` reading `GET /me/mailFolders/delta?$select=id,displayName,parentFolderId,isHidden`
   and following `@odata.nextLink` until `@odata.deltaLink`, leaving hidden
@@ -124,7 +125,7 @@ sites only renamed.
   from two pages, a folder repeated on both pages, an `@removed` entry, a
   missing well-known folder, a failing second page, hidden
   folders left out, messages of a named folder.
-- [ ] T010 STOP: run ./scripts/check.sh and git diff --check; compare the
+- [x] T010 STOP: run ./scripts/check.sh and git diff --check; compare the
   size with plan.md's table (imap ~190, graph ~130, forks ~35); report,
   suggest the commit and wait before portion 2.
 

@@ -10,13 +10,15 @@ use crate::batch::{BATCH_SIZE, MessageIdentity, ReceivedBatch, ReceivedMessage};
 use goa_adapter::GraphAccess;
 use mailbag_content::display_names;
 use mailbag_domain::{DisplayFields, IncompleteList, ReceivedContent};
-use mailbag_graph::{GraphError, GraphMessage, Mailbox, list_inbox_messages};
+use mailbag_graph::{GraphError, GraphMessage, Mailbox, list_mailbox_messages};
 
 pub(crate) async fn load_microsoft365_inbox(
     access: GraphAccess,
     service_url: &str,
 ) -> Result<ReceivedBatch, GraphError> {
-    let page = list_inbox_messages(service_url, &access.access_token, BATCH_SIZE).await?;
+    // The well-known name serves as the Inbox's id in any language.
+    let page =
+        list_mailbox_messages(service_url, &access.access_token, "inbox", BATCH_SIZE).await?;
     // A full batch is complete however many messages the Inbox holds; only a
     // page the service cut short while offering more is not (spec FR-003).
     let cut_short = page.more_available && page.messages.len() < BATCH_SIZE as usize;

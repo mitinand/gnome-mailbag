@@ -239,7 +239,7 @@ fn a_window_that_empties_during_the_load_is_not_an_empty_inbox() {
         ..FixtureSetup::default()
     });
     let error = load_inbox(&fixture).unwrap_err();
-    assert_eq!(error.failure, ImapFailure::InboxChanged);
+    assert_eq!(error.failure, ImapFailure::MailboxChanged);
 }
 
 #[test]
@@ -582,6 +582,7 @@ fn gmail_fixture(messages: Vec<FixtureMessage>) -> ImapFixture {
         .collect();
     ImapFixture::start(FixtureSetup {
         access_token: Some(TEST_ACCESS_TOKEN.to_owned()),
+        capabilities_after_sign_in: vec!["UTF8=ACCEPT"],
         messages,
         ..FixtureSetup::default()
     })
@@ -640,14 +641,14 @@ fn the_record_names_gmails_fields_and_never_the_token() {
     assert!(!text.contains(TEST_ACCESS_TOKEN), "{text}");
 }
 
-/// The Generic IMAP load asks Gmail's server for none of it.
+/// The Generic IMAP load asks Gmail's server for none of Gmail's own
+/// extensions; UTF-8 names follow the server's capabilities on every load.
 #[test]
 fn a_generic_imap_load_sends_no_gmail_command_and_carries_no_gmail_fields() {
     let fixture = gmail_fixture(plain_messages(1));
     let batch = received_batch(load_inbox(&fixture));
     assert_eq!(batch.messages[0].gmail, None);
     let commands = fixture.log().commands;
-    assert!(!commands.contains(&"ENABLE".to_owned()), "{commands:?}");
     assert!(!commands.contains(&"ID".to_owned()), "{commands:?}");
 }
 

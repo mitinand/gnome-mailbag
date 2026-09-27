@@ -1,14 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Reads the Inbox of an IMAP account over a verified GIO TLS connection.
+//! Lists the mailboxes of an IMAP account and reads one of them over a
+//! verified GIO TLS connection.
 //!
 //! This crate owns the protocol: the secure connection, sign-in, read-only
-//! commands and the message part structure with IMAP section numbers. It has no
-//! notion of a mail provider and never decodes message content. Its futures
-//! must run on one thread with a running GLib main context.
+//! commands, mailbox names and the message part structure with IMAP section
+//! numbers. It has no notion of a mail provider and never decodes message
+//! content. Its futures must run on one thread with a running GLib main
+//! context.
 
 mod fetch_responses;
+mod mailbox_list;
 mod part_tree;
 mod reader;
 #[cfg(any(test, feature = "test-support"))]
@@ -20,9 +23,11 @@ pub mod test_server;
 #[cfg(test)]
 mod tests;
 mod transport;
+pub mod utf7;
 
+pub use mailbox_list::list_mailboxes;
 pub use part_tree::MessagePart;
-pub use reader::InboxReader;
+pub use reader::MailboxReader;
 
 use std::fmt;
 
@@ -44,13 +49,10 @@ pub enum Credential {
     AccessToken(String),
 }
 
-/// What the caller asks for between sign-in and EXAMINE. A server that refuses
-/// either command keeps the load going.
+/// What the caller asks for between sign-in and the first mailbox command. A
+/// server that refuses it keeps the load going.
 #[derive(Debug, Default)]
 pub struct OpenOptions {
-    /// Offer UTF8=ACCEPT, so that mailbox and label names arrive as UTF-8
-    /// instead of modified UTF-7.
-    pub readable_names: bool,
     /// Name this client to the server, as Gmail asks clients to do.
     pub client_identity: Option<ClientIdentity>,
 }
@@ -86,7 +88,7 @@ pub struct GmailRow {
     /// X-GM-MSGID: the same message keeps it in every folder.
     pub message_id: u64,
     /// X-GM-LABELS, as the server sent them. Gmail leaves out the label of the
-    /// opened folder.
+    /// opened mailbox.
     pub labels: Vec<String>,
 }
 
@@ -106,7 +108,8 @@ pub enum ImapStep {
     /// TLS, certificate verification or STARTTLS.
     SecureConnection,
     SignIn,
-    OpenInbox,
+    ListMailboxes,
+    OpenMailbox,
     /// The message list or part structures.
     FetchMessages,
     FetchText,
@@ -121,8 +124,8 @@ pub enum ImapFailure {
     TimedOut(ImapStep),
     /// The server offers neither AUTHENTICATE PLAIN nor LOGIN.
     NoSignInMethod,
-    /// The Inbox was replaced, or all its selected messages disappeared.
-    InboxChanged,
+    /// The mailbox was replaced, or all its selected messages disappeared.
+    MailboxChanged,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -181,6 +184,29 @@ impl fmt::Debug for ServerReply {
     }
 }
 
+/// A mailbox as LIST names it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MailboxName {
+    /// The name as the server sent it, which opens the mailbox: modified
+    /// UTF-7 unless `MailboxList::utf8_names`.
+    pub name: String,
+    /// Every attribute the server listed, such as `\Noselect` or `\Sent`,
+    /// in the server's order.
+    pub attributes: Vec<String>,
+    /// The hierarchy delimiter; `None` for a flat name.
+    pub delimiter: Option<String>,
+}
+
+/// Every mailbox of an account, from one completed LIST command.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MailboxList {
+    pub names: Vec<MailboxName>,
+    /// Whether the names are UTF-8, because the server announced UTF-8
+    /// support and accepted it (RFC 6855); otherwise they are modified UTF-7
+    /// (RFC 3501 §5.1.3), which `utf7::decode` makes readable.
+    pub utf8_names: bool,
+}
+
 /// List fields of one message.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MessageRow {
@@ -231,7 +257,7 @@ pub enum MessageText {
     /// failed the command without answering for this message. The message
     /// keeps its row.
     NotReturned,
-    /// The message is gone from the Inbox.
+    /// The message is gone from the mailbox.
     Disappeared,
 }
 

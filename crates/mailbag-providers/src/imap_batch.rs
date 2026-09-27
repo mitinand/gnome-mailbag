@@ -12,7 +12,7 @@ use mailbag_content::{
 };
 use mailbag_domain::{AccountId, IncompleteList, ReceivedContent};
 use mailbag_imap::{
-    Credential, Encryption, ImapAccount, ImapError, ImapFailure, InboxReader, MessageList,
+    Credential, Encryption, ImapAccount, ImapError, ImapFailure, MailboxReader, MessageList,
     MessagePart, MessageText, TextParts, TextRequest,
 };
 use std::collections::BTreeMap;
@@ -36,7 +36,7 @@ pub(crate) fn imap_account(access: ImapAccess) -> ImapAccount {
 /// needs and assembles the batch. Both IMAP loads reach this with their own
 /// message list; nothing below here depends on the provider.
 pub(crate) async fn load_batch_from_rows(
-    reader: &mut InboxReader,
+    reader: &mut MailboxReader,
     listed: MessageList,
     account_id: AccountId,
 ) -> Result<ReceivedBatch, ImapError> {
@@ -104,7 +104,7 @@ pub(crate) async fn load_batch_from_rows(
     // because another client moved them. Older mail outside the window may
     // still be there, so this is not an empty Inbox.
     if messages.is_empty() && window > 0 {
-        return Err(ImapFailure::InboxChanged.into());
+        return Err(ImapFailure::MailboxChanged.into());
     }
     Ok(ReceivedBatch {
         account_id,

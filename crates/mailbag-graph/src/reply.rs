@@ -1,18 +1,66 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The service's JSON answers: the message list and the error body of a
-//! refusal. Only the list's shape and each message's identifier and read state
+//! The service's JSON answers: the folder listing, the message list and the
+//! error body of a refusal. Only the list's shape and each message's identifier and read state
 //! are required; any other field the service leaves out, or sends in another
 //! form, is left out of the message, so one odd message never fails the list
 //! (specs/005-microsoft-graph-integration/research.md §4). An empty subject,
 //! name or address is left out too: the window then shows its fallback, and
-//! the name rule falls back to the address.
+//! the name rule falls back to the address. A folder needs its id and name.
 
-use crate::{GraphFailure, GraphMessage, InboxPage, Mailbox};
+use crate::{GraphFailure, GraphFolder, GraphMessage, Mailbox, MessagePage};
 use serde_json::Value;
 
-pub(crate) fn read_inbox_page(answer: &[u8]) -> Result<InboxPage, GraphFailure> {
+/// One page of the change-tracking folder listing.
+pub(crate) struct FolderPage {
+    /// Each entry's folder id with the folder, or `None` when the entry marks
+    /// the folder removed or the folder is hidden.
+    pub(crate) entries: Vec<(String, Option<GraphFolder>)>,
+    /// The next page's address; `None` on the last page.
+    pub(crate) next_link: Option<String>,
+}
+
+pub(crate) fn read_folder_page(answer: &[u8]) -> Result<FolderPage, GraphFailure> {
+    let answer: Value = serde_json::from_slice(answer).map_err(|_| GraphFailure::InvalidReply)?;
+    let entries = answer["value"]
+        .as_array()
+        .ok_or(GraphFailure::InvalidReply)?
+        .iter()
+        .map(read_folder_entry)
+        .collect::<Option<Vec<_>>>()
+        .ok_or(GraphFailure::InvalidReply)?;
+    let next_link = owned_text(&answer["@odata.nextLink"]);
+    // The last page carries the link for later changes instead; a page with
+    // neither link may not be the last.
+    if next_link.is_none() && !answer["@odata.deltaLink"].is_string() {
+        return Err(GraphFailure::InvalidReply);
+    }
+    Ok(FolderPage { entries, next_link })
+}
+
+/// `None` when the entry has no id, or names a listed folder without a name.
+fn read_folder_entry(entry: &Value) -> Option<(String, Option<GraphFolder>)> {
+    let folder_id = entry["id"].as_str()?.to_owned();
+    if entry.get("@removed").is_some() || entry["isHidden"].as_bool() == Some(true) {
+        return Some((folder_id, None));
+    }
+    let folder = GraphFolder {
+        id: folder_id.clone(),
+        name: entry["displayName"].as_str()?.to_owned(),
+        parent_id: owned_text(&entry["parentFolderId"]),
+        well_known: None,
+    };
+    Some((folder_id, Some(folder)))
+}
+
+/// The id of the one folder a request by well-known name answers with.
+pub(crate) fn read_folder_id(answer: &[u8]) -> Result<String, GraphFailure> {
+    let answer: Value = serde_json::from_slice(answer).map_err(|_| GraphFailure::InvalidReply)?;
+    owned_text(&answer["id"]).ok_or(GraphFailure::InvalidReply)
+}
+
+pub(crate) fn read_message_page(answer: &[u8]) -> Result<MessagePage, GraphFailure> {
     let answer: Value = serde_json::from_slice(answer).map_err(|_| GraphFailure::InvalidReply)?;
     let entries = answer["value"]
         .as_array()
@@ -22,7 +70,7 @@ pub(crate) fn read_inbox_page(answer: &[u8]) -> Result<InboxPage, GraphFailure> 
         .map(read_message)
         .collect::<Option<Vec<_>>>()
         .ok_or(GraphFailure::InvalidReply)?;
-    Ok(InboxPage {
+    Ok(MessagePage {
         messages,
         more_available: answer["@odata.nextLink"].is_string(),
     })
@@ -80,8 +128,8 @@ fn unix_seconds(iso_8601: &str) -> Option<i64> {
 mod tests {
     use super::*;
 
-    fn read(answer: &str) -> Result<InboxPage, GraphFailure> {
-        read_inbox_page(answer.as_bytes())
+    fn read(answer: &str) -> Result<MessagePage, GraphFailure> {
+        read_message_page(answer.as_bytes())
     }
 
     fn read_one(entry: &str) -> GraphMessage {
@@ -139,10 +187,10 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_inbox_is_an_empty_page() {
+    fn an_empty_folder_is_an_empty_page() {
         assert_eq!(
             read(r#"{"value":[]}"#),
-            Ok(InboxPage {
+            Ok(MessagePage {
                 messages: Vec::new(),
                 more_available: false,
             })

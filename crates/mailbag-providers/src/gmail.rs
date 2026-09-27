@@ -1,20 +1,20 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The Gmail load: the same steps as a Generic IMAP load, with the three
-//! things Gmail offers beyond RFC 3501 — UTF-8 names, a named client, and its
-//! own message identifier and labels on every row.
+//! The Gmail load: the same steps as a Generic IMAP load, with the two things
+//! Gmail offers beyond RFC 3501 that it asks for — a named client, and its own
+//! message identifier and labels on every row.
 
 use crate::{
     batch::{BATCH_SIZE, ReceivedBatch},
     imap_batch::{imap_account, load_batch_from_rows},
 };
 use goa_adapter::ImapAccess;
-use mailbag_imap::{ClientIdentity, ImapError, InboxReader, MessageRow, OpenOptions, RowItems};
+use mailbag_imap::{ClientIdentity, ImapError, MailboxReader, MessageRow, OpenOptions, RowItems};
 
 pub(crate) async fn load_gmail_inbox(access: ImapAccess) -> Result<ReceivedBatch, ImapError> {
     let account_id = access.account_id.clone();
-    let mut reader = InboxReader::open(imap_account(access), gmail_options()).await?;
+    let mut reader = MailboxReader::open(imap_account(access), gmail_options(), "INBOX").await?;
     let listed = reader
         .fetch_rows(RowItems::WithGmailAttributes, BATCH_SIZE)
         .await?;
@@ -27,7 +27,6 @@ pub(crate) async fn load_gmail_inbox(access: ImapAccess) -> Result<ReceivedBatch
 /// (specs/004-gmail-integration/research.md §6).
 fn gmail_options() -> OpenOptions {
     OpenOptions {
-        readable_names: true,
         client_identity: Some(ClientIdentity {
             name: "Mailbag".to_owned(),
             version: env!("CARGO_PKG_VERSION").to_owned(),

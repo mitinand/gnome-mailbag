@@ -9,28 +9,29 @@ use crate::{
         keep_structures, message_text, section_paths, uid_set,
     },
     session::{
-        self, InboxSession, ServerNotices, StepFailure, command_failure, replace_sign_in_name,
+        self, MailboxSession, SOCKET_TIMEOUT_SECONDS, ServerNotices, StepFailure, command_failure,
+        replace_sign_in_name,
     },
     transport,
 };
 use async_imap::error::{Error, ResponseTooLarge};
 use std::{collections::BTreeMap, io};
 
-/// Seconds without progress after which connecting, TLS, a read or a write fails.
-const SOCKET_TIMEOUT_SECONDS: u32 = 30;
 const ROW_ITEMS: &str = "UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT)]";
 /// Gmail's message identifier and labels, added to the row FETCH on request.
 const GMAIL_ROW_ITEMS: &str = "X-GM-MSGID X-GM-LABELS";
 const STRUCTURE_ITEMS: &str = "(UID BODYSTRUCTURE)";
 
-/// A signed-in, read-only session with an account's Inbox. It never changes
-/// mail on the server. Dropping it closes the connection at once.
-pub struct InboxReader {
+/// A signed-in, read-only session with one mailbox of an account. It never
+/// changes mail on the server. Dropping it closes the connection at once.
+pub struct MailboxReader {
     account: ImapAccount,
     /// Kept for the reconnection that an unreadable structure forces.
     options: OpenOptions,
     socket_timeout_seconds: u32,
-    pub(crate) inbox: InboxSession,
+    /// The mailbox name as LIST gave it.
+    mailbox_name: String,
+    pub(crate) mailbox: MailboxSession,
     notices: ServerNotices,
     needs_reconnect: bool,
 }
@@ -42,10 +43,15 @@ enum MessageSet<'a> {
     Uids(&'a [u32]),
 }
 
-impl InboxReader {
-    /// Connects securely, signs in and opens the Inbox read-only.
-    pub async fn open(account: ImapAccount, options: OpenOptions) -> Result<Self, ImapError> {
-        Self::open_with_socket_timeout(account, options, SOCKET_TIMEOUT_SECONDS).await
+impl MailboxReader {
+    /// Connects securely, signs in and opens the mailbox read-only. `mailbox`
+    /// is the name as LIST gave it, or `INBOX`.
+    pub async fn open(
+        account: ImapAccount,
+        options: OpenOptions,
+        mailbox: &str,
+    ) -> Result<Self, ImapError> {
+        Self::open_with_socket_timeout(account, options, mailbox, SOCKET_TIMEOUT_SECONDS).await
     }
 
     /// Tests shorten the socket timeout to observe stalled servers quickly.
@@ -53,23 +59,34 @@ impl InboxReader {
     pub async fn open_with_short_socket_timeout(
         account: ImapAccount,
         options: OpenOptions,
+        mailbox: &str,
         socket_timeout_seconds: u32,
     ) -> Result<Self, ImapError> {
-        Self::open_with_socket_timeout(account, options, socket_timeout_seconds).await
+        Self::open_with_socket_timeout(account, options, mailbox, socket_timeout_seconds).await
     }
 
     async fn open_with_socket_timeout(
         account: ImapAccount,
         options: OpenOptions,
+        mailbox_name: &str,
         socket_timeout_seconds: u32,
     ) -> Result<Self, ImapError> {
         let mut notices = ServerNotices::default();
-        match session::open_inbox(&account, &options, socket_timeout_seconds, &mut notices).await {
-            Ok(inbox) => Ok(Self {
+        let opened = session::open_mailbox(
+            &account,
+            &options,
+            socket_timeout_seconds,
+            &mut notices,
+            mailbox_name,
+        )
+        .await;
+        match opened {
+            Ok(mailbox) => Ok(Self {
                 account,
                 options,
                 socket_timeout_seconds,
-                inbox,
+                mailbox_name: mailbox_name.to_owned(),
+                mailbox,
                 notices,
                 needs_reconnect: false,
             }),
@@ -77,12 +94,12 @@ impl InboxReader {
         }
     }
 
-    /// The Inbox version the read UIDs belong to.
+    /// The mailbox version the read UIDs belong to.
     pub fn uid_validity(&self) -> Option<u32> {
-        self.inbox.uid_validity
+        self.mailbox.uid_validity
     }
 
-    /// Reads the rows of the newest `batch_size` Inbox messages, at least one,
+    /// Reads the rows of the newest `batch_size` messages, at least one,
     /// in descending UID order. A message the server did not answer for is
     /// left out. A server that answers for some messages and then refuses the
     /// command leaves the list short; its reason travels with the rows,
@@ -92,7 +109,7 @@ impl InboxReader {
         row_items: RowItems,
         batch_size: u32,
     ) -> Result<MessageList, ImapError> {
-        let count = self.inbox.message_count;
+        let count = self.mailbox.message_count;
         if count == 0 {
             return Ok(MessageList {
                 rows: Vec::new(),
@@ -127,9 +144,9 @@ impl InboxReader {
                     ..server_reply
                 }),
             }),
-            // Messages deleted since EXAMINE are missing; that is not an empty Inbox.
+            // Messages deleted since EXAMINE are missing; that is not an empty mailbox.
             FetchEnd::Completed if rows.is_empty() => {
-                Err(self.error(ImapFailure::InboxChanged.into()))
+                Err(self.error(ImapFailure::MailboxChanged.into()))
             }
             FetchEnd::Completed => Ok(MessageList {
                 rows,
@@ -162,7 +179,7 @@ impl InboxReader {
             }
         }
         if structures.is_empty() {
-            return Err(self.error(ImapFailure::InboxChanged.into()));
+            return Err(self.error(ImapFailure::MailboxChanged.into()));
         }
         for uid in uids.iter().filter(|uid| !structures.contains_key(uid)) {
             tracing::debug!(uid, "message disappeared");
@@ -210,26 +227,27 @@ impl InboxReader {
         Ok(())
     }
 
-    /// Replaces the session with a fresh one on the same Inbox.
+    /// Replaces the session with a fresh one on the same mailbox.
     async fn reconnect(&mut self) -> Result<(), ImapError> {
         tracing::info!("reconnecting after a structure that could not be read");
-        self.inbox.connection.close();
-        let opened = session::open_inbox(
+        self.mailbox.connection.close();
+        let opened = session::open_mailbox(
             &self.account,
             &self.options,
             self.socket_timeout_seconds,
             &mut self.notices,
+            &self.mailbox_name,
         )
         .await;
-        let inbox = match opened {
-            Ok(inbox) => inbox,
+        let mailbox = match opened {
+            Ok(mailbox) => mailbox,
             Err(failure) => return Err(self.error(failure)),
         };
         // Another UIDVALIDITY means the UIDs now name other messages.
-        if inbox.uid_validity != self.inbox.uid_validity {
-            return Err(self.error(ImapFailure::InboxChanged.into()));
+        if mailbox.uid_validity != self.mailbox.uid_validity {
+            return Err(self.error(ImapFailure::MailboxChanged.into()));
         }
-        self.inbox = inbox;
+        self.mailbox = mailbox;
         self.needs_reconnect = false;
         Ok(())
     }
@@ -306,7 +324,7 @@ impl InboxReader {
         if self.needs_reconnect {
             self.reconnect().await?;
         }
-        let session = &mut self.inbox.session;
+        let session = &mut self.mailbox.session;
         let responses = match messages {
             MessageSet::Sequence(first, last) => {
                 match session.fetch(format!("{first}:{last}"), items).await {
@@ -328,7 +346,7 @@ impl InboxReader {
             );
         }
         if matches!(&responses.end, FetchEnd::Failed(error) if is_parse_failure(error)) {
-            self.inbox.connection.close();
+            self.mailbox.connection.close();
             self.needs_reconnect = true;
         }
         Ok(responses)

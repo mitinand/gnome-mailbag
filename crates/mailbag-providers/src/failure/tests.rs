@@ -62,7 +62,7 @@ fn every_failure_value_has_its_kind() {
         ),
         // The same codes at another step say nothing about the credentials.
         (
-            imap_failure(Failed(ImapStep::OpenInbox), Some("AUTHENTICATIONFAILED")),
+            imap_failure(Failed(ImapStep::OpenMailbox), Some("AUTHENTICATIONFAILED")),
             Kind::ServerStepFailed(ServerStep::OpenInbox),
         ),
         (
@@ -82,7 +82,7 @@ fn every_failure_value_has_its_kind() {
             Kind::NoSignInMethod,
         ),
         (
-            imap_failure(ImapFailure::InboxChanged, None),
+            imap_failure(ImapFailure::MailboxChanged, None),
             Kind::InboxChanged,
         ),
         (

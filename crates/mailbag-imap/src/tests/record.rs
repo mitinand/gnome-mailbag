@@ -1,14 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The two guarantees of what reading an Inbox writes: a connection names the
+//! The two guarantees of what reading a mailbox writes: a connection names the
 //! server it went to even when it fails, and no sign-in name reaches a line
 //! (specs/003-logging).
 
 use super::test_record::CapturedRecord;
 use super::{expect_failure, expect_success, plain_messages, run};
 use crate::{
-    Credential, Encryption, ImapAccount, ImapFailure, ImapStep, InboxReader, OpenOptions, RowItems,
+    Credential, Encryption, ImapAccount, ImapFailure, ImapStep, MailboxReader, OpenOptions,
+    RowItems,
     session::replace_sign_in_name,
     test_server::{FixtureSetup, ImapFixture, TEST_LOGIN, TEST_PASSWORD},
 };
@@ -53,7 +54,11 @@ fn a_connection_that_fails_leaves_the_host_in_the_record() {
         encryption: Encryption::ImplicitTls,
     };
     let record = CapturedRecord::start(tracing::Level::DEBUG);
-    let error = expect_failure(run(InboxReader::open(unreachable, OpenOptions::default())));
+    let error = expect_failure(run(MailboxReader::open(
+        unreachable,
+        OpenOptions::default(),
+        "INBOX",
+    )));
     assert_eq!(error.failure, ImapFailure::Failed(ImapStep::Connect));
     let attempts: Vec<String> = record
         .lines_at("DEBUG")
@@ -74,7 +79,11 @@ fn a_refused_sign_in_is_logged_with_a_short_sign_in_name_replaced() {
     let mut account = fixture.account_with_password("wrong password");
     account.login = "ab".to_owned();
     let record = CapturedRecord::start(tracing::Level::DEBUG);
-    expect_failure(run(InboxReader::open(account, OpenOptions::default())));
+    expect_failure(run(MailboxReader::open(
+        account,
+        OpenOptions::default(),
+        "INBOX",
+    )));
     let replies: Vec<String> = record
         .lines_at("DEBUG")
         .into_iter()
@@ -107,7 +116,11 @@ fn a_refused_sign_in_carries_its_texts_with_the_sign_in_name_replaced_once() {
     });
     let mut account = fixture.account_with_password("wrong password");
     account.login = "in".to_owned();
-    let error = expect_failure(run(InboxReader::open(account, OpenOptions::default())));
+    let error = expect_failure(run(MailboxReader::open(
+        account,
+        OpenOptions::default(),
+        "INBOX",
+    )));
     let reply = error.server_reply.expect("the rejection is kept");
     assert_eq!(reply.text, "<login> may not sign <login> as <login>");
     assert_eq!(error.alerts, ["Password for <login> expired"]);
@@ -123,7 +136,11 @@ fn the_refusal_of_a_short_list_carries_the_sign_in_name_replaced() {
     });
     let mut account = fixture.account();
     account.login = "some".to_owned();
-    let mut reader = expect_success(run(InboxReader::open(account, OpenOptions::default())));
+    let mut reader = expect_success(run(MailboxReader::open(
+        account,
+        OpenOptions::default(),
+        "INBOX",
+    )));
     let listed = expect_success(run(reader.fetch_rows(RowItems::Standard, 100)));
     let refusal = listed.refusal.expect("the list is short");
     assert_eq!(refusal.text, "<login> messages could not be FETCHed");

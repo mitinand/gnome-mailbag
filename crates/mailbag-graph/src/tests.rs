@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::{
-    GraphError, GraphFailure, GraphMessage, InboxPage, Mailbox, list_inbox_messages,
-    list_inbox_messages_with_short_wait_limit,
+    GraphError, GraphFailure, GraphFolder, GraphMessage, Mailbox, MessagePage, WellKnownFolder,
+    list_folders, list_mailbox_messages, list_mailbox_messages_with_short_wait_limit,
     test_server::{
-        ReceivedRequest, ScriptedAnswer, ScriptedService, TEST_ACCESS_TOKEN, fixture_immutable_id,
-        fixture_received_unix,
+        ReceivedRequest, ScriptedAnswer, ScriptedFolders, ScriptedService, TEST_ACCESS_TOKEN,
+        fixture_immutable_id, fixture_received_unix, folder_entry,
     },
 };
 use std::{
@@ -26,8 +26,13 @@ fn run<T>(future: impl Future<Output = T>) -> T {
         .unwrap()
 }
 
-fn list_from(service_url: &str) -> Result<InboxPage, GraphError> {
-    run(list_inbox_messages(service_url, TEST_ACCESS_TOKEN, 100))
+fn list_from(service_url: &str) -> Result<MessagePage, GraphError> {
+    run(list_mailbox_messages(
+        service_url,
+        TEST_ACCESS_TOKEN,
+        "inbox",
+        100,
+    ))
 }
 
 fn failure_from(answer: ScriptedAnswer) -> GraphError {
@@ -69,7 +74,7 @@ fn messages_arrive_with_their_fields_and_text() {
     };
     assert_eq!(
         page,
-        InboxPage {
+        MessagePage {
             messages: vec![
                 GraphMessage {
                     immutable_id: fixture_immutable_id(1),
@@ -160,9 +165,10 @@ fn a_closed_port_fails_the_connection() {
 fn a_silent_service_times_out_at_the_wait_limit() {
     let service = ScriptedService::stalled();
     let started = Instant::now();
-    let error = run(list_inbox_messages_with_short_wait_limit(
+    let error = run(list_mailbox_messages_with_short_wait_limit(
         &service.url(),
         TEST_ACCESS_TOKEN,
+        "inbox",
         100,
         1,
     ))
@@ -202,7 +208,7 @@ fn dropping_the_listing_ends_its_request() {
     let service = ScriptedService::stalled();
     let service_url = service.url();
     run(async {
-        let listing = list_inbox_messages(&service_url, TEST_ACCESS_TOKEN, 100);
+        let listing = list_mailbox_messages(&service_url, TEST_ACCESS_TOKEN, "inbox", 100);
         glib::future_with_timeout(Duration::from_millis(300), listing)
             .await
             .expect_err("the service never answers");
@@ -213,6 +219,193 @@ fn dropping_the_listing_ends_its_request() {
     assert_eq!(
         sent.matches("GET /me/mailFolders/inbox/messages?").count(),
         1,
+        "{sent}"
+    );
+}
+
+fn folders_from(
+    folders: ScriptedFolders,
+) -> (Result<Vec<GraphFolder>, GraphError>, ScriptedService) {
+    let service = ScriptedService::start_with_folders(ScriptedAnswer::inbox(1), folders);
+    (run(list_folders(service.url(), TEST_ACCESS_TOKEN)), service)
+}
+
+fn folder(
+    id: &str,
+    name: &str,
+    parent_id: &str,
+    well_known: Option<WellKnownFolder>,
+) -> GraphFolder {
+    GraphFolder {
+        id: id.to_owned(),
+        name: name.to_owned(),
+        parent_id: Some(parent_id.to_owned()),
+        well_known,
+    }
+}
+
+#[test]
+fn the_whole_tree_arrives_from_every_page_with_the_well_known_folders_marked() {
+    let (listed, service) = folders_from(ScriptedFolders {
+        pages: vec![
+            Ok(vec![
+                folder_entry("inbox-id", "Incoming", "root-id"),
+                folder_entry("projects-id", "Projects", "root-id"),
+            ]),
+            Ok(vec![
+                folder_entry("reports-id", "Reports", "projects-id"),
+                folder_entry("sent-id", "Outgoing", "root-id"),
+            ]),
+        ],
+        // No archive was ever created, so that name gives no folder.
+        well_known: vec![
+            ("inbox", ScriptedAnswer::folder_id("inbox-id")),
+            ("sentitems", ScriptedAnswer::folder_id("sent-id")),
+        ],
+    });
+    assert_eq!(
+        listed.expect("a folder list"),
+        [
+            folder(
+                "inbox-id",
+                "Incoming",
+                "root-id",
+                Some(WellKnownFolder::Inbox)
+            ),
+            folder("projects-id", "Projects", "root-id", None),
+            folder("reports-id", "Reports", "projects-id", None),
+            folder(
+                "sent-id",
+                "Outgoing",
+                "root-id",
+                Some(WellKnownFolder::SentItems)
+            ),
+        ]
+    );
+    let requests = service.received_requests();
+    let asked: Vec<(&str, &str)> = requests
+        .iter()
+        .map(|request| (request.path.as_str(), request.query.as_str()))
+        .collect();
+    assert_eq!(
+        asked,
+        [
+            (
+                "/me/mailFolders/delta",
+                "$select=id,displayName,parentFolderId,isHidden"
+            ),
+            ("/me/mailFolders/delta", "$skiptoken=1"),
+            ("/me/mailFolders/inbox", "$select=id"),
+            ("/me/mailFolders/drafts", "$select=id"),
+            ("/me/mailFolders/sentitems", "$select=id"),
+            ("/me/mailFolders/deleteditems", "$select=id"),
+            ("/me/mailFolders/junkemail", "$select=id"),
+            ("/me/mailFolders/archive", "$select=id"),
+        ]
+    );
+    assert!(
+        requests.iter().all(|request| {
+            request.authorization == Some(format!("Bearer {TEST_ACCESS_TOKEN}"))
+                && request.prefer.is_none()
+        }),
+        "{requests:?}"
+    );
+}
+
+#[test]
+fn a_folder_repeated_on_a_later_page_counts_once_with_its_last_entry() {
+    let (listed, _service) = folders_from(ScriptedFolders {
+        pages: vec![
+            Ok(vec![folder_entry("projects-id", "Projects", "root-id")]),
+            Ok(vec![folder_entry(
+                "projects-id",
+                "Projects 2026",
+                "root-id",
+            )]),
+        ],
+        well_known: Vec::new(),
+    });
+    assert_eq!(
+        listed.expect("a folder list"),
+        [folder("projects-id", "Projects 2026", "root-id", None)]
+    );
+}
+
+#[test]
+fn removed_entries_and_hidden_folders_are_left_out() {
+    let (listed, _service) = folders_from(ScriptedFolders {
+        pages: vec![
+            Ok(vec![
+                folder_entry("projects-id", "Projects", "root-id"),
+                folder_entry("old-id", "Old", "root-id"),
+                serde_json::json!({
+                    "id": "hidden-id",
+                    "displayName": "Hidden",
+                    "parentFolderId": "root-id",
+                    "isHidden": true,
+                }),
+            ]),
+            Ok(vec![
+                serde_json::json!({ "id": "old-id", "@removed": { "reason": "deleted" } }),
+            ]),
+        ],
+        well_known: Vec::new(),
+    });
+    assert_eq!(
+        listed.expect("a folder list"),
+        [folder("projects-id", "Projects", "root-id", None)]
+    );
+}
+
+#[test]
+fn a_failing_later_page_fails_the_whole_list() {
+    let (listed, _service) = folders_from(ScriptedFolders {
+        pages: vec![
+            Ok(vec![folder_entry("projects-id", "Projects", "root-id")]),
+            Err(ScriptedAnswer::throttled()),
+        ],
+        well_known: Vec::new(),
+    });
+    assert_eq!(
+        listed.expect_err("a failed page").failure,
+        GraphFailure::Refused {
+            status: 429,
+            code: Some("ApplicationThrottled".to_owned()),
+        }
+    );
+}
+
+#[test]
+fn a_refused_well_known_name_fails_the_list_unlike_a_missing_folder() {
+    let (listed, _service) = folders_from(ScriptedFolders {
+        pages: vec![Ok(vec![folder_entry("inbox-id", "Inbox", "root-id")])],
+        well_known: vec![("inbox", ScriptedAnswer::throttled())],
+    });
+    assert_eq!(
+        listed.expect_err("a refused lookup").failure,
+        GraphFailure::Refused {
+            status: 429,
+            code: Some("ApplicationThrottled".to_owned()),
+        }
+    );
+}
+
+/// The scripted service sees paths decoded, so the request line is read as
+/// sent.
+#[test]
+fn the_messages_of_a_folder_are_asked_for_by_its_escaped_id() {
+    let service = ScriptedService::stalled();
+    let service_url = service.url();
+    run(async {
+        let listing = list_mailbox_messages(&service_url, TEST_ACCESS_TOKEN, "AAMkAD=/folder", 100);
+        glib::future_with_timeout(Duration::from_millis(300), listing)
+            .await
+            .expect_err("the service never answers");
+        glib::timeout_future(Duration::from_millis(100)).await;
+    });
+    let sent = service.read_first_connection();
+    assert!(
+        sent.starts_with("GET /me/mailFolders/AAMkAD%3D%2Ffolder/messages?"),
         "{sent}"
     );
 }

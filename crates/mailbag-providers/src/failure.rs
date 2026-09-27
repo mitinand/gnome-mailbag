@@ -69,7 +69,7 @@ impl LoadFailure {
                 ImapFailure::Failed(step) => FailureKind::ServerStepFailed(server_step(step)),
                 ImapFailure::TimedOut(step) => FailureKind::ServerNotResponding(server_step(step)),
                 ImapFailure::NoSignInMethod => FailureKind::NoSignInMethod,
-                ImapFailure::InboxChanged => FailureKind::InboxChanged,
+                ImapFailure::MailboxChanged => FailureKind::InboxChanged,
             },
             Self::MicrosoftGraph(error) => match error.failure {
                 GraphFailure::ConnectionFailed => FailureKind::ServiceUnreachable,
@@ -195,7 +195,10 @@ fn server_step(step: ImapStep) -> ServerStep {
         ImapStep::Connect => ServerStep::Connect,
         ImapStep::SecureConnection => ServerStep::SecureConnection,
         ImapStep::SignIn => ServerStep::SignIn,
-        ImapStep::OpenInbox => ServerStep::OpenInbox,
+        // Nothing lists mailboxes before folder lists are loaded; the domain
+        // names this step when it gains folders.
+        ImapStep::ListMailboxes => ServerStep::OpenInbox,
+        ImapStep::OpenMailbox => ServerStep::OpenInbox,
         ImapStep::FetchMessages => ServerStep::FetchMessages,
         ImapStep::FetchText => ServerStep::FetchText,
     }
