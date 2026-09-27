@@ -139,11 +139,12 @@ ancestor collapses (an earlier offline probe), which the spec turns into
 a rule (FR-010). The approved `folder-row.ui` already wraps the row in a
 `GtkTreeExpander`; Workbench's "List View with a Tree" is the demo followed.
 **Decision**: account nodes in a `ListStore` updated in place by identity,
-as today; each account's folder subtree rebuilt after a completed Refresh
-Account (`remove_all` and fill in sidebar order), since the spec keeps no
-expansion memory and a Refresh Account is a maintenance action; the
-selection lives in the window's state, as today, and the row is reselected
-on bind when its node is the shown mailbox (plan challenge 2026-09-27: an
+as today; each account's folder subtree rebuilt when its stored list
+changed (`remove_all` and fill in sidebar order), since the spec keeps no
+expansion memory and a Refresh Account is a maintenance action; an unchanged
+list keeps the rows, so what the user collapsed stays collapsed; the
+selection lives in the window's state, as today, and the shown mailbox's row
+is marked again after the rebuild (plan challenge 2026-09-27: an
 in-place diff would have to move rows across parents and reorder siblings
 for ~50 lines with no requirement behind it).
 
@@ -167,7 +168,9 @@ attributes, not by its name, which is localized.
 the status page when nothing is shown, the banner over the shown mailbox's
 rows otherwise (007 FR-005); Retry repeats Refresh Account
 (`RetriedOperation::RefreshAccount`). An empty completed list is not a
-failure: the account is hidden for the run with 001's toast. Each account
+failure: nothing is stored or shown differently, and the record says so
+(the hiding of the account for the run was dropped on 2026-09-27: no
+supported provider lists no mailbox). Each account
 keeps one latest outcome with its target, as 007 FR-005 already says of
 "the latest refresh of the account": a mailbox outcome shows when that
 mailbox is shown, a folder-list outcome whenever the account's mailbox or
@@ -176,3 +179,5 @@ notices never compete (plan challenge 2026-09-27). Folder lists that cannot
 be read from the store are shown as 007 FR-013 shows an unreadable stored
 list: the failure page with Details and a Retry that reads again; a silent
 "not loaded" would hide stored mail without a word (review, 2026-09-27).
+That Retry is the stored mail's one Retry, which reads the folder lists and
+the shown mailbox together (2026-09-27, before the window was built).

@@ -4,6 +4,9 @@
 **Created**: 2026-09-26
 **Status**: Approved on 2026-09-27. Sized and challenged on 2026-09-26,
 clarified on 2026-09-27; the decisions are recorded under Clarifications.
+Amended on 2026-09-27 before the window was built: an empty folder list no
+longer hides the account (FR-001), and folder lists that cannot be read
+share the stored mail's Retry (FR-008).
 **Input**: Support for several mailboxes per account: their discovery, role
 recognition, nesting, storage and display in the sidebar. Deleting mailboxes
 is not built. Once mailboxes are shown, the account itself can no longer be
@@ -244,8 +247,8 @@ rows and the failure shown after each.
 | The folder list arrived but the folder does not open | A failed Refresh Mailbox; nothing stored changes, the folder stays listed | FR-011 |
 | The server refuses or cuts short the folder list | A failed Refresh Account; nothing stored changes | FR-001, FR-011 |
 | The shown folder is gone from a completed folder list | Nothing is selected; the list asks the user to select a mailbox | FR-010 |
-| Refresh Account completes with no mailbox at all | Nothing stored; the account is hidden until the next start; a toast says that no mailbox was found | FR-001 |
-| The stored folder lists cannot be read | The failure page with Details in the list's place, whose Retry reads the lists again; the sidebar keeps what it showed | FR-008 |
+| Refresh Account completes with no mailbox at all | Nothing stored and nothing shown changes; the record says that no mailbox was found | FR-001 |
+| The stored folder lists cannot be read | The failure page with Details in the list's place, as for stored mail that cannot be read; its Retry reads the folder lists and the shown mailbox again; the sidebar keeps what it showed | FR-008 |
 | The server lists only containers that cannot be opened (RFC 9051 §6.3.5 allows it) | The containers are shown; the account stays a selectable row, so Refresh Account stays available | FR-009 |
 | A Microsoft 365 listing repeats a folder on two pages or marks one as removed | The folder counts once; a removed entry is left out | FR-001 |
 
@@ -329,7 +332,8 @@ rows and the failure shown after each.
   for a hidden account and a record line; after the next start the account
   is shown again with the folder list it had stored before, or as one whose
   folders are not loaded when it had none. The case is too rare to carry
-  through every rule of the sidebar.
+  through every rule of the sidebar. *Changed on 2026-09-27 before the
+  window was built, see below.*
 - Q: Can a renamed IMAP folder be recognized, so that its stored mail
   stays? → A: Only with a server-given identifier. For Generic IMAP, RFC
   9051 keeps a renamed mailbox's UIDs but neither promises that its
@@ -396,6 +400,17 @@ rows and the failure shown after each.
   (FR-003).
 - `UTF8=ONLY` counts as `UTF8=ACCEPT` (RFC 6855 §6) (FR-005).
 
+### Session 2026-09-27 (before the window was built)
+
+- Q: Does an empty completed folder list still hide the account for the
+  run? → A: No. No supported provider lists no mailbox (Gmail and
+  Microsoft 365 always have an Inbox), so the hiding, its toast and its
+  state have no case to serve; nothing is stored, nothing shown changes and
+  the record says so (FR-001).
+- Q: Does an unreadable folder list need a Retry of its own? → A: No. It is
+  shown as any stored mail that cannot be read, and the one Retry reads the
+  folder lists and the shown mailbox again (FR-008).
+
 ## Requirements
 
 ### Functional Requirements
@@ -410,9 +425,8 @@ rows and the failure shown after each.
   one keeps its stored messages and is updated. A folder list the server
   refused, cut short or that could not be completed (a further page failed)
   MUST make the action fail and change nothing stored. A completed folder
-  list without any folder stores nothing: the account is hidden from the
-  sidebar until the next start, the toast that 001 uses for a hidden account
-  says that no mailbox was found, and the record says so. Refresh Mailbox loads
+  list without any folder stores nothing and changes nothing shown; the
+  record says that no mailbox was found. Refresh Mailbox loads
   the selected folder's newest messages as today (002 FR-002, 004 FR-003,
   005 FR-003) and does not touch the folder list. One load runs at a time;
   both actions are unavailable while one runs (007).
@@ -512,8 +526,9 @@ rows and the failure shown after each.
   and after each completed load of the account. Folder lists that cannot be
   read are a failure of the read, shown as 007 FR-013 shows an unreadable
   stored list: the failure page in the list's place with Details, whose
-  Retry reads the lists again; the sidebar keeps what it showed; the failure
-  is written to the record.
+  Retry reads the stored mail again, the folder lists and the shown mailbox
+  together; the sidebar keeps what it showed; the failure is written to the
+  record.
 
 **Navigation**
 

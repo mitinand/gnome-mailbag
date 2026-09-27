@@ -10,7 +10,7 @@ use crate::{
     gmail::{list_gmail_folders, load_gmail_mailbox},
     imap::{list_imap_folders, load_imap_mailbox},
     microsoft365::{list_microsoft365_folders, load_microsoft365_mailbox},
-    store_load::{store_folder_list, store_inbox_until_folders, store_mailbox},
+    store_load::{store_folder_list, store_mailbox},
 };
 use futures_util::{
     FutureExt,
@@ -54,42 +54,11 @@ impl LoadKind {
             Self::PanicsForTest(account_id) => account_id,
         }
     }
-
-    /// The Inbox by the name its provider opens it by without a folder list:
-    /// IMAP's reserved name, Microsoft Graph's well-known name.
-    fn inbox(&self) -> FolderRef {
-        let identity = match self {
-            Self::Microsoft365 { .. } => "inbox",
-            _ => "INBOX",
-        };
-        FolderRef {
-            account: self.account_id().clone(),
-            identity: identity.to_owned(),
-        }
-    }
-}
-
-/// What the worker loads and writes.
-pub(crate) enum LoadJob {
-    Load(LoadTarget),
-    /// Until the window knows folders: the account's Inbox, stored as its
-    /// one folder.
-    InboxUntilFolders,
-}
-
-impl LoadJob {
-    /// What the record calls the load.
-    pub(crate) fn record_name(&self) -> &'static str {
-        match self {
-            Self::Load(target) => target.record_name(),
-            Self::InboxUntilFolders => "mailbox",
-        }
-    }
 }
 
 pub(crate) struct LoadRequest {
     kind: LoadKind,
-    job: LoadJob,
+    target: LoadTarget,
     /// Closed when the caller cancels or drops the load.
     cancelled: async_channel::Receiver<()>,
     outcome: async_channel::Sender<LoadResult>,
@@ -108,22 +77,22 @@ impl MailWorker {
         }
     }
 
-    /// Runs `job` for the account the access data names. `on_finished` runs
+    /// Loads `target` of the account the access data names. `on_finished` runs
     /// once on the calling GLib context, even when the worker stops, so a
     /// load always ends and the refresh actions become available again.
     pub(crate) fn start_load(
         &self,
         kind: LoadKind,
-        job: LoadJob,
+        target: LoadTarget,
         on_finished: impl FnOnce(LoadResult) + 'static,
     ) -> LoadHandle {
         let account_id = kind.account_id().clone();
-        let record_name = job.record_name();
+        let record_name = target.record_name();
         let (cancel, cancelled) = async_channel::bounded(1);
         let (sender, outcome) = async_channel::bounded(1);
         let request = LoadRequest {
             kind,
-            job,
+            target,
             cancelled,
             outcome: sender,
         };
@@ -190,7 +159,7 @@ fn run_worker(requests: &async_channel::Receiver<LoadRequest>, store: &Store) {
             context.block_on(async {
                 while let Ok(request) = requests.recv().await {
                     let outcome =
-                        run_load(request.kind, request.job, store, &request.cancelled).await;
+                        run_load(request.kind, request.target, store, &request.cancelled).await;
                     request.outcome.try_send(outcome).ok();
                 }
             });
@@ -202,11 +171,11 @@ fn run_worker(requests: &async_channel::Receiver<LoadRequest>, store: &Store) {
 /// cancels the load.
 async fn run_load(
     kind: LoadKind,
-    job: LoadJob,
+    target: LoadTarget,
     store: &Store,
     cancelled: &async_channel::Receiver<()>,
 ) -> LoadResult {
-    let mut load = Box::pin(load_catching_panics(kind, job, store, cancelled));
+    let mut load = Box::pin(load_catching_panics(kind, target, store, cancelled));
     match future::select(&mut load, pin!(cancelled.recv())).await {
         Either::Left((outcome, _)) => outcome,
         Either::Right(_) => {
@@ -224,27 +193,23 @@ async fn run_load(
 /// (specs/006-error-handling FR-014).
 async fn load_catching_panics(
     kind: LoadKind,
-    job: LoadJob,
+    target: LoadTarget,
     store: &Store,
     cancelled: &async_channel::Receiver<()>,
 ) -> LoadResult {
     let account_id = kind.account_id().clone();
-    let record_name = job.record_name();
+    let record_name = target.record_name();
     // A load cancelled while it waited for the store writes nothing
     // (specs/007-mail-storage/research.md §6).
     let load_cancelled = || cancelled.is_closed();
     let load = async move {
-        Ok::<_, LoadFailure>(match job {
-            LoadJob::Load(LoadTarget::FolderList) => {
+        Ok::<_, LoadFailure>(match target {
+            LoadTarget::FolderList => {
                 let account = kind.account_id().clone();
                 store_folder_list(store, &account, list_folders(kind).await?, load_cancelled)
             }
-            LoadJob::Load(LoadTarget::Mailbox(folder)) => {
+            LoadTarget::Mailbox(folder) => {
                 store_mailbox(store, load_mailbox(kind, folder).await?, load_cancelled)
-            }
-            LoadJob::InboxUntilFolders => {
-                let inbox = kind.inbox();
-                store_inbox_until_folders(store, load_mailbox(kind, inbox).await?, load_cancelled)
             }
         })
     };

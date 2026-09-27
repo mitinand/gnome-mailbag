@@ -8,7 +8,7 @@
 
 use super::*;
 use crate::{test_directory::TestDirectory, test_record::CapturedRecord};
-use mailbag_domain::{ContentExplanation, DisplayFields, FailureKind, ReceivedContent};
+use mailbag_domain::{ContentExplanation, DisplayFields, FailureKind, FolderRole, ReceivedContent};
 use std::{fs, os::unix::fs::PermissionsExt, path::Path};
 
 fn account(name: &str) -> AccountId {

@@ -28,9 +28,7 @@ use folders::{
     delete_messages_without_folder, delete_unlisted_folders, read_folder_messages, stored_folder,
     upsert_folders, write_mailbox,
 };
-use mailbag_domain::{
-    AccountId, Failure, Folder, FolderMembership, FolderRef, FolderRole, Message,
-};
+use mailbag_domain::{AccountId, Failure, Folder, FolderMembership, FolderRef, Message};
 use open::{configure_connection, create_schema, open_store};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::{
@@ -170,51 +168,6 @@ impl Store {
         })
     }
 
-    /// Until the window knows folders: stores the account's Inbox load as the
-    /// one folder `INBOX`.
-    pub fn replace_inbox(
-        &self,
-        account: &AccountId,
-        messages: &[Message],
-        load_cancelled: impl FnOnce() -> bool,
-    ) -> Result<StoreWrite, Failure> {
-        let inbox = Folder {
-            identity: INBOX.to_owned(),
-            name: INBOX.to_owned(),
-            parent: None,
-            attributes: Vec::new(),
-            role: Some(FolderRole::Inbox),
-            selectable: true,
-        };
-        let placed: Vec<(Message, FolderMembership)> = (0..)
-            .zip(messages)
-            .map(|(position, message)| {
-                (
-                    message.clone(),
-                    FolderMembership {
-                        uid: None,
-                        position,
-                    },
-                )
-            })
-            .collect();
-        self.with_connection(StoreOperation::Write, |connection| {
-            if load_cancelled() {
-                return Ok(StoreWrite::LoadCancelled);
-            }
-            let transaction = connection.transaction()?;
-            upsert_folders(&transaction, account, std::slice::from_ref(&inbox))?;
-            write_mailbox(&transaction, &inbox_of(account), &placed)?;
-            transaction.commit()?;
-            Ok(StoreWrite::Stored)
-        })
-    }
-
-    /// Until the window knows folders: the account's folder `INBOX`.
-    pub fn read_inbox(&self, account: &AccountId) -> Result<Option<Vec<Message>>, Failure> {
-        self.read_mailbox(&inbox_of(account))
-    }
-
     /// Deletes the stored mail of every account not in `current_accounts`,
     /// and returns those accounts for the record.
     pub fn delete_other_accounts(
@@ -263,15 +216,5 @@ impl Store {
         }
         let connection = connection.as_mut().expect("the store was opened above");
         work(connection).map_err(|error| storage_failure(operation, &error))
-    }
-}
-
-/// The Inbox's reserved name (RFC 3501 §5.1), until the window knows folders.
-const INBOX: &str = "INBOX";
-
-fn inbox_of(account: &AccountId) -> FolderRef {
-    FolderRef {
-        account: account.clone(),
-        identity: INBOX.to_owned(),
     }
 }

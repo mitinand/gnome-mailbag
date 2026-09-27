@@ -62,19 +62,6 @@ pub(crate) fn store_mailbox(
     mailbox_load_result(written, &batch.folder, &placed, batch.incomplete)
 }
 
-/// Until the window knows folders: stores the Inbox's batch as the account's
-/// one folder.
-pub(crate) fn store_inbox_until_folders(
-    store: &Store,
-    batch: ReceivedBatch,
-    load_cancelled: impl FnOnce() -> bool,
-) -> LoadResult {
-    let placed = placed_messages(batch.messages, &batch.folder);
-    let messages: Vec<Message> = placed.iter().map(|(message, _)| message.clone()).collect();
-    let written = store.replace_inbox(&batch.folder.account, &messages, load_cancelled);
-    mailbox_load_result(written, &batch.folder, &placed, batch.incomplete)
-}
-
 fn mailbox_load_result(
     written: Result<StoreWrite, Failure>,
     folder: &FolderRef,

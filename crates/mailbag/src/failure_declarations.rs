@@ -11,6 +11,7 @@
 #[cfg(test)]
 mod tests;
 
+use crate::failure_dialog::RetriedOperation;
 use mailbag_domain::{
     ContentExplanation, Failure, FailureKind, IncompleteList, ReceivedContent, RemoteSource,
     RemoteText, ServerStep,
@@ -46,9 +47,18 @@ pub enum FailureAction {
     OnlineAccounts,
 }
 
-/// Where a rejected sign-in sends the user, for every provider.
-const CHECK_SIGN_IN: &str = "Check this account's sign-in in Online Accounts, then choose \
-                             Refresh Inbox.";
+/// The words that name the failed load: the account's folder list when Retry
+/// refreshes the account, otherwise the mailbox (specs/008-folders FR-011).
+fn choose_by_load(
+    retried: RetriedOperation,
+    folder_list: &'static str,
+    mailbox: &'static str,
+) -> &'static str {
+    match retried {
+        RetriedOperation::RefreshAccount => folder_list,
+        RetriedOperation::RefreshMailbox | RetriedOperation::ReadStoredMail => mailbox,
+    }
+}
 
 /// The heading of a remote text's block: who said it.
 pub fn remote_heading(source: RemoteSource) -> &'static str {
@@ -60,37 +70,51 @@ pub fn remote_heading(source: RemoteSource) -> &'static str {
     }
 }
 
-/// The failure of an operation that delivered nothing, such as a load.
-pub fn declare_failure(failure: &Failure) -> DeclaredFailure {
+/// The failure of an operation that delivered nothing, such as a load, which
+/// `retried` repeats.
+pub fn declare_failure(failure: &Failure, retried: RetriedOperation) -> DeclaredFailure {
+    // Where a rejected sign-in sends the user, for every provider.
+    let check_sign_in = choose_by_load(
+        retried,
+        "Check this account's sign-in in Online Accounts, then choose Refresh Account.",
+        "Check this account's sign-in in Online Accounts, then choose Refresh Mailbox.",
+    );
     let (title, explanation, advice, action) = match failure.kind {
         FailureKind::AccountSettingsUnavailable => (
             "Account settings unavailable",
             "This account's settings could not be read from Online Accounts.",
-            Some("Check this account in Online Accounts, then choose Refresh Inbox."),
+            Some(choose_by_load(
+                retried,
+                "Check this account in Online Accounts, then choose Refresh Account.",
+                "Check this account in Online Accounts, then choose Refresh Mailbox.",
+            )),
             Some(FailureAction::OnlineAccounts),
         ),
         FailureKind::EncryptionNotConfigured => (
             "No encryption configured",
             "This account has no encryption configured, so no password was requested and no \
              connection was made.",
-            Some(
+            Some(choose_by_load(
+                retried,
                 "Choose SSL or STARTTLS for this account in Online Accounts, then choose \
-                  Refresh Inbox.",
-            ),
+                 Refresh Account.",
+                "Choose SSL or STARTTLS for this account in Online Accounts, then choose \
+                 Refresh Mailbox.",
+            )),
             Some(FailureAction::OnlineAccounts),
         ),
         FailureKind::PasswordUnavailable => (
             "Password unavailable",
             "This account's password could not be read from Online Accounts, so no sign-in \
              was attempted.",
-            Some(CHECK_SIGN_IN),
+            Some(check_sign_in),
             Some(FailureAction::OnlineAccounts),
         ),
         FailureKind::AuthorizationUnavailable => (
             "Authorization unavailable",
             "This account's authorization could not be read from Online Accounts, so no \
              sign-in was attempted.",
-            Some(CHECK_SIGN_IN),
+            Some(check_sign_in),
             Some(FailureAction::OnlineAccounts),
         ),
         FailureKind::OnlineAccountsNotResponding => (
@@ -103,7 +127,11 @@ pub fn declare_failure(failure: &Failure) -> DeclaredFailure {
         // the declaration total.
         FailureKind::AccountRequestStopped => (
             "Loading stopped",
-            "Loading this Inbox stopped before it finished.",
+            choose_by_load(
+                retried,
+                "Loading the folder list stopped before it finished.",
+                "Loading this mailbox stopped before it finished.",
+            ),
             None,
             Some(FailureAction::Retry),
         ),
@@ -116,7 +144,7 @@ pub fn declare_failure(failure: &Failure) -> DeclaredFailure {
         FailureKind::ServerRejectedSignIn => (
             failed_step_title(ServerStep::SignIn),
             failed_step_explanation(ServerStep::SignIn),
-            Some(CHECK_SIGN_IN),
+            Some(check_sign_in),
             Some(FailureAction::OnlineAccounts),
         ),
         // A failed secure connection gets Retry: a refused certificate and a
@@ -141,8 +169,8 @@ pub fn declare_failure(failure: &Failure) -> DeclaredFailure {
             None,
         ),
         FailureKind::MailboxChanged => (
-            "Inbox changed",
-            "The messages being loaded are no longer in this Inbox.",
+            "Mailbox changed",
+            "The messages being loaded are no longer in this mailbox.",
             None,
             Some(FailureAction::Retry),
         ),
@@ -161,7 +189,7 @@ pub fn declare_failure(failure: &Failure) -> DeclaredFailure {
         FailureKind::ServiceRejectedSignIn => (
             "Sign-in rejected",
             "The mail service rejected sign-in.",
-            Some(CHECK_SIGN_IN),
+            Some(check_sign_in),
             Some(FailureAction::OnlineAccounts),
         ),
         // Any other status: the general arm, with the status in the details.
@@ -179,7 +207,11 @@ pub fn declare_failure(failure: &Failure) -> DeclaredFailure {
         ),
         FailureKind::Stopped => (
             "Refresh stopped",
-            "Loading this Inbox stopped because of an internal error.",
+            choose_by_load(
+                retried,
+                "Loading the folder list stopped because of an internal error.",
+                "Loading this mailbox stopped because of an internal error.",
+            ),
             Some("If this happens again, report it with the technical details."),
             Some(FailureAction::Retry),
         ),
@@ -198,7 +230,7 @@ pub fn declare_failure(failure: &Failure) -> DeclaredFailure {
         ),
         FailureKind::StoredMailUnreadable => (
             "Stored mail unreadable",
-            "The stored messages could not be read.",
+            "The stored mail could not be read.",
             None,
             Some(FailureAction::Retry),
         ),
@@ -213,7 +245,7 @@ pub fn declare_failure(failure: &Failure) -> DeclaredFailure {
     }
 }
 
-/// Why the list on screen holds fewer messages than the Inbox offered.
+/// Why the list on screen holds fewer messages than the mailbox offered.
 pub fn declare_short_list(incomplete: &IncompleteList) -> DeclaredFailure {
     match incomplete {
         IncompleteList::ServerRefused { reply, .. } => DeclaredFailure {
@@ -313,7 +345,7 @@ fn failed_step_title(step: ServerStep) -> &'static str {
         ServerStep::SecureConnection => "Secure connection failed",
         ServerStep::SignIn => "Sign-in rejected",
         ServerStep::ListFolders => "Folder list not received",
-        ServerStep::OpenMailbox => "Inbox not opened",
+        ServerStep::OpenMailbox => "Mailbox not opened",
         ServerStep::FetchMessages => "Message list not received",
         ServerStep::FetchText => "Message text not received",
     }
@@ -328,8 +360,8 @@ fn failed_step_explanation(step: ServerStep) -> &'static str {
         }
         ServerStep::SignIn => "The mail server rejected sign-in.",
         ServerStep::ListFolders => "The mail server did not send the folder list.",
-        ServerStep::OpenMailbox => "The mail server did not open the Inbox.",
-        ServerStep::FetchMessages => "The mail server did not send this Inbox's messages.",
+        ServerStep::OpenMailbox => "The mail server did not open this mailbox.",
+        ServerStep::FetchMessages => "The mail server did not send this mailbox's messages.",
         ServerStep::FetchText => "The mail server did not send the text of these messages.",
     }
 }
@@ -344,9 +376,9 @@ fn waiting_step_explanation(step: ServerStep) -> &'static str {
         ServerStep::ListFolders => {
             "The mail server stopped responding while sending the folder list."
         }
-        ServerStep::OpenMailbox => "The mail server stopped responding while opening the Inbox.",
+        ServerStep::OpenMailbox => "The mail server stopped responding while opening this mailbox.",
         ServerStep::FetchMessages => {
-            "The mail server stopped responding while sending this Inbox's messages."
+            "The mail server stopped responding while sending this mailbox's messages."
         }
         ServerStep::FetchText => {
             "The mail server stopped responding while sending the message text."

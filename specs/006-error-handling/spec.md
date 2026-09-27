@@ -8,7 +8,8 @@ is written in code corrected 2026-09-26, and failures handed to the
 application as domain values decided the same day and built in portion 6
 (research §1). The decisions taken
 at sizing, at the specification challenge and on the prototype are
-recorded under Clarifications.
+recorded under Clarifications. FR-004 and the contract amended on
+2026-09-27 by [Folders](../008-folders/spec.md).
 **Input**: One lasting model for how Mailbag reports failures, from the
 component that meets them to what the user sees. Today each failure is
 presented the way its feature happened to choose: a status page for a failed
@@ -316,6 +317,10 @@ from the approved forms, and decided:
   Inbox"), or instead of one, when the step happens outside Mailbag. A
   failure with nothing to do has no advice. Advice MUST NOT claim more than
   the failure proves (FR-009).
+  *Amended 2026-09-27 by [Folders](../008-folders/spec.md): the wording speaks of the
+  mailbox and of the two actions, Refresh Mailbox and Refresh Account,
+  whichever carries the failure; obtaining the folder list is a step of its
+  own, and Retry repeats the action that failed (008 FR-011).*
 - **FR-005 — The failure dialog**: Every channel's button opens the failure
   dialog, which presents the failure in this order and nothing else:
 

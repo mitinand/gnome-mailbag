@@ -64,4 +64,5 @@ Mailbox").
 - `app.refresh-mailbox` ("Refresh Mailbox"): the selected mailbox.
 - `app.refresh-account` ("Refresh Account"): the selected account or the
   selected mailbox's account.
-- `RetriedOperation::RefreshMailbox | RefreshAccount | ReadStoredMailbox | ReadFolderLists`.
+- `RetriedOperation::RefreshMailbox | RefreshAccount | ReadStoredMail`; the
+  last reads the folder lists and the shown mailbox again (`app.read-stored-mail`).

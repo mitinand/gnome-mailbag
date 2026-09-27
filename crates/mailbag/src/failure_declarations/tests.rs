@@ -33,7 +33,7 @@ fn sources(declared: &DeclaredFailure) -> Vec<RemoteSource> {
 #[test]
 fn a_timeout_at_sign_in_offers_retry_without_advice() {
     let failure = failure_of(FailureKind::ServerNotResponding(ServerStep::SignIn));
-    let declared = declare_failure(&failure);
+    let declared = declare_failure(&failure, RetriedOperation::RefreshMailbox);
     assert_eq!(declared.action, Some(FailureAction::Retry));
     assert_eq!(declared.advice, None);
     assert_eq!(declared.details, failure.details);
@@ -41,14 +41,17 @@ fn a_timeout_at_sign_in_offers_retry_without_advice() {
 
 #[test]
 fn a_rejected_sign_in_sends_to_online_accounts_with_the_alert_first() {
-    let declared = declare_failure(&Failure {
-        kind: FailureKind::ServerRejectedSignIn,
-        remote_texts: vec![
-            remote_text(RemoteSource::ServerAlert, "Password for <login> expired"),
-            remote_text(RemoteSource::ServerReply, "<login> may not sign in now"),
-        ],
-        details: "Failure: ServerRejectedSignIn\nServer code: AUTHENTICATIONFAILED".to_owned(),
-    });
+    let declared = declare_failure(
+        &Failure {
+            kind: FailureKind::ServerRejectedSignIn,
+            remote_texts: vec![
+                remote_text(RemoteSource::ServerAlert, "Password for <login> expired"),
+                remote_text(RemoteSource::ServerReply, "<login> may not sign in now"),
+            ],
+            details: "Failure: ServerRejectedSignIn\nServer code: AUTHENTICATIONFAILED".to_owned(),
+        },
+        RetriedOperation::RefreshMailbox,
+    );
     assert_eq!(declared.action, Some(FailureAction::OnlineAccounts));
     assert!(declared.advice.is_some());
     assert_eq!(
@@ -76,7 +79,7 @@ fn a_temporary_outage_and_an_unknown_code_offer_retry_with_the_code_in_the_detai
             details: format!("Failure: {kind:?}\nServer code: LIMIT"),
             ..failure_of(kind)
         };
-        let declared = declare_failure(&failure);
+        let declared = declare_failure(&failure, RetriedOperation::RefreshMailbox);
         assert_eq!(declared.action, Some(FailureAction::Retry), "{kind:?}");
         assert_eq!(declared.advice, None, "{kind:?}");
         assert_eq!(declared.details, failure.details, "{kind:?}");
@@ -85,28 +88,38 @@ fn a_temporary_outage_and_an_unknown_code_offer_retry_with_the_code_in_the_detai
 
 #[test]
 fn nothing_the_user_does_helps_a_missing_sign_in_method() {
-    let declared = declare_failure(&failure_of(FailureKind::NoSignInMethod));
+    let declared = declare_failure(
+        &failure_of(FailureKind::NoSignInMethod),
+        RetriedOperation::RefreshMailbox,
+    );
     assert_eq!(declared.action, None);
 }
 
 #[test]
 fn a_failed_secure_connection_offers_retry_since_a_cut_handshake_looks_the_same() {
     let kind = FailureKind::ServerStepFailed(ServerStep::SecureConnection);
-    let declared = declare_failure(&failure_of(kind));
+    let declared = declare_failure(&failure_of(kind), RetriedOperation::RefreshMailbox);
     assert_eq!(declared.action, Some(FailureAction::Retry));
 }
 
 #[test]
 fn the_mail_service_status_decides_between_online_accounts_and_retry() {
-    let rejected = declare_failure(&failure_of(FailureKind::ServiceRejectedSignIn));
+    let rejected = declare_failure(
+        &failure_of(FailureKind::ServiceRejectedSignIn),
+        RetriedOperation::RefreshMailbox,
+    );
     assert_eq!(rejected.action, Some(FailureAction::OnlineAccounts));
     assert!(rejected.advice.is_some());
 
-    let failed = declare_failure(&Failure {
-        kind: FailureKind::RequestRefused,
-        remote_texts: vec![remote_text(RemoteSource::ServiceMessage, "Service fault")],
-        details: "Failure: RequestRefused\nStatus: 500\nService code: generalException".to_owned(),
-    });
+    let failed = declare_failure(
+        &Failure {
+            kind: FailureKind::RequestRefused,
+            remote_texts: vec![remote_text(RemoteSource::ServiceMessage, "Service fault")],
+            details: "Failure: RequestRefused\nStatus: 500\nService code: generalException"
+                .to_owned(),
+        },
+        RetriedOperation::RefreshMailbox,
+    );
     assert_eq!(failed.action, Some(FailureAction::Retry));
     assert_eq!(sources(&failed), [RemoteSource::ServiceMessage]);
     assert_eq!(failed.remote_texts[0].text, "Service fault");
@@ -115,7 +128,10 @@ fn the_mail_service_status_decides_between_online_accounts_and_retry() {
 
 #[test]
 fn an_answer_the_code_cannot_read_offers_retry() {
-    let declared = declare_failure(&failure_of(FailureKind::UnexpectedAnswer));
+    let declared = declare_failure(
+        &failure_of(FailureKind::UnexpectedAnswer),
+        RetriedOperation::RefreshMailbox,
+    );
     assert_eq!(declared.action, Some(FailureAction::Retry));
     assert_eq!(declared.advice, None);
     assert!(declared.details.contains("UnexpectedAnswer"));
@@ -123,24 +139,33 @@ fn an_answer_the_code_cannot_read_offers_retry() {
 
 #[test]
 fn a_failed_connection_to_the_mail_service_carries_the_system_text() {
-    let declared = declare_failure(&Failure {
-        remote_texts: vec![remote_text(RemoteSource::System, "Connection refused")],
-        ..failure_of(FailureKind::ServiceUnreachable)
-    });
+    let declared = declare_failure(
+        &Failure {
+            remote_texts: vec![remote_text(RemoteSource::System, "Connection refused")],
+            ..failure_of(FailureKind::ServiceUnreachable)
+        },
+        RetriedOperation::RefreshMailbox,
+    );
     assert_eq!(declared.action, Some(FailureAction::Retry));
     assert_eq!(sources(&declared), [RemoteSource::System]);
 }
 
 #[test]
 fn an_account_without_encryption_sends_to_online_accounts() {
-    let declared = declare_failure(&failure_of(FailureKind::EncryptionNotConfigured));
+    let declared = declare_failure(
+        &failure_of(FailureKind::EncryptionNotConfigured),
+        RetriedOperation::RefreshMailbox,
+    );
     assert_eq!(declared.action, Some(FailureAction::OnlineAccounts));
     assert!(declared.advice.is_some());
 }
 
 #[test]
 fn a_stopped_worker_offers_retry_and_asks_for_a_report() {
-    let declared = declare_failure(&failure_of(FailureKind::Stopped));
+    let declared = declare_failure(
+        &failure_of(FailureKind::Stopped),
+        RetriedOperation::RefreshMailbox,
+    );
     assert_eq!(declared.action, Some(FailureAction::Retry));
     assert!(declared.advice.is_some());
 }
@@ -155,7 +180,7 @@ fn the_stores_failures_offer_retry_and_only_a_full_disk_advises() {
         FailureKind::StoredMailUnreadable,
     ] {
         let failure = failure_of(kind);
-        let declared = declare_failure(&failure);
+        let declared = declare_failure(&failure, RetriedOperation::RefreshMailbox);
         assert_eq!(declared.action, Some(FailureAction::Retry), "{kind:?}");
         assert_eq!(
             declared.advice.is_some(),

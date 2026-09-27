@@ -16,10 +16,14 @@ use adw::{glib, gtk, prelude::*};
 /// what shows the failure (specs/007-mail-storage/research.md §10).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RetriedOperation {
-    /// A load, a short list or a message's content: Refresh Inbox.
-    RefreshInbox,
-    /// A stored Inbox that could not be read: read it again.
-    ReadStoredInbox,
+    /// A mailbox's load, a short list or a message's content: Refresh
+    /// Mailbox.
+    RefreshMailbox,
+    /// A folder list's load: Refresh Account.
+    RefreshAccount,
+    /// Stored mail that could not be read, the folder lists or the shown
+    /// mailbox: read both again.
+    ReadStoredMail,
 }
 
 /// Gives a form's action button the declared action, or hides it. The one
@@ -34,9 +38,14 @@ pub fn show_action_button(
         return;
     };
     let (label, action_name) = match (action, retried) {
-        (FailureAction::Retry, RetriedOperation::RefreshInbox) => ("Retry", "app.refresh-inbox"),
-        (FailureAction::Retry, RetriedOperation::ReadStoredInbox) => {
-            ("Retry", "app.read-stored-inbox")
+        (FailureAction::Retry, RetriedOperation::RefreshMailbox) => {
+            ("Retry", "app.refresh-mailbox")
+        }
+        (FailureAction::Retry, RetriedOperation::RefreshAccount) => {
+            ("Retry", "app.refresh-account")
+        }
+        (FailureAction::Retry, RetriedOperation::ReadStoredMail) => {
+            ("Retry", "app.read-stored-mail")
         }
         (FailureAction::OnlineAccounts, _) => ("Online Accounts", "app.accounts"),
     };

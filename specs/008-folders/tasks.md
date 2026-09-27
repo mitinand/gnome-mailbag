@@ -3,8 +3,10 @@
 **Feature**: `008-folders`
 **Created**: 2026-09-27 · **Branch**: `claude/folders` · **Status**: Documents
 approved on 2026-09-27 (T001); portion 1 (T002–T010) committed on
-2026-09-27; portion 2 (T011–T016) committed on 2026-09-27; portion 3
-(T017–T023) implemented on 2026-09-27, awaiting review.
+2026-09-27; portions 2 and 3 (T011–T023) committed on 2026-09-27. Before
+portion 4 the budget was raised and the empty list's hidden account and the
+folder-list read's own Retry were dropped (spec Clarifications); portion 4
+(T024–T033) implemented on 2026-09-27, awaiting review.
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -240,9 +242,9 @@ portion 4.
   `store_folder_list(store, account, folders, load_cancelled)` returning
   `LoadResult::EmptyFolderList` without a write when `folders` is empty and
   calling `replace_folders` otherwise, and `store_mailbox(store, batch,
-  load_cancelled)` calling `replace_mailbox`; remove the store's Inbox
-  adapters of portion 2 and add the temporary providers adapter for the
-  window; record lines "folder list load finished" with the count
+  load_cancelled)` calling `replace_mailbox`; add the temporary providers
+  adapter for the window (the store's Inbox adapters of portion 2 stay with
+  it until portion 4, since the window reads `read_inbox` until then); record lines "folder list load finished" with the count
   and "mailbox load finished" with the folder's identity at debug and the
   counts at info; `log_load_failure` names the target.
 - [x] T022 [P] [US1] [US2] [US4] [US7] Tests in
@@ -263,12 +265,12 @@ portion 4.
 Goal: the sidebar shows accounts and folders, the two actions work, failures
 speak of the mailbox (US1–US7).
 
-- [ ] T024 Amend the documents first: specs/006-error-handling/spec.md and
+- [x] T024 Amend the documents first: specs/006-error-handling/spec.md and
   contracts/failure-declaration.md (`ListFolders` and `OpenMailbox` steps,
   `MailboxChanged`, Retry of Refresh Account, the wording rule for the
   mailbox); specs/006-error-handling/quickstart.md and
   specs/007-mail-storage/quickstart.md where they say Refresh Inbox.
-- [ ] T025 [US6] Forms and resources: in crates/mailbag/resources/ui/mailbag.ui
+- [x] T025 [US6] Forms and resources: in crates/mailbag/resources/ui/mailbag.ui
   rename the menu item to "_Refresh Mailbox" (`app.refresh-mailbox`) and add
   "Refresh _Account" (`app.refresh-account`) under it; add
   crates/mailbag/resources/ui/account-problem.ui declaring the account row's
@@ -279,7 +281,7 @@ speak of the mailbox (US1–US7).
   from the GNOME icon-development-kit's `inbox.svg` with a `.license` file
   (CC0-1.0) and register it in mailbag.gresource.xml. Say in the report that
   Workbench's "List View with a Tree" is the demo followed.
-- [ ] T026 [US1] [US2] [US3] [US6] Rename crates/mailbag/src/account_ui.rs to
+- [x] T026 [US1] [US2] [US3] [US6] Rename crates/mailbag/src/account_ui.rs to
   sidebar_ui.rs (`SidebarUi`): a `TreeListModel` (autoexpand) over a
   `ListStore` of account nodes; each account node's child model is its folder
   `ListStore`, each folder node's its children; nodes are `BoxedAnyObject`s
@@ -292,46 +294,51 @@ speak of the mailbox (US1–US7).
   (group by parent, sort siblings by `FolderRole::ORDER` then
   `glib::CollationKey` of the name, fill; the account row becomes a heading
   when it has a folder that can be opened and stays a selectable row
-  otherwise, containers included); `hide_for_run(account)`;
+  otherwise, containers included);
   role icons from `FolderRole::icon_name`, `folder-symbolic` otherwise;
   activation: a selectable folder selects it, an account without folders
-  selects it, a heading or container does nothing; a `notify::expanded`
-  handler on rows clears the selection when the collapsed row is an ancestor
-  of the shown mailbox; the row of the shown mailbox is reselected on bind;
+  selects it, a heading or container does nothing; the tree model's
+  `items-changed` outside the sidebar's own rebuilds clears the selection
+  when the user collapsed an ancestor of the shown mailbox; an unchanged
+  list keeps the rows; the row of the shown mailbox is marked again after a
+  rebuild;
   `Selection { Account(AccountId), Mailbox(FolderRef) }` with
   `selection()`, `connect_selection_changed`.
-- [ ] T027 [US1] [US5] [US7] In crates/mailbag/src/accounts.rs and
+- [x] T027 [US1] [US5] [US7] In crates/mailbag/src/accounts.rs and
   refreshes.rs: `AccountList` is the one owner of the selection
-  (`Selection`) and of the accounts hidden for the run; `Refreshes` keeps one latest outcome per
+  (`Selection`); `Refreshes` keeps one latest outcome per
   account with its `LoadTarget` (`outcome_of(account) -> Option<(&LoadTarget,
   &RefreshOutcome)>`), `begin_load(target, cancellation)`,
   `finish_load(target, result)`, `is_loading`, `discard_excluded`.
-- [ ] T028 [US1] [US3] [US5] [US6] [US7] In crates/mailbag/src/window_ui.rs:
+- [x] T028 [US1] [US3] [US5] [US6] [US7] In crates/mailbag/src/window_ui.rs:
   `refresh_mailbox()` and `refresh_account()` (`app.refresh-mailbox`,
   `app.refresh-account`, both disabled while a load runs, the first also
   without a selected mailbox, the second without a selection);
   `finish_load(target, result)`: a completed folder-list load reads the
-  folder lists again; `LoadResult::EmptyFolderList` hides the account for
-  the run, shows the 001-style toast "No mailbox was found for {label}." and
-  logs at warn; a completed mailbox load of the shown mailbox reads it
+  folder lists again; `LoadResult::EmptyFolderList` ends the load as a
+  completed one that changes nothing shown; a completed mailbox load of the shown mailbox reads it
   again; after a folder-list read the selection is cleared when the shown
   mailbox is no longer listed or when the selected account now has folders
   (spec FR-010);
   `read_folder_lists()` as one numbered read of every shown account's
   folders on GIO's pool, at start, after a complete account update and
-  after a completed folder-list load, a failure shown as the failure page with Details whose Retry
-  (`RetriedOperation::ReadFolderLists`, `app.read-folder-lists`) reads
+  after a completed folder-list load, a failure shown as the failure page
+  with Details as for stored mail that cannot be read, whose Retry
+  (`RetriedOperation::ReadStoredMail`, `app.read-stored-mail`, today's
+  `app.read-stored-inbox`) reads the folder lists and the shown mailbox
   again while the sidebar keeps what it showed; `ShownMailbox` keyed by `FolderRef` replacing
-  `ShownInbox`; `render()`: the list title from mail_ui.rs `show_mailbox(name,
+  `ShownInbox`; `render()`: the list title from mail_ui.rs `show_title(name,
   account label)`, "no mail loaded" for an unloaded folder and a selected
   empty account with the advice "Choose Refresh Account or Refresh Mailbox in
   the main menu.", "Mailbox is empty" for a loaded empty one, "Select a
   mailbox" when nothing is selected, the banner or failure page for the
   account's latest outcome when its target is the shown mailbox or, for a
   folder list, the account; `RetriedOperation::RefreshMailbox |
-  RefreshAccount | ReadStoredMailbox | ReadFolderLists` in failure_dialog.rs; remove the
-  portion-3 adapter.
-- [ ] T029 [US7] In crates/mailbag/src/failure_declarations.rs: wording for
+  RefreshAccount | ReadStoredMail` in failure_dialog.rs; remove the
+  temporary bridge: the providers' `LoadsInbox`, `LoadJob::InboxUntilFolders`
+  and `store_inbox_until_folders`, the store's `replace_inbox` and
+  `read_inbox`, and the `EmptyFolderList` arm refreshes.rs got in portion 3.
+- [x] T029 [US7] In crates/mailbag/src/failure_declarations.rs: wording for
   `ServerStep::ListFolders` ("Folder list not received", "The mail server
   did not send the folder list.", the timed-out variant), `OpenMailbox`
   ("Mailbox not opened", "The mail server did not open this mailbox."),
@@ -340,17 +347,17 @@ speak of the mailbox (US1–US7).
   mailbox."), every "Refresh Inbox" → "Refresh Mailbox" or "Refresh Account"
   by the carrier, "Loading this mailbox stopped…"; main.rs registers the two
   actions and removes `refresh-inbox`.
-- [ ] T030 [P] [US1] [US3] [US6] GTK test in crates/mailbag/src/sidebar_ui/tests.rs
+- [x] T030 [P] [US1] [US3] [US6] GTK test in crates/mailbag/src/sidebar_ui/tests.rs
   (one per process, `#[ignore]` as the others): accounts appear as
   selectable rows; after folders are shown an account is a heading whose
   activation changes nothing; folders come in the spec's order with the
-  roles' icons and user folders by collation (a Cyrillic and a Latin name);
+  roles' icons and user folders by collation (a non-Latin and a Latin name);
   nested folders under their parent; a container cannot be selected; an account whose folders are all
   containers stays selectable;
   collapsing the parent of the selected folder clears the selection; a
   rebuilt subtree reselects the shown mailbox's row; a row's tooltip is the
   folder's full name.
-- [ ] T031 [P] [US1] [US4] [US5] [US7] GTK tests in
+- [x] T031 [P] [US1] [US4] [US5] [US7] GTK tests in
   crates/mailbag/src/mail_ui/tests.rs, where the scripted loader and the
   graphical tests live, through the scripted loader writing into a test
   store: Refresh Account on an empty account shows the folders
@@ -359,13 +366,14 @@ speak of the mailbox (US1–US7).
   selection and its rows; a failed folder list shows the failure page (empty
   account) or the banner (shown mailbox) with Retry repeating Refresh
   Account; a failed mailbox open shows the banner with Retry repeating
-  Refresh Mailbox; an empty completed list hides the account with the toast;
-  a failed folder-list read shows the failure page and its Retry reads
-  again; an older read's answer never replaces a newer one's.
-- [ ] T032 [P] [US2] Unit tests in crates/mailbag/src/accounts/tests.rs and
+  Refresh Mailbox; an empty completed list changes nothing shown;
+  a failed folder-list read shows the failure page and its Retry reads the
+  folder lists and the shown mailbox again; an older read's answer never
+  replaces a newer one's.
+- [x] T032 [P] [US2] Unit tests in crates/mailbag/src/accounts/tests.rs and
   refreshes/tests.rs for the selection rules and one outcome per account
   with its target.
-- [ ] T033 STOP: run ./scripts/check.sh, git diff --check and each GTK test
+- [x] T033 STOP: run ./scripts/check.sh, git diff --check and each GTK test
   one by one; compare the size with plan.md's table (window ~230); report,
   suggest the commit and wait.
 

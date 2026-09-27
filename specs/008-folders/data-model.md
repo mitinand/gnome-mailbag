@@ -77,4 +77,3 @@ checks and deletions.
 | The folder lists of the shown accounts as last read, with the number of the latest read | The window | The run; read again after a complete account update and after each completed Refresh Account |
 | The shown mailbox's rows, with the number of the latest read | The window | As 007's shown Inbox |
 | Each account's latest refresh outcome, with the target it was for | The window's `Refreshes` | Until the account's next load ends (006 FR-007, 007 FR-005) |
-| Accounts hidden for the run after an empty folder list | `AccountList` | The run |

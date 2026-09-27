@@ -30,7 +30,7 @@ use goa_adapter::{AccessError, AccessRequest, GoaAdapter, ImapAccess};
 use mailbag_domain::AccountId;
 use mailbag_store::Store;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
-use worker::{LoadHandle, LoadJob, LoadKind, MailWorker};
+use worker::{LoadHandle, LoadKind, MailWorker};
 
 /// Which load sequence an account needs. The window turns the account's
 /// `AccountProvider` into this; that type does not reach this crate.
@@ -55,18 +55,6 @@ pub trait LoadsMail {
         account_id: &AccountId,
         provider: MailProvider,
         target: LoadTarget,
-        report: Box<dyn FnOnce(LoadResult)>,
-    ) -> Box<dyn CancelsLoadOnDrop>;
-}
-
-/// Until the window knows folders: Refresh Inbox's load of the account's
-/// Inbox, stored as its one folder.
-pub trait LoadsInbox {
-    /// As `LoadsMail::start_load` for the Inbox.
-    fn start_load(
-        &self,
-        account_id: &AccountId,
-        provider: MailProvider,
         report: Box<dyn FnOnce(LoadResult)>,
     ) -> Box<dyn CancelsLoadOnDrop>;
 }
@@ -96,31 +84,6 @@ impl LoadsMail for MailLoader {
         target: LoadTarget,
         report: Box<dyn FnOnce(LoadResult)>,
     ) -> Box<dyn CancelsLoadOnDrop> {
-        self.start(account_id, provider, LoadJob::Load(target), report)
-    }
-}
-
-impl LoadsInbox for MailLoader {
-    fn start_load(
-        &self,
-        account_id: &AccountId,
-        provider: MailProvider,
-        report: Box<dyn FnOnce(LoadResult)>,
-    ) -> Box<dyn CancelsLoadOnDrop> {
-        self.start(account_id, provider, LoadJob::InboxUntilFolders, report)
-    }
-}
-
-impl MailLoader {
-    /// Asks Online Accounts for the account's access, then runs `job` on the
-    /// mail worker.
-    fn start(
-        &self,
-        account_id: &AccountId,
-        provider: MailProvider,
-        job: LoadJob,
-        report: Box<dyn FnOnce(LoadResult)>,
-    ) -> Box<dyn CancelsLoadOnDrop> {
         let transfer = Rc::new(RefCell::new(None));
         let started_transfer = transfer.clone();
         let worker = self.worker.clone();
@@ -131,10 +94,11 @@ impl MailLoader {
             // The load ends here, on GTK's context, before the worker is
             // involved.
             Err(error) => report(
-                LoadFailure::OnlineAccounts(error).give_up(&requested_account, job.record_name()),
+                LoadFailure::OnlineAccounts(error)
+                    .give_up(&requested_account, target.record_name()),
             ),
             Ok(kind) => {
-                *started_transfer.borrow_mut() = Some(worker.start_load(kind, job, report));
+                *started_transfer.borrow_mut() = Some(worker.start_load(kind, target, report));
             }
         };
         let request = match provider {

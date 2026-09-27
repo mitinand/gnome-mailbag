@@ -11,20 +11,23 @@ use mailbag_domain::{Failure, FailureKind, IncompleteList, RemoteSource, RemoteT
 #[test]
 fn the_report_holds_the_dialog_text_in_its_order_with_the_sign_in_name_replaced() {
     // The IMAP crate replaces the sign-in name where it builds the failure.
-    let failure = declare_failure(&Failure {
-        kind: FailureKind::ServerRejectedSignIn,
-        remote_texts: vec![
-            RemoteText {
-                source: RemoteSource::ServerAlert,
-                text: "Password for <login> expired".to_owned(),
-            },
-            RemoteText {
-                source: RemoteSource::ServerReply,
-                text: "<login> may not sign in".to_owned(),
-            },
-        ],
-        details: "Failure: ServerRejectedSignIn\nServer code: AUTHENTICATIONFAILED".to_owned(),
-    });
+    let failure = declare_failure(
+        &Failure {
+            kind: FailureKind::ServerRejectedSignIn,
+            remote_texts: vec![
+                RemoteText {
+                    source: RemoteSource::ServerAlert,
+                    text: "Password for <login> expired".to_owned(),
+                },
+                RemoteText {
+                    source: RemoteSource::ServerReply,
+                    text: "<login> may not sign in".to_owned(),
+                },
+            ],
+            details: "Failure: ServerRejectedSignIn\nServer code: AUTHENTICATIONFAILED".to_owned(),
+        },
+        RetriedOperation::RefreshMailbox,
+    );
     let report = report_text(&failure);
     let expected_order = [
         failure.title,
@@ -48,14 +51,17 @@ fn the_report_leaves_out_what_the_failure_does_not_have() {
 
 #[test]
 fn a_long_remote_text_leaves_the_later_blocks_in_the_report() {
-    let failure = declare_failure(&Failure {
-        kind: FailureKind::ServerStepFailed(ServerStep::OpenMailbox),
-        remote_texts: vec![RemoteText {
-            source: RemoteSource::ServerReply,
-            text: "a".repeat(70_000),
-        }],
-        details: "Failure: ServerStepFailed(OpenMailbox)".to_owned(),
-    });
+    let failure = declare_failure(
+        &Failure {
+            kind: FailureKind::ServerStepFailed(ServerStep::OpenMailbox),
+            remote_texts: vec![RemoteText {
+                source: RemoteSource::ServerReply,
+                text: "a".repeat(70_000),
+            }],
+            details: "Failure: ServerStepFailed(OpenMailbox)".to_owned(),
+        },
+        RetriedOperation::RefreshMailbox,
+    );
     let report = report_text(&failure);
     assert!(
         report.ends_with("Technical details:\nFailure: ServerStepFailed(OpenMailbox)"),

@@ -548,8 +548,12 @@
         <attribute name="label" translatable="yes">_Synchronization Status</attribute>
       </item>
       <item>
-        <attribute name="action">app.refresh-inbox</attribute>
-        <attribute name="label" translatable="yes">_Refresh Inbox</attribute>
+        <attribute name="action">app.refresh-mailbox</attribute>
+        <attribute name="label" translatable="yes">_Refresh Mailbox</attribute>
+      </item>
+      <item>
+        <attribute name="action">app.refresh-account</attribute>
+        <attribute name="label" translatable="yes">Refresh _Account</attribute>
       </item>
     </section>
     <section>

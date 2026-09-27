@@ -27,7 +27,7 @@ pub enum LoadTarget {
 
 impl LoadTarget {
     /// What the record calls the load; the folder's name stays out of it.
-    pub(crate) fn record_name(&self) -> &'static str {
+    pub fn record_name(&self) -> &'static str {
         match self {
             Self::FolderList => "folder list",
             Self::Mailbox(_) => "mailbox",

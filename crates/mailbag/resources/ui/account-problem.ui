@@ -1,0 +1,43 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!-- SPDX-FileCopyrightText: 2026 Andrey Mitin
+     SPDX-License-Identifier: GPL-3.0-or-later -->
+<interface domain="mailbag">
+  <!-- interface-name account-problem.ui -->
+  <requires lib="gtk" version="4.12"/>
+  <object class="GtkMenuButton" id="account_problem">
+    <property name="icon-name">dialog-warning-symbolic</property>
+    <property name="popover">account_problem_popover</property>
+    <property name="valign">center</property>
+    <property name="visible">false</property>
+    <style>
+      <class name="flat"/>
+    </style>
+  </object>
+  <object class="GtkPopover" id="account_problem_popover">
+    <property name="child">
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <property name="spacing">6</property>
+        <child>
+          <object class="GtkLabel" id="account_problem_explanation">
+            <property name="max-width-chars">30</property>
+            <property name="use-markup">false</property>
+            <property name="wrap">true</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="account_problem_retry">
+            <property name="label" translatable="yes">Retry Check</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="account_problem_settings">
+            <property name="action-name">app.accounts</property>
+            <property name="label" translatable="yes">Online Accounts</property>
+            <property name="visible">false</property>
+          </object>
+        </child>
+      </object>
+    </property>
+  </object>
+</interface>

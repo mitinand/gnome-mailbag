@@ -7,6 +7,9 @@ estimate after the clarification's additions; challenged the same day
 (four simplifications applied, one deferral declined by the maintainer's
 earlier decision), aligned with the spec and tasks by the consistency
 analysis, and corrected after an external review the same day; see Size.
+Before the window portion (2026-09-27) the budget was raised to the
+forecast, and the empty list's hidden account and the folder-list read's
+own Retry were dropped (spec Clarifications).
 
 ## Size
 
@@ -14,21 +17,24 @@ The budget agreed at sizing on 2026-09-26 was ≤ 900 production and ≤ 550
 test lines; the clarification of 2026-09-27 added Refresh Account as an
 action of its own, the membership relation, the full attribute list per
 folder, three roles and the hidden-account rule, and the budget was raised
-the same day to ≤ 1 050 and ≤ 600. Reassess
+the same day to ≤ 1 050 and ≤ 600. Before the window portion it was raised
+again to ≤ 1 760 and ≤ 1 840: the estimates below left out doc comments,
+formatting and test fixtures and came out two to three times low; they are
+kept as written. Reassess
 with the maintainer before exceeding the budget or about 1.5 times an item's
 estimate; at every review pause the size so far is compared with this table.
 
 | Item | Budget | This plan (estimate) |
 |---|---|---|
-| New modules and production lines | ≤ 1 050 net (raised from 900 on 2026-09-27) | `mailbag-domain` ≈ 70 (`FolderRole` with its order and views, `Folder`, `FolderRef`, `FolderMembership`); `mailbag-imap` ≈ 190 (`list_mailboxes` ~60, `utf7.rs` ~50, opening a named mailbox ~25, UTF-8 names by capability ~15, steps and `MailboxChanged` ~15, reader changes ~25); `mailbag-graph` ≈ 130 (`list_folders` with the delta listing, paging and well-known names ~90, messages of a folder ~20, reply parsing ~20); `mailbag-providers` ≈ 150 (folder-list sequences of the three providers ~60, roles from attributes and well-known names ~30, the Gmail container ~10, batch types and `LoadTarget` ~20, store writes ~30); `mailbag-store` ≈ 180 (schema ~40, `replace_folders` ~50, `replace_mailbox` ~60, `read_folders` and `read_mailbox` ~30, account deletion unchanged); `mailbag` ≈ 230 (sidebar tree rebuilt per account after a folder-list load, sorted by role and collation ~110, shown mailbox and one folder-list read ~60, two actions and Retry ~25, wording ~20, hidden account ~15, icons ~10). **Net ≈ 985** after the plan challenge (in-place tree diff −50, per-account numbered reads −20, sorting moved out of the store) and the review of 2026-09-27 (folder-list read failure page and Retry +15, selectable account without openable folders +5, special-use return option and `UTF8=ONLY` +5, delta duplicates and removed entries +10). Forks: async-imap ~20, imap-proto ~15, counted apart |
+| New modules and production lines | ≤ 1 760 net (raised from 900 to 1 050, then before the window portion, on 2026-09-27) | `mailbag-domain` ≈ 70 (`FolderRole` with its order and views, `Folder`, `FolderRef`, `FolderMembership`); `mailbag-imap` ≈ 190 (`list_mailboxes` ~60, `utf7.rs` ~50, opening a named mailbox ~25, UTF-8 names by capability ~15, steps and `MailboxChanged` ~15, reader changes ~25); `mailbag-graph` ≈ 130 (`list_folders` with the delta listing, paging and well-known names ~90, messages of a folder ~20, reply parsing ~20); `mailbag-providers` ≈ 150 (folder-list sequences of the three providers ~60, roles from attributes and well-known names ~30, the Gmail container ~10, batch types and `LoadTarget` ~20, store writes ~30); `mailbag-store` ≈ 180 (schema ~40, `replace_folders` ~50, `replace_mailbox` ~60, `read_folders` and `read_mailbox` ~30, account deletion unchanged); `mailbag` ≈ 230 (sidebar tree rebuilt per account after a folder-list load, sorted by role and collation ~110, shown mailbox and one folder-list read ~60, two actions and Retry ~25, wording ~20, icons ~10; the hidden account ~15 dropped). **Net ≈ 985** after the plan challenge (in-place tree diff −50, per-account numbered reads −20, sorting moved out of the store) and the review of 2026-09-27 (folder-list read failure page and Retry +15, selectable account without openable folders +5, special-use return option and `UTF8=ONLY` +5, delta duplicates and removed entries +10). Forks: async-imap ~20, imap-proto ~15, counted apart |
 | Call sites or existing files touched | — | Rust: imap `lib.rs`, `session.rs`, `reader.rs`, `test_server.rs`, new `utf7.rs`; graph `lib.rs`, `reply.rs`, `test_server.rs`; providers `lib.rs`, `batch.rs`, `worker.rs`, `imap.rs`, `gmail.rs`, `imap_batch.rs`, `microsoft365.rs`, `store_load.rs`, new `folders.rs`; store `schema.sql`, `lib.rs`; domain `lib.rs`; mailbag `main.rs`, `window_ui.rs`, `account_ui.rs` (becomes `sidebar_ui.rs`), `accounts.rs`, `refreshes.rs`, `mail_ui.rs`, `failure_declarations.rs`, `failure_dialog.rs`. Forms: `mailbag.ui` (menu), new `account-problem.ui`; resources: one icon and `mailbag.gresource.xml`. Build: `Cargo.lock` and `cargo-sources.json` for the fork revisions |
 | New crates | 0 | 0 |
 | New threads, timers, queues | 0 | 0: the mail worker runs both load kinds one at a time; the window reads through GIO's pool as in 007 |
-| New state, types, error types | — | Domain: `FolderRole`, `Folder`, `FolderRef`, `FolderMembership`; `ServerStep::ListFolders`, `OpenInbox` → `OpenMailbox`, `InboxChanged` → `MailboxChanged`. Providers: `LoadTarget { FolderList, Mailbox(FolderRef) }`, `ReceivedFolderList`. Store: `StoredFolder`. Window: the selection (`Account(id)` / `Mailbox(ref)` / none), the folder lists as one numbered read, one latest refresh outcome per account with its target, accounts hidden for the run, `RetriedOperation::RefreshAccount` |
+| New state, types, error types | — | Domain: `FolderRole`, `Folder`, `FolderRef`, `FolderMembership`; `ServerStep::ListFolders`, `OpenInbox` → `OpenMailbox`, `InboxChanged` → `MailboxChanged`. Providers: `LoadTarget { FolderList, Mailbox(FolderRef) }`, `ReceivedFolderList`. Store: `StoredFolder`. Window: the selection (`Account(id)` / `Mailbox(ref)` / none), the folder lists as one numbered read, one latest refresh outcome per account with its target, `RetriedOperation::RefreshAccount` |
 | New fields in existing data | — | Persisted: tables `folder`, `membership`; `message` gains `labels` and loses `account`-scoped uniqueness in favour of `(account, identity)`; the `inbox` table goes ([data-model.md](data-model.md)). In memory: `ReceivedMessage` carries its UID for the membership; `LoadResult` unchanged |
 | Changes to other features' contracts or documents | 007, 002, 004, 005, 006 | 007 spec FR-002/FR-003/FR-014(b) and data model (the target model built); 002 FR-002/FR-003/FR-012, 004 FR-003/FR-005, 005 FR-003/FR-006 (a named folder; Refresh Mailbox); 006 spec and contract (wording, the new step, Retry of Refresh Account); the 001 contract is untouched (accounts still come from Online Accounts) |
 | New dependencies | 0 | 0; the two fork branches move the pinned revisions |
-| Tests | ≤ 600 (raised from 550 on 2026-09-27) | ≈ 560: imap ~150 (LIST scripting in the test server ~60, listing and names ~60, UTF-7 ~30); graph ~70 (folder routes in the test server, listing, well-known 404); domain ~20 (roles); store ~120; providers ~90 (three sequences, roles, the Gmail container, memberships from two labels); window ~80 (sidebar GTK test, selection and collapse, Refresh Account outcomes, hidden account); ≈ 560 after the plan challenge and the review of 2026-09-27 |
+| Tests | ≤ 1 840 (raised from 550 to 600, then before the window portion, on 2026-09-27) | ≈ 560: imap ~150 (LIST scripting in the test server ~60, listing and names ~60, UTF-7 ~30); graph ~70 (folder routes in the test server, listing, well-known 404); domain ~20 (roles); store ~120; providers ~90 (three sequences, roles, the Gmail container, memberships from two labels); window ~80 (sidebar GTK test, selection and collapse, Refresh Account outcomes); ≈ 560 after the plan challenge and the review of 2026-09-27 |
 
 ## Summary
 
@@ -59,7 +65,7 @@ that did not round-trip.
 | The domain | `FolderRole` (nine roles, the sidebar's order, `is_view`), `Folder` (identity, name, parent, attributes, role, selectable), `FolderRef`, `FolderMembership` (UID, position) | ~70 |
 | The store | Tables `folder`, `message`, `membership`; `replace_folders` (delete folders not listed with their memberships and orphaned messages, update listed ones, insert new); `replace_mailbox` (replace the folder's memberships, upsert messages by identity, drop orphans, mark loaded); `read_folders`; `read_mailbox` | ~180 |
 | Providers | `LoadTarget::FolderList` and `::Mailbox(ref)` through the same worker; folder-list sequences per provider producing `Folder`s with roles; the Gmail container dropped; an empty list reported as `LoadResult::EmptyFolderList` without a write; mailbox loads take the target's identity; the batch carries UIDs and labels; two writes | ~150 |
-| The window | Sidebar as a tree list: accounts as headings or selectable empty rows, folders in order with icons, the account's subtree rebuilt after a folder-list load, collapse clears the selection; the shown mailbox read from the store; Refresh Mailbox and Refresh Account with their outcomes; wording; the account problem form; the hidden account | ~230 |
+| The window | Sidebar as a tree list: accounts as headings or selectable empty rows, folders in order with icons, the account's subtree rebuilt when its stored list changed, collapse clears the selection; the shown mailbox read from the store; Refresh Mailbox and Refresh Account with their outcomes; wording; the account problem form | ~230 |
 
 Not built: unread counts, whole-folder loads, label-driven memberships, the
 combined Inbox, moves and deletes, folder management, expansion memory,
@@ -165,12 +171,13 @@ horizontal scrolling, OBJECTID, localized role names (spec FR-013).
   `glib::CollationKey` of the name, fill; the account node itself stays; an
   account whose list holds no folder that can be opened stays a selectable
   row (spec FR-009).
-  Collapsed subfolders reopen after a Refresh Account, which the spec
-  allows (research §9).
+  An unchanged list keeps the rows; a changed one reopens collapsed
+  subfolders, which the spec allows (research §9).
 - Activation: a selectable folder → `Selection::Mailbox`; an account without
   folders → `Selection::Account`; a heading or a container → nothing.
-- `connect_selection_changed`; expansion `notify::expanded` on rows: when the
-  collapsed row is an ancestor of the shown mailbox, clear the selection.
+- `connect_selection_changed`; the tree model's `items-changed` outside the
+  sidebar's own rebuilds: when the shown mailbox's row is no longer shown,
+  the user collapsed an ancestor, so clear the selection.
 - The account problem button from `account-problem.ui`.
 
 **`mailbag/src/window_ui.rs`**
@@ -183,15 +190,19 @@ horizontal scrolling, OBJECTID, localized role names (spec FR-013).
   target; Retry repeats the target's action (007 FR-005's "latest refresh
   of the account").
 - `finish_load(target, result)`: outcome under its target; a completed
-  folder-list load re-reads the folder lists; `EmptyFolderList` hides the
-  account for the run (`AccountList`) with the toast and a record line; a
-  completed mailbox load re-reads the shown mailbox.
+  folder-list load re-reads the folder lists; `EmptyFolderList` ends the
+  load as a completed one that changed nothing (the providers' record line
+  says the list held no folder); after either, the selected mailbox is
+  read when the window does not hold its rows, since the load's start forgot
+  a failed read of them (007 FR-013); a completed mailbox load re-reads the
+  shown mailbox.
 - `read_folder_lists()` at start, after each complete account update and
   after a completed folder-list load: one read of every shown account's
   folders through GIO's pool, with one number so an older answer is
-  dropped; a failed read shows the failure page with Details, whose Retry
-  (`RetriedOperation::ReadFolderLists`) reads again, and leaves the sidebar
-  as it was (spec FR-008, 007 FR-013). After the read, the selection is
+  dropped; a failed read shows the failure page with Details as for stored
+  mail that cannot be read, whose Retry (`RetriedOperation::ReadStoredMail`)
+  reads the folder lists and the shown mailbox again, and leaves the
+  sidebar as it was (spec FR-008, 007 FR-013). After the read, the selection is
   cleared when the shown mailbox is no longer listed or when the selected
   account now has folders (spec FR-010).
 - `read_shown_mailbox()`: as 007's read of the Inbox, keyed by `FolderRef`.
@@ -235,7 +246,7 @@ the maintainer's review and compare the size with the table above.
    and mailboxes".
 4. **Navigating mailboxes.** The sidebar tree, selection and collapse, the
    two actions and their outcomes, wording and 006's amendment, the forms,
-   the icon, the hidden account; the GUI tests. Suggested commit: "Navigate
+   the icon; the GUI tests. Suggested commit: "Navigate
    mailboxes in the sidebar".
 
 After portion 4: the GUI tests one by one, `simplify-review` on the branch
