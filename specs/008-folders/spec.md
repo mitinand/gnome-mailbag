@@ -21,7 +21,11 @@ sit is stated (FR-005, FR-009), and showing the folders under a personal
 namespace prefix beside the Inbox is deferred (FR-013(i)). Amended after an
 external review, 2026-09-28: a Microsoft 365 message may keep its old
 folder's relation until that folder's next load (FR-004), and the tree's
-keyboard focus and Tab are decided (Assumptions).
+keyboard focus and Tab are decided (Assumptions). Amended after a spike on
+2026-09-28: the tree is a list box over the platform's tree model, the
+arrow keys select, and the space between accounts sits above their rows
+(FR-006, FR-010, Assumptions); checked on the installed build the same
+day.
 **Input**: Support for several mailboxes per account: their discovery, role
 recognition, nesting, storage and display in the sidebar. Deleting mailboxes
 is not built. Once mailboxes are shown, the account itself can no longer be
@@ -455,6 +459,19 @@ rows and the failure shown after each.
   itself. This replaces the clarification's "no substitution for the
   Inbox" (FR-005).
 
+### Session 2026-09-28 (the sidebar's list, after a spike)
+
+- Q: Which list shows the tree? → A: A `GtkListBox` bound to the tree model,
+  its row an `AdwActionRow` with a `GtkTreeExpander` as its first prefix. A
+  spike compared it with the `GtkListView` tree built first: in the list box
+  the keyboard focus rests on the row, which the platform outlines, the
+  action row sits where the platform places it, so it prints no warning,
+  and the space between accounts goes above a row rather than into it; the
+  list box selects the row the arrow keys reach, which a mail sidebar may
+  do, since selecting reads stored rows and never loads (FR-010). The price
+  is that every row is built at once, about 0.35 s for 1 000 folders in the
+  spike, and that the row passes the expander's keys on.
+
 ## Requirements
 
 ### Functional Requirements
@@ -552,8 +569,9 @@ rows and the failure shown after each.
 - **FR-006 — Nesting**: Folders form a tree as their server describes it (the
   hierarchy delimiter of IMAP, the parent folder of Microsoft 365), without
   a limit on depth anywhere: not in the store, not in the tree. The tree is
-  the platform's own tree list: each level is indented by one expander
-  width, and a name too long for the sidebar is shortened with an ellipsis.
+  the platform's tree model shown in a list box, each row with the
+  platform's expander: each level is indented by one expander width, and a
+  name too long for the sidebar is shortened with an ellipsis.
   A folder whose parent is not listed sits directly under the account. A
   folder that cannot be opened is shown as a container: it can be expanded
   and never selected. A mailbox the server marks `\Noselect`, or
@@ -609,7 +627,11 @@ rows and the failure shown after each.
   rows and never loads (007). Refresh Mailbox loads the selected folder;
   Refresh Account loads the folder list of the selected account or of the
   selected folder's account. A row's expander only expands or collapses
-  it; it never selects the row. The list's title names the folder and its
+  it; it never selects the row. The arrow keys, and Tab entering the tree,
+  select the folder they reach, as a click does; a heading or a container
+  they pass changes nothing. Collapsing a row with the pointer keeps the
+  keyboard focus on that row. On a narrow window a click or Enter shows the
+  selected folder's list; the arrow keys keep the sidebar. The list's title names the folder and its
   account. Each account keeps the outcome of its latest load, of a mailbox or of
   its folder list: a mailbox's outcome shows over that mailbox only, a
   folder list's outcome shows whenever a mailbox of the account or the
@@ -754,25 +776,22 @@ rows and the failure shown after each.
 - The store's structure changes with this feature; under 007 FR-012 an
   existing store is discarded at start and refilled by refreshing.
 - The approved sidebar form already holds the tree row with its expander,
-  icon, title and hidden badge; this feature binds it and changes no widget
-  arrangement. The form changes are: the main menu's "Refresh Inbox"
+  icon, title and hidden badge; this feature binds it. The form changes
+  are: the main menu's "Refresh Inbox"
   becomes "Refresh Mailbox" and gains "Refresh Account"; the account row's
-  problem button and its explanation move from code into a form. Decided at
-  the acceptance: the tree's own single-click activation is off, a click on
-  the row's name selects it and the expander arrow only expands (FR-010),
-  and the row's icon sits 1 px higher than the platform's row
-  places it, closer to the middle of the name. Decided after the
-  acceptance: space, not a line, sets every account but the first apart
-  from the one above it; the form's hidden separator becomes the
-  platform's spacer at one and a half times its height (18 px). The space
-  belongs to the account's row, so an account row that can be selected
-  (FR-009) is highlighted with it; accepted, since that row is rare.
-  Decided after the external review, 2026-09-28: the arrow keys move
-  between the tree's rows and Tab leaves the tree after the current row
-  (the tree's `tab-behavior` is `item`); the keyboard focus rests on the
-  tree's own row, which the platform outlines, and the tree passes the keys
-  that expand and collapse a row (`+`, `-`, `*`) to that row's expander.
-  The row's box and expander take no focus in the form.
+  problem button and its explanation move from code into a form. Decided
+  after a spike on 2026-09-28 (Clarifications): the tree is a `GtkListBox`
+  with single selection and `tab-behavior` `item`, bound to the tree model;
+  its row is the platform's action row with the expander, which takes no
+  focus, as its first prefix, then the icon, which sits 1 px higher than
+  the platform places it, closer to the middle of the name. A click on a
+  row selects it and the expander arrow only expands (FR-010). Space, not a
+  line, sets every account but the first apart from the one above it: the
+  platform's spacer at one and a half times its height (18 px), above the
+  account's row and outside it. The keyboard focus rests on the row, which
+  the platform outlines; the arrow keys move between rows and select, Tab
+  leaves the tree after the current row, and the row passes the keys that
+  expand and collapse it (`+`, `-`, `*`) to its expander.
 
 ## Amendments to earlier specifications
 

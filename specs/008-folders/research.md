@@ -153,6 +153,26 @@ selection lives in the window's state, as today, and the shown mailbox's row
 is marked again after the rebuild (plan challenge 2026-09-27: an
 in-place diff would have to move rows across parents and reorder siblings
 for ~50 lines with no requirement behind it).
+**Revised on 2026-09-28 after a spike** (spec Clarifications): the tree is
+a `GtkListBox` bound to the same model (`bind_model`), its row an
+`AdwActionRow` with the `GtkTreeExpander` as its first prefix. Checked in
+the spike on GTK 4.22 and libadwaita 1.9: the focus rests on the row, which
+libadwaita outlines (`row:focus:focus-visible`), where the `GtkListView`
+tree left it on the expander or the row's box, which it does not outline;
+an action row directly in a list box prints no `gtk_list_box_row_grab_focus`
+warning; a list box header puts the space between accounts above the row;
+`tab-behavior` exists on `GtkListBox` since GTK 4.18; the arrow keys select
+selectable rows and pass over the others without a signal; `select_row`
+emits `row-selected`, and removing the selected row emits it without a row.
+The expander's keys need the focus on the expander, so the row forwards
+them (`EventControllerKey::forward`). Every row is built at once: about
+0.35 s for 1 000 folders and 1.6 s for 5 000 in the spike, against 0.1 s
+for the `GtkListView`, which builds only the rows on screen. No Workbench
+demo shows a tree in a list box: "List Box" gives the list, "List View with
+a Tree" the model and the expander. After a row the focus was in is
+collapsed away, the window moves the focus to its first focusable widget
+after the next frame, and a list box row taking the focus that way is
+selected, so the sidebar gives the focus to the collapsed row first.
 
 ## 10. Gmail
 

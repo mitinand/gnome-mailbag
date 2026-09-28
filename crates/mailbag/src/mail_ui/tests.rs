@@ -512,18 +512,19 @@ impl WindowWidgets {
         (title.title().to_string(), title.subtitle().to_string())
     }
 
-    /// Activates the sidebar row of the account, or of one of its folders,
-    /// as a click does.
+    /// Selects the sidebar row of the account, or of one of its folders, as
+    /// a click does.
     fn select(&self, ui: &WindowUi, account: &AccountId, folder: Option<&str>) {
         let position = ui
             .sidebar()
             .borrow()
             .position_of_row(account, folder)
             .expect("the row is shown");
-        self.builder
-            .object::<gtk::ListView>("folder_tree")
-            .expect("folder_tree")
-            .emit_by_name::<()>("activate", &[&position]);
+        let tree = self
+            .builder
+            .object::<gtk::ListBox>("folder_tree")
+            .expect("folder_tree");
+        tree.select_row(tree.row_at_index(position as i32).as_ref());
     }
 }
 

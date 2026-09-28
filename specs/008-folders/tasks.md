@@ -7,7 +7,9 @@ approved on 2026-09-27 (T001); portion 1 (T002–T010) committed on
 portion 4 the budget was raised and the empty list's hidden account and the
 folder-list read's own Retry were dropped (spec Clarifications); portion 4
 (T024–T033) committed on 2026-09-27; polish (T034–T037) done on
-2026-09-27; the feature is implemented and accepted. The texts of done
+2026-09-27; the feature is implemented and accepted. Phase 7 (T038–T042),
+the sidebar on a list box after the spike of 2026-09-28, done on
+`claude/sidebar` and checked on the installed build on 2026-09-28. The texts of done
 tasks describe the work as planned: the simplification review (T034) and
 the acceptance (plan, Post-implementation) changed what T012–T015, T018,
 T019, T021, T022, T026, T028 and T030 describe, and T005's tests use the
@@ -401,6 +403,35 @@ speak of the mailbox (US1–US7).
 - [x] T036 Mark the spec's Status implemented and accepted, and the amended
   specs' status lines.
 - [x] T037 STOP: final report with the open items.
+
+## Phase 7: the sidebar on a list box (portion 5)
+
+Decided after the spike of 2026-09-28 (spec Clarifications, research §9).
+
+- [x] T038 Documents: spec FR-006, FR-010, Assumptions and Clarifications;
+  research §9; the plan's sidebar map; quickstart step 5; these tasks.
+- [x] T039 Forms: in crates/mailbag/resources/ui/mailbag.ui `folder_tree`
+  becomes a `GtkListBox` (`navigation-sidebar`, single selection,
+  `tab-behavior` `item`, GTK 4.18 required); in folder-row.ui the row is an
+  `AdwActionRow` with the expander (no focus) and the icon (1 px up) as
+  prefixes and the badge as suffix, and the account spacer is an object of
+  its own.
+- [x] T040 crates/mailbag/src/sidebar_ui.rs: `bind_model` with `create_row`,
+  the header function for the spacer, selection by `row-selected` and
+  marking by `select_row`, `row-activated` for a narrow window, the row's
+  key forwarding, removed nodes letting go of their tree rows; remove the
+  item factory, `bound_item`, the click gesture on the name and the tree's
+  own key forwarding.
+- [x] T041 Tests: crates/mailbag/src/sidebar_ui/tests.rs and the window
+  tests' selection helper on the list box: arrows select, a heading or a
+  container passes, collapsing clears the selection and keeps the focus on
+  the collapsed row, removed rows are freed, the focus rests on the row,
+  its expander collapses it (real key presses only by hand, quickstart
+  step 5), Tab leaves the tree, a narrow window hides the sidebar on
+  Enter.
+- [x] T042 STOP: `scripts/check.sh`, the GTK tests one per process; the
+  maintainer checks quickstart steps 3–5 on the installed build; report,
+  suggest the commit and wait.
 
 ## Dependencies
 

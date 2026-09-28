@@ -6,54 +6,46 @@
   <!-- interface-name folder-row.ui -->
   <requires lib="gtk" version="4.12"/>
   <requires lib="libadwaita" version="1.5"/>
-  <object class="GtkBox" id="folder_row">
-    <property name="orientation">vertical</property>
-    <child>
-      <!-- Space that sets an account apart from the one above it: the
-           platform's spacer, one and a half times its height. -->
-      <object class="GtkSeparator" id="account_spacing">
-        <property name="height-request">18</property>
-        <property name="orientation">vertical</property>
-        <property name="visible">false</property>
-        <style>
-          <class name="spacer"/>
-        </style>
+  <!-- The tree's row. The keyboard focus rests on it; it passes the
+       expander's keys on. -->
+  <object class="AdwActionRow" id="folder_row">
+    <property name="title"/>
+    <property name="title-lines">1</property>
+    <property name="use-markup">false</property>
+    <!-- A prefix added later goes first: the expander, then the icon. -->
+    <child type="prefix">
+      <object class="GtkImage" id="folder_icon">
+        <property name="icon-name">mail-unread-symbolic</property>
+        <!-- Raises the icon by 1 px: the platform's row centers it 1.5 px
+             below the middle of the name. -->
+        <property name="margin-bottom">2</property>
+        <property name="pixel-size">16</property>
       </object>
     </child>
-    <child>
-      <!-- The keyboard focus rests on the tree's row; the tree passes the
-           expander's keys on. -->
+    <child type="prefix">
       <object class="GtkTreeExpander" id="folder_expander">
         <property name="focusable">false</property>
-        <property name="child">
-          <object class="AdwActionRow" id="folder_details">
-            <property name="focusable">false</property>
-            <property name="hexpand">true</property>
-            <property name="title"/>
-            <property name="title-lines">1</property>
-            <property name="use-markup">false</property>
-            <child type="prefix">
-              <object class="GtkImage" id="folder_icon">
-                <property name="icon-name">mail-unread-symbolic</property>
-                <!-- Raises the icon by 1 px: the platform's row centers it
-                     1.5 px below the middle of the name. -->
-                <property name="margin-bottom">2</property>
-                <property name="pixel-size">16</property>
-              </object>
-            </child>
-            <child type="suffix">
-              <object class="GtkLabel" id="folder_badge">
-                <property name="label"/>
-                <style>
-                  <class name="accent"/>
-                  <class name="numeric"/>
-                </style>
-                <property name="visible">false</property>
-              </object>
-            </child>
-          </object>
-        </property>
       </object>
     </child>
+    <child type="suffix">
+      <object class="GtkLabel" id="folder_badge">
+        <property name="label"/>
+        <style>
+          <class name="accent"/>
+          <class name="numeric"/>
+        </style>
+        <property name="visible">false</property>
+      </object>
+    </child>
+  </object>
+  <!-- Space above every account but the first, as the tree's header of the
+       account's row: the platform's spacer, one and a half times its
+       height. -->
+  <object class="GtkSeparator" id="account_spacing">
+    <property name="height-request">18</property>
+    <property name="orientation">vertical</property>
+    <style>
+      <class name="spacer"/>
+    </style>
   </object>
 </interface>
