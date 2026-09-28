@@ -161,8 +161,16 @@ horizontal scrolling, OBJECTID, localized role names (spec FR-013).
 
 - `SidebarUi::new(builder)`: a `TreeListModel` over a `ListStore` of
   account nodes (autoexpand); each account node's child model is its folder
-  `ListStore`, each folder's child model its children; `SingleSelection`
-  with `autoselect` off; the factory binds the approved row form.
+  `ListStore`, each folder's child model its children. Revised on
+  2026-09-28 (research §9): the model is bound to the form's `GtkListBox`;
+  `create_row` gives each tree row its node's action row and ties the
+  expander to it; the header function puts the spacer above every account
+  but the first, found by its row; `row-selected` from the user selects in
+  `AccountList`, while the sidebar's own marking and rebuilds find it
+  borrowed and pass; `row-activated` hides the sidebar on a narrow window;
+  the row passes the expander's keys on; a row collapsed away with the
+  focus in it gives the focus to the collapsed row, a rebuild to the
+  selected row; removed nodes let go of their tree rows.
 - `apply_update(update)`: account rows in place as today.
 - `show_folders(account, folders)`: rebuild the account's child store:
   group by parent, sort siblings by `FolderRole::ORDER` then
@@ -171,8 +179,9 @@ horizontal scrolling, OBJECTID, localized role names (spec FR-013).
   row (spec FR-009).
   An unchanged list keeps the rows; a changed one reopens collapsed
   subfolders, which the spec allows (research §9).
-- Activation: a selectable folder → `Selection::Mailbox`; an account without
-  folders → `Selection::Account`; a heading or a container → nothing.
+- Selection: a selectable folder → `Selection::Mailbox`; an account without
+  folders → `Selection::Account`; a heading or a container cannot be
+  selected.
 - `connect_selection_changed`; the tree model's `items-changed` outside the
   sidebar's own rebuilds: when the shown mailbox's row is no longer shown,
   the user collapsed an ancestor, so clear the selection.
@@ -380,6 +389,13 @@ visible: the focus stayed on the row's box, outside the expander that takes
 those keys, and the platform outlines only the list's own row. The focus
 now rests on that row, the tree passes the expander's keys on, and Tab
 leaves the tree after the current row (spec, Assumptions).
+
+The sidebar moved to a list box after the spike of 2026-09-28 (research
+§9, tasks Phase 7). A review of that change found that a pointer collapse
+let the window's own focus move select the tree's first row, that the
+arrow keys stopped after a rebuild, and that a new account row was not
+activatable; all fixed. The maintainer checked quickstart steps 3–5 on the
+installed build on 2026-09-28: all pass.
 
 The record of step 9 at debug level: folder names appear in debug lines
 only; no subject, sender, text or credential; a failed load is one error

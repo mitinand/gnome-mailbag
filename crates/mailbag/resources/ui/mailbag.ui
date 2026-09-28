@@ -5,7 +5,7 @@
 <interface domain="mailbag">
   <!-- interface-name mailbag.ui -->
   <requires lib="gio" version="2.0"/>
-  <requires lib="gtk" version="4.12"/>
+  <requires lib="gtk" version="4.18"/>
   <requires lib="libadwaita" version="1.8"/>
   <object class="AdwWindow" id="window">
     <property name="content">
@@ -383,9 +383,10 @@
                 <property name="content">
                   <object class="GtkScrolledWindow">
                     <property name="child">
-                      <object class="GtkListView" id="folder_tree">
-                        <!-- Tab leaves the tree after the current row; the
-                             arrow keys move between rows. -->
+                      <object class="GtkListBox" id="folder_tree">
+                        <!-- The arrow keys move between rows and select;
+                             Tab leaves the tree after the current row. -->
+                        <property name="selection-mode">single</property>
                         <property name="tab-behavior">item</property>
                         <style>
                           <class name="navigation-sidebar"/>

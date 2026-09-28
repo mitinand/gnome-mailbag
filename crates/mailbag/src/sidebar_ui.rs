@@ -4,8 +4,10 @@
 //! The sidebar: each account and, once its folder list is stored, its
 //! folders as a tree (specs/008-folders FR-006, FR-009, FR-010). It shows the
 //! selection `AccountList` owns and tells the window when the user changed
-//! it. The pattern is Workbench's "List View with a Tree": a `TreeListModel`
-//! whose rows carry a `TreeExpander`.
+//! it. A list box shows a `TreeListModel`; each row is an action row whose
+//! first prefix is the model's `TreeExpander` (specs/008-folders research §9).
+//! No Workbench demo shows a tree in a list box: its "List Box" demo gives
+//! the list, its "List View with a Tree" the model and the expander.
 
 use crate::accounts::{
     AccountList, AccountPage, AccountProblem, AccountRow, ExclusionReason, Selection,
@@ -15,11 +17,7 @@ use adw::{gio, glib, gtk, prelude::*};
 use goa_adapter::{AccountUpdate, ErrorCause};
 use mailbag_domain::{AccountId, Folder, FolderRef, FolderRole};
 use mailbag_providers::MailProvider;
-use std::{
-    cell::{Cell, RefCell},
-    collections::BTreeMap,
-    rc::Rc,
-};
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 #[cfg(test)]
 mod tests;
@@ -36,11 +34,6 @@ pub enum PageAction {
 struct SidebarNode {
     key: Selection,
     widgets: RowWidgets,
-    /// Whether activating the row selects it: a folder that can be opened,
-    /// or an account without such a folder.
-    selectable: Cell<bool>,
-    /// The tree's item that shows this row while it is bound.
-    bound_item: glib::WeakRef<gtk::ListItem>,
     children: gio::ListStore,
     /// The folder list an account's rows show, in identity order; empty for
     /// a folder.
@@ -51,11 +44,10 @@ struct SidebarNode {
 
 /// The widgets of folder-row.ui.
 struct RowWidgets {
-    root: gtk::Box,
-    /// Shown above every account but the first.
+    row: adw::ActionRow,
+    /// The tree's header above every account but the first.
     account_spacing: gtk::Separator,
     expander: gtk::TreeExpander,
-    details: adw::ActionRow,
     icon: gtk::Image,
     /// Hidden until unread counts arrive (specs/008-folders FR-013(a)).
     badge: gtk::Label,
@@ -75,70 +67,84 @@ pub struct SidebarUi {
     account_nodes: BTreeMap<AccountId, glib::BoxedAnyObject>,
     root: gio::ListStore,
     tree_model: gtk::TreeListModel,
-    selection_model: gtk::SingleSelection,
-    tree: gtk::ListView,
+    tree: gtk::ListBox,
     mail_split: adw::NavigationSplitView,
     folders_split: adw::OverlaySplitView,
     retry_check: gio::SimpleAction,
     toasts: adw::ToastOverlay,
     on_selection_changed: RefCell<Option<Box<dyn Fn()>>>,
-    /// Set while the sidebar itself adds or removes rows, so that only rows
-    /// the user collapsed away count as hiding the selection.
-    changing_rows: Rc<Cell<bool>>,
 }
 
 impl SidebarUi {
     pub fn new(builder: &gtk::Builder) -> Rc<RefCell<Self>> {
-        let tree: gtk::ListView = builder.object("folder_tree").expect("folder_tree");
+        let tree: gtk::ListBox = builder.object("folder_tree").expect("folder_tree");
         let mail_split = builder.object("mail_split").expect("mail_split");
         let folders_split = builder.object("folders_split").expect("folders_split");
         let toasts = builder.object("toasts").expect("toasts");
         let root = gio::ListStore::new::<glib::BoxedAnyObject>();
         let tree_model = gtk::TreeListModel::new(root.clone(), false, true, child_rows);
-        let selection_model = gtk::SingleSelection::new(Some(tree_model.clone()));
-        selection_model.set_autoselect(false);
-        selection_model.set_can_unselect(true);
-        tree.set_model(Some(&selection_model));
-        tree.set_factory(Some(&create_row_factory()));
-        let changing_rows = Rc::new(Cell::new(false));
+        tree.bind_model(Some(&tree_model), create_row);
+        let header_accounts = root.clone();
+        tree.set_header_func(move |row, before| set_account_spacing(&header_accounts, row, before));
         let ui = Rc::new(RefCell::new(Self {
             accounts: AccountList::default(),
             account_nodes: BTreeMap::new(),
             root,
             tree_model: tree_model.clone(),
-            selection_model,
             tree: tree.clone(),
             mail_split,
             folders_split,
             retry_check: gio::SimpleAction::new("retry-accounts", None),
             toasts,
             on_selection_changed: RefCell::new(None),
-            changing_rows: changing_rows.clone(),
         }));
-        forward_expander_keys(&tree);
-        let activating = Rc::downgrade(&ui);
-        tree.connect_activate(move |_, position| {
-            let Some(ui) = activating.upgrade() else {
+        let selecting = Rc::downgrade(&ui);
+        tree.connect_row_selected(move |_, row| {
+            let Some(ui) = selecting.upgrade() else {
                 return;
             };
-            let selected = ui.borrow_mut().select_at(position);
+            // The sidebar is borrowed while it changes the tree itself, so its
+            // own marking and rebuilds end here; only the user's choice goes on.
+            let Ok(mut sidebar) = ui.try_borrow_mut() else {
+                return;
+            };
+            let Some(position) = row.and_then(|row| u32::try_from(row.index()).ok()) else {
+                // Unselecting all (Ctrl+Shift+A) leaves the selection shown.
+                sidebar.show_selection();
+                return;
+            };
+            let selected = sidebar.select_at(position);
+            drop(sidebar);
             // The window shows the newly selected mail; it must not find the
             // sidebar borrowed while it reads the selection.
             if selected {
                 ui.borrow().notify_selection_changed();
             }
         });
-        let collapsing = Rc::downgrade(&ui);
-        tree_model.connect_items_changed(move |_, _, removed, _| {
-            if removed == 0 || changing_rows.get() {
-                return;
+        let activating = Rc::downgrade(&ui);
+        tree.connect_row_activated(move |_, _| {
+            if let Some(ui) = activating.upgrade() {
+                ui.borrow().show_list_on_narrow_window();
             }
+        });
+        let collapsing = Rc::downgrade(&ui);
+        tree_model.connect_items_changed(move |_, position, removed, _| {
             let Some(ui) = collapsing.upgrade() else {
                 return;
             };
+            // Only rows the user collapsed away: the sidebar's own changes
+            // find it borrowed.
+            let Ok(mut sidebar) = ui.try_borrow_mut() else {
+                return;
+            };
+            if removed == 0 {
+                return;
+            }
+            sidebar.keep_focus_on_collapsed(position);
             // Collapsing the shown mailbox's parent or account clears the
             // selection (specs/008-folders FR-010).
-            let cleared = ui.borrow_mut().clear_hidden_selection();
+            let cleared = sidebar.clear_hidden_selection();
+            drop(sidebar);
             if cleared {
                 ui.borrow().notify_selection_changed();
             }
@@ -245,13 +251,7 @@ impl SidebarUi {
     pub fn folder_name(&self, folder: &FolderRef) -> Option<String> {
         let key = Selection::Mailbox(folder.clone());
         let node = self.node_at(self.position_of(&key)?)?;
-        Some(
-            node.borrow::<SidebarNode>()
-                .widgets
-                .details
-                .title()
-                .to_string(),
-        )
+        Some(node.borrow::<SidebarNode>().widgets.row.title().to_string())
     }
 
     pub fn shows_account(&self, id: &AccountId) -> bool {
@@ -266,7 +266,6 @@ impl SidebarUi {
 
     pub fn apply_update(&mut self, update: &AccountUpdate) {
         let hidden_notices = self.accounts.apply_update(update);
-        self.changing_rows.set(true);
         let removed: Vec<_> = self
             .account_nodes
             .keys()
@@ -282,6 +281,7 @@ impl SidebarUi {
             if let Some(position) = self.root.find(&item) {
                 self.root.remove(position);
             }
+            node.release_rows();
         }
         for (position, (id, account)) in self.accounts.visible_accounts().iter().enumerate() {
             let item = self.account_nodes.entry(id.clone()).or_insert_with(|| {
@@ -289,15 +289,20 @@ impl SidebarUi {
                 self.root.insert(position as u32, &item);
                 item
             });
-            let node = item.borrow::<SidebarNode>();
-            node.show_account(account, self.accounts.retry_pending());
-            node.widgets.account_spacing.set_visible(position > 0);
+            item.borrow::<SidebarNode>()
+                .show_account(account, self.accounts.retry_pending());
         }
-        self.changing_rows.set(false);
         self.show_selection();
-        // The keyboard stays in the tree when its account row is removed.
+        // The keyboard stays in the tree when its account row is removed: on
+        // the selected row, else the first.
         if tree_had_focus && !contains_focus(&self.tree) {
-            focus_widget(&self.tree);
+            let row = self
+                .tree
+                .selected_row()
+                .or_else(|| self.tree.row_at_index(0));
+            if let Some(row) = row {
+                row.grab_focus();
+            }
         }
         for notice in hidden_notices {
             self.show_toast(&format!(
@@ -332,10 +337,13 @@ impl SidebarUi {
                 .push(folder.clone());
         }
         let tree_had_focus = contains_focus(&self.tree);
-        self.changing_rows.set(true);
         {
             let node = item.borrow::<SidebarNode>();
+            let old_folders: Vec<glib::BoxedAnyObject> = node.children.iter().flatten().collect();
             node.children.remove_all();
+            for folder in old_folders {
+                folder.borrow::<SidebarNode>().release_rows();
+            }
             fill_folders(&node.children, account, None, &by_parent);
             node.set_selectable(!openable);
             node.widgets
@@ -343,7 +351,6 @@ impl SidebarUi {
                 .set_hide_expander(node.children.n_items() == 0);
             *node.listed_folders.borrow_mut() = folders;
         }
-        self.changing_rows.set(false);
         let selection_gone = self
             .accounts
             .selection()
@@ -353,9 +360,14 @@ impl SidebarUi {
             self.accounts.clear_selection();
         }
         self.show_selection();
-        // The keyboard stays in the tree when its row is rebuilt away.
+        // The keyboard stays in the tree when its row is rebuilt away: on the
+        // selected row, else the account's.
         if tree_had_focus && !contains_focus(&self.tree) {
-            focus_widget(&self.tree);
+            let account_row = item.borrow::<SidebarNode>().widgets.row.clone();
+            match self.tree.selected_row() {
+                Some(row) => row.grab_focus(),
+                None => account_row.grab_focus(),
+            };
         }
         selection_gone
     }
@@ -370,23 +382,45 @@ impl SidebarUi {
         self.show_toast(error.message());
     }
 
-    /// Selects the row at `position` when it can be selected; a heading or a
-    /// container changes nothing.
+    /// Selects the row the user chose at `position`, by a click, the arrow
+    /// keys or Tab; returns whether the selection changed. The tree selects
+    /// only rows that can be selected, and selects the selected row again
+    /// when Tab enters it.
     fn select_at(&mut self, position: u32) -> bool {
         let Some(item) = self.node_at(position) else {
             return false;
         };
         let node = item.borrow::<SidebarNode>();
-        if !node.selectable.get() {
+        if self.accounts.selection() == Some(&node.key) {
             return false;
         }
         self.accounts.select(node.key.clone());
-        self.selection_model.set_selected(position);
         self.mail_split.set_show_content(false);
+        true
+    }
+
+    /// A click or Enter on a row shows the selected mail's list on a narrow
+    /// window; the arrow keys keep the sidebar (specs/008-folders FR-010).
+    fn show_list_on_narrow_window(&self) {
         if self.folders_split.is_collapsed() {
             self.folders_split.set_show_sidebar(false);
         }
-        true
+    }
+
+    /// Gives the keyboard focus to the row collapsed at `position - 1` when
+    /// it left with a hidden row: the window would move it to the tree's
+    /// first row, which selects that row (specs/008-folders FR-010).
+    fn keep_focus_on_collapsed(&self, position: u32) {
+        let focus_left = self
+            .tree
+            .root()
+            .is_some_and(|root| root.focus().is_none_or(|focus| focus.root().is_none()));
+        let collapsed = position
+            .checked_sub(1)
+            .and_then(|collapsed| self.tree.row_at_index(collapsed as i32));
+        if focus_left && let Some(collapsed) = collapsed {
+            collapsed.grab_focus();
+        }
     }
 
     /// Clears a selection whose row the user collapsed away; returns whether
@@ -404,18 +438,21 @@ impl SidebarUi {
 
     /// Marks the selected row in the tree, or none.
     fn show_selection(&self) {
-        let position = self
+        let row = self
             .accounts
             .selection()
-            .and_then(|selection| self.position_of(selection));
-        self.selection_model
-            .set_selected(position.unwrap_or(gtk::INVALID_LIST_POSITION));
+            .and_then(|selection| self.position_of(selection))
+            .and_then(|position| self.tree.row_at_index(position as i32));
+        match row {
+            Some(row) => self.tree.select_row(Some(&row)),
+            None => self.tree.unselect_all(),
+        }
     }
 
     fn shows_selectable(&self, selection: &Selection) -> bool {
         self.position_of(selection)
             .and_then(|position| self.node_at(position))
-            .is_some_and(|item| item.borrow::<SidebarNode>().selectable.get())
+            .is_some_and(|item| item.borrow::<SidebarNode>().widgets.row.is_selectable())
     }
 
     /// The row of `key` among the rows the tree shows, which leaves out the
@@ -428,7 +465,7 @@ impl SidebarUi {
     }
 
     /// The row of an account, or of one of its folders, for the window's
-    /// graphical test to activate.
+    /// graphical test to select.
     #[cfg(test)]
     pub fn position_of_row(&self, account: &AccountId, folder: Option<&str>) -> Option<u32> {
         let key = match folder {
@@ -442,12 +479,16 @@ impl SidebarUi {
     }
 
     fn node_at(&self, position: u32) -> Option<glib::BoxedAnyObject> {
-        self.tree_model
-            .item(position)
-            .and_downcast::<gtk::TreeListRow>()?
-            .item()
-            .and_downcast()
+        node_at(&self.tree_model, position)
     }
+}
+
+fn node_at(tree_model: &gtk::TreeListModel, position: u32) -> Option<glib::BoxedAnyObject> {
+    tree_model
+        .item(position)
+        .and_downcast::<gtk::TreeListRow>()?
+        .item()
+        .and_downcast()
 }
 
 /// The children of a row: an account's folders, which it may gain later, or
@@ -490,76 +531,50 @@ fn fill_folders(
     }
 }
 
-fn create_row_factory() -> gtk::SignalListItemFactory {
-    let factory = gtk::SignalListItemFactory::new();
-    factory.connect_bind(|_, item| {
-        let item = item.downcast_ref::<gtk::ListItem>().expect("list item");
-        // The tree marks the selection `AccountList` owns; a click alone
-        // never selects a row.
-        item.set_selectable(false);
-        let row = item
-            .item()
-            .and_downcast::<gtk::TreeListRow>()
-            .expect("a tree row");
-        let node = row.item().and_downcast::<glib::BoxedAnyObject>().unwrap();
-        let node = node.borrow::<SidebarNode>();
-        node.widgets.expander.set_list_row(Some(&row));
-        item.set_activatable(node.selectable.get());
-        node.bound_item.set(Some(item));
-        item.set_child(Some(&node.widgets.root));
+/// The row that shows a tree row: its node's action row, whose expander
+/// follows the tree row.
+fn create_row(item: &glib::Object) -> gtk::Widget {
+    let tree_row = item.downcast_ref::<gtk::TreeListRow>().expect("a tree row");
+    let node = tree_row
+        .item()
+        .and_downcast::<glib::BoxedAnyObject>()
+        .expect("a sidebar node");
+    let node = node.borrow::<SidebarNode>();
+    node.widgets.expander.set_list_row(Some(tree_row));
+    node.widgets.row.clone().upcast()
+}
+
+/// Puts the spacer above every account but the first (specs/008-folders,
+/// Assumptions). The account is found by its row: while rows are removed the
+/// tree's positions already name other rows.
+fn set_account_spacing(
+    accounts: &gio::ListStore,
+    row: &gtk::ListBoxRow,
+    before: Option<&gtk::ListBoxRow>,
+) {
+    let spacing = before.and_then(|_| {
+        accounts
+            .iter::<glib::BoxedAnyObject>()
+            .flatten()
+            .find_map(|item| {
+                let node = item.borrow::<SidebarNode>();
+                (node.widgets.row.upcast_ref::<gtk::ListBoxRow>() == row)
+                    .then(|| node.widgets.account_spacing.clone())
+            })
     });
-    factory.connect_unbind(|_, item| {
-        let item = item.downcast_ref::<gtk::ListItem>().unwrap();
-        let node = item
-            .item()
-            .and_downcast::<gtk::TreeListRow>()
-            .and_then(|row| row.item())
-            .and_downcast::<glib::BoxedAnyObject>();
-        if let Some(node) = node {
-            let node = node.borrow::<SidebarNode>();
-            node.bound_item.set(None);
-            // The tree's row holds this node, which holds the expander: the
-            // expander lets go of the row so a removed node is freed.
-            node.widgets
-                .expander
-                .set_list_row(None::<&gtk::TreeListRow>);
-            if let Some(problem) = &node.problem {
-                problem.popover.popdown();
-            }
-        }
-        item.set_child(None::<&gtk::Widget>);
-    });
-    factory
+    row.set_header(spacing.as_ref());
 }
 
 impl RowWidgets {
     fn new() -> Self {
         let builder = gtk::Builder::from_string(include_str!("../resources/ui/folder-row.ui"));
-        let root: gtk::Box = builder.object("folder_row").unwrap();
-        let details: adw::ActionRow = builder.object("folder_details").unwrap();
+        let row: adw::ActionRow = builder.object("folder_row").unwrap();
         let expander: gtk::TreeExpander = builder.object("folder_expander").unwrap();
-        // A click on the row's name activates it, which selects a row that
-        // can be selected; the expander's arrow only expands, and Enter
-        // activates through the tree (specs/008-folders FR-010).
-        let click = gtk::GestureClick::new();
-        let row_expander = expander.downgrade();
-        click.connect_released(move |_, _, _, _| {
-            let Some(expander) = row_expander.upgrade() else {
-                return;
-            };
-            if let Some(row) = expander.list_row() {
-                let position = row.position().to_variant();
-                expander
-                    .activate_action("list.activate-item", Some(&position))
-                    .expect("the row is in the tree");
-            }
-        });
-        details.add_controller(click);
+        forward_expander_keys(&row, &expander);
         Self {
-            root,
+            row,
             account_spacing: builder.object("account_spacing").unwrap(),
             expander,
-            details,
             icon: builder.object("folder_icon").unwrap(),
             badge: builder.object("folder_badge").unwrap(),
         }
@@ -570,8 +585,8 @@ impl SidebarNode {
     fn account(id: &AccountId, retry_check: &gio::SimpleAction) -> Self {
         let widgets = RowWidgets::new();
         // An account row never shows a count; its problem button takes the place.
-        widgets.details.remove(&widgets.badge);
-        widgets.details.add_css_class("heading");
+        widgets.row.remove(&widgets.badge);
+        widgets.row.add_css_class("heading");
         widgets.expander.set_hide_expander(true);
         let builder = gtk::Builder::from_string(include_str!("../resources/ui/account-problem.ui"));
         let problem = ProblemWidgets {
@@ -585,49 +600,59 @@ impl SidebarNode {
         problem
             .retry
             .connect_clicked(move |_| retry_check.activate(None));
-        widgets.details.add_suffix(&problem.button);
-        Self {
+        widgets.row.add_suffix(&problem.button);
+        let node = Self {
             key: Selection::Account(id.clone()),
             widgets,
-            selectable: Cell::new(true),
-            bound_item: glib::WeakRef::new(),
             children: gio::ListStore::new::<glib::BoxedAnyObject>(),
             listed_folders: RefCell::default(),
             problem: Some(problem),
-        }
+        };
+        // Until it has a folder that can be opened (specs/008-folders FR-009).
+        node.set_selectable(true);
+        node
     }
 
     fn folder(account: &AccountId, folder: &Folder) -> Self {
         let widgets = RowWidgets::new();
-        widgets.details.set_title(shown_name(folder));
+        widgets.row.set_title(shown_name(folder));
         widgets.icon.set_icon_name(Some(folder_icon(folder.role)));
-        Self {
+        let node = Self {
             key: Selection::Mailbox(FolderRef {
                 account: account.clone(),
                 identity: folder.identity.clone(),
             }),
             widgets,
-            selectable: Cell::new(folder.selectable),
-            bound_item: glib::WeakRef::new(),
             children: gio::ListStore::new::<glib::BoxedAnyObject>(),
             listed_folders: RefCell::default(),
             problem: None,
-        }
+        };
+        node.set_selectable(folder.selectable);
+        node
     }
 
-    /// Whether activating the row selects it. A row that cannot be selected,
-    /// a heading or a container, does not react to the pointer
-    /// (specs/008-folders FR-009).
+    /// Whether the row can be selected: a folder that can be opened, or an
+    /// account without such a folder. A row that cannot, a heading or a
+    /// container, does not react to the pointer (specs/008-folders FR-009).
     fn set_selectable(&self, selectable: bool) {
-        self.selectable.set(selectable);
-        if let Some(item) = self.bound_item.upgrade() {
-            item.set_activatable(selectable);
+        self.widgets.row.set_selectable(selectable);
+        self.widgets.row.set_activatable(selectable);
+    }
+
+    /// Lets go of the tree rows that this row and its folders' rows hold: a
+    /// tree row holds its node, so a removed node is freed only then.
+    fn release_rows(&self) {
+        self.widgets
+            .expander
+            .set_list_row(None::<&gtk::TreeListRow>);
+        for folder in self.children.iter::<glib::BoxedAnyObject>().flatten() {
+            folder.borrow::<SidebarNode>().release_rows();
         }
     }
 
     fn show_account(&self, account: &AccountRow, retry_pending: bool) {
         let problem = self.problem.as_ref().expect("an account row");
-        self.widgets.details.set_title(&account.label);
+        self.widgets.row.set_title(&account.label);
         self.widgets.icon.set_icon_name(Some(account.icon_name));
         let explanation = account
             .problems
@@ -636,10 +661,8 @@ impl SidebarNode {
             .collect::<Vec<_>>()
             .join("\n");
         if explanation.is_empty() {
-            if (contains_focus(&problem.button) || contains_focus(&problem.popover))
-                && let Some(row) = self.widgets.root.parent()
-            {
-                focus_widget(&row);
+            if contains_focus(&problem.button) || contains_focus(&problem.popover) {
+                self.widgets.row.grab_focus();
             }
             problem.popover.popdown();
         }
@@ -672,36 +695,17 @@ pub fn show_check_progress(button: &gtk::Button, pending: bool) {
     });
 }
 
-/// The keyboard focus rests on the tree's own row, which the platform
-/// outlines; the keys that expand and collapse it are the expander's, so
-/// the tree passes them on (specs/008-folders, Assumptions).
-fn forward_expander_keys(tree: &gtk::ListView) {
+/// The keyboard focus rests on the row, which the platform outlines; the
+/// keys that expand and collapse it are its expander's, so the row passes
+/// them on (specs/008-folders, Assumptions).
+fn forward_expander_keys(row: &adw::ActionRow, expander: &gtk::TreeExpander) {
     let keys = gtk::EventControllerKey::new();
-    let key_tree = tree.downgrade();
-    keys.connect_key_pressed(move |keys, _, _, _| {
-        let expander = key_tree.upgrade().and_then(|tree| focused_expander(&tree));
-        match expander {
-            Some(expander) if keys.forward(&expander) => glib::Propagation::Stop,
-            _ => glib::Propagation::Proceed,
-        }
+    let row_expander = expander.downgrade();
+    keys.connect_key_pressed(move |keys, _, _, _| match row_expander.upgrade() {
+        Some(expander) if keys.forward(&expander) => glib::Propagation::Stop,
+        _ => glib::Propagation::Proceed,
     });
-    tree.add_controller(keys);
-}
-
-/// The expander of the tree's row that has the keyboard focus: the row
-/// holds folder-row.ui, whose last child is the expander.
-fn focused_expander(tree: &gtk::ListView) -> Option<gtk::TreeExpander> {
-    let focus = tree.root()?.focus()?;
-    if focus.parent().as_ref() != Some(tree.upcast_ref()) {
-        return None;
-    }
-    focus.first_child()?.last_child()?.downcast().ok()
-}
-
-fn focus_widget(widget: &impl IsA<gtk::Widget>) {
-    if let Some(root) = widget.root() {
-        root.set_focus(Some(widget));
-    }
+    row.add_controller(keys);
 }
 
 fn contains_focus(widget: &impl IsA<gtk::Widget>) -> bool {
