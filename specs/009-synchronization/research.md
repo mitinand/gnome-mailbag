@@ -5,20 +5,20 @@ on: a source line, a document, or a probe run at the feature-start or while
 planning (2026-09-28). Probe results are stated without the accounts they
 ran on.
 
-## §1 One cycle, two parts: learning changes and storing portions
+## §1 One cycle, two parts: learning changes and storing batches
 
 **Decision**: A cycle is written as the steps of spec FR-001: open the
 folder, learn the server's changes, store them. Learning changes is one
 function per way of learning them (the IMAP base method, the Microsoft 365
-delta query); each delivers `FolderPortion`s ([contract](contracts/synchronization.md)).
-One store operation, `Store::store_portion`, writes any portion in one
+delta query); each delivers `FolderBatch`s ([contract](contracts/synchronization.md)).
+One store operation, `Store::store_batch`, writes any batch in one
 transaction and does not know which way produced it.
 
 **Rationale**: two ways exist today, so the shared shape is not speculative;
 CONDSTORE later adds a third way and one field of folder state (spec
 FR-015(e)) without touching the store, the worker or the window. The
 store has no provider rule: a Generic IMAP renumbering is expressed by
-identities (§2), not by a reset kind of portion.
+identities (§2), not by a reset kind of batch.
 
 **Alternatives**: a store operation per kind of change (removals, read
 state, arrivals), called by each provider: rejected, since every provider
@@ -45,7 +45,7 @@ and every message of the new version is an arrival: no old row, text or
 open reader is ever attached to a new message, also when the window's
 coalesced reads skip the moment between. No numbering version is stored
 per folder, and no reset rule exists. (External review, 2026-09-29; it
-replaces a stored `uid_validity` with a reset portion, which could match
+replaces a stored `uid_validity` with a reset batch, which could match
 the rows of a store written without a version to new messages.)
 
 **Rationale**:
@@ -76,18 +76,18 @@ UID, which the fork also passes on for unsolicited flag updates, is skipped; 100
 about 2 MB in memory instead of tens of megabytes (inferred from the
 response sizes).
 
-## §3 IMAP: arrivals and their texts, a portion at a time
+## §3 IMAP: arrivals and their texts, a batch at a time
 
 **Decision**: Arrivals are the listed messages the store lacks, taken
-highest UID first in portions of 100. For each portion: `UID FETCH` of the
+highest UID first in batches of 100. For each batch: `UID FETCH` of the
 list fields (today's row items) by UID set; then, for the rows whose
 INTERNALDATE lies within 30 days of the cycle's start, the part structures
-and the text parts as today's batch reads them (002 FR-004); then the
-portion is stored. Rows older than 30 days are stored with
+and the text parts as the newest-100 load read them (002 FR-004); then the
+batch is stored. Rows older than 30 days are stored with
 `ReceivedContent::NotDownloaded`. A message missing from the row answer
 disappeared and is skipped without failing (spec Edge Cases), and a group
 of structures that all disappeared is skipped likewise. A NO that ends a
-portion's row FETCH keeps the rows received, stores them, and ends the
+batch's row FETCH keeps the rows received, stores them, and ends the
 cycle as an incomplete list (`IncompleteList::ServerRefused`) without the
 completed state, as today's `MessageList.refusal` does, so a folder never
 looks complete while the server withheld messages. The sequence-number
@@ -97,25 +97,33 @@ FETCH goes.
 - Texts with their rows (spec FR-003): the newest messages are readable as
   soon as listed, and a stop leaves no stored message of the last 30 days
   without its text.
-- 100 is today's batch, whose timing on real servers is known; one portion
+- 100 is the newest-100 load's size, whose timing on real servers is known; one batch
   with texts took seconds on the slowest server measured (19 texts per
   second).
 - Structures are never asked for a whole folder in one command: on one
   server `UID FETCH 1:* (BODYSTRUCTURE)` over a folder of several thousand
   messages took 15 minutes, while groups of 100 ran at 92 messages per second (measured).
-- The portion size bounds the work a stop loses (spec FR-010), not the time
+- The batch size bounds the work a stop loses (spec FR-010), not the time
   quitting takes (§8).
 
 **Alternatives**: every row first, texts afterwards: rejected by the spec
 challenge (the newest message said "not downloaded" during a fill). Larger
-portions for rows without text: kept as an optional mechanism, for a first
+batches for rows without text: kept as an optional mechanism, for a first
 fill of a very large folder that proves slow.
+
+**Measured on the installed build (2026-09-30)**: on one server the first
+read of any header of an older message costs about 90 ms, whatever the
+items (header fields, ENVELOPE or the whole header: 9–11 s per 100), and a
+second read of the same messages 0.2 s; flags and dates alone take 0.2 s
+per 100. A first fill of 9 000 messages there takes about 15 minutes, the
+newest rows first. Larger batches do not help, since the cost is per
+message; several connections at once would, and belong with 019.
 
 ## §4 Gmail: label folders by the same method
 
 **Decision**: A Gmail label folder runs §2 and §3 with `X-GM-MSGID` in the
-listing. A listed message's identity is `gmail:<X-GM-MSGID>`. Before a portion's
-rows are fetched, the cycle asks the store which of the portion's
+listing. A listed message's identity is `gmail:<X-GM-MSGID>`. Before a batch's
+rows are fetched, the cycle asks the store which of the batch's
 identities the account already holds (`Store::stored_identities`, one
 query on the unique `(account, identity)` index); those messages are only
 related to this folder with their listed read state, and nothing of them is
@@ -135,7 +143,11 @@ one number per line.
   the list fields and `isRead`, `$orderby=receivedDateTime desc` on a first
   reading, `Prefer: odata.maxpagesize=500` and `IdType="ImmutableId"`; it
   follows `@odata.nextLink` until `@odata.deltaLink`. Each page is a
-  portion.
+  batch.
+  Page size (measured 2026-09-30): a page takes about 0.35 s plus 5 ms per
+  message (50 in 0.6 s, 500 in 3 s), so smaller pages lengthen a full
+  reading; the same pages once took 20 s and one 81 s, the service's
+  load at that hour.
 - An entry for a message the account also holds in another folder is not
   applied from the entry, which may be older than that folder's state (a
   message read in A, moved to B and marked unread there, then an old
@@ -158,18 +170,31 @@ one number per line.
   received date, so the folder holds no message between its earliest and
   latest dates that the page lacks; its messages within 30 days get their
   texts in one request
-  `GET /me/mailFolders/{id}/messages?$filter=receivedDateTime ge A and receivedDateTime le B&$select=id,body&$top=500`
+  `GET /me/mailFolders/{id}/messages?$filter=receivedDateTime ge A and receivedDateTime lt B&$select=id,body&$top=500`
   with `Prefer: outlook.body-content-type="text"` (the list's default page
-  is 10 messages), A and B being those messages' earliest and latest
-  dates; messages with an equal date outside the page are ignored.
+  is 10 messages), A being those messages' earliest date and B a second
+  after their latest; messages with an equal date outside the page are
+  ignored. The service keeps dates finer than the seconds it shows: a
+  range ending `le` the latest shown date missed that message (probe,
+  2026-09-30).
+- A message of the last 30 days whose list fields the service reports
+  again (a listed entry, or a partial one that changed other fields) gets
+  its text again: a draft edited in another client keeps its identity,
+  and so does the message once sent (spec FR-009; external review,
+  2026-09-29). Probe, 2026-09-29: a draft whose text alone was edited in
+  Outlook on the web came in the next round as a listed entry.
 - Texts in a round of changes: its arrived messages are scattered in time
   (a message moved in from a month ago beside today's), so each text is
   read by the message's identifier; a date range could cover a month of
   mail for two messages (external review, 2026-09-29).
-- Position: the `@odata.deltaLink` is saved with the portion that completes
-  the cycle. During the first fill of a folder never refreshed, each page's
-  portion saves its `@odata.nextLink` as the place to continue (spec
-  FR-008, FR-010).
+- Position: the `@odata.deltaLink` is saved with the batch that completes
+  the cycle, as `server_position`. During the first fill of a folder never
+  refreshed, each page's batch saves its `@odata.nextLink` as `fill_place`,
+  the place to continue (spec FR-008, FR-010). Each page that is not a
+  reading's last marks the folder not completed and leaves
+  `server_position` as it was, so an interrupted round starts again from
+  it and is never taken for a first fill (external review, 2026-09-29: one
+  field held both links, told apart by `synchronized`).
 - A 410, or a 4xx whose `error.code` is `syncStateNotFound` (compared
   without case), means the saved position or place is no longer accepted;
   the cycle then reads the whole folder, keeps the listed identities in
@@ -226,12 +251,12 @@ re-reading.
 message's text, against spec FR-009; JSON batching of per-message requests:
 more code for the same result as a date range.
 
-## §6 The store: folder state, portions, reads without text
+## §6 The store: folder state, batches, reads without text
 
 **Decision** ([data-model.md](data-model.md)):
 - `folder` gains `server_position`; `loaded` becomes `synchronized` ("the
   folder's latest cycle completed"). No numbering version is stored (§2).
-  The first portion of a cycle that has messages to fetch sets
+  The first batch of a cycle that has messages to fetch sets
   `synchronized` to 0, so a stopped cycle that left no row is shown as "no
   mail loaded", never as an empty folder.
 - `membership` loses `position`: rows are ordered by the message's received
@@ -244,11 +269,11 @@ more code for the same result as a date range.
 - The content code `not_downloaded` joins the schema's `CHECK`.
 - `Store::read_folder_sync(folder)` returns the folder state and the stored
   identities with their read state, once per cycle.
-- `Store::store_portion(folder, portion, cancelled)` writes one portion in
+- `Store::store_batch(folder, batch, cancelled)` writes one batch in
   one transaction under the store's lock, after the cancellation check that
   loads use today: removals, orphaned messages, read states, arrivals (an
   arrival never replaces a stored text with `NotDownloaded`), memberships,
-  and the folder state when the portion carries one.
+  and the folder state when the batch carries one.
 - `Store::read_folder_rows(folder)` returns the list fields and read state
   of the folder's messages without their text; `None` when no cycle
   completed and no row is stored ("no mail loaded").
@@ -260,32 +285,32 @@ more code for the same result as a date range.
 (measured at the feature-start and for 007), so the list never carries text
 and the reader reads one message on opening. The store already serializes
 writers behind one lock, so parallel cycles later (spec FR-002(d)) write
-portion after portion without change. The existing `load_cancelled` check
-under the lock keeps 007 FR-007 and FR-008 for every portion.
+batch after batch without change. The existing `load_cancelled` check
+under the lock keeps 007 FR-007 and FR-008 for every batch.
 
 **Alternatives**: a stored "listed in this reading" mark per relation, to
 resume Microsoft 365 re-readings: rejected with the spec's rule that
 re-readings restart.
 
-## §7 The worker reports portions; the window re-reads the shown folder
+## §7 The worker reports batches; the window re-reads the shown folder
 
 **Decision**: The mail worker's outcome channel carries
-`LoadEvent::PortionStored` any number of times before the final
+`LoadEvent::BatchStored` any number of times before the final
 `LoadEvent::Finished(LoadResult)`. Today it holds one message and the result
 is sent with `try_send`; it becomes unbounded and the window receives in a
-loop, so the final result is never dropped behind an unread portion event.
-The window, on a portion of any folder of the shown folder's account (a
+loop, so the final result is never dropped behind an unread batch event.
+The window, on a batch of any folder of the shown folder's account (a
 Gmail label and a moved Microsoft 365 message share messages across
 folders, as the completed load already rules today), reads the shown
 folder's rows again while the rows and the banner on screen stay as they are (a "read
 due" mark, not the state of a first read, which hides the banner); a
-portion that arrives while a read runs marks one more read when it ends, so
+batch that arrives while a read runs marks one more read when it ends, so
 reads never pile up and no timer is needed.
 
 **Rationale**: FR-003 and FR-013; the numbered-read pattern exists for
 stored mailboxes (007, 008).
 
-**Alternatives**: the worker passes the portion to the window: two sources
+**Alternatives**: the worker passes the batch to the window: two sources
 of rows, against 007 FR-001 ("the window shows stored mail only").
 
 ## §8 Quitting within a second
@@ -293,15 +318,15 @@ of rows, against 007 FR-001 ("the window shows stored mail only").
 **Decision**: Unchanged mechanism, now a requirement (spec FR-010): closing
 the window drops the running load's handle, the worker drops the cycle's
 future, which closes its connection, and nothing joins the worker thread
-(`main.rs`, `connect_destroy`). A portion being written finishes or rolls
+(`main.rs`, `connect_destroy`). A batch being written finishes or rolls
 back with the process (007 FR-010). A test starts a cycle against a
 scripted server that stops answering, cancels it and checks that the
 cancellation is reported within a second; the installed build is checked by
 hand (quickstart).
 
 **Rationale**: the store's transaction is the only work that cannot stop at
-once; a portion's write took milliseconds (measured for 100 000 rows in
-portions of 500: 0.8 s in all).
+once; a batch's write took milliseconds (measured for 100 000 rows in
+batches of 500: 0.8 s in all).
 
 ## §9 The list widget
 
@@ -344,7 +369,7 @@ GTK's thread in a release build, and 0.13 s without.
 **Alternatives**: a signal factory that builds `message-row.ui` per row and
 fills it in code, as the list box does today: with reused rows it needs a
 row widget class or data attached to widgets, so it is not simpler;
-rebuilding the model on each read: 100 000 items per portion, and the
+rebuilding the model on each read: 100 000 items per batch, and the
 selection lost.
 
 **Checked in portion 1** (Cambalache 1.0.3, 2026-09-29): Cambalache does
@@ -361,7 +386,7 @@ parent must be `GObject`.
 **Decision**: The failure kind and its wording stay. Of its four producers
 today, three go: rows of a sequence-number FETCH that all vanished
 (`reader.rs`, `fetch_rows`), structures that all vanished
-(`fetch_structures`) and a batch whose messages all vanished
+(`fetch_structures`) and a newest-100 load whose messages all vanished
 (`imap_batch.rs`, `load_batch_from_rows`); a vanished message is a missing
 answer to a UID FETCH, which the cycle skips. One producer remains: after a structure the
 parser cannot read, the reader reconnects, and if the folder's UIDVALIDITY
@@ -383,7 +408,7 @@ maintainer, 2026-09-28). A second saved place, after 45 minutes, answered in
 **Rationale**: pages of 15 seconds were measured, and a page read from a
 saved place after a 15-minute pause took 29.3 seconds (probe, 2026-09-28),
 at the edge of today's limit. A request that exceeds the limit stops the
-cycle, and the stored portions and the saved place make the next Refresh
+cycle, and the stored batches and the saved place make the next Refresh
 continue (FR-010), so the cost of a too short limit is a failure banner and
 a second Refresh; the cost of a longer one is a real outage noticed after
 60 seconds instead of 30.
@@ -408,7 +433,7 @@ Microsoft 365 it repeats the request with the new token; on Gmail it drops
 the reader, opens the folder again with the new access through
 `MailboxReader::open`, compares `uid_validity()` with the one it holds (a
 change is `MailboxChanged`), and repeats the interrupted request (the
-listing or the portion). A different token does not prove the cause:
+listing or the batch). A different token does not prove the cause:
 Online Accounts renews a token that has less than ten minutes left,
 whatever ended the session, so a BYE Gmail sent for its limits can,
 rarely, be followed by one reconnect; 004's amendment says so. With the

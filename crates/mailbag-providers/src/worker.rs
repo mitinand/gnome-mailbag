@@ -11,7 +11,7 @@ use crate::{
     imap::list_imap_folders,
     microsoft365::list_microsoft365_folders,
     renewal::AccessRenewal,
-    store_load::{PortionWriter, store_folder_list},
+    store_load::{BatchWriter, store_folder_list},
 };
 use futures_util::{
     FutureExt,
@@ -68,7 +68,7 @@ pub(crate) struct LoadRequest {
     target: LoadTarget,
     /// Closed when the caller cancels or drops the load.
     cancelled: async_channel::Receiver<()>,
-    /// Unbounded, so the final result is never dropped behind a portion
+    /// Unbounded, so the final result is never dropped behind a batch
     /// event the caller has not read yet.
     events: async_channel::Sender<LoadEvent>,
 }
@@ -87,7 +87,7 @@ impl MailWorker {
     }
 
     /// Loads `target` of the account the access data names. `on_event`
-    /// runs on the calling GLib context for each stored portion, then once
+    /// runs on the calling GLib context for each stored batch, then once
     /// with the end, even when the worker stops, so a load always ends and
     /// the refresh actions become available again.
     pub(crate) fn start_load(
@@ -235,7 +235,7 @@ async fn load_catching_panics(
                 ))
             }
             LoadTarget::Mailbox(folder) => {
-                synchronize_folder(kind, PortionWriter::new(store, folder, cancelled, events)).await
+                synchronize_folder(kind, BatchWriter::new(store, folder, cancelled, events)).await
             }
         }
     };

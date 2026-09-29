@@ -81,12 +81,13 @@ pub(crate) fn read_folder_state(
     folder_id: i64,
 ) -> rusqlite::Result<FolderState> {
     connection.query_row(
-        "SELECT server_position, synchronized FROM folder WHERE id = ?1",
+        "SELECT server_position, fill_place, synchronized FROM folder WHERE id = ?1",
         [folder_id],
         |row| {
             Ok(FolderState {
                 server_position: row.get(0)?,
-                synchronized: row.get(1)?,
+                fill_place: row.get(1)?,
+                synchronized: row.get(2)?,
             })
         },
     )
@@ -121,6 +122,26 @@ pub(crate) fn read_stored_identities(
         }
     }
     Ok(stored)
+}
+
+/// Which of `identities` another folder of the folder's account holds.
+pub(crate) fn read_identities_in_other_folders(
+    connection: &Connection,
+    folder: &FolderRef,
+    identities: &[String],
+) -> rusqlite::Result<HashSet<String>> {
+    let mut select = connection.prepare(
+        "SELECT 1 FROM message JOIN membership ON membership.message = message.id \
+         JOIN folder ON folder.id = membership.folder \
+         WHERE message.account = ?1 AND message.identity = ?2 AND folder.identity != ?3",
+    )?;
+    let mut held = HashSet::new();
+    for identity in identities {
+        if select.exists(params![folder.account.as_str(), identity, folder.identity])? {
+            held.insert(identity.clone());
+        }
+    }
+    Ok(held)
 }
 
 /// Deletes the folder's memberships of messages proven gone from it.
@@ -224,8 +245,14 @@ pub(crate) fn write_folder_state(
     state: &FolderState,
 ) -> rusqlite::Result<()> {
     transaction.execute(
-        "UPDATE folder SET server_position = ?2, synchronized = ?3 WHERE id = ?1",
-        params![folder_id, state.server_position, state.synchronized],
+        "UPDATE folder SET server_position = ?2, fill_place = ?3, synchronized = ?4 \
+         WHERE id = ?1",
+        params![
+            folder_id,
+            state.server_position,
+            state.fill_place,
+            state.synchronized
+        ],
     )?;
     Ok(())
 }

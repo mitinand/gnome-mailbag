@@ -3,12 +3,12 @@
 
 use super::*;
 use crate::renewal::AccessRenewal;
-use crate::store_load::{PortionWriter, store_folder_list};
+use crate::store_load::{BatchWriter, store_folder_list};
 use crate::test_record::CapturedRecord;
 use crate::worker::{LoadKind, MailWorker, report_events};
 use goa_adapter::{GraphAccess, ImapAccess, ImapCredential, ImapEncryption};
 use mailbag_domain::{
-    AccountId, ContentExplanation, DisplayFields, Failure, FailureKind, Folder, FolderPortion,
+    AccountId, ContentExplanation, DisplayFields, Failure, FailureKind, Folder, FolderBatch,
     FolderRef, FolderRole, FolderState, IncompleteList, Message, ReceivedContent,
 };
 use mailbag_graph::test_server as graph_service;
@@ -157,7 +157,7 @@ fn read_stored_messages(
 }
 
 /// Runs one load of `target` on `worker` and waits for its end; returns it
-/// with how many portions the load reported stored before.
+/// with how many batches the load reported stored before.
 async fn finish_load(
     worker: &MailWorker,
     kind: LoadKind,
@@ -170,14 +170,14 @@ async fn finish_load(
     load_end(&events).await
 }
 
-/// The end of a load whose events arrive on `events`, and how many portions
+/// The end of a load whose events arrive on `events`, and how many batches
 /// it reported stored before.
 async fn load_end(events: &async_channel::Receiver<LoadEvent>) -> (LoadResult, usize) {
-    let mut portions = 0;
+    let mut batches = 0;
     loop {
         match events.recv().await.expect("the load reports its end") {
-            LoadEvent::PortionStored => portions += 1,
-            LoadEvent::Finished(outcome) => return (outcome, portions),
+            LoadEvent::BatchStored => batches += 1,
+            LoadEvent::Finished(outcome) => return (outcome, batches),
         }
     }
 }
@@ -303,10 +303,10 @@ fn only_the_selected_text_parts_are_requested() {
     );
 }
 
-/// A portion whose text transfer broke is not stored; the listing's proof
+/// A batch whose text transfer broke is not stored; the listing's proof
 /// is, and the folder stays "no mail loaded" (spec FR-008, FR-010).
 #[test]
-fn an_interrupted_transfer_stores_no_part_of_its_portion() {
+fn an_interrupted_transfer_stores_no_part_of_its_batch() {
     let fixture = ImapFixture::start(FixtureSetup {
         messages: plain_messages(2),
         fault: Some((FaultyCommand::Text, FaultKind::Close)),
@@ -920,12 +920,12 @@ fn a_microsoft_365_first_fill_stores_page_by_page_with_recent_texts() {
     let kind = microsoft365_kind(&service);
     let inbox = inbox_of(&kind);
     store_inbox(&store, &inbox);
-    let (outcome, stored, portions) = synchronize_kind_again(kind, &store);
+    let (outcome, stored, batches) = synchronize_kind_again(kind, &store);
     assert!(
         matches!(outcome, LoadResult::Stored { incomplete: None }),
         "{outcome:?}"
     );
-    assert_eq!(portions, 2);
+    assert_eq!(batches, 2);
     assert_eq!(identities(&stored), [1, 2, 3, 800].map(graph_identity));
     assert_eq!(text_of(&stored[0].content), "Text 1");
     // Message 3 has no body in the service.
@@ -984,9 +984,10 @@ fn a_continued_microsoft_365_first_fill_reads_one_more_round() {
     assert!(!place.synchronized);
     assert!(
         place
-            .server_position
+            .fill_place
             .is_some_and(|link| link.ends_with("$skiptoken=page-2"))
     );
+    assert_eq!(place.server_position, None);
     let asked_before = service.received_requests().len();
     let kind = microsoft365_kind_with(&service, "another-token", None);
     let (outcome, stored, _) = synchronize_kind_again(kind, &store);
@@ -1112,11 +1113,11 @@ fn an_entry_for_a_message_another_folder_holds_is_read_again_first() {
     synchronize_kind_again(microsoft365_kind(&service), &store);
     // Archive's own cycle related the message there, unread.
     let archive = folder_of("synthetic-microsoft365", "archive");
-    let archived = FolderPortion {
+    let archived = FolderBatch {
         known_arrived: vec![(graph_identity(2), false)],
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     };
-    store.store_portion(&archive, &archived, || false).unwrap();
+    store.store_batch(&archive, &archived, || false).unwrap();
     synchronize_kind_again(microsoft365_kind(&service), &store);
     assert!(!stored_messages(&store, &archive)[0].seen);
     assert!(
@@ -1175,7 +1176,7 @@ fn a_rejected_position_rereads_the_folder_and_removes_what_it_did_not_list() {
     let inbox = folder_of("synthetic-microsoft365", "inbox");
     store_inbox(&store, &inbox);
     // A message deleted meanwhile, and a position the service no longer knows.
-    let earlier = FolderPortion {
+    let earlier = FolderBatch {
         arrived: vec![Message {
             identity: graph_identity(9),
             ..stored_earlier_message()
@@ -1185,11 +1186,12 @@ fn a_rejected_position_rereads_the_folder_and_removes_what_it_did_not_list() {
                 "{}/me/mailFolders/inbox/messages/delta?$deltatoken=expired",
                 service.url()
             )),
+            fill_place: None,
             synchronized: true,
         }),
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     };
-    store.store_portion(&inbox, &earlier, || false).unwrap();
+    store.store_batch(&inbox, &earlier, || false).unwrap();
     let (outcome, stored, _) = synchronize_kind_again(microsoft365_kind(&service), &store);
     assert!(matches!(outcome, LoadResult::Stored { .. }), "{outcome:?}");
     assert_eq!(identities(&stored), [graph_identity(1), graph_identity(2)]);
@@ -1435,21 +1437,18 @@ fn message_with(number: u32, content: ReceivedContent) -> Message {
 }
 
 #[test]
-fn a_portion_of_a_cancelled_load_is_not_stored() {
+fn a_batch_of_a_cancelled_load_is_not_stored() {
     let inbox = folder_of("synthetic-account", "INBOX");
     let store = store_with_inbox(&inbox);
     let (cancel, cancelled) = async_channel::bounded::<()>(1);
     drop(cancel);
     let (events, reported) = async_channel::unbounded();
-    let mut portions = PortionWriter::new(&store, inbox.clone(), &cancelled, &events);
-    let portion = FolderPortion {
+    let mut batches = BatchWriter::new(&store, inbox.clone(), &cancelled, &events);
+    let batch = FolderBatch {
         arrived: vec![message_with(10, ReceivedContent::Text("Text".to_owned()))],
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     };
-    assert!(matches!(
-        portions.store(&portion),
-        Err(LoadResult::Cancelled)
-    ));
+    assert!(matches!(batches.store(&batch), Err(LoadResult::Cancelled)));
     assert_eq!(read_stored_messages(&store, &inbox), Ok(None));
     assert!(reported.is_empty());
 }
@@ -1461,8 +1460,8 @@ fn unreadable_content_and_a_refused_list_each_warn_without_server_text() {
     let record = CapturedRecord::start(tracing::Level::DEBUG);
     let (_cancel, cancelled) = async_channel::bounded::<()>(1);
     let (events, _reported) = async_channel::unbounded();
-    let mut portions = PortionWriter::new(&store, inbox, &cancelled, &events);
-    let portion = FolderPortion {
+    let mut batches = BatchWriter::new(&store, inbox, &cancelled, &events);
+    let batch = FolderBatch {
         arrived: vec![
             message_with(30, ReceivedContent::Text("Text".to_owned())),
             // Not supported by design, so counted at info and not warned about.
@@ -1475,10 +1474,10 @@ fn unreadable_content_and_a_refused_list_each_warn_without_server_text() {
                 ReceivedContent::Explained(ContentExplanation::UnknownCharset("x".to_owned())),
             ),
         ],
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     };
-    portions.store(&portion).expect("the portion is stored");
-    portions.finish(
+    batches.store(&batch).expect("the batch is stored");
+    batches.finish(
         3,
         Some(IncompleteList::ServerRefused {
             reply: "private refusal text".to_owned(),
@@ -1748,7 +1747,7 @@ fn row_fetches(fixture: &ImapFixture) -> Vec<String> {
 
 /// A cycle of the Generic IMAP Inbox of `fixture` into `store`, which already
 /// lists the Inbox; returns how it ended, what the Inbox then holds and how
-/// many portions were reported stored.
+/// many batches were reported stored.
 fn synchronize_again(
     fixture: &ImapFixture,
     store: &Arc<Store>,
@@ -1759,7 +1758,7 @@ fn synchronize_again(
 fn synchronize_kind_again(kind: LoadKind, store: &Arc<Store>) -> (LoadResult, Vec<Message>, usize) {
     let inbox = inbox_of(&kind);
     let worker = MailWorker::new(store.clone());
-    let (outcome, portions) = run_on_context(finish_load(
+    let (outcome, batches) = run_on_context(finish_load(
         &worker,
         kind,
         LoadTarget::Mailbox(inbox.clone()),
@@ -1767,7 +1766,7 @@ fn synchronize_kind_again(kind: LoadKind, store: &Arc<Store>) -> (LoadResult, Ve
     let messages = read_stored_messages(store, &inbox)
         .expect("the store reads")
         .unwrap_or_default();
-    (outcome, messages, portions)
+    (outcome, messages, batches)
 }
 
 fn imap_server(messages: Vec<FixtureMessage>) -> ImapFixture {
@@ -1814,13 +1813,13 @@ fn a_second_cycle_without_changes_fetches_no_message_and_stores_nothing() {
     let store = Arc::new(store_with_inbox(&folder_of("synthetic-account", "INBOX")));
     let (_, first, _) = synchronize_again(&fixture, &store);
     let fetches_before = fixture.log().fetches.len();
-    let (outcome, second, portions) = synchronize_again(&fixture, &store);
+    let (outcome, second, batches) = synchronize_again(&fixture, &store);
     assert!(
         matches!(outcome, LoadResult::Stored { incomplete: None }),
         "{outcome:?}"
     );
     assert_eq!(second, first);
-    assert_eq!(portions, 0);
+    assert_eq!(batches, 0);
     let later = &fixture.log().fetches[fetches_before..];
     assert_eq!(later.len(), 1, "{later:?}");
     assert_eq!(later[0].message_set, "1:*");
@@ -1902,7 +1901,7 @@ fn plain_listing_setup(count: u32) -> FixtureSetup {
 }
 
 /// A complete listing proves removals even when the server then refuses a
-/// portion's rows; the folder does not complete (research §3).
+/// batch's rows; the folder does not complete (research §3).
 #[test]
 fn a_refused_row_fetch_keeps_the_proven_removals_and_does_not_complete() {
     let inbox = folder_of("synthetic-account", "INBOX");
@@ -1947,21 +1946,6 @@ fn a_renumbered_generic_imap_folder_replaces_its_rows() {
     assert_eq!(identities(&stored), ["imap:INBOX/2/20", "imap:INBOX/2/10"]);
     assert_eq!(text_of(&stored[0].content).trim(), "Another second");
     assert_eq!(row_fetches(&renumbered), ["20,10"]);
-}
-
-/// A row stored before identities carried the numbering version leaves with
-/// the first complete listing.
-#[test]
-fn a_row_without_a_numbering_version_leaves_with_the_first_complete_listing() {
-    let inbox = folder_of("synthetic-account", "INBOX");
-    let store = Arc::new(store_with_inbox(&inbox));
-    let unversioned = Message {
-        identity: "imap:INBOX/10".to_owned(),
-        ..stored_earlier_message()
-    };
-    store_completed_cycle(&store, &inbox, &[unversioned], || false).unwrap();
-    let (_, stored, _) = synchronize_again(&imap_server(plain_messages(1)), &store);
-    assert_eq!(identities(&stored), [imap_identity(10)]);
 }
 
 /// Gmail's identity survives a renumbering, so nothing is fetched again.
@@ -2024,7 +2008,7 @@ fn a_gmail_message_stored_through_another_label_is_related_without_fetching() {
     );
 }
 
-/// SC-005: a first fill stopped after some portions continues without
+/// SC-005: a first fill stopped after some batches continues without
 /// fetching the stored messages again; the stopped fill is not an empty
 /// folder.
 #[test]
@@ -2042,10 +2026,10 @@ fn a_stopped_first_fill_continues_without_fetching_stored_messages_again() {
                 sender.try_send(event).ok();
             },
         );
-        // The listing's portion, then the first hundred.
+        // The listing's batch, then the first hundred.
         for _ in 0..2 {
-            let event = events.recv().await.expect("a portion");
-            assert!(matches!(event, LoadEvent::PortionStored), "{event:?}");
+            let event = events.recv().await.expect("a batch");
+            assert!(matches!(event, LoadEvent::BatchStored), "{event:?}");
         }
         drop(handle);
         let (outcome, _) = load_end(&events).await;
@@ -2096,15 +2080,19 @@ fn a_first_fill_stopped_before_any_row_is_no_mail_loaded() {
 /// SC-001, SC-002 on a scripted folder of 10 000 messages. The times are
 /// printed for the reader; the machine decides them.
 #[test]
-fn a_large_folder_fills_in_portions_and_a_second_cycle_fetches_nothing() {
+fn a_large_folder_fills_in_batches_and_a_second_cycle_fetches_nothing() {
+    // The newest hundred are recent, so the first batch carries their texts.
     let messages = (1..=10_000)
-        .map(|uid| FixtureMessage::plain_text(uid, "Text").received_at(days_ago(60)))
+        .map(|uid| match uid > 9_900 {
+            true => FixtureMessage::plain_text(uid, "Text"),
+            false => FixtureMessage::plain_text(uid, "Text").received_at(days_ago(60)),
+        })
         .collect();
     let fixture = imap_server(messages);
     let inbox = folder_of("synthetic-account", "INBOX");
     let store = Arc::new(store_with_inbox(&inbox));
     let started = Instant::now();
-    let (first_portion, outcome, portions) = run_on_context(async {
+    let (first_batch, outcome, batches) = run_on_context(async {
         let worker = MailWorker::new(store.clone());
         let (sender, events) = async_channel::unbounded();
         let _handle = worker.start_load(
@@ -2114,31 +2102,37 @@ fn a_large_folder_fills_in_portions_and_a_second_cycle_fetches_nothing() {
                 sender.try_send(event).ok();
             },
         );
-        // The listing's portion comes first, then the first hundred.
-        events.recv().await.expect("the listing's portion");
+        // The listing's batch comes first, then the first hundred.
+        events.recv().await.expect("the listing's batch");
         events.recv().await.expect("the first hundred");
-        let first_portion = started.elapsed();
-        let (outcome, portions) = load_end(&events).await;
-        (first_portion, outcome, portions + 2)
+        let first_batch = started.elapsed();
+        let (outcome, batches) = load_end(&events).await;
+        (first_batch, outcome, batches + 2)
     });
     assert!(
         matches!(outcome, LoadResult::Stored { incomplete: None }),
         "{outcome:?}"
     );
     println!(
-        "10 000 messages: first hundred stored after {first_portion:?}, all after {:?}",
+        "10 000 messages: first hundred stored after {first_batch:?}, all after {:?}",
         started.elapsed()
     );
-    assert_eq!(portions, 1 + 100 + 1);
+    assert_eq!(batches, 1 + 100 + 1);
     let fetches_before = fixture.log().fetches.len();
     let started = Instant::now();
-    let (_, stored, portions) = synchronize_again(&fixture, &store);
+    let (_, stored, batches) = synchronize_again(&fixture, &store);
     println!(
         "a second cycle without changes took {:?}",
         started.elapsed()
     );
     assert_eq!(stored.len(), 10_000);
-    assert_eq!(portions, 0);
+    assert_eq!(batches, 0);
+    assert!(
+        stored[..100]
+            .iter()
+            .all(|message| matches!(message.content, ReceivedContent::Text(_)))
+    );
+    assert_eq!(stored[100].content, ReceivedContent::NotDownloaded);
     assert_eq!(fixture.log().fetches.len(), fetches_before + 1);
 }
 
@@ -2226,16 +2220,17 @@ fn store_completed_cycle(
         .map(|row| row.identity)
         .filter(|identity| !messages.iter().any(|message| message.identity == *identity))
         .collect();
-    let portion = FolderPortion {
+    let batch = FolderBatch {
         removed,
         arrived: messages.to_vec(),
         state: Some(FolderState {
             server_position: None,
+            fill_place: None,
             synchronized: true,
         }),
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     };
-    store.store_portion(folder, &portion, load_cancelled)
+    store.store_batch(folder, &batch, load_cancelled)
 }
 
 /// Only a saved link is answered with a full reading: a rejected first
@@ -2248,4 +2243,203 @@ fn a_rejected_first_reading_fails_the_cycle() {
     let (outcome, _) = synchronize_inbox(microsoft365_kind(&service));
     assert_eq!(failure_of(outcome).kind, FailureKind::RequestRefused);
     assert_eq!(service.received_requests().len(), 1);
+}
+
+/// A message stored earlier in the same cycle and removed in its extra
+/// round leaves: removals are not checked against the folder as the cycle
+/// found it.
+#[test]
+fn a_message_stored_and_removed_in_one_cycle_leaves() {
+    use graph_service::{ScriptedNext::*, delta_entry};
+    let mut mailbox = graph_mailbox(
+        vec![
+            ("first", delta_page(vec![delta_entry(1)], More("page-2"))),
+            ("page-2", delta_page(vec![delta_entry(2)], Done("round-1"))),
+            (
+                "round-1",
+                delta_page(
+                    vec![serde_json::json!({
+                        "id": graph_service::fixture_immutable_id(2),
+                        "@removed": {"reason": "deleted"},
+                    })],
+                    Done("round-2"),
+                ),
+            ),
+        ],
+        inbox_messages(&[1, 2]),
+    );
+    mailbox.token_accepted_requests = Some(2);
+    let service = graph_service::ScriptedService::start_with_changes(mailbox);
+    let store = Arc::new(Store::in_memory());
+    store_inbox(&store, &folder_of("synthetic-microsoft365", "inbox"));
+    // The first cycle stops after page one; the second continues from
+    // page two, stores message 2 and then reads its removal.
+    synchronize_kind_again(microsoft365_kind(&service), &store);
+    let kind = microsoft365_kind_with(&service, "another-token", None);
+    let (outcome, stored, _) = synchronize_kind_again(kind, &store);
+    assert!(matches!(outcome, LoadResult::Stored { .. }), "{outcome:?}");
+    assert_eq!(identities(&stored), [graph_identity(1)]);
+}
+
+/// A message a round stored before the service rejected its next page, and
+/// that the full reading no longer lists, leaves too: the removal at the
+/// reading's end compares with the folder as it is then, not as the cycle
+/// found it.
+#[test]
+fn a_full_reading_after_a_rejected_page_removes_what_this_cycle_stored() {
+    use graph_service::{ScriptedNext::*, delta_entry};
+    let service = graph_service::ScriptedService::start_with_changes(graph_mailbox(
+        vec![
+            ("first", delta_page(vec![delta_entry(1)], Done("round-1"))),
+            // The round stores message 5, then its next page is gone.
+            ("round-1", delta_page(vec![delta_entry(5)], More("expired"))),
+        ],
+        inbox_messages(&[1, 5]),
+    ));
+    let store = Arc::new(Store::in_memory());
+    store_inbox(&store, &folder_of("synthetic-microsoft365", "inbox"));
+    synchronize_kind_again(microsoft365_kind(&service), &store);
+    let (outcome, stored, _) = synchronize_kind_again(microsoft365_kind(&service), &store);
+    assert!(matches!(outcome, LoadResult::Stored { .. }), "{outcome:?}");
+    assert_eq!(identities(&stored), [graph_identity(1)]);
+}
+
+/// FR-008: a round whose first page removed every row and whose next page
+/// failed leaves the folder not completed, never shown as empty, and the
+/// next cycle starts that round again from its start.
+#[test]
+fn an_interrupted_round_leaves_the_folder_not_completed_and_starts_again() {
+    use graph_service::{ScriptedNext::*, delta_entry};
+    let id = graph_service::fixture_immutable_id;
+    let removed = |number| serde_json::json!({"id": id(number), "@removed": {"reason": "deleted"}});
+    let service = graph_service::ScriptedService::start_with_changes(graph_mailbox(
+        vec![
+            (
+                "first",
+                delta_page(vec![delta_entry(1), delta_entry(2)], Done("round-1")),
+            ),
+            (
+                "round-1",
+                delta_page(vec![removed(1), removed(2)], More("page-2")),
+            ),
+            (
+                "page-2",
+                graph_service::ScriptedPage::Refused(graph_service::ScriptedAnswer::throttled()),
+            ),
+        ],
+        inbox_messages(&[1, 2]),
+    ));
+    let store = Arc::new(Store::in_memory());
+    let inbox = folder_of("synthetic-microsoft365", "inbox");
+    store_inbox(&store, &inbox);
+    synchronize_kind_again(microsoft365_kind(&service), &store);
+    let (outcome, _, _) = synchronize_kind_again(microsoft365_kind(&service), &store);
+    assert!(matches!(outcome, LoadResult::Failed(_)), "{outcome:?}");
+    assert_eq!(store.read_folder_rows(&inbox), Ok(None));
+    let state = store.read_folder_sync(&inbox).unwrap().state;
+    assert!(!state.synchronized);
+    assert_eq!(state.fill_place, None);
+    assert!(
+        state
+            .server_position
+            .is_some_and(|link| link.ends_with("$deltatoken=round-1"))
+    );
+    let asked_before = service.received_requests().len();
+    synchronize_kind_again(microsoft365_kind(&service), &store);
+    assert!(
+        service.received_requests()[asked_before]
+            .query
+            .contains("$deltatoken=round-1")
+    );
+}
+
+/// The round a continued first fill reads after its last page is continued
+/// as a round when it is interrupted, not as another first fill: its texts
+/// come one by one, never by a date range.
+#[test]
+fn an_interrupted_round_after_a_continued_fill_is_continued_as_a_round() {
+    use graph_service::{ScriptedNext::*, delta_entry};
+    let service = graph_service::ScriptedService::start_with_changes(graph_mailbox(
+        vec![("round-1", delta_page(vec![delta_entry(3)], Done("round-2")))],
+        inbox_messages(&[1, 2, 3]),
+    ));
+    let store = Arc::new(Store::in_memory());
+    let inbox = folder_of("synthetic-microsoft365", "inbox");
+    store_inbox(&store, &inbox);
+    // What the fill left: its rows, and the round it had begun after its
+    // last page.
+    let filled = FolderBatch {
+        arrived: vec![Message {
+            identity: graph_identity(1),
+            ..stored_earlier_message()
+        }],
+        state: Some(FolderState {
+            server_position: Some(format!(
+                "{}/me/mailFolders/inbox/messages/delta?$deltatoken=round-1",
+                service.url()
+            )),
+            fill_place: None,
+            synchronized: false,
+        }),
+        ..FolderBatch::default()
+    };
+    store.store_batch(&inbox, &filled, || false).unwrap();
+    let (outcome, stored, _) = synchronize_kind_again(microsoft365_kind(&service), &store);
+    assert!(matches!(outcome, LoadResult::Stored { .. }), "{outcome:?}");
+    // The earlier row has no date, so it lists last.
+    assert_eq!(identities(&stored), [graph_identity(3), graph_identity(1)]);
+    let requests = service.received_requests();
+    assert!(
+        requests[0].query.contains("$deltatoken=round-1"),
+        "{requests:?}"
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|request| !request.query.contains("$filter=")),
+        "{requests:?}"
+    );
+    assert!(store.read_folder_sync(&inbox).unwrap().state.synchronized);
+}
+
+/// FR-009: a recent message whose fields the service reports again, such as
+/// a draft edited in another client, gets its text again.
+#[test]
+fn an_edited_recent_message_gets_its_text_again() {
+    use graph_service::{ScriptedNext::*, delta_entry};
+    let mut edited = graph_service::stored_message(2, "inbox");
+    edited["subject"] = "Edited subject".into();
+    edited["body"]["content"] = "Edited text".into();
+    let mut listed_again = delta_entry(2);
+    listed_again["subject"] = "Edited subject".into();
+    let service = graph_service::ScriptedService::start_with_changes(graph_mailbox(
+        vec![("round-1", delta_page(vec![listed_again], Done("round-2")))],
+        vec![edited],
+    ));
+    let store = Arc::new(Store::in_memory());
+    let inbox = folder_of("synthetic-microsoft365", "inbox");
+    store_inbox(&store, &inbox);
+    // The draft as an earlier cycle stored it, with its old text.
+    let earlier = FolderBatch {
+        arrived: vec![Message {
+            identity: graph_identity(2),
+            received_unix: Some(graph_service::fixture_received_unix(2)),
+            content: ReceivedContent::Text("Old text".to_owned()),
+            ..stored_earlier_message()
+        }],
+        state: Some(FolderState {
+            server_position: Some(format!(
+                "{}/me/mailFolders/inbox/messages/delta?$deltatoken=round-1",
+                service.url()
+            )),
+            fill_place: None,
+            synchronized: true,
+        }),
+        ..FolderBatch::default()
+    };
+    store.store_batch(&inbox, &earlier, || false).unwrap();
+    let (outcome, stored, _) = synchronize_kind_again(microsoft365_kind(&service), &store);
+    assert!(matches!(outcome, LoadResult::Stored { .. }), "{outcome:?}");
+    assert_eq!(stored[0].fields.subject.as_deref(), Some("Edited subject"));
+    assert_eq!(text_of(&stored[0].content), "Edited text");
 }

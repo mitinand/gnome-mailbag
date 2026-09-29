@@ -156,7 +156,6 @@ fn read_message(entry: &Value) -> Option<GraphMessage> {
             .unwrap_or_default(),
         received_unix: entry["receivedDateTime"].as_str().and_then(unix_seconds),
         is_read: entry["isRead"].as_bool()?,
-        body_text: owned_text(&entry["body"]["content"]),
     })
 }
 
@@ -249,7 +248,6 @@ mod tests {
                 ],
                 received_unix: Some(1_536_462_908),
                 is_read: true,
-                body_text: None,
             })]
         );
     }
@@ -314,10 +312,16 @@ mod tests {
     }
 
     #[test]
-    fn a_body_without_content_leaves_the_text_out() {
-        let message =
-            read_one(r#"{"id":"message-1","isRead":false,"body":{"contentType":"text"}}"#);
-        assert_eq!(message.body_text, None);
+    fn a_body_without_content_has_no_text_and_an_empty_one_is_a_text() {
+        assert_eq!(
+            read_message_text(br#"{"body":{"contentType":"text"}}"#),
+            Ok(None)
+        );
+        // An empty rendering is the message's text (FR-005), not a missing field.
+        assert_eq!(
+            read_message_text(br#"{"body":{"contentType":"text","content":""}}"#),
+            Ok(Some(String::new()))
+        );
     }
 
     #[test]
@@ -325,8 +329,7 @@ mod tests {
         let message = read_one(
             r#"{"id":"message-1","isRead":false,"subject":"",
                 "from":{"emailAddress":{"name":"","address":"ada@example.org"}},
-                "toRecipients":[{"emailAddress":{"name":"Bo Example","address":""}}],
-                "body":{"contentType":"text","content":""}}"#,
+                "toRecipients":[{"emailAddress":{"name":"Bo Example","address":""}}]}"#,
         );
         assert_eq!(message.subject, None);
         assert_eq!(
@@ -343,8 +346,6 @@ mod tests {
                 address: None,
             }]
         );
-        // An empty rendering is the message's text (FR-005), not a missing field.
-        assert_eq!(message.body_text, Some(String::new()));
     }
 
     #[test]

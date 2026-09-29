@@ -3,7 +3,7 @@
 **Amended** on 2026-09-29 by
 [009's data model](../009-synchronization/data-model.md): `folder.loaded`
 becomes `synchronized` beside a new `server_position`, `membership.position`
-goes, a Generic IMAP identity carries its UIDVALIDITY, and portions replace
+goes, a Generic IMAP identity carries its UIDVALIDITY, and batches replace
 "Replacing a mailbox" and "Reading a mailbox" below.
 
 The persisted form of the store after this feature (spec FR-004, FR-007),

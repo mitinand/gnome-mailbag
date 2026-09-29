@@ -107,7 +107,6 @@ fn listed_messages_arrive_with_their_fields_and_the_next_link_is_followed() {
             to: Vec::new(),
             received_unix: Some(fixture_received_unix(2)),
             is_read: false,
-            body_text: None,
         })
     );
     let NextPage::More(next_link) = first.next else {

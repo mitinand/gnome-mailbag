@@ -442,15 +442,21 @@ fn delta_page(
 }
 
 /// The id and body of the folder's messages received within the filter's
-/// two times, `receivedDateTime ge A and receivedDateTime le B`.
+/// two times, `receivedDateTime ge A and receivedDateTime lt B`. Like the
+/// service, it keeps each date finer than the second it shows: half a
+/// second after it, so a range ending `le` the shown second misses it.
 fn texts_between(changes: &ScriptedChanges, folder_id: &str, filter: &str) -> ScriptedAnswer {
     let filter = glib::Uri::unescape_string(filter, None::<&str>).expect("an escaped filter");
+    assert!(
+        filter.contains(" lt "),
+        "a range with an excluded end: {filter}"
+    );
     let times: Vec<i64> = filter
         .split(' ')
         .filter_map(|word| glib::DateTime::from_iso8601(word, None).ok())
-        .map(|time| time.to_unix())
+        .map(|time| time.to_unix() * 1000)
         .collect();
-    let [from, to] = times[..] else {
+    let [from_ms, to_ms] = times[..] else {
         panic!("a filter with two times: {filter}");
     };
     let texts: Vec<serde_json::Value> = changes
@@ -458,11 +464,11 @@ fn texts_between(changes: &ScriptedChanges, folder_id: &str, filter: &str) -> Sc
         .iter()
         .filter(|message| message["parentFolderId"] == folder_id)
         .filter(|message| {
-            let received = message["receivedDateTime"]
+            let received_ms = message["receivedDateTime"]
                 .as_str()
                 .and_then(|time| glib::DateTime::from_iso8601(time, None).ok())
-                .map(|time| time.to_unix());
-            received.is_some_and(|received| (from..=to).contains(&received))
+                .map(|time| time.to_unix() * 1000 + 500);
+            received_ms.is_some_and(|received_ms| (from_ms..to_ms).contains(&received_ms))
         })
         .map(|message| serde_json::json!({ "id": message["id"], "body": message["body"] }))
         .collect();

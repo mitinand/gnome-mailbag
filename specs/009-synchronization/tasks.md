@@ -2,7 +2,9 @@
 
 **Feature**: `009-synchronization`
 **Created**: 2026-09-28 · **Branch**: `claude/sync` · **Status**: Documents
-approved on 2026-09-29 (T001); next: portion 1 (T002–T008).
+approved on 2026-09-29 (T001); portions 1–4 committed on 2026-09-29;
+T033–T036 done, the manual checks passed on the installed build on
+2026-09-30; T037 reported the same day.
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -15,11 +17,11 @@ stop. The maintainer creates commits and PRs. Do not start code before
 document approval. Nothing committed may name where an idea came from
 outside this repository, nor any account or server of a person.
 
-Phases follow the plan's portions. Story labels trace tasks to US1 (the
+Phases follow the plan's batches. Story labels trace tasks to US1 (the
 whole folder arrives, newest first), US2 (later refreshes bring only what
 changed), US3 (nothing disappears without proof), US4 (an interrupted first
 fill continues), US5 (recent mail can be read offline) and US6 (an
-account's mail follows Online Accounts). Tests are part of every portion
+account's mail follows Online Accounts). Tests are part of every batch
 and live beside their modules; no test pins wording except the privacy
 invariants.
 
@@ -27,7 +29,7 @@ invariants.
 |---|---|---|---|
 | Documents | T001 | docs(sync): specify and plan synchronization | Synchronization |
 | 1. The list as a list view | T002–T008 | feat(ui): show messages in a list view | Synchronization |
-| 2. The store for cycles | T009–T014 | feat(store): store folder portions | Synchronization |
+| 2. The store for cycles | T009–T014 | feat(store): store folder batches | Synchronization |
 | 3. IMAP cycles | T015–T024 | feat(sync): synchronize IMAP folders | Synchronization |
 | 4. Microsoft 365 cycles | T025–T032 | feat(sync): synchronize Microsoft 365 folders | Synchronization |
 | 5. Polish | T033–T037 | (per review) | Synchronization |
@@ -115,7 +117,7 @@ is that the open message stays open when a load leaves it in the list.
 
 ## Phase 3: the store for cycles (portion 2)
 
-Goal: the store holds folder state and writes portions; loads keep
+Goal: the store holds folder state and writes batches; loads keep
 working through `replace_mailbox`, adjusted to the new schema.
 
 - [x] T009 Amend the documents first: specs/007-mail-storage/spec.md
@@ -130,7 +132,7 @@ working through `replace_mailbox`, adjusted to the new schema.
   data-model.md and contracts/folders.md; each with a status line naming
   this feature.
 - [x] T010 [US1] [US2] [US3] [US5] In crates/mailbag-domain/src/lib.rs:
-  `FolderState`, `FolderPortion { removed, read_states, known_arrived,
+  `FolderState`, `FolderBatch { removed, read_states, known_arrived,
   arrived, state }`, `ReceivedContent::NotDownloaded`; privacy-safe `Debug`
   (counts and identities only); the reader's wording for `NotDownloaded`
   in crates/mailbag/src/failure_declarations.rs, `declare_content` ("The
@@ -145,19 +147,19 @@ working through `replace_mailbox`, adjusted to the new schema.
 - [x] T012 [US1] [US2] [US3] [US4] In crates/mailbag-store/src/lib.rs and
   src/folders.rs: `read_folder_sync(folder) -> FolderSync`,
   `stored_identities(account, identities) -> HashSet<String>`,
-  `store_portion(folder, portion, load_cancelled) -> StoreWrite` in the
+  `store_batch(folder, batch, load_cancelled) -> StoreWrite` in the
   order of data-model.md (a full record never replaces a stored content
-  with `NotDownloaded`; the state written when the portion carries it,
-  including the first portion's "not completed"), `read_folder_rows`
+  with `NotDownloaded`; the state written when the batch carries it,
+  including the first batch's "not completed"), `read_folder_rows`
   ordered by received date then id;
   `replace_mailbox` adjusted (no position, sets `synchronized`) and kept
   until portion 4.
 - [x] T013 [P] [US1] [US2] [US3] [US4] Tests in
-  crates/mailbag-store/src/tests.rs: a portion with removals, read states,
+  crates/mailbag-store/src/tests.rs: a batch with removals, read states,
   known arrivals and arrivals round-trips; orphans go; a stored text
   survives a `NotDownloaded` arrival from another folder; the state is
-  written only when the portion carries it; a cancelled portion writes
-  nothing; a failing portion leaves the previous state whole; rows newest
+  written only when the batch carries it; a cancelled batch writes
+  nothing; a failing batch leaves the previous state whole; rows newest
   first by received date; `None` for a folder never synchronized and
   without rows, an empty list for a synchronized empty folder;
   `stored_identities` over two folders of one account; a folder marked
@@ -170,7 +172,7 @@ working through `replace_mailbox`, adjusted to the new schema.
 ## Phase 4: IMAP cycles (portion 3)
 
 Goal: Refresh Mailbox on a Generic IMAP or Gmail folder runs a cycle; the
-window follows its portions; Microsoft 365 still loads its newest 100.
+window follows its batches; Microsoft 365 still loads its newest 100.
 
 - [x] T015 Amend the documents first: specs/002-imap-integration/spec.md
   (FR-002, FR-003) and contracts/imap-reading.md (the `1:*` listing, rows
@@ -204,7 +206,7 @@ window follows its portions; Microsoft 365 still loads its newest 100.
   session after a given command with the next sign-in accepting a new
   token; tests for each.
 - [x] T018 [US1] [US4] In crates/mailbag-providers/src/worker.rs,
-  src/lib.rs and src/batch.rs: `LoadEvent { PortionStored,
+  src/lib.rs and src/batch.rs: `LoadEvent { BatchStored,
   Finished(LoadResult) }`; the outcome channel unbounded, received in a
   loop; `LoadsMail::start_load(…, on_event)`; the scripted loader of the
   GTK tests and crates/mailbag/src/window_ui.rs adapted (Finished as
@@ -214,7 +216,7 @@ window follows its portions; Microsoft 365 still loads its newest 100.
   src/imap_batch.rs: `synchronize_folder` choosing the provider once;
   `synchronize_imap_folder(access, options, identify, folder, store,
   events)` as the plan's function map (open, `read_folder_sync`, the
-  listing, the portion of removals and read states when the listing
+  listing, the batch of removals and read states when the listing
   completed, which marks the folder not completed when messages are
   missing, arrivals highest UID first in
   hundreds with `stored_identities` for known messages, rows by UID, texts
@@ -229,7 +231,7 @@ window follows its portions; Microsoft 365 still loads its newest 100.
   ServerRefused }` and removes nothing; a refused row fetch after a
   complete listing ends the same way and keeps the removals the listing
   proved; neither saves the completed state;
-  `store_portion` sends `PortionStored`.
+  `store_batch` sends `BatchStored`.
 - [x] T020 [US1] [US6] In a new crates/mailbag-providers/src/renewal.rs and
   src/lib.rs: the renewal channel of research §13: `MailLoader::start_load`
   gives the load a sender and answers requests on GTK's context with the
@@ -237,12 +239,12 @@ window follows its portions; Microsoft 365 still loads its newest 100.
   first successful command, asks once: with a different token it makes one
   attempt, opening the folder again with `MailboxReader::open`, comparing
   `uid_validity()` (a change is `MailboxChanged`) and repeating the
-  interrupted request (the listing or the portion); with the same token,
+  interrupted request (the listing or the batch); with the same token,
   or after a second end, the cycle ends with Gmail's reason; a cancelled
   load drops the request.
 - [x] T021 [P] [US1] [US2] [US3] [US4] [US5] [US6] Tests in
   crates/mailbag-providers/src/tests.rs against the scripted server and an
-  in-memory store: a first fill newest first in portions with texts only
+  in-memory store: a first fill newest first in batches with texts only
   within 30 days; a second cycle that changes nothing and fetches no
   message; arrivals, read-state changes and removals; a removal reported
   during the listing; a refused listing removes nothing and does not
@@ -255,7 +257,7 @@ window follows its portions; Microsoft 365 still loads its newest 100.
   rows stored without a numbering version in their identity leave with the
   first complete listing; a stopped refill leaves the folder "no mail
   loaded", not empty; a first fill of 10 000 scripted messages whose first
-  portion is stored before the rest and a second cycle that fetches
+  batch is stored before the rest and a second cycle that fetches
   nothing (SC-001, SC-002; times written to the output, not asserted); a message gone between the listing
   and its rows; a Gmail message stored through another label is related
   without fetching; a first fill stopped and continued without fetching
@@ -263,16 +265,16 @@ window follows its portions; Microsoft 365 still loads its newest 100.
   server stops answering; a Gmail session ended mid-fill is renewed and
   the fill completes (SC-010), and a BYE with the token unchanged, or a
   second BYE, ends the cycle with Gmail's reason; an account excluded
-  mid-fill stores no later portion.
+  mid-fill stores no later batch.
 - [x] T022 [US1] [US4] In crates/mailbag/src/window_ui.rs: on
-  `PortionStored` for any folder of the shown folder's account, read the
+  `BatchStored` for any folder of the shown folder's account, read the
   shown folder's rows again while the rows and the banner on screen stay
-  (a "read due" mark), as a completed load already rules today; a portion during a
+  (a "read due" mark), as a completed load already rules today; a batch during a
   read marks one more read; the refresh actions stay unavailable while a
   cycle runs.
 - [x] T023 [P] [US1] [US4] GTK test in crates/mailbag/src/mail_ui/tests.rs:
-  the scripted loader stores portions and reports them; the list grows
-  without losing the selection or the open message; a portion of another
+  the scripted loader stores batches and reports them; the list grows
+  without losing the selection or the open message; a batch of another
   folder of the same account that changes a shared message's read state,
   followed by a failed end, updates the shown folder; and a failure banner
   from the previous refresh does not blink.
@@ -325,7 +327,7 @@ path, `replace_mailbox` and `MoreAvailable` are gone.
 - [x] T029 [US1] [US2] [US3] [US4] [US6] In
   crates/mailbag-providers/src/cycle.rs and src/renewal.rs:
   `synchronize_graph_folder` as the plan's function map (`where_to_start`;
-  pages as portions with entries merged per message; partial and unknown
+  pages as batches with entries merged per message; partial and unknown
   entries, and any entry for a message the account also holds in another
   folder, read with `read_message` and related to this folder only if its
   `parentFolderId` names it; texts of a first fill's page by date range,
@@ -333,14 +335,14 @@ path, `replace_mailbox` and `MoreAvailable` are gone.
   page; a continued first fill reads one more round before completing; a
   rejected position or place starts a full reading that keeps the listed
   identities and removes the others at its end; the delta link saved with
-  the completing portion; the outcome of T025 applied); a 401 after the
+  the completing batch; the outcome of T025 applied); a 401 after the
   cycle's first successful request asks for the token once and makes one
   attempt only with a different token; the same token, or a second 401,
   is the refused sign-in.
 - [x] T030 [US1] Remove what the cycles replaced:
   `IncompleteList::MoreAvailable` (crates/mailbag-domain/src/lib.rs, its
   producer and its wording in crates/mailbag/src/failure_declarations.rs
-  and their tests), `BATCH_SIZE` and the batch path in
+  and their tests), `BATCH_SIZE` and the newest-100 path in
   crates/mailbag-providers (batch.rs, imap.rs, gmail.rs, microsoft365.rs,
   store_load.rs), and `replace_mailbox` in crates/mailbag-store.
 - [x] T031 [P] [US1] [US2] [US3] [US4] [US6] Tests in
@@ -367,21 +369,21 @@ path, `replace_mailbox` and `MoreAvailable` are gone.
   when a cycle ends, with counts of listed, removed, read-state changes,
   related, arrived and texts; folder names at debug only; no test pins the
   text.
-- [ ] T034 Align the documents with what was built: the spec's status, the
+- [x] T034 Align the documents with what was built: the spec's status, the
   plan's function map and size notes (no measured sizes written back), the
   data model, the contract, and the status lines of the amended specs.
   Rename the spec's *portion* to *batch* in the documents and the code
   (`FolderPortion`, `store_portion`, `PortionStored`), since *portion* also
   names a commit's share of the work (AGENTS.md); done here, after
-  portion 4 removed the old batch path (maintainer's decision
+  portion 4 removed the old newest-100 path (maintainer's decision
   2026-09-29).
-- [ ] T035 After the GTK tests one by one: `simplify-review` of the branch
+- [x] T035 After the GTK tests one by one: `simplify-review` of the branch
   diff in a fresh subagent; bring findings that change behaviour or add
   scope to the maintainer.
-- [ ] T036 With the maintainer on the installed build: the steps of
+- [x] T036 With the maintainer on the installed build: the steps of
   quickstart.md; results written to plan.md under "Post-implementation"
   without sizes.
-- [ ] T037 STOP: final report with the open items.
+- [x] T037 STOP: final report with the open items.
 
 ## Dependencies
 
@@ -420,5 +422,5 @@ read and star and for moving and deleting (spec FR-015(a), (b));
 background synchronization, cycles in parallel and continuing a first fill
 after the start (FR-015(c)); HTML, previews, download on opening and
 retention (FR-015(d)); CONDSTORE (FR-015(e)); a Refresh that stops the
-running cycle, larger rows-only portions and renewal before expiry (plan,
+running cycle, larger rows-only batches and renewal before expiry (plan,
 Optional mechanisms); upgrading a populated store (FR-015(f)).

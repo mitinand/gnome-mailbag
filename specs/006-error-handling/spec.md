@@ -17,7 +17,9 @@ and the `MailboxChanged` kind amended the same day by Synchronization: a
 refused listing of a cycle, "Text not received" without Retry, and
 `MailboxChanged` only after a reconnection; the list short because the mail
 service offered more than one request holds no longer arises and its
-wording is removed.
+wording is removed. FR-008 amended on 2026-09-30 by Synchronization, at
+the maintainer's review of the installed build: a refresh of the same
+mail hides the banner while it runs.
 **Input**: One lasting model for how Mailbag reports failures, from the
 component that meets them to what the user sees. Today each failure is
 presented the way its feature happened to choose: a status page for a failed
@@ -127,7 +129,7 @@ banner after the load and its absence after the next complete load.
 *Amended 2026-09-29 by [Synchronization](../009-synchronization/spec.md):
 a Microsoft 365 cycle reads every page, so "the mail service offered more
 than one request holds" no longer arises; on IMAP the list a server refuses to finish is a cycle's listing, which then
-removes nothing, or a portion's rows after a complete listing, whose proven
+removes nothing, or a batch's rows after a complete listing, whose proven
 removals stay; either way the rows stored so far are shown under the banner
 (009 FR-004, FR-011).*
 
@@ -406,6 +408,8 @@ from the approved forms, and decided:
 - **FR-008 — A notice lives with its cause**: A notice appears when the
   failure arrives and goes when the next result of the same operation
   replaces it: a complete load clears the banner and the status page, a
+  refresh of the same mail hides the banner while it runs and it returns
+  only if that refresh fails or ends short, a
   reopened message shows its own state. Selecting another account shows that
   account's state; the notice returns with the account. A notice never
   outlives what it is about and is never dismissed by time alone, except the

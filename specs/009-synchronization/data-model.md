@@ -12,8 +12,9 @@ the store's version; all tables are `STRICT`.
 
 | Column | Type | Meaning |
 |---|---|---|
-| `server_position` | TEXT, null | Microsoft 365 only: after a completed cycle, the `@odata.deltaLink` to read changes from; during an unfinished first fill, the `@odata.nextLink` to continue from; null otherwise |
-| `synchronized` | INTEGER, 0 or 1 | Whether the folder's latest cycle completed; replaces 008's `loaded`. The first portion of a cycle that has messages to fetch sets it to 0, the completing portion to 1 |
+| `server_position` | TEXT, null | Microsoft 365 only: the `@odata.deltaLink` the next round of changes starts from, once a first reading completed; null otherwise |
+| `fill_place` | TEXT, null | Microsoft 365 only: the `@odata.nextLink` an unfinished first fill continues from; null otherwise. Kept apart from `server_position` so that neither link's meaning depends on `synchronized` (external review, 2026-09-29) |
+| `synchronized` | INTEGER, 0 or 1 | Whether the folder's latest cycle completed; replaces 008's `loaded`. The first batch of an IMAP cycle that has messages to fetch, and each Microsoft 365 page that is not a reading's last, set it to 0; the completing batch sets it to 1 |
 
 The other columns are 008's. Replacing a folder list (008 FR-001) keeps
 these two columns of a folder it keeps. No numbering version is stored:
@@ -38,10 +39,10 @@ memberships (the primary key's prefix) and sorts them.
 
 ## Rules
 
-- **Reading a folder for a cycle**: the folder's `server_position` and
-  `synchronized`, and the identity and `seen` of every message it holds;
+- **Reading a folder for a cycle**: the folder's `server_position`,
+  `fill_place` and `synchronized`, and the identity and `seen` of every message it holds;
   one read at the cycle's start.
-- **Storing a portion** (spec FR-008), in one transaction, after the load's
+- **Storing a batch** (spec FR-008), in one transaction, after the load's
   cancellation check under the store's lock:
   1. delete the folder's memberships of the removed identities;
   2. delete the account's messages left without a membership;
@@ -52,16 +53,16 @@ memberships (the primary key's prefix) and sorts them.
      the stored one unless the record's content is `not_downloaded` and a
      content is stored (another folder's cycle downloaded it);
   5. insert the arrival's membership in the folder if missing, and the
-     memberships of the portion's messages the account already held,
+     memberships of the batch's messages the account already held,
      setting their `seen` as listed;
-  6. when the portion carries a folder state, write the two state
+  6. when the batch carries a folder state, write the two state
      columns.
   A folder the store does not hold fails the write, as 008's loads do.
 - **Reading a folder's rows**: `None` when `synchronized = 0` and the folder
   holds no membership ("no mail loaded", 007 FR-006); otherwise the
   identity, list fields and `seen` of its messages in the order above,
   without `content_detail`.
-- **Finding stored messages of a portion**: which of up to a hundred
+- **Finding stored messages of a batch**: which of up to a hundred
   identities the account already holds, by `(account, identity)`.
 - **Reading a message's content**: `content_kind` and `content_detail` by
   `(account, identity)`, when the message is opened.
@@ -77,5 +78,5 @@ memberships (the primary key's prefix) and sorts them.
 |---|---|---|
 | The folder's stored identities with `seen`, and the server's listing | The running cycle | One cycle |
 | The identities a Microsoft 365 full reading listed | The running cycle | One cycle; a stopped re-reading starts over |
-| The shown folder's rows, the number of the latest read, and whether another read is due | The window | As 008's shown mailbox; a portion of the shown folder marks a read due |
+| The shown folder's rows, the number of the latest read, and whether another read is due | The window | As 008's shown mailbox; a batch of the shown folder marks a read due |
 | The list model's items and the open message's identity | The message list | While the folder is shown |

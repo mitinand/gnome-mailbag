@@ -26,12 +26,12 @@ mod tests;
 use failure::{StoreError, StoreOperation, storage_failure};
 use folders::{
     delete_memberships, delete_messages_without_folder, delete_unlisted_folders,
-    read_folder_identities, read_folder_state, read_listed_rows, read_stored_identities,
-    relate_known, set_read_states, store_arrived, stored_content, stored_folder, stored_folder_id,
-    upsert_folders, write_folder_state,
+    read_folder_identities, read_folder_state, read_identities_in_other_folders, read_listed_rows,
+    read_stored_identities, relate_known, set_read_states, store_arrived, stored_content,
+    stored_folder, stored_folder_id, upsert_folders, write_folder_state,
 };
 use mailbag_domain::{
-    AccountId, Failure, Folder, FolderPortion, FolderRef, FolderState, MessageListRow,
+    AccountId, Failure, Folder, FolderBatch, FolderRef, FolderState, MessageListRow,
     ReceivedContent,
 };
 use open::{configure_connection, create_schema, open_store};
@@ -130,7 +130,7 @@ impl Store {
         })
     }
 
-    /// Which of a portion's identities the account already holds, so the
+    /// Which of a batch's identities the account already holds, so the
     /// cycle relates them without fetching them.
     pub fn stored_identities(
         &self,
@@ -152,31 +152,21 @@ impl Store {
         identities: &[String],
     ) -> Result<HashSet<String>, Failure> {
         self.with_connection(StoreOperation::Read, |connection| {
-            let mut select = connection.prepare(
-                "SELECT 1 FROM message JOIN membership ON membership.message = message.id \
-                 JOIN folder ON folder.id = membership.folder \
-                 WHERE message.account = ?1 AND message.identity = ?2 AND folder.identity != ?3",
-            )?;
-            let mut held = HashSet::new();
-            for identity in identities {
-                let key = params![folder.account.as_str(), identity, folder.identity];
-                if select.exists(key)? {
-                    held.insert(identity.clone());
-                }
-            }
-            Ok(held)
+            Ok(read_identities_in_other_folders(
+                connection, folder, identities,
+            )?)
         })
     }
 
-    /// Stores one portion of a cycle in one transaction, whole or not at all
+    /// Stores one batch of a cycle in one transaction, whole or not at all
     /// (specs/009-synchronization FR-008): removals, then the messages left
     /// in no folder, read states, full records, messages the account already
-    /// held, and the folder's state when the portion carries one.
+    /// held, and the folder's state when the batch carries one.
     /// `load_cancelled` is asked under the store's lock, as for a folder list.
-    pub fn store_portion(
+    pub fn store_batch(
         &self,
         folder: &FolderRef,
-        portion: &FolderPortion,
+        batch: &FolderBatch,
         load_cancelled: impl FnOnce() -> bool,
     ) -> Result<StoreWrite, Failure> {
         self.with_connection(StoreOperation::Write, |connection| {
@@ -186,12 +176,15 @@ impl Store {
             let account = &folder.account;
             let transaction = connection.transaction()?;
             let folder_id = stored_folder_id(&transaction, folder)?;
-            delete_memberships(&transaction, folder_id, account, &portion.removed)?;
-            delete_messages_without_folder(&transaction, account)?;
-            set_read_states(&transaction, account, &portion.read_states)?;
-            store_arrived(&transaction, folder_id, account, &portion.arrived)?;
-            relate_known(&transaction, folder_id, account, &portion.known_arrived)?;
-            if let Some(state) = &portion.state {
+            // Only a removal can leave a message in no folder.
+            if !batch.removed.is_empty() {
+                delete_memberships(&transaction, folder_id, account, &batch.removed)?;
+                delete_messages_without_folder(&transaction, account)?;
+            }
+            set_read_states(&transaction, account, &batch.read_states)?;
+            store_arrived(&transaction, folder_id, account, &batch.arrived)?;
+            relate_known(&transaction, folder_id, account, &batch.known_arrived)?;
+            if let Some(state) = &batch.state {
                 write_folder_state(&transaction, folder_id, state)?;
             }
             transaction.commit()?;

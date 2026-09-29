@@ -129,17 +129,20 @@ pub struct Message {
 /// Key Entities).
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct FolderState {
-    /// Microsoft 365 only: after a completed cycle, where the next one reads
-    /// changes from; during an unfinished first fill, where it continues.
+    /// Microsoft 365 only: where the next round of changes starts, once a
+    /// first reading completed.
     pub server_position: Option<String>,
+    /// Microsoft 365 only: where an unfinished first fill continues.
+    pub fill_place: Option<String>,
     /// Whether the folder's latest cycle completed.
     pub synchronized: bool,
 }
 
 /// One whole part of a cycle's result, which the store writes in one
-/// transaction (specs/009-synchronization FR-008).
-#[derive(Clone, Default, PartialEq, Eq)]
-pub struct FolderPortion {
+/// transaction (specs/009-synchronization FR-008). Its Debug shows identities
+/// and the messages' own privacy-safe Debug.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FolderBatch {
     /// Identities proven gone from the folder.
     pub removed: Vec<String>,
     /// The new read state of messages the folder holds.
@@ -150,7 +153,7 @@ pub struct FolderPortion {
     /// Full records to insert or update, each with its content or
     /// `ReceivedContent::NotDownloaded`.
     pub arrived: Vec<Message>,
-    /// The folder's state, when this portion changes it.
+    /// The folder's state, when this batch changes it.
     pub state: Option<FolderState>,
 }
 
@@ -374,20 +377,8 @@ impl fmt::Debug for FolderState {
         formatter
             .debug_struct("FolderState")
             .field("server_position", &self.server_position.is_some())
+            .field("fill_place", &self.fill_place.is_some())
             .field("synchronized", &self.synchronized)
-            .finish()
-    }
-}
-
-impl fmt::Debug for FolderPortion {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("FolderPortion")
-            .field("removed", &self.removed)
-            .field("read_states", &self.read_states)
-            .field("known_arrived", &self.known_arrived)
-            .field("arrived", &self.arrived)
-            .field("state", &self.state)
             .finish()
     }
 }

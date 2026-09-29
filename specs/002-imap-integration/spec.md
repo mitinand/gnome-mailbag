@@ -216,7 +216,7 @@ has no network failure or server-identity reconciliation of its own.
   the user selected, by its identity, rather than the Inbox; the batch is
   that folder's newest 100 messages (008 FR-007, FR-010).*
   *Amended 2026-09-29 by [Synchronization](../009-synchronization/spec.md): a
-  cycle reads the whole folder, newest first, in portions of 100; rows are
+  cycle reads the whole folder, newest first, in batches of 100; rows are
   ordered by received date (009 FR-003, FR-013).*
 - **FR-003 — Loading and refresh**: Only activating Refresh Inbox MUST start a
   load. It MUST clear the selected account's list and reader, obtain a batch
@@ -233,7 +233,7 @@ has no network failure or server-identity reconciliation of its own.
   selected folder and Refresh Account the account's folder list; selecting
   an account or a folder never starts a load (008 FR-001, FR-010).*
   *Amended 2026-09-29 by [Synchronization](../009-synchronization/spec.md):
-  the rows stay while a cycle runs and change as its portions are stored;
+  the rows stay while a cycle runs and change as its batches are stored;
   a refused listing removes nothing and reports the list as incomplete, and
   a refused row fetch keeps the removals the complete listing proved (009
   FR-004, FR-011, FR-013).*

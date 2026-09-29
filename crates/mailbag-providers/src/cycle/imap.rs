@@ -10,11 +10,11 @@ use crate::{
     gmail::{gmail_options, log_gmail_rows},
     imap_texts::{imap_account, read_contents},
     renewal::AccessRenewal,
-    store_load::PortionWriter,
+    store_load::BatchWriter,
 };
 use goa_adapter::{ImapAccess, ImapCredential};
 use mailbag_content::decode_display_fields;
-use mailbag_domain::{FolderPortion, FolderState, IncompleteList, Message, ReceivedContent};
+use mailbag_domain::{FolderBatch, FolderState, IncompleteList, Message, ReceivedContent};
 use mailbag_imap::{
     FolderListing, ImapError, ImapFailure, ImapStep, MailboxReader, OpenOptions, RowItems,
     ServerReply,
@@ -22,8 +22,8 @@ use mailbag_imap::{
 use mailbag_store::FolderSync;
 use std::{collections::HashSet, time::SystemTime};
 
-/// How many missing messages one portion fetches (research §3).
-const PORTION_SIZE: usize = 100;
+/// How many missing messages one batch fetches (research §3).
+const BATCH_SIZE: usize = 100;
 
 /// How a listed message is identified in its account (spec FR-005, FR-006).
 #[derive(Clone, Copy)]
@@ -44,41 +44,42 @@ struct ListedMessage {
 
 /// The cycle of an IMAP folder, Generic IMAP or Gmail (spec FR-005, FR-006;
 /// research §2, §3): list every message, store what the listing proves,
-/// then fetch the missing messages newest first, a portion at a time.
+/// then fetch the missing messages newest first, a batch at a time.
 pub(super) async fn synchronize_imap_folder(
     access: ImapAccess,
-    identify: IdentityRule,
+    identity_rule: IdentityRule,
     renewal: Option<AccessRenewal<ImapAccess>>,
-    portions: &mut PortionWriter<'_>,
+    batches: &mut BatchWriter<'_>,
 ) -> Result<LoadResult, CycleEnd> {
     let recent_limit = super::recent_limit(SystemTime::now());
-    let mut server = ImapFolder::open(access, identify, renewal, &portions.folder.identity).await?;
-    let stored = portions.read_folder_sync()?;
+    let mut server =
+        ImapFolder::open(access, identity_rule, renewal, &batches.folder.identity).await?;
+    let stored = batches.read_folder_sync()?;
     let listing = server.list_messages().await?;
-    let listed = server.identify(&listing, &portions.folder.identity)?;
+    let listed = server.identify(&listing, &batches.folder.identity)?;
     let missing = missing_messages(&listed, &stored);
-    portions.store(&listing_changes(&listed, &stored, &listing, &missing))?;
-    for portion_messages in missing.chunks(PORTION_SIZE) {
-        let (portion, refusal) = server
-            .fetch_arrivals(portion_messages, recent_limit, portions)
+    batches.store(&listing_changes(&listed, &stored, &listing, &missing))?;
+    for batch_messages in missing.chunks(BATCH_SIZE) {
+        let (batch, refusal) = server
+            .fetch_arrivals(batch_messages, recent_limit, batches)
             .await?;
-        portions.store(&portion)?;
+        batches.store(&batch)?;
         // The rows the server withheld are missing, so the folder stays
         // not completed; the listing's proof is stored.
         if let Some(refusal) = refusal {
-            return Ok(portions.finish(listed.len(), Some(short_list(refusal))));
+            return Ok(batches.finish(listed.len(), Some(short_list(refusal))));
         }
     }
     if let Some(refusal) = listing.refusal {
-        return Ok(portions.finish(listed.len(), Some(short_list(refusal))));
+        return Ok(batches.finish(listed.len(), Some(short_list(refusal))));
     }
     if !missing.is_empty() {
-        portions.store(&FolderPortion {
+        batches.store(&FolderBatch {
             state: Some(completed(None)),
-            ..FolderPortion::default()
+            ..FolderBatch::default()
         })?;
     }
-    Ok(portions.finish(listed.len(), None))
+    Ok(batches.finish(listed.len(), None))
 }
 
 /// The listed messages the folder does not hold, highest UID first, so the
@@ -97,14 +98,14 @@ fn missing_messages<'a>(
 
 /// What the listing proves before anything is fetched: removals when it
 /// completed (spec FR-004), changed read states, and the folder's state: not
-/// completed while messages are missing, completed when none are and the
-/// listing completed; a refused listing leaves the state as it was.
+/// completed while messages are missing, refused listing or not; completed
+/// when none are and the listing completed; otherwise as it was.
 fn listing_changes(
     listed: &[ListedMessage],
     stored: &FolderSync,
     listing: &FolderListing,
     missing: &[&ListedMessage],
-) -> FolderPortion {
+) -> FolderBatch {
     let complete = listing.refusal.is_none();
     let listed_identities: HashSet<&str> = listed
         .iter()
@@ -136,11 +137,11 @@ fn listing_changes(
     } else {
         None
     };
-    FolderPortion {
+    FolderBatch {
         removed,
         read_states,
         state,
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     }
 }
 
@@ -155,7 +156,7 @@ fn short_list(refusal: ServerReply) -> IncompleteList {
 /// access the cycle may use (research §13).
 struct ImapFolder {
     reader: MailboxReader,
-    identify: IdentityRule,
+    identity_rule: IdentityRule,
     renewal: Option<SessionRenewal>,
 }
 
@@ -170,7 +171,7 @@ struct SessionRenewal {
 impl ImapFolder {
     async fn open(
         access: ImapAccess,
-        identify: IdentityRule,
+        identity_rule: IdentityRule,
         renewal: Option<AccessRenewal<ImapAccess>>,
         folder: &str,
     ) -> Result<Self, ImapError> {
@@ -182,10 +183,11 @@ impl ImapFolder {
             }),
             _ => None,
         };
-        let reader = MailboxReader::open(imap_account(access), options(identify), folder).await?;
+        let reader =
+            MailboxReader::open(imap_account(access), options(identity_rule), folder).await?;
         Ok(Self {
             reader,
-            identify,
+            identity_rule,
             renewal,
         })
     }
@@ -198,7 +200,7 @@ impl ImapFolder {
 
     /// What the listing and the rows ask for beyond RFC 3501.
     fn row_items(&self) -> RowItems {
-        match self.identify {
+        match self.identity_rule {
             IdentityRule::Generic => RowItems::Standard,
             IdentityRule::Gmail => RowItems::WithGmailAttributes,
         }
@@ -212,7 +214,7 @@ impl ImapFolder {
         listing: &FolderListing,
         folder: &str,
     ) -> Result<Vec<ListedMessage>, ImapError> {
-        let generic_prefix = match self.identify {
+        let generic_prefix = match self.identity_rule {
             IdentityRule::Generic => {
                 // RFC 3501 §2.3.1.1 requires UIDVALIDITY with every opened
                 // mailbox.
@@ -249,7 +251,7 @@ impl ImapFolder {
         Ok(listed)
     }
 
-    /// One portion of missing messages: those the account already holds,
+    /// One batch of missing messages: those the account already holds,
     /// related without fetching them (research §4), and the others with
     /// their rows and, for those received after `recent_limit`, their text.
     /// A message that disappeared meanwhile is left out. A row fetch the
@@ -258,13 +260,13 @@ impl ImapFolder {
         &mut self,
         messages: &[&ListedMessage],
         recent_limit: i64,
-        portions: &PortionWriter<'_>,
-    ) -> Result<(FolderPortion, Option<ServerReply>), CycleEnd> {
+        batches: &BatchWriter<'_>,
+    ) -> Result<(FolderBatch, Option<ServerReply>), CycleEnd> {
         let identities: Vec<String> = messages
             .iter()
             .map(|message| message.identity.clone())
             .collect();
-        let known = portions.stored_identities(&identities)?;
+        let known = batches.stored_identities(&identities)?;
         let (known, unknown): (Vec<&ListedMessage>, Vec<&ListedMessage>) = messages
             .iter()
             .copied()
@@ -304,15 +306,15 @@ impl ImapFolder {
                 })
             })
             .collect();
-        let portion = FolderPortion {
+        let batch = FolderBatch {
             known_arrived: known
                 .iter()
                 .map(|message| (message.identity.clone(), message.seen))
                 .collect(),
             arrived,
-            ..FolderPortion::default()
+            ..FolderBatch::default()
         };
-        Ok((portion, rows.refusal))
+        Ok((batch, rows.refusal))
     }
 
     /// Runs one request of the cycle. When the server ended a Gmail session,
@@ -345,7 +347,7 @@ impl ImapFolder {
         tracing::info!("the server ended the session; opening the folder again");
         let reader = MailboxReader::open(
             imap_account(access),
-            options(self.identify),
+            options(self.identity_rule),
             &renewal.folder,
         )
         .await?;
@@ -360,8 +362,8 @@ impl ImapFolder {
 }
 
 /// What the provider asks for beyond RFC 3501 when it opens a folder.
-fn options(identify: IdentityRule) -> OpenOptions {
-    match identify {
+fn options(identity_rule: IdentityRule) -> OpenOptions {
+    match identity_rule {
         IdentityRule::Generic => OpenOptions::default(),
         IdentityRule::Gmail => gmail_options(),
     }

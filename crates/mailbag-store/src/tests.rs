@@ -9,8 +9,8 @@
 use super::*;
 use crate::{test_directory::TestDirectory, test_record::CapturedRecord};
 use mailbag_domain::{
-    ContentExplanation, DisplayFields, FailureKind, FolderPortion, FolderRole, FolderState,
-    Message, ReceivedContent,
+    ContentExplanation, DisplayFields, FailureKind, FolderBatch, FolderRole, FolderState, Message,
+    ReceivedContent,
 };
 use std::{fs, os::unix::fs::PermissionsExt, path::Path};
 
@@ -565,6 +565,7 @@ fn store_listing(account: &AccountId, folders: &[&str]) -> Store {
 fn completed(server_position: Option<&str>) -> Option<FolderState> {
     Some(FolderState {
         server_position: server_position.map(str::to_owned),
+        fill_place: None,
         synchronized: true,
     })
 }
@@ -580,27 +581,27 @@ fn identities_of(store: &Store, folder: &FolderRef) -> Vec<String> {
 }
 
 #[test]
-fn a_portion_removes_changes_relates_and_adds_in_one_write() {
+fn a_batch_removes_changes_relates_and_adds_in_one_write() {
     let synced = account("synced");
     let store = store_listing(&synced, &["INBOX", "Work"]);
     let (inbox, work) = (folder_of(&synced, "INBOX"), folder_of(&synced, "Work"));
-    let first = FolderPortion {
+    let first = FolderBatch {
         arrived: vec![
             dated_message("kept", 3),
             dated_message("gone", 2),
             dated_message("read", 1),
         ],
         state: completed(None),
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     };
-    store.store_portion(&inbox, &first, || false).unwrap();
-    let elsewhere = FolderPortion {
+    store.store_batch(&inbox, &first, || false).unwrap();
+    let elsewhere = FolderBatch {
         arrived: vec![dated_message("shared", 4)],
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     };
-    store.store_portion(&work, &elsewhere, || false).unwrap();
+    store.store_batch(&work, &elsewhere, || false).unwrap();
 
-    let second = FolderPortion {
+    let second = FolderBatch {
         removed: vec!["gone".to_owned()],
         read_states: vec![("read".to_owned(), true)],
         known_arrived: vec![("shared".to_owned(), true)],
@@ -608,7 +609,7 @@ fn a_portion_removes_changes_relates_and_adds_in_one_write() {
         state: None,
     };
     assert_eq!(
-        store.store_portion(&inbox, &second, || false),
+        store.store_batch(&inbox, &second, || false),
         Ok(StoreWrite::Stored)
     );
     assert_eq!(
@@ -640,23 +641,23 @@ fn a_text_not_downloaded_never_replaces_a_stored_content() {
     let synced = account("synced");
     let store = store_listing(&synced, &["INBOX", "Archive"]);
     let recent = dated_message("message", 1);
-    let with_text = FolderPortion {
+    let with_text = FolderBatch {
         arrived: vec![recent.clone()],
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     };
     store
-        .store_portion(&folder_of(&synced, "INBOX"), &with_text, || false)
+        .store_batch(&folder_of(&synced, "INBOX"), &with_text, || false)
         .unwrap();
-    let without_text = FolderPortion {
+    let without_text = FolderBatch {
         arrived: vec![Message {
             seen: true,
             content: ReceivedContent::NotDownloaded,
             ..recent.clone()
         }],
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     };
     store
-        .store_portion(&folder_of(&synced, "Archive"), &without_text, || false)
+        .store_batch(&folder_of(&synced, "Archive"), &without_text, || false)
         .unwrap();
     assert_eq!(
         store.read_message_content(&synced, "message"),
@@ -668,15 +669,15 @@ fn a_text_not_downloaded_never_replaces_a_stored_content() {
         .unwrap();
     assert!(inbox.stored["message"]);
     // A text replaces a text.
-    let newer = FolderPortion {
+    let newer = FolderBatch {
         arrived: vec![Message {
             content: ReceivedContent::Text("Newer".to_owned()),
             ..recent
         }],
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     };
     store
-        .store_portion(&folder_of(&synced, "Archive"), &newer, || false)
+        .store_batch(&folder_of(&synced, "Archive"), &newer, || false)
         .unwrap();
     assert_eq!(
         store.read_message_content(&synced, "message"),
@@ -685,24 +686,22 @@ fn a_text_not_downloaded_never_replaces_a_stored_content() {
 }
 
 #[test]
-fn the_folder_state_changes_only_with_a_portion_that_carries_it() {
+fn the_folder_state_changes_only_with_a_batch_that_carries_it() {
     let synced = account("synced");
     let store = store_listing(&synced, &["INBOX"]);
     let inbox = folder_of(&synced, "INBOX");
     let never = FolderState::default();
     assert_eq!(store.read_folder_sync(&inbox).unwrap().state, never);
-    let completing = FolderPortion {
+    let completing = FolderBatch {
         state: completed(Some("position")),
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     };
-    store.store_portion(&inbox, &completing, || false).unwrap();
-    let without_state = FolderPortion {
+    store.store_batch(&inbox, &completing, || false).unwrap();
+    let without_state = FolderBatch {
         arrived: vec![dated_message("message", 1)],
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     };
-    store
-        .store_portion(&inbox, &without_state, || false)
-        .unwrap();
+    store.store_batch(&inbox, &without_state, || false).unwrap();
     assert_eq!(
         store.read_folder_sync(&inbox).unwrap().state,
         completed(Some("position")).unwrap()
@@ -718,25 +717,25 @@ fn the_folder_state_changes_only_with_a_portion_that_carries_it() {
 }
 
 #[test]
-fn a_cancelled_or_failing_portion_leaves_the_folder_as_it_was() {
+fn a_cancelled_or_failing_batch_leaves_the_folder_as_it_was() {
     let synced = account("synced");
     let store = store_listing(&synced, &["INBOX"]);
     let inbox = folder_of(&synced, "INBOX");
-    let first = FolderPortion {
+    let first = FolderBatch {
         arrived: vec![dated_message("first", 1)],
         state: completed(None),
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     };
-    store.store_portion(&inbox, &first, || false).unwrap();
+    store.store_batch(&inbox, &first, || false).unwrap();
     let before = store.read_folder_sync(&inbox).unwrap();
-    let changes = FolderPortion {
+    let changes = FolderBatch {
         removed: vec!["first".to_owned()],
         arrived: vec![dated_message("second", 2), dated_message("third", 3)],
         state: Some(FolderState::default()),
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     };
     assert_eq!(
-        store.store_portion(&inbox, &changes, || true),
+        store.store_batch(&inbox, &changes, || true),
         Ok(StoreWrite::LoadCancelled)
     );
     assert_eq!(store.read_folder_sync(&inbox).unwrap(), before);
@@ -749,14 +748,14 @@ fn a_cancelled_or_failing_portion_leaves_the_folder_as_it_was() {
             )?)
         })
         .unwrap();
-    let failure = store.store_portion(&inbox, &changes, || false).unwrap_err();
+    let failure = store.store_batch(&inbox, &changes, || false).unwrap_err();
     assert_eq!(failure.kind, FailureKind::MailNotSaved);
     assert_eq!(store.read_folder_sync(&inbox).unwrap(), before);
     assert_eq!(identities_of(&store, &inbox), ["first"]);
 }
 
 #[test]
-fn a_folder_the_store_does_not_hold_takes_no_portion() {
+fn a_folder_the_store_does_not_hold_takes_no_batch() {
     let synced = account("synced");
     let store = store_listing(&synced, &["INBOX"]);
     let unknown = folder_of(&synced, "Unknown");
@@ -764,13 +763,13 @@ fn a_folder_the_store_does_not_hold_takes_no_portion() {
         store.read_folder_sync(&unknown).unwrap_err().kind,
         FailureKind::MailNotSaved
     );
-    let portion = FolderPortion {
+    let batch = FolderBatch {
         arrived: vec![dated_message("message", 1)],
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     };
     assert_eq!(
         store
-            .store_portion(&unknown, &portion, || false)
+            .store_batch(&unknown, &batch, || false)
             .unwrap_err()
             .kind,
         FailureKind::MailNotSaved
@@ -779,7 +778,7 @@ fn a_folder_the_store_does_not_hold_takes_no_portion() {
 }
 
 /// "No mail loaded" and an empty folder differ: a folder shows rows once a
-/// portion stored some, and an empty list only after a completed cycle.
+/// batch stored some, and an empty list only after a completed cycle.
 #[test]
 fn a_folder_without_rows_is_empty_only_after_a_completed_cycle() {
     let synced = account("synced");
@@ -787,24 +786,24 @@ fn a_folder_without_rows_is_empty_only_after_a_completed_cycle() {
     let inbox = folder_of(&synced, "INBOX");
     assert_eq!(store.read_folder_rows(&inbox), Ok(None));
     let not_completed = Some(FolderState::default());
-    let started = FolderPortion {
+    let started = FolderBatch {
         state: not_completed.clone(),
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     };
-    store.store_portion(&inbox, &started, || false).unwrap();
+    store.store_batch(&inbox, &started, || false).unwrap();
     assert_eq!(store.read_folder_rows(&inbox), Ok(None));
-    let some_rows = FolderPortion {
+    let some_rows = FolderBatch {
         arrived: vec![dated_message("message", 1)],
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     };
-    store.store_portion(&inbox, &some_rows, || false).unwrap();
+    store.store_batch(&inbox, &some_rows, || false).unwrap();
     assert_eq!(identities_of(&store, &inbox), ["message"]);
-    let emptied = FolderPortion {
+    let emptied = FolderBatch {
         removed: vec!["message".to_owned()],
         state: completed(None),
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     };
-    store.store_portion(&inbox, &emptied, || false).unwrap();
+    store.store_batch(&inbox, &emptied, || false).unwrap();
     assert_eq!(store.read_folder_rows(&inbox), Ok(Some(Vec::new())));
     assert_eq!(
         store.read_folder_rows(&folder_of(&synced, "Unknown")),
@@ -817,12 +816,12 @@ fn stored_identities_are_those_any_folder_of_the_account_holds() {
     let synced = account("synced");
     let store = store_listing(&synced, &["INBOX", "Work"]);
     for (identity, name) in [("in-inbox", "INBOX"), ("in-work", "Work")] {
-        let portion = FolderPortion {
+        let batch = FolderBatch {
             arrived: vec![dated_message(identity, 1)],
-            ..FolderPortion::default()
+            ..FolderBatch::default()
         };
         store
-            .store_portion(&folder_of(&synced, name), &portion, || false)
+            .store_batch(&folder_of(&synced, name), &batch, || false)
             .unwrap();
     }
     let other = account("other");
@@ -840,11 +839,11 @@ fn identities_in_other_folders_are_those_another_folder_of_the_account_holds() {
     let store = store_listing(&synced, &["INBOX", "Archive"]);
     let (inbox, archive) = (folder_of(&synced, "INBOX"), folder_of(&synced, "Archive"));
     let store_in = |folder: &FolderRef, identity: &str| {
-        let portion = FolderPortion {
+        let batch = FolderBatch {
             arrived: vec![dated_message(identity, 1)],
-            ..FolderPortion::default()
+            ..FolderBatch::default()
         };
-        store.store_portion(folder, &portion, || false).unwrap();
+        store.store_batch(folder, &batch, || false).unwrap();
     };
     store_in(&inbox, "only-here");
     store_in(&archive, "only-there");
@@ -872,14 +871,15 @@ fn store_completed_cycle(
         .map(|row| row.identity)
         .filter(|identity| !messages.iter().any(|message| message.identity == *identity))
         .collect();
-    let portion = FolderPortion {
+    let batch = FolderBatch {
         removed,
         arrived: messages.to_vec(),
         state: Some(FolderState {
             server_position: None,
+            fill_place: None,
             synchronized: true,
         }),
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     };
-    store.store_portion(folder, &portion, load_cancelled)
+    store.store_batch(folder, &batch, load_cancelled)
 }

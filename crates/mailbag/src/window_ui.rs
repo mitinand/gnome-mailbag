@@ -77,10 +77,10 @@ struct ShownMailbox {
     /// The number of the latest read, as for the folder lists.
     latest_read: u64,
     stored: StoredMailbox,
-    /// A read after a stored portion runs, while the rows and the banner on
+    /// A read after a stored batch runs, while the rows and the banner on
     /// screen stay as they are.
     rereading: bool,
-    /// A portion was stored while a read ran: one more read follows it, so
+    /// A batch was stored while a read ran: one more read follows it, so
     /// reads never pile up (specs/009-synchronization/research.md §7).
     read_due: bool,
 }
@@ -191,9 +191,8 @@ impl WindowUi {
         window.read_stored_mail.connect_activate(move |_, _| {
             if let Some(window) = reading.upgrade() {
                 window.read_folder_lists();
-                // A new read of the shown mailbox reads the open message's
-                // content again.
                 window.read_shown_mailbox();
+                window.mail.read_open_content_again();
                 window.render();
             }
         });
@@ -362,7 +361,7 @@ impl WindowUi {
                     return;
                 };
                 match event {
-                    LoadEvent::PortionStored => window.show_stored_portion(&loaded_account),
+                    LoadEvent::BatchStored => window.show_stored_batch(&loaded_account),
                     LoadEvent::Finished(result) => {
                         window.finish_load(&loaded_account, loaded_target.clone(), result)
                     }
@@ -390,11 +389,11 @@ impl WindowUi {
         self.render();
     }
 
-    /// A cycle stored a portion: the shown mailbox is read again when it
-    /// belongs to the loaded account, since a portion of one folder can change
+    /// A cycle stored a batch: the shown mailbox is read again when it
+    /// belongs to the loaded account, since a batch of one folder can change
     /// messages another folder of the account holds too (a Gmail label, a
     /// moved Microsoft 365 message).
-    fn show_stored_portion(self: &Rc<Self>, account_id: &AccountId) {
+    fn show_stored_batch(self: &Rc<Self>, account_id: &AccountId) {
         if self
             .selected_mailbox()
             .is_some_and(|folder| folder.account == *account_id)
@@ -502,7 +501,7 @@ impl WindowUi {
         self.spawn_rows_read(folder, read);
     }
 
-    /// Reads the shown mailbox's rows again after a stored portion, while the
+    /// Reads the shown mailbox's rows again after a stored batch, while the
     /// rows and the banner on screen stay; during a running read it only
     /// marks one more read.
     fn read_shown_mailbox_again(self: &Rc<Self>) {
@@ -524,7 +523,7 @@ impl WindowUi {
     }
 
     /// Runs read number `read` of the folder's rows, then shows what it found
-    /// if it is still the latest, and starts the read a portion marked due.
+    /// if it is still the latest, and starts the read a batch marked due.
     fn spawn_rows_read(self: &Rc<Self>, folder: FolderRef, read: u64) {
         let store = self.store.clone();
         let window = Rc::downgrade(self);
@@ -687,10 +686,14 @@ impl WindowUi {
         let outcome = refreshes
             .outcome_of(account)
             .filter(|(target, _)| concerns_shown(target));
-        let banner = outcome.and_then(|(target, outcome)| banner_of(outcome, retried_by(target)));
         let loading = refreshes
             .loading_target(account)
             .filter(|target| concerns_shown(target));
+        // A refresh of the same mail answers the last one's notice: the
+        // banner goes while it runs and returns only if it fails too.
+        let banner = outcome
+            .filter(|_| loading.is_none())
+            .and_then(|(target, outcome)| banner_of(outcome, retried_by(target)));
         let no_mail_loaded = ShownMail::Status {
             title: "No mail loaded",
             description: Some("Choose Refresh Account or Refresh Mailbox in the main menu."),

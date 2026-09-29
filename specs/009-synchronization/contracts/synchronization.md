@@ -2,17 +2,18 @@
 
 The definitions the crates share for a cycle, kept in `mailbag-domain`, and
 the operations the window, the providers and the store agree on. Names are
-the code's; meanings are the spec's. A *cycle* and a *portion* are the
-spec's terms; the code says `FolderPortion` for a portion and keeps the
+the code's; meanings are the spec's. A *cycle* and a *batch* are the
+spec's terms; the code says `FolderBatch` for a batch and keeps the
 user's word, *mailbox*, where it names the refreshed folder
 (`LoadTarget::Mailbox`, "Refresh Mailbox").
 
 ## Domain types (`mailbag-domain`)
 
-- `FolderState { server_position: Option<String>, synchronized: bool }`:
+- `FolderState { server_position: Option<String>, fill_place:
+  Option<String>, synchronized: bool }`:
   what a folder remembers between cycles (data-model.md `folder`). A
   Generic IMAP message's identity is `imap:<folder>/<UIDVALIDITY>/<UID>`.
-- `FolderPortion { removed: Vec<String>, read_states: Vec<(String, bool)>,
+- `FolderBatch { removed: Vec<String>, read_states: Vec<(String, bool)>,
   known_arrived: Vec<(String, bool)>, arrived: Vec<Message>, state:
   Option<FolderState> }`: one whole part of a cycle's result. `removed`
   holds identities proven gone from the folder (spec FR-004);
@@ -21,9 +22,9 @@ user's word, *mailbox*, where it names the refreshed folder
   their listed `seen`, related without fetching (research §4); `arrived`
   full records to insert or update (messages the account did not hold, and
   stored messages whose fields the service reported again), each with its
-  content or `NotDownloaded`; `state` is present in the portion that
-  completes the cycle, in the first portion of a cycle that has messages
-  to fetch (marking the folder not completed), and in each page's portion
+  content or `NotDownloaded`; `state` is present in the batch that
+  completes the cycle, in the first batch of a cycle that has messages
+  to fetch (marking the folder not completed), and in each page's batch
   of a Microsoft 365 first fill (spec FR-008).
 - `MessageListRow { identity, fields: DisplayFields, received_unix, seen }`:
   a message as the list shows it, without its content.
@@ -38,17 +39,17 @@ user's word, *mailbox*, where it names the refreshed folder
 
 - `LoadsMail::start_load(&self, account, provider, target: LoadTarget,
   on_event: Box<dyn FnMut(LoadEvent)>) -> Box<dyn CancelsLoadOnDrop>`:
-  `LoadEvent::PortionStored` any number of times, then exactly one
+  `LoadEvent::BatchStored` any number of times, then exactly one
   `LoadEvent::Finished(LoadResult)`, on the calling GLib context. One load
   runs at a time as today.
 - `LoadTarget::Mailbox(folder)` runs one cycle of the folder;
   `LoadTarget::FolderList` is unchanged (008).
 - `LoadResult::Stored { incomplete }`: the cycle completed, or it ended
   incomplete (`IncompleteList::ServerRefused`): a refused listing removes
-  nothing; a portion's row FETCH that ended with NO after a complete
+  nothing; a batch's row FETCH that ended with NO after a complete
   listing keeps the removals the listing proved and stored. `Failed` and
-  `Cancelled` as today; the portions stored before stay (spec FR-010).
-- A cycle writes only through `Store::store_portion`; nothing reaches the
+  `Cancelled` as today; the batches stored before stay (spec FR-010).
+- A cycle writes only through `Store::store_batch`; nothing reaches the
   window with data (007 FR-001).
 - Renewing access (research §13) stays inside `mailbag-providers`: the
   cycle asks through a channel that `MailLoader` answers on GTK's context
@@ -62,12 +63,12 @@ user's word, *mailbox*, where it names the refreshed folder
   Failure>` with `FolderSync { state: FolderState, stored: HashMap<String,
   bool> }` (identity → `seen`); a folder the store does not hold is a
   `MailNotSaved` failure, as for writes.
-- `store_portion(&self, folder: &FolderRef, portion: &FolderPortion,
+- `store_batch(&self, folder: &FolderRef, batch: &FolderBatch,
   load_cancelled: impl FnOnce() -> bool) -> Result<StoreWrite, Failure>`:
   one transaction in the order of data-model.md; `StoreWrite::LoadCancelled`
   writes nothing.
 - `stored_identities(&self, account: &AccountId, identities: &[String]) ->
-  Result<HashSet<String>, Failure>`: which of a portion's identities the
+  Result<HashSet<String>, Failure>`: which of a batch's identities the
   account already holds.
 - `identities_in_other_folders(&self, folder: &FolderRef, identities:
   &[String]) -> Result<HashSet<String>, Failure>`: which of a Microsoft 365
@@ -125,7 +126,7 @@ user's word, *mailbox*, where it names the refreshed folder
   place, arrivals and removals in one splice; it keeps the open message,
   whose row is the selected one, while it is listed, and reads its content
   again.
-  A portion of any folder of the shown folder's account makes the window
+  A batch of any folder of the shown folder's account makes the window
   read the shown folder again.
 - Opening a message reads its content with `read_message_content` on GIO's
   pool; the reader shows the text, the reason for none, or "not

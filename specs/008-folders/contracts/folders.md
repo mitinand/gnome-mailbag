@@ -2,7 +2,7 @@
 
 **Amended** on 2026-09-29 by
 [Synchronization](../../009-synchronization/contracts/synchronization.md):
-`replace_mailbox` and `read_mailbox` give way to `store_portion`,
+`replace_mailbox` and `read_mailbox` give way to `store_batch`,
 `read_folder_rows` and `read_message_content`.
 
 The definitions the crates share for folders, kept in `mailbag-domain`, and

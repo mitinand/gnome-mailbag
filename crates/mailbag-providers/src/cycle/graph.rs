@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The cycle of a Microsoft 365 folder (spec FR-007; research §5, §13): the
-//! service's delta reading, one portion per page, from the folder's saved
+//! service's delta reading, one batch per page, from the folder's saved
 //! position.
 
 use super::{CycleEnd, completed};
 use crate::{
-    LoadResult, microsoft365::received_fields, renewal::AccessRenewal, store_load::PortionWriter,
+    LoadResult, microsoft365::received_fields, renewal::AccessRenewal, store_load::BatchWriter,
 };
 use goa_adapter::GraphAccess;
-use mailbag_domain::{FolderPortion, FolderState, Message, ReceivedContent};
+use mailbag_domain::{FolderBatch, FolderState, Message, ReceivedContent};
 use mailbag_graph::{
     ChangePage, ChangesFrom, GraphError, GraphFailure, GraphMessage, MessageChange, NextPage,
     read_message, read_message_changes, read_message_text, read_texts_received_between,
@@ -32,24 +32,26 @@ enum Reading {
     /// The changes since the saved position.
     Round,
     /// A first reading after the service rejected the saved position: at its
-    /// end, the stored messages it did not list are removed.
+    /// end, the stored messages it did not list, by identity, are removed.
     FullRereading { listed: HashSet<String> },
 }
 
 /// The cycle of a Microsoft 365 folder: pages of the delta reading, each
-/// stored as a portion, until the reading completes with the position the
+/// stored as a batch, until the reading completes with the position the
 /// next cycle starts from.
 pub(super) async fn synchronize_graph_folder(
     access: GraphAccess,
     service_url: String,
     renewal: AccessRenewal<GraphAccess>,
-    portions: &mut PortionWriter<'_>,
+    batches: &mut BatchWriter<'_>,
 ) -> Result<LoadResult, CycleEnd> {
     let recent_limit = super::recent_limit(SystemTime::now());
-    let stored = portions.read_folder_sync()?;
-    let folder_id = portions.folder.identity.clone();
+    let mut stored = batches.read_folder_sync()?;
+    let folder_id = batches.folder.identity.clone();
     let mut service = GraphService::new(access, service_url, renewal);
     let (mut from, mut reading) = where_to_start(&stored, &folder_id);
+    // Where the current round started: an interrupted round starts there again.
+    let mut round_start = stored.state.server_position.clone();
     // Messages the service reported, for the record.
     let mut reported = 0;
     loop {
@@ -62,6 +64,9 @@ pub(super) async fn synchronize_graph_folder(
                     && !matches!(reading, Reading::FullRereading { .. }) =>
             {
                 tracing::info!("the service no longer accepts the saved position");
+                // What the folder holds now, earlier batches of this cycle
+                // included, is what the full reading's end compares with.
+                stored = batches.read_folder_sync()?;
                 from = ChangesFrom::FirstReading(folder_id.clone());
                 reading = Reading::FullRereading {
                     listed: HashSet::new(),
@@ -73,61 +78,70 @@ pub(super) async fn synchronize_graph_folder(
         let changes = merge_per_message(page.changes);
         reported += changes.len();
         if let Reading::FullRereading { listed } = &mut reading {
-            listed.extend(changes.keys().cloned());
+            listed.extend(changes.keys().map(|id| identity(id)));
         }
-        let mut portion = service
-            .portion_from_changes(changes, &reading, &stored, recent_limit, portions)
+        let mut batch = service
+            .batch_from_changes(changes, &reading, recent_limit, batches)
             .await?;
         match page.next {
             NextPage::More(next_link) => {
-                if matches!(reading, Reading::FirstFill { .. }) {
-                    portion.state = Some(FolderState {
-                        server_position: Some(next_link.clone()),
+                // Not the reading's last page: the folder is not completed.
+                batch.state = Some(match reading {
+                    Reading::FirstFill { .. } => FolderState {
+                        server_position: None,
+                        fill_place: Some(next_link.clone()),
                         synchronized: false,
-                    });
-                }
-                portions.store(&portion)?;
+                    },
+                    Reading::Round | Reading::FullRereading { .. } => FolderState {
+                        server_position: round_start.clone(),
+                        fill_place: None,
+                        synchronized: false,
+                    },
+                });
+                batches.store(&batch)?;
                 from = ChangesFrom::Link(next_link);
             }
             NextPage::Done(delta_link)
                 if matches!(reading, Reading::FirstFill { continued: true }) =>
             {
-                portion.state = Some(FolderState {
+                batch.state = Some(FolderState {
                     server_position: Some(delta_link.clone()),
+                    fill_place: None,
                     synchronized: false,
                 });
-                portions.store(&portion)?;
+                batches.store(&batch)?;
+                round_start = Some(delta_link.clone());
                 from = ChangesFrom::Link(delta_link);
                 reading = Reading::Round;
             }
             NextPage::Done(delta_link) => {
                 if let Reading::FullRereading { listed } = &reading {
-                    portion.removed.extend(
+                    batch.removed.extend(
                         stored
                             .stored
                             .keys()
-                            .filter(|identity| !listed.contains(graph_id(identity)))
+                            .filter(|identity| !listed.contains(*identity))
                             .cloned(),
                     );
                 }
-                portion.state = Some(completed(Some(delta_link)));
-                portions.store(&portion)?;
-                return Ok(portions.finish(reported, None));
+                batch.state = Some(completed(Some(delta_link)));
+                batches.store(&batch)?;
+                return Ok(batches.finish(reported, None));
             }
         }
     }
 }
 
-/// Where the reading starts: the saved position after a completed cycle, the
-/// saved place of an unfinished first fill, or a first reading.
+/// Where the reading starts: the saved place of an unfinished first fill,
+/// the saved position of the next round, or a first reading.
 fn where_to_start(stored: &FolderSync, folder_id: &str) -> (ChangesFrom, Reading) {
-    match (&stored.state.server_position, stored.state.synchronized) {
-        (Some(position), true) => (ChangesFrom::Link(position.clone()), Reading::Round),
-        (Some(place), false) => (
+    match (&stored.state.fill_place, &stored.state.server_position) {
+        (Some(place), _) => (
             ChangesFrom::Link(place.clone()),
             Reading::FirstFill { continued: true },
         ),
-        (None, _) => (
+        (None, Some(position)) => (ChangesFrom::Link(position.clone()), Reading::Round),
+        (None, None) => (
             ChangesFrom::FirstReading(folder_id.to_owned()),
             Reading::FirstFill { continued: false },
         ),
@@ -184,11 +198,6 @@ fn identity(graph_id: &str) -> String {
     format!("graph:{graph_id}")
 }
 
-/// The service's identifier inside a stored identity.
-fn graph_id(identity: &str) -> &str {
-    identity.strip_prefix("graph:").unwrap_or(identity)
-}
-
 /// Microsoft Graph for one cycle, with the one renewal of its token the
 /// cycle may use (research §13).
 struct GraphService {
@@ -203,6 +212,8 @@ struct GraphService {
 /// A message to store in full, and whether its text is to be fetched.
 struct Arrival {
     message: GraphMessage,
+    /// The message arrived after the 30-day limit, and the account lacks it
+    /// or the service reported its fields again (spec FR-009).
     wants_text: bool,
 }
 
@@ -223,32 +234,45 @@ impl GraphService {
         .await
     }
 
-    /// One page's changes as a portion. A message another folder of the
+    /// One page's changes as a batch. A message another folder of the
     /// account holds, a partial entry that changed other list fields and an
     /// entry for a message the account lacks are read again; a message read
     /// again is kept only if it is in this folder now (research §5).
-    async fn portion_from_changes(
+    async fn batch_from_changes(
         &mut self,
         changes: HashMap<String, MessageChange>,
         reading: &Reading,
-        stored: &FolderSync,
         recent_limit: i64,
-        portions: &PortionWriter<'_>,
-    ) -> Result<FolderPortion, CycleEnd> {
+        batches: &BatchWriter<'_>,
+    ) -> Result<FolderBatch, CycleEnd> {
         let identities: Vec<String> = changes.keys().map(|id| identity(id)).collect();
-        let held_elsewhere = portions.identities_in_other_folders(&identities)?;
-        let held_by_account = portions.stored_identities(&identities)?;
-        let mut portion = FolderPortion::default();
+        let held_elsewhere = batches.identities_in_other_folders(&identities)?;
+        let held_by_account = batches.stored_identities(&identities)?;
+        let mut batch = FolderBatch::default();
         let mut arrivals = Vec::new();
         for (id, change) in changes {
             let stored_identity = identity(&id);
-            let held_here = stored.stored.contains_key(&stored_identity);
             let known = held_by_account.contains(&stored_identity);
-            let read_again = match &change {
-                MessageChange::Removed(_) => {
-                    if held_here {
-                        portion.removed.push(stored_identity);
+            // The service reported the message's list fields again: a draft
+            // edited elsewhere keeps its identity, so its text is read again
+            // (spec FR-009).
+            let fields_reported = matches!(
+                change,
+                MessageChange::Listed(_)
+                    | MessageChange::Changed {
+                        other_fields: true,
+                        ..
                     }
+            );
+            let wants_text = |message: &GraphMessage| {
+                (!known || fields_reported) && is_recent(message, recent_limit)
+            };
+            let read_again = match &change {
+                // Not checked against the folder as the cycle found it: an
+                // earlier page of this cycle may have stored the message, and
+                // removing one the folder lacks changes nothing.
+                MessageChange::Removed(_) => {
+                    batch.removed.push(stored_identity);
                     continue;
                 }
                 _ if held_elsewhere.contains(&stored_identity) => true,
@@ -256,34 +280,34 @@ impl GraphService {
                 MessageChange::Changed { other_fields, .. } => *other_fields || !known,
             };
             if read_again {
-                if let Some(message) = self.read_in_folder(&id, &portions.folder.identity).await? {
+                if let Some(message) = self.read_in_folder(&id, &batches.folder.identity).await? {
                     arrivals.push(Arrival {
+                        wants_text: wants_text(&message),
                         message,
-                        wants_text: !known,
                     });
                 }
                 continue;
             }
             match change {
                 MessageChange::Listed(message) => arrivals.push(Arrival {
+                    wants_text: wants_text(&message),
                     message,
-                    wants_text: !known,
                 }),
                 MessageChange::Changed {
                     is_read: Some(seen),
                     ..
-                } => portion.read_states.push((stored_identity, seen)),
+                } => batch.read_states.push((stored_identity, seen)),
                 _ => {}
             }
         }
         let texts = self
-            .read_texts(&arrivals, reading, recent_limit, &portions.folder.identity)
+            .read_texts(&arrivals, reading, &batches.folder.identity)
             .await?;
-        portion.arrived = arrivals
+        batch.arrived = arrivals
             .into_iter()
-            .map(|arrival| stored_message(arrival, &texts, recent_limit))
+            .map(|arrival| stored_message(arrival, &texts))
             .collect();
-        Ok(portion)
+        Ok(batch)
     }
 
     /// The message as it is now, if it is in `folder_id`.
@@ -300,7 +324,7 @@ impl GraphService {
             .map(|(message, _)| message))
     }
 
-    /// The texts of the arrivals received after `recent_limit`: for a page
+    /// The texts of the arrivals that want one: for a page
     /// of a first reading, by the range of their dates in one request; for a
     /// round of changes, whose arrivals are scattered in time, one by one
     /// (research §5).
@@ -308,12 +332,11 @@ impl GraphService {
         &mut self,
         arrivals: &[Arrival],
         reading: &Reading,
-        recent_limit: i64,
         folder_id: &str,
     ) -> Result<HashMap<String, Option<String>>, GraphError> {
         let recent: Vec<&GraphMessage> = arrivals
             .iter()
-            .filter(|arrival| arrival.wants_text && is_recent(&arrival.message, recent_limit))
+            .filter(|arrival| arrival.wants_text)
             .map(|arrival| &arrival.message)
             .collect();
         if recent.is_empty() {
@@ -384,20 +407,16 @@ fn is_recent(message: &GraphMessage, recent_limit: i64) -> bool {
         .is_some_and(|received| received >= recent_limit)
 }
 
-/// An arrival as the store keeps it: with its text when it is recent and the
-/// account had none, otherwise without one, which keeps a stored content.
-fn stored_message(
-    arrival: Arrival,
-    texts: &HashMap<String, Option<String>>,
-    recent_limit: i64,
-) -> Message {
+/// An arrival as the store keeps it: with its text when it wanted one,
+/// otherwise without one, which keeps a stored content.
+fn stored_message(arrival: Arrival, texts: &HashMap<String, Option<String>>) -> Message {
     let message = arrival.message;
-    let content = match (arrival.wants_text, is_recent(&message, recent_limit)) {
-        (true, true) => match texts.get(&message.immutable_id) {
+    let content = match arrival.wants_text {
+        true => match texts.get(&message.immutable_id) {
             Some(Some(text)) => ReceivedContent::Text(text.clone()),
             _ => ReceivedContent::TextNotReturned,
         },
-        _ => ReceivedContent::NotDownloaded,
+        false => ReceivedContent::NotDownloaded,
     };
     Message {
         identity: identity(&message.immutable_id),

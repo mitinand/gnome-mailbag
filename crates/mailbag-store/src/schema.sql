@@ -7,8 +7,9 @@
 -- nothing is converted before the first release.
 
 -- A folder as the account's latest completed folder list left it, with what
--- it remembers between cycles. `server_position` is where a Microsoft 365
--- cycle reads changes from, or continues an unfinished first fill.
+-- it remembers between cycles. On Microsoft 365, `server_position` is where
+-- the next round of changes starts and `fill_place` where an unfinished
+-- first fill continues.
 -- `synchronized` means that its latest cycle completed; without memberships
 -- it is then empty.
 CREATE TABLE folder (
@@ -30,6 +31,7 @@ CREATE TABLE folder (
     )),
     selectable INTEGER NOT NULL CHECK (selectable IN (0, 1)),
     server_position TEXT,
+    fill_place TEXT,
     synchronized INTEGER NOT NULL CHECK (synchronized IN (0, 1)),
     UNIQUE (account, identity)
 ) STRICT;

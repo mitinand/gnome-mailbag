@@ -13,7 +13,7 @@ use goa_adapter::{
     ErrorCause,
 };
 use mailbag_domain::{
-    AccountId, ContentExplanation, Failure, FailureKind, Folder, FolderPortion, FolderRef,
+    AccountId, ContentExplanation, Failure, FailureKind, Folder, FolderBatch, FolderRef,
     FolderRole, FolderState, IncompleteList, Message, RemoteSource, RemoteText, ServerStep,
 };
 use mailbag_providers::{
@@ -150,18 +150,18 @@ impl ScriptedLoader {
         (self.take_running_load().on_event)(LoadEvent::Finished(result));
     }
 
-    /// Stores a portion of the running mailbox load into `folder`, which may
+    /// Stores a batch of the running mailbox load into `folder`, which may
     /// be another folder of its account, and reports it, as a cycle does;
     /// the load goes on.
-    fn report_portion(&self, folder: &FolderRef, portion: &FolderPortion) {
+    fn report_batch(&self, folder: &FolderRef, batch: &FolderBatch) {
         let mut loads = self.started_loads.borrow_mut();
         let started = loads.last_mut().expect("a load is running");
         let write = self
             .store
-            .store_portion(folder, portion, || started.cancelled.get())
-            .expect("the test store takes the portion");
+            .store_batch(folder, batch, || started.cancelled.get())
+            .expect("the test store takes the batch");
         if write == StoreWrite::Stored {
-            (started.on_event)(LoadEvent::PortionStored);
+            (started.on_event)(LoadEvent::BatchStored);
         }
     }
 
@@ -970,10 +970,13 @@ fn mail_ui_transitions() {
     assert_eq!(widgets.rows().len(), 3);
     assert_eq!(widgets.banner_title(), Some(rejected.title.to_owned()));
 
-    // A refresh keeps loading for its own mailbox when the user selects
-    // another account.
+    // A refresh of that mailbox hides the banner while it runs; the rows stay.
+    // It keeps loading for its own mailbox when the user selects another
+    // account.
     refresh_mailbox.activate(None);
     settle(&ui);
+    assert_eq!(widgets.banner_title(), None);
+    assert_eq!(widgets.rows().len(), 3);
     widgets.select(&ui, &google, None);
     settle(&ui);
     assert_eq!(widgets.list_page(), "failed");
@@ -1305,13 +1308,13 @@ fn mailbox_navigation() {
     window.destroy();
 }
 
-/// A cycle's portions reach the window as they are stored: the list grows
-/// and keeps the open message, a portion of another label of the account
+/// A cycle's batches reach the window as they are stored: the list grows
+/// and keeps the open message, a batch of another label of the account
 /// changes a shared message on screen, and the previous refresh's banner
 /// stays revealed while the rows are read again (009 FR-013, research §7).
 #[test]
 #[ignore = "requires a graphical GTK session"]
-fn portions_update_the_shown_folder() {
+fn batches_update_the_shown_folder() {
     adw::init().expect("GTK display");
     let store = Arc::new(Store::in_memory());
     let (window, ui, loader, widgets) = open_window(store.clone());
@@ -1329,22 +1332,22 @@ fn portions_update_the_shown_folder() {
     widgets.select(&ui, &google, Some("INBOX"));
     settle(&ui);
 
-    // A first fill: the newest portion is listed before the load ends.
+    // A first fill: the newest batch is listed before the load ends.
     refresh_mailbox.activate(None);
     settle(&ui);
-    let arrivals = |messages: &[Message]| FolderPortion {
+    let arrivals = |messages: &[Message]| FolderBatch {
         arrived: messages.to_vec(),
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     };
     let [newer, older] = two_messages().try_into().expect("two messages");
-    loader.report_portion(&inbox, &arrivals(std::slice::from_ref(&newer)));
+    loader.report_batch(&inbox, &arrivals(std::slice::from_ref(&newer)));
     settle(&ui);
     assert_eq!(widgets.list_page(), "messages");
     assert_eq!(widgets.rows().len(), 1);
     assert!(widgets.shows_load_feedback());
     widgets.open_row(0);
     settle(&ui);
-    loader.report_portion(&inbox, &arrivals(std::slice::from_ref(&older)));
+    loader.report_batch(&inbox, &arrivals(std::slice::from_ref(&older)));
     settle(&ui);
     assert_eq!(widgets.rows().len(), 2);
     assert_eq!(widgets.reader_page(), "message");
@@ -1367,11 +1370,11 @@ fn portions_update_the_shown_folder() {
     widgets.open_row(0);
     settle(&ui);
     assert!(widgets.banner().is_revealed());
-    let related = FolderPortion {
+    let related = FolderBatch {
         known_arrived: vec![(newer.identity.clone(), true)],
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     };
-    loader.report_portion(&projects, &related);
+    loader.report_batch(&projects, &related);
     // Anything that redraws the window during the read, such as an Online
     // Accounts update, keeps the rows and the banner.
     ui.apply_account_update(&imap_and_google_accounts());
@@ -1761,14 +1764,15 @@ fn store_completed_cycle(
         .map(|row| row.identity)
         .filter(|identity| !messages.iter().any(|message| message.identity == *identity))
         .collect();
-    let portion = FolderPortion {
+    let batch = FolderBatch {
         removed,
         arrived: messages.to_vec(),
         state: Some(FolderState {
             server_position: None,
+            fill_place: None,
             synchronized: true,
         }),
-        ..FolderPortion::default()
+        ..FolderBatch::default()
     };
-    store.store_portion(folder, &portion, load_cancelled)
+    store.store_batch(folder, &batch, load_cancelled)
 }

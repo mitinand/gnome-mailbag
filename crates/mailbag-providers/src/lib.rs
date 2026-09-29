@@ -47,11 +47,11 @@ pub enum MailProvider {
 /// Where Microsoft 365 mail is read.
 const MICROSOFT_GRAPH: &str = "https://graph.microsoft.com/v1.0";
 
-/// Starts one account's load of `target` and reports its stored portions and
+/// Starts one account's load of `target` and reports its stored batches and
 /// how it ended. The window loads with Online Accounts and the mail worker;
 /// the graphical test reports events without a server.
 pub trait LoadsMail {
-    /// Reports each stored portion, then the end once, on the calling GLib
+    /// Reports each stored batch, then the end once, on the calling GLib
     /// context. The returned step cancels the load when it is dropped.
     fn start_load(
         &self,

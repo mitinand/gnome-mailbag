@@ -136,7 +136,9 @@ impl MailUi {
 
     /// Shows the rows of a stored mailbox. A new read updates the list by its
     /// difference with the rows shown and keeps the open message while it is
-    /// listed, reading its content again; the same read changes nothing.
+    /// listed, with its envelope from the new row; the same read changes
+    /// nothing. The content is not read again: no cycle changes the stored
+    /// content of a message it keeps.
     pub fn show_rows(&self, account_id: &AccountId, rows: &Rc<[MessageListRow]>) {
         let (same_account, same_read) = match &*self.listed_rows.borrow() {
             Some((listed_account, listed)) => {
@@ -161,7 +163,6 @@ impl MailUi {
             Some(position) => {
                 self.selection.set_selected(position);
                 self.show_envelope(&rows[position as usize]);
-                self.request_content(account_id, &identity);
             }
             None => self.close_reader(),
         }
@@ -189,6 +190,14 @@ impl MailUi {
         self.list_title.set_title(title);
         self.list_title.set_subtitle(subtitle);
         self.list_page.set_title(title);
+    }
+
+    /// Reads the open message's content again, as the Retry of a failed
+    /// read does.
+    pub fn read_open_content_again(&self) {
+        if let Some((account_id, identity)) = self.open_message_of() {
+            self.request_content(&account_id, &identity);
+        }
     }
 
     /// The account and identity of the message the reader shows.

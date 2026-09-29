@@ -104,8 +104,6 @@ pub struct GraphMessage {
     /// When the message arrived, as seconds since the Unix epoch.
     pub received_unix: Option<i64>,
     pub is_read: bool,
-    /// The body as the service rendered it into text.
-    pub body_text: Option<String>,
 }
 
 /// Leaves the received mail out of the record.
@@ -115,7 +113,6 @@ impl fmt::Debug for GraphMessage {
             .debug_struct("GraphMessage")
             .field("immutable_id", &self.immutable_id)
             .field("is_read", &self.is_read)
-            .field("body_length", &self.body_text.as_ref().map(String::len))
             .finish_non_exhaustive()
     }
 }
@@ -356,7 +353,7 @@ fn rejected_position(error: GraphError) -> GraphError {
 }
 
 /// The texts of the folder's messages received from `from_unix` to
-/// `to_unix`, both included, by identifier: one request for a first
+/// `to_unix`, both seconds included, by identifier: one request for a first
 /// reading's page, whose messages lie between those dates
 /// (specs/009-synchronization/research.md §5), paged by the service.
 pub async fn read_texts_received_between(
@@ -367,10 +364,12 @@ pub async fn read_texts_received_between(
     to_unix: i64,
 ) -> Result<MessageTexts, GraphError> {
     let session = open_session(WAIT_LIMIT_SECONDS);
+    // The service keeps dates finer than the seconds it shows, so a message
+    // shown at `to_unix` may lie after it: the range ends a second later.
     let filter = format!(
-        "receivedDateTime%20ge%20{}%20and%20receivedDateTime%20le%20{}",
+        "receivedDateTime%20ge%20{}%20and%20receivedDateTime%20lt%20{}",
         iso_8601(from_unix),
-        iso_8601(to_unix)
+        iso_8601(to_unix + 1)
     );
     let mut address = format!(
         "{service_url}/me/mailFolders/{}/messages?$filter={filter}&$select=id,body&$top=500",

@@ -2,11 +2,18 @@
 
 **Feature**: `009-synchronization`
 **Created**: 2026-09-28
-**Status**: Approved on 2026-09-29 (tasks T001). Sized at the feature-start on 2026-09-28 (budget: at most
-1 500 production lines, raised to 1 600 at planning, and 1 500 test lines; no thread, timer or queue of
-its own, no new dependency, no change to the IMAP library forks), specified
+**Status**: Implemented on `claude/sync` on 2026-09-29, portion by portion
+with the maintainer's review; the manual checks of the quickstart
+passed on the installed build on 2026-09-30 (plan, Post-implementation).
+Approved on 2026-09-29 (tasks T001). Sized at the feature-start on
+2026-09-28 (budget: at most 1 500 production lines, raised to 1 600 at
+planning and to 2 000 during the implementation, and 1 500 test lines,
+exceeded with the maintainer's consent; no thread, timer or queue of its
+own, no new dependency, no change to the IMAP library forks), specified
 and challenged the same day; the decisions are recorded under
-Clarifications.
+Clarifications. The word *batch* replaced *portion* for a part of a
+cycle's result on 2026-09-29, since *portion* also names a commit's share
+of the work.
 **Input**: Refresh Mailbox brings the whole selected folder into agreement
 with its server instead of replacing it with its newest 100 messages: after
 a refresh the stored folder is at least as new as the server's folder was
@@ -39,7 +46,7 @@ exist yet is marked deferred in FR-015 and gets no plan decisions, tasks or
 code until that layer exists.
 
 A *cycle* is one synchronization of one folder, from opening it on the
-server to the folder being in agreement or the cycle stopping. A *portion*
+server to the folder being in agreement or the cycle stopping. A *batch*
 is a part of a cycle's result that is stored whole, at once.
 
 ## User Scenarios & Testing
@@ -59,7 +66,7 @@ never freezes.
 
 1. **Given** a folder never refreshed, **when** the user refreshes it,
    **then** the newest messages are listed first and the rest follow in
-   portions until the list holds every message of the folder.
+   batches until the list holds every message of the folder.
 2. **Given** a refresh is filling a folder, **when** the user opens a listed
    message of the last 30 days, **then** it opens with its text and stays
    open while rows keep arriving.
@@ -130,13 +137,13 @@ into agreement.
 The network drops, the user quits, or the computer sleeps while a large
 folder fills. What was stored stays listed and readable. The next Refresh
 Mailbox continues where the fill stopped instead of starting over.
-**Independent Test**: stop the scripted server after some portions of a
+**Independent Test**: stop the scripted server after some batches of a
 first fill; the stored rows stay; restart Mailbag and refresh; the fill
 completes and messages stored before are not fetched again.
 
 **Acceptance Scenarios**:
 
-1. **Given** a first fill stopped after some portions, **when** the user
+1. **Given** a first fill stopped after some batches, **when** the user
    looks at the folder, **then** the stored messages are listed and those
    of the last 30 days open with their text (FR-011 says what the list
    shows about the stop).
@@ -168,14 +175,14 @@ receives no request.
 
 ### User Story 6 — An account's mail follows Online Accounts (Priority: P3)
 
-007 FR-007 and FR-008 hold for every portion. **Independent Test**:
-through the scripted loader, remove the account after a portion is stored.
+007 FR-007 and FR-008 hold for every batch. **Independent Test**:
+through the scripted loader, remove the account after a batch is stored.
 
 **Acceptance Scenarios**:
 
 1. **Given** a folder is filling, **when** a complete Online Accounts answer
    no longer lists the account with Mail on, **then** the refresh stops, no
-   portion is stored after that answer, and the account's mail is deleted;
+   batch is stored after that answer, and the account's mail is deleted;
    when Mail is on again, the next refresh fills the folder from nothing.
 
 ### Edge Cases
@@ -252,9 +259,9 @@ documentation does not say how, and FR-007's rule covers either form.
   cycle (FR-002).
 - Q: Can a second way of learning changes be added without reworking the
   feature? → A: Yes. Every way of learning changes delivers the same kind
-  of portion (messages removed with proof, read-state changes, arrived
+  of batch (messages removed with proof, read-state changes, arrived
   messages, texts, the folder's new state), and one step
-  stores portions without knowing which way produced them (plan). Adding
+  stores batches without knowing which way produced them (plan). Adding
   CONDSTORE later adds one way and one field of folder state.
 - Q: Does the base method scale? → A: The folder's listing costs a few
   dozen bytes per message, so a folder of 100 000 messages is a listing of
@@ -276,7 +283,7 @@ documentation does not say how, and FR-007's rule covers either form.
 ### Session 2026-09-28 (specification)
 
 - Q: What shows a folder's progress while it fills? → A: The sidebar's
-  spinner, as for any load, and the list growing as portions are stored,
+  spinner, as for any load, and the list growing as batches are stored,
   as other mail clients do. A count or a progress bar would change the
   approved forms and is not added.
 - Q: What does a folder whose first fill stopped show after a restart? →
@@ -295,7 +302,7 @@ documentation does not say how, and FR-007's rule covers either form.
 - Q: How fast must quitting be while a cycle runs? → A: About one second at
   most; nothing waits for a cycle (FR-010), since waiting for a run on a
   large folder would keep the window open for minutes after the user
-  closed it. The portion size bounds the work a stop loses, not the time
+  closed it. The batch size bounds the work a stop loses, not the time
   quitting takes (plan).
 
 ### Session 2026-09-28 (plan)
@@ -361,8 +368,8 @@ documentation does not say how, and FR-007's rule covers either form.
   store's structure fills every folder again. Nothing is lost against
   today, which lists only the newest 100 messages; older messages become
   readable when the content cache downloads on opening.
-- Q: When is a text fetched? → A: With the rows of its portion, newest
-  portion first, so the newest messages are readable at once and an
+- Q: When is a text fetched? → A: With the rows of its batch, newest
+  batch first, so the newest messages are readable at once and an
   interrupted fill leaves readable rows (FR-003).
 - Q: Does an IMAP removal need the listing's count to equal the count the
   server announced? → A: No. RFC 3501 lets a server report another
@@ -400,7 +407,7 @@ documentation does not say how, and FR-007's rule covers either form.
   a delay, so a change made shortly before a cycle may arrive with the next
   one. Which texts are kept is FR-009's rule, not part of this
   agreement. A cycle that stops before completing guarantees only that
-  nothing was removed without proof (FR-004) and that every stored portion
+  nothing was removed without proof (FR-004) and that every stored batch
   is whole (FR-008). A cycle reads only: it never changes anything on the
   server.
 
@@ -413,7 +420,7 @@ documentation does not say how, and FR-007's rule covers either form.
   Whatever wakes synchronization up (today the user; later timers, IMAP
   IDLE, a network change) only starts a cycle; nothing it reports is stored
   by itself. (c) At most one cycle of a folder runs at a time. (d) Cycles of
-  different accounts may run at the same time; each portion is still stored
+  different accounts may run at the same time; each batch is still stored
   whole (FR-008). Today one load runs at a time (008 FR-012), which
   satisfies (c) and (d).
 
@@ -421,10 +428,10 @@ documentation does not say how, and FR-007's rule covers either form.
 
 - **FR-003 — First fill, newest first, readable at once**: When a folder
   holds no completed cycle, a cycle MUST store its messages newest first,
-  in portions: on IMAP the highest numbers (UIDs) first, on Microsoft 365
-  the latest received date first. A portion holds its messages' list fields
+  in batches: on IMAP the highest numbers (UIDs) first, on Microsoft 365
+  the latest received date first. A batch holds its messages' list fields
   together with the texts FR-009 selects among them, so a stored message of
-  the last 30 days is readable as soon as it is listed. Each stored portion
+  the last 30 days is readable as soon as it is listed. Each stored batch
   is listed at once; the user can scroll and open listed messages while
   the rest arrives. While a folder fills, the sidebar's spinner runs as for
   any load and the growing list is the progress; no count or progress bar
@@ -472,22 +479,29 @@ documentation does not say how, and FR-007's rule covers either form.
   place reads one more round of changes before it completes, so changes
   made during the pause are included as far as the service reports them.
   Messages keep their immutable identifier (005 FR-004).
-- **FR-008 — Whole portions**: Each portion is stored whole or not at all;
+- **FR-008 — Whole batches**: Each batch is stored whole or not at all;
   after any interruption the store holds the state after some number of
-  whole portions (007 FR-010). The folder's saved state (the saved
-  position, whether a cycle completed) changes only with the portion that
-  completes the cycle, with two exceptions: the first portion of a cycle
-  that has messages to fetch marks the folder as not completed, so a folder
-  that a stopped cycle left without rows is never shown as empty (007
-  FR-006); and each page of an unfinished first fill on Microsoft 365 saves
-  the place where it continues (FR-010).
+  whole batches (007 FR-010). The folder's saved state (the saved
+  position, whether a cycle completed) changes only with the batch that
+  completes the cycle, with two exceptions: the first batch of a cycle
+  that has messages to fetch, and on Microsoft 365 each page that is not a
+  reading's last, mark the folder as not completed, so a folder that a
+  stopped cycle left without rows is never shown as empty (007 FR-006);
+  and each page of an unfinished first fill on Microsoft 365 saves the
+  place where it continues (FR-010). *Amended 2026-09-29 after an external
+  review*: a Microsoft 365 round whose first page removed every row and
+  whose next page failed left the folder shown as empty.
 
 **Content**
 
 - **FR-009 — Text for recent messages**: A cycle MUST store the text the
   reader shows (002 FR-004, with its reasons for none) for every message of
   the folder received in the last 30 days that has no text yet, counted
-  back from the cycle's start by the server's received date. Other messages
+  back from the cycle's start by the server's received date. On Microsoft
+  365, a message of the last 30 days whose list fields the service
+  reports again gets its text again: a draft edited elsewhere keeps its
+  identity, also once sent (*amended 2026-09-29 after an external
+  review*). Other messages
   keep no text; opening one says that its text was not downloaded and makes
   no request (constitution III: never shown as empty). A stored text stays
   until the message leaves the store; nothing is evicted before the content
@@ -499,10 +513,10 @@ documentation does not say how, and FR-007's rule covers either form.
 - **FR-010 — A cycle stops at once and continues later**: Quitting
   Mailbag, or closing its window, MUST end it within about one second
   whatever cycle runs: the cycle stops where it is, and nothing waits for
-  it to finish or for its server to answer. A portion being stored when the
+  it to finish or for its server to answer. A batch being stored when the
   cycle stops is stored whole or not at all (FR-008), so a stop loses at
-  most that portion. A cycle that stops for any reason MUST keep every
-  portion it stored. The next cycle of the folder
+  most that batch. A cycle that stops for any reason MUST keep every
+  batch it stored. The next cycle of the folder
   continues from the stored state: on IMAP by comparing the server's
   listing with what is stored, so stored messages are not fetched again; on
   Microsoft 365 from the saved position, or, for the first fill of a folder
@@ -534,7 +548,7 @@ documentation does not say how, and FR-007's rule covers either form.
   folder where nothing changed it reads the folder's listing once (IMAP) or
   one page of changes (Microsoft 365) and fetches no message.
 - **FR-013 — The window during and after a cycle**: The stored rows stay
-  while a cycle runs and change as its portions are stored: arrived rows
+  while a cycle runs and change as its batches are stored: arrived rows
   appear in their place, removed rows disappear, read state changes in
   place. The list keeps the user's position and selection; the open message
   stays open unless the cycle removes it. A folder of 100 000 messages is
@@ -542,8 +556,8 @@ documentation does not say how, and FR-007's rule covers either form.
   ordered newest first by received date until the message list decides the
   order. This replaces "the reader closes when the rows are replaced" of
   007 FR-005 and 008 FR-010.
-- **FR-014 — Accounts**: 007 FR-007 and FR-008 hold for every portion: no
-  portion of an account's cycle is stored after a complete Online Accounts
+- **FR-014 — Accounts**: 007 FR-007 and FR-008 hold for every batch: no
+  batch of an account's cycle is stored after a complete Online Accounts
   answer without the account or with its Mail off. When Mail is on again,
   its folders fill from nothing.
 
@@ -584,9 +598,9 @@ documentation does not say how, and FR-007's rule covers either form.
 ### Key Entities
 
 - **Folder state**: what a folder remembers between cycles. On Microsoft
-  365 the saved position of its last completed cycle, or where an
-  unfinished first fill continues. Whether the folder's latest cycle
-  completed. IMAP keeps no numbering version of its own: it is part of a
+  365 the position the next round of changes starts from, and, apart
+  from it, where an unfinished first fill continues. Whether the folder's
+  latest cycle completed. IMAP keeps no numbering version of its own: it is part of a
   Generic IMAP message's identity (FR-005).
 - **Message**: as in 007 FR-002 and 008 FR-004, with one more reason for
   having no text: not downloaded (FR-009).
@@ -596,7 +610,7 @@ documentation does not say how, and FR-007's rule covers either form.
 ### How a cycle runs
 
 The flow of one cycle. Every step after opening stores its result as whole
-portions, and a cycle that stops keeps what it stored (FR-010).
+batches, and a cycle that stops keeps what it stored (FR-010).
 
 ```mermaid
 flowchart TD
@@ -620,9 +634,9 @@ flowchart TD
     full --> done
 ```
 
-A text is stored in the portion that stores its message's row, and a
+A text is stored in the batch that stores its message's row, and a
 message never becomes younger, so no stored message of the last 30 days
-lacks its text once its portion is stored.
+lacks its text once its batch is stored.
 
 ### A folder's synchronization state
 
@@ -632,7 +646,7 @@ stateDiagram-v2
     state "First fill not completed" as filling
     state "Refreshed" as refreshed
     [*] --> never
-    never --> filling: first portion stored
+    never --> filling: first batch stored
     filling --> filling: cycle stopped, the next one continues
     filling --> refreshed: cycle completed
     refreshed --> refreshed: cycle completed or stopped, stored rows stay
@@ -663,7 +677,7 @@ rows is shown as an empty folder.
   reordered entries, removals, a position no longer accepted, a change for
   an unknown message) each end with the stored folder equal to the
   service's folder.
-- **SC-005**: A first fill stopped after some portions and continued after
+- **SC-005**: A first fill stopped after some batches and continued after
   a restart completes, and no message stored before the stop is fetched
   again.
 - **SC-006**: After a completed refresh with the server stopped, every
@@ -677,7 +691,7 @@ rows is shown as an empty folder.
   deleted and received in another client in between.
 - **SC-009**: Closing the window while a first fill of a scripted folder of
   10 000 messages runs ends Mailbag within 1 second; at the next start the
-  store opens whole and holds every portion stored before the close.
+  store opens whole and holds every batch stored before the close.
 - **SC-010**: A scripted Microsoft 365 service that rejects the access token
   in the middle of a first fill, and a scripted Gmail server that ends the
   session in the middle of one, each accept a new token from the scripted

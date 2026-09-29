@@ -562,7 +562,7 @@ rows and the failure shown after each.
   *Amended by 009 (FR-005, FR-006, FR-013)*: a Generic IMAP message's
   identity is `imap:<folder>/<UIDVALIDITY>/<UID>`, so a renumbered folder's
   messages are new messages; a folder's relations change by its cycles'
-  portions, not by one replacement; a relation carries no position, since
+  batches, not by one replacement; a relation carries no position, since
   rows are ordered by received date; a moved Microsoft 365 message stays
   listed in its old folder until that folder's next cycle, since a folder's
   removals are proven by its own reading (009 FR-004); Gmail labels are not

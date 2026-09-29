@@ -11,8 +11,8 @@ that synchronization needs; built and accepted with it the same day. FR-005
 amended on 2026-09-29 by [Synchronization](../009-synchronization/spec.md):
 the reader stays open while its message is listed. FR-002, FR-003, FR-004,
 FR-010 and FR-014(a), (b), (e), (f) amended the same day by
-Synchronization: a folder's mail is what its cycles stored, portion by
-portion. The decisions taken at sizing and at the
+Synchronization: a folder's mail is what its cycles stored, batch by
+batch. The decisions taken at sizing and at the
 specification challenge are recorded under Clarifications.
 **Input**: Every piece of mail the window shows comes from a local store and
 from nowhere else. A load writes what it received into the store; the window
@@ -29,7 +29,10 @@ and local changes. It owns what is stored, where, how it stays whole and
 private, how it follows Online Accounts, and how the window reads it. It does
 not own how a folder is synchronized with its server: what a load fetches
 stays as each provider feature defines it (the newest 100 Inbox messages), and
-a completed load replaces what the store holds for that folder. Whatever waits
+a completed load replaces what the store holds for that folder. *Amended by
+[009](../009-synchronization/spec.md)*: synchronization owns how a folder
+agrees with its server, and its cycles store their results batch by batch
+(009 FR-001, FR-008). Whatever waits
 for a layer that does not exist yet is marked deferred in FR-014 and gets no
 plan decisions, tasks or code until that layer exists.
 
@@ -309,7 +312,7 @@ window shows and what the record says.
   whose list the server did not finish, or whose service offered more than one
   request holds, completes with the messages it received (006 US3).
   *Replaced by 009 FR-001 and FR-008*: Refresh Mailbox runs a cycle that
-  stores whole portions; a folder is no longer replaced by one load.
+  stores whole batches; a folder is no longer replaced by one load.
 - **FR-005 — The window during and after a refresh**: While a refresh runs,
   the stored rows stay and the sidebar's spinner runs; with nothing stored the
   list says that the Inbox is loading, as today. When a load completes the
@@ -352,8 +355,8 @@ window shows and what the record says.
   latest one, and never part of a load. A load acknowledged as stored survives
   a quit and a crash; after a power loss it may be missing (constitution III:
   the next refresh obtains it again). *Replaced by 009 FR-008 and FR-010*:
-  the store holds the portions a cycle stored, each whole, never part of a
-  portion; the next cycle continues from them.
+  the store holds the batches a cycle stored, each whole, never part of a
+  batch; the next cycle continues from them.
 - **FR-011 — Never in the window's way**: Reading and writing the store MUST
   NOT block the window (constitution V). Selecting an account shows its
   stored rows without a visible wait, and the window stays responsive while a

@@ -23,13 +23,13 @@ pub enum LoadTarget {
 }
 
 /// What a load tells whoever started it, on that caller's context: any number
-/// of stored portions, then exactly one end (specs/009-synchronization
+/// of stored batches, then exactly one end (specs/009-synchronization
 /// research §7).
 #[derive(Debug)]
 pub enum LoadEvent {
-    /// The cycle stored a portion of its folder; the window reads the store
+    /// The cycle stored a batch of its folder; the window reads the store
     /// again.
-    PortionStored,
+    BatchStored,
     Finished(LoadResult),
 }
 
