@@ -6,7 +6,10 @@
 //! function runs inside the caller's transaction or read.
 
 use crate::content::{content_columns, content_from_columns};
-use mailbag_domain::{AccountId, DisplayFields, Folder, FolderRef, FolderRole, Message};
+use mailbag_domain::{
+    AccountId, DisplayFields, Folder, FolderRef, FolderRole, Message, MessageListRow,
+    ReceivedContent,
+};
 use rusqlite::{Connection, Row, Transaction, params, types::Type};
 use std::collections::BTreeSet;
 
@@ -121,25 +124,36 @@ pub(crate) fn delete_messages_without_folder(
     Ok(())
 }
 
-/// The messages a folder holds, in its load's order.
-pub(crate) fn read_folder_messages(
+/// The rows of the messages a folder holds, in its load's order, without
+/// their content.
+pub(crate) fn read_listed_rows(
     connection: &Connection,
     folder_id: i64,
-) -> rusqlite::Result<Vec<Message>> {
+) -> rusqlite::Result<Vec<MessageListRow>> {
     connection
         .prepare(
-            "SELECT identity, subject, sender, recipients, received, seen, content_kind, \
-             content_detail \
+            "SELECT identity, subject, sender, recipients, received, seen \
              FROM membership JOIN message ON message.id = membership.message \
              WHERE membership.folder = ?1 ORDER BY membership.position",
         )?
-        .query_map([folder_id], stored_message)?
+        .query_map([folder_id], |row| {
+            Ok(MessageListRow {
+                identity: row.get("identity")?,
+                fields: DisplayFields {
+                    subject: row.get("subject")?,
+                    from: row.get("sender")?,
+                    to: row.get("recipients")?,
+                },
+                received_unix: row.get("received")?,
+                seen: row.get("seen")?,
+            })
+        })?
         .collect()
 }
 
-/// Where `read_folder_messages` selects `content_kind`, and `read_folders`
+/// Where `read_message_content` selects `content_kind`, and `read_folders`
 /// selects `role`, for a failure that names the column.
-const CONTENT_KIND_COLUMN: usize = 6;
+const CONTENT_KIND_COLUMN: usize = 0;
 const ROLE_COLUMN: usize = 3;
 
 /// One stored folder, from the columns `read_folders` selects. The schema's
@@ -184,27 +198,15 @@ fn role_from_code(code: &str) -> Option<FolderRole> {
         .find(|role| role_code(*role) == code)
 }
 
-/// One stored message, from the columns `read_folder_messages` selects, with
-/// the same rule for content codes as for role codes.
-fn stored_message(row: &Row) -> rusqlite::Result<Message> {
+/// One stored message's content, from the columns `read_message_content`
+/// selects, with the same rule for content codes as for role codes.
+pub(crate) fn stored_content(row: &Row) -> rusqlite::Result<ReceivedContent> {
     let content_code: String = row.get("content_kind")?;
-    let content =
-        content_from_columns(&content_code, row.get("content_detail")?).ok_or_else(|| {
-            damaged_row(
-                CONTENT_KIND_COLUMN,
-                format!("unknown content code {content_code}"),
-            )
-        })?;
-    Ok(Message {
-        identity: row.get("identity")?,
-        fields: DisplayFields {
-            subject: row.get("subject")?,
-            from: row.get("sender")?,
-            to: row.get("recipients")?,
-        },
-        received_unix: row.get("received")?,
-        seen: row.get("seen")?,
-        content,
+    content_from_columns(&content_code, row.get("content_detail")?).ok_or_else(|| {
+        damaged_row(
+            CONTENT_KIND_COLUMN,
+            format!("unknown content code {content_code}"),
+        )
     })
 }
 

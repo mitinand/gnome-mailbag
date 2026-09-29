@@ -7,7 +7,9 @@
 aligned on 2026-09-26 with 006 as corrected that day. FR-002, FR-003 and
 FR-014(b) amended on 2026-09-27 by [008](../008-folders/spec.md), which
 builds the target model of FR-003 except the IMAP UID and the folder state
-that synchronization needs; built and accepted with it the same day. The decisions taken at sizing and at the
+that synchronization needs; built and accepted with it the same day. FR-005
+amended on 2026-09-29 by [Synchronization](../009-synchronization/spec.md):
+the reader stays open while its message is listed. The decisions taken at sizing and at the
 specification challenge are recorded under Clarifications.
 **Input**: Every piece of mail the window shows comes from a local store and
 from nowhere else. A load writes what it received into the store; the window
@@ -299,8 +301,9 @@ window shows and what the record says.
 - **FR-005 — The window during and after a refresh**: While a refresh runs,
   the stored rows stay and the sidebar's spinner runs; with nothing stored the
   list says that the Inbox is loading, as today. When a load completes the
-  window reads the store again: the list shows the stored rows and the reader
-  closes. A failed load leaves the store unchanged (FR-004): stored rows stay
+  window reads the store again: the list shows the stored rows, and the
+  reader stays open while its message is listed (amended by 009 FR-013,
+  which replaces "the reader closes"). A failed load leaves the store unchanged (FR-004): stored rows stay
   with the banner that names the failure (006 FR-013(a)); with nothing stored
   the failure page takes the list's place (006 FR-006). The banner describes
   the latest refresh of the account and nothing older: its failure, or its

@@ -101,10 +101,36 @@ fn load_target(kind: LoadKind, target: LoadTarget, store: &Arc<Store>) -> LoadRe
 
 /// The messages a load stored in `folder`.
 fn stored_messages(store: &Store, folder: &FolderRef) -> Vec<Message> {
-    store
-        .read_mailbox(folder)
+    read_stored_messages(store, folder)
         .expect("the store reads")
         .expect("the folder was loaded")
+}
+
+/// The folder's stored messages whole, as the list reads their rows and the
+/// reader their contents; `None` for a folder never loaded.
+fn read_stored_messages(
+    store: &Store,
+    folder: &FolderRef,
+) -> Result<Option<Vec<Message>>, Failure> {
+    let Some(rows) = store.read_folder_rows(folder)? else {
+        return Ok(None);
+    };
+    let messages = rows
+        .into_iter()
+        .map(|row| {
+            let content = store
+                .read_message_content(&folder.account, &row.identity)?
+                .expect("a listed message is stored");
+            Ok(Message {
+                identity: row.identity,
+                fields: row.fields,
+                received_unix: row.received_unix,
+                seen: row.seen,
+                content,
+            })
+        })
+        .collect::<Result<_, Failure>>()?;
+    Ok(Some(messages))
 }
 
 /// Runs one load of `target` on `worker` and waits for its outcome.
@@ -565,7 +591,7 @@ fn a_refused_sign_in_is_one_error_line_of_the_load() {
     assert!(errors[0].contains("cause=ServerRejectedSignIn"), "{text}");
     assert!(!text.contains("wrong password"), "{text}");
     assert_eq!(
-        store.read_mailbox(&inbox).unwrap(),
+        read_stored_messages(&store, &inbox).unwrap(),
         Some(vec![stored_earlier_message()])
     );
 }
@@ -1022,7 +1048,7 @@ fn a_load_cancelled_before_its_write_stores_nothing() {
     };
     let outcome = store_mailbox(&store, batch, || true);
     assert!(matches!(outcome, LoadResult::Cancelled), "{outcome:?}");
-    assert_eq!(store.read_mailbox(&inbox), Ok(None));
+    assert_eq!(read_stored_messages(&store, &inbox), Ok(None));
 }
 
 #[test]
@@ -1258,14 +1284,16 @@ fn a_mailbox_load_stores_the_messages_of_the_folder_it_names() {
     let work = folder_of("synthetic-account", "Work");
     let outcome = load_target(kind(), LoadTarget::Mailbox(work.clone()), &store);
     assert!(matches!(outcome, LoadResult::Stored { .. }), "{outcome:?}");
-    let stored = store.read_mailbox(&work).unwrap().expect("a loaded folder");
+    let stored = read_stored_messages(&store, &work)
+        .unwrap()
+        .expect("a loaded folder");
     let identities: Vec<&str> = stored
         .iter()
         .map(|message| message.identity.as_str())
         .collect();
     assert_eq!(identities, ["imap:Work/20", "imap:Work/10"]);
     assert_eq!(
-        store.read_mailbox(&folder_of("synthetic-account", "INBOX")),
+        read_stored_messages(&store, &folder_of("synthetic-account", "INBOX")),
         Ok(None)
     );
     assert_eq!(fixture.log().examined_mailboxes, ["Work"]);
@@ -1291,7 +1319,9 @@ fn a_gmail_message_under_two_loaded_labels_is_one_message_in_both() {
     for label in [&work, &travel] {
         load_target(kind(), LoadTarget::Mailbox(label.clone()), &store);
     }
-    let in_work = store.read_mailbox(&work).unwrap().expect("a loaded label");
+    let in_work = read_stored_messages(&store, &work)
+        .unwrap()
+        .expect("a loaded label");
     assert_eq!(in_work[0].identity, "gmail:1000");
-    assert_eq!(store.read_mailbox(&travel), Ok(Some(in_work)));
+    assert_eq!(read_stored_messages(&store, &travel), Ok(Some(in_work)));
 }

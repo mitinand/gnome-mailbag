@@ -58,6 +58,33 @@ fn store_with(account: &AccountId, loaded: &[(&str, &[Message])]) -> Store {
     store
 }
 
+/// The folder's stored messages whole, as the list reads their rows and the
+/// reader their contents.
+fn read_stored_messages(
+    store: &Store,
+    folder: &FolderRef,
+) -> Result<Option<Vec<Message>>, Failure> {
+    let Some(rows) = store.read_folder_rows(folder)? else {
+        return Ok(None);
+    };
+    let messages = rows
+        .into_iter()
+        .map(|row| {
+            let content = store
+                .read_message_content(&folder.account, &row.identity)?
+                .expect("a listed message is stored");
+            Ok(Message {
+                identity: row.identity,
+                fields: row.fields,
+                received_unix: row.received_unix,
+                seen: row.seen,
+                content,
+            })
+        })
+        .collect::<Result<_, Failure>>()?;
+    Ok(Some(messages))
+}
+
 fn stored_message_count(store: &Store) -> i64 {
     store
         .with_connection(StoreOperation::Read, |connection| {
@@ -119,10 +146,16 @@ fn a_new_folder_list_drops_unlisted_folders_with_their_own_mail_and_keeps_the_re
     let mut stored = store.read_folders(&listed).unwrap();
     stored.sort_by(|left, right| left.identity.cmp(&right.identity));
     assert_eq!(stored, [renamed_kept, folder("New")]);
-    assert_eq!(store.read_mailbox(&folder_of(&listed, "Old")), Ok(None));
-    assert_eq!(store.read_mailbox(&folder_of(&listed, "New")), Ok(None));
     assert_eq!(
-        store.read_mailbox(&folder_of(&listed, "Kept")),
+        read_stored_messages(&store, &folder_of(&listed, "Old")),
+        Ok(None)
+    );
+    assert_eq!(
+        read_stored_messages(&store, &folder_of(&listed, "New")),
+        Ok(None)
+    );
+    assert_eq!(
+        read_stored_messages(&store, &folder_of(&listed, "Kept")),
         Ok(Some(vec![shared]))
     );
     assert_eq!(stored_message_count(&store), 1);
@@ -168,7 +201,24 @@ fn a_mailbox_reads_back_in_the_loads_order_with_every_field() {
         store.replace_mailbox(&inbox, &messages, || false),
         Ok(StoreWrite::Stored)
     );
-    assert_eq!(store.read_mailbox(&inbox), Ok(Some(messages)));
+    assert_eq!(read_stored_messages(&store, &inbox), Ok(Some(messages)));
+}
+
+#[test]
+fn a_content_is_read_by_its_message_and_a_message_no_longer_stored_has_none() {
+    let loaded = account("loaded");
+    let store = store_with(&loaded, &[("INBOX", &[text_message("first")])]);
+    assert_eq!(
+        store.read_message_content(&loaded, "first"),
+        Ok(Some(ReceivedContent::Text("Text of first".to_owned())))
+    );
+    store
+        .replace_mailbox(&folder_of(&loaded, "INBOX"), &[], || false)
+        .unwrap();
+    assert_eq!(store.read_message_content(&loaded, "first"), Ok(None));
+    // Another account's message of the same identity is not this one's.
+    let other = store_with(&account("other"), &[("INBOX", &[text_message("first")])]);
+    assert_eq!(other.read_message_content(&loaded, "first"), Ok(None));
 }
 
 #[test]
@@ -183,7 +233,7 @@ fn a_new_load_of_a_mailbox_replaces_its_messages_and_deletes_those_left_nowhere(
         .replace_mailbox(&folder_of(&loaded, "INBOX"), &newer, || false)
         .unwrap();
     assert_eq!(
-        store.read_mailbox(&folder_of(&loaded, "INBOX")),
+        read_stored_messages(&store, &folder_of(&loaded, "INBOX")),
         Ok(Some(newer))
     );
     assert_eq!(stored_message_count(&store), 1);
@@ -210,7 +260,7 @@ fn a_message_in_two_folders_is_stored_once_with_its_latest_fields() {
         .unwrap();
     for identity in ["Work", "Travel"] {
         assert_eq!(
-            store.read_mailbox(&folder_of(&loaded, identity)),
+            read_stored_messages(&store, &folder_of(&loaded, identity)),
             Ok(Some(vec![read_later.clone()])),
             "{identity}"
         );
@@ -226,14 +276,17 @@ fn a_folder_never_loaded_is_not_an_empty_one() {
         .replace_folders(&loaded, &[folder("Emptied"), folder("Unloaded")], || false)
         .unwrap();
     assert_eq!(
-        store.read_mailbox(&folder_of(&loaded, "Emptied")),
+        read_stored_messages(&store, &folder_of(&loaded, "Emptied")),
         Ok(Some(Vec::new()))
     );
     assert_eq!(
-        store.read_mailbox(&folder_of(&loaded, "Unloaded")),
+        read_stored_messages(&store, &folder_of(&loaded, "Unloaded")),
         Ok(None)
     );
-    assert_eq!(store.read_mailbox(&folder_of(&loaded, "Unknown")), Ok(None));
+    assert_eq!(
+        read_stored_messages(&store, &folder_of(&loaded, "Unknown")),
+        Ok(None)
+    );
 }
 
 #[test]
@@ -270,7 +323,7 @@ fn a_cancelled_load_writes_nothing() {
     );
     assert_eq!(store.read_folders(&loaded).unwrap().len(), 1);
     assert_eq!(
-        store.read_mailbox(&folder_of(&loaded, "INBOX")),
+        read_stored_messages(&store, &folder_of(&loaded, "INBOX")),
         Ok(Some(previous))
     );
 }
@@ -303,7 +356,7 @@ fn keeping_accounts_deletes_every_other_accounts_folders_and_mail_and_names_them
     }
     assert_eq!(stored_message_count(&store), 1);
     assert_eq!(
-        store.read_mailbox(&folder_of(&kept, "INBOX")),
+        read_stored_messages(&store, &folder_of(&kept, "INBOX")),
         Ok(Some(vec![text_message("kept")]))
     );
 }
@@ -338,7 +391,7 @@ fn a_write_that_fails_midway_leaves_the_previous_state_whole() {
         "{}",
         failure.details
     );
-    assert_eq!(store.read_mailbox(&inbox), Ok(Some(previous)));
+    assert_eq!(read_stored_messages(&store, &inbox), Ok(Some(previous)));
 }
 
 /// A full disk is its own failure, so the window can advise freeing space,
@@ -376,7 +429,7 @@ fn a_full_disk_is_storage_full_and_leaves_the_previous_state_whole() {
         "{}",
         failure.details
     );
-    assert_eq!(store.read_mailbox(&inbox), Ok(Some(previous)));
+    assert_eq!(read_stored_messages(&store, &inbox), Ok(Some(previous)));
 }
 
 #[test]
@@ -394,7 +447,7 @@ fn a_store_opened_again_from_its_file_reads_the_same_mail() {
     drop(store);
     let reopened = Store::at(directory.store_path());
     assert_eq!(
-        reopened.read_mailbox(&folder_of(&loaded, "INBOX")),
+        read_stored_messages(&reopened, &folder_of(&loaded, "INBOX")),
         Ok(Some(messages))
     );
 }

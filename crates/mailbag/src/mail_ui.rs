@@ -3,17 +3,22 @@
 
 //! Shows one mailbox's stored mail in the approved list and reader.
 //!
-//! Opening a message uses the text read with the list; it sends no request
-//! and changes nothing on the server.
+//! The list builds only its visible rows and follows each new read of the
+//! stored rows by their difference, so the open message stays open while it
+//! is listed (specs/009-synchronization FR-013). Opening a message asks the
+//! window for its stored content; it sends no request and changes nothing
+//! on the server.
 
+mod message_item;
 #[cfg(test)]
 mod tests;
 
-use crate::failure_declarations::{DeclaredFailure, declare_content};
+use crate::failure_declarations::{DeclaredFailure, declare_content, declare_failure};
 use crate::failure_dialog::{RetriedOperation, show_action_button, status_description};
 use adw::{gio, glib, gtk, prelude::*};
-use mailbag_domain::{AccountId, DisplayFields, Message, ReceivedContent};
-use std::{cell::RefCell, rc::Rc};
+use mailbag_domain::{AccountId, DisplayFields, Failure, MessageListRow, ReceivedContent};
+use message_item::MessageItem;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 /// How much text a GTK label shows, in UTF-8 bytes. Longer text is cut at a
 /// character boundary without an explanation; the stored text keeps its
@@ -31,9 +36,14 @@ const DISPLAY_LIMIT_BYTES: usize = 65_536;
 /// inside it is expected anyway.
 const LONGEST_WORD_WRAPPED_RUN: usize = 100;
 
+/// Asks the window for the content of an account's message.
+type ContentRequest = Box<dyn Fn(&AccountId, &str)>;
+
 pub struct MailUi {
-    messages: gtk::ListBox,
-    rows: gio::ListStore,
+    /// The list's row objects, in the order the stored rows were read.
+    items: gio::ListStore,
+    /// The list's selection: the open message's row, or none.
+    selection: gtk::SingleSelection,
     list_title: adw::WindowTitle,
     list_page: adw::NavigationPage,
     mail_split: adw::NavigationSplitView,
@@ -51,26 +61,35 @@ pub struct MailUi {
     content_status: adw::StatusPage,
     content_action: gtk::Button,
     sender_avatar: adw::Avatar,
-    /// Whose stored mailbox the rows were built from, and its messages, to
-    /// rebuild them only when the shown mailbox or its mail changed.
-    listed_mailbox: RefCell<Option<(AccountId, Rc<[Message]>)>>,
-}
-
-/// One row's message: the stored mailbox it belongs to and its place in it.
-struct ListedMessage {
-    mailbox: Rc<[Message]>,
-    position: usize,
+    /// Whose stored rows the list shows, as the latest read found them, to
+    /// update the list only when a new read answered.
+    listed_rows: RefCell<Option<(AccountId, Rc<[MessageListRow]>)>>,
+    /// The identity of the message the reader shows.
+    open_message: RefCell<Option<String>>,
+    content_request: RefCell<Option<ContentRequest>>,
 }
 
 impl MailUi {
     pub fn new(builder: &gtk::Builder) -> Rc<Self> {
-        let messages: gtk::ListBox = builder.object("messages").expect("mailbag.ui: messages");
+        let messages: gtk::ListView = builder.object("messages").expect("mailbag.ui: messages");
         let reader = build_reader(builder);
-        let rows = gio::ListStore::new::<glib::BoxedAnyObject>();
-        messages.bind_model(Some(&rows), |listed| build_message_row(listed).upcast());
+        // The row template names the row object's type.
+        MessageItem::ensure_type();
+        let factory = gtk::BuilderListItemFactory::from_bytes(
+            None::<&gtk::BuilderScope>,
+            &glib::Bytes::from_static(include_bytes!("../resources/ui/message-row.ui")),
+        );
+        messages.set_factory(Some(&factory));
+        let items = gio::ListStore::new::<MessageItem>();
+        let selection = gtk::SingleSelection::builder()
+            .model(&items)
+            .autoselect(false)
+            .can_unselect(true)
+            .build();
+        messages.set_model(Some(&selection));
         let mail = Rc::new(Self {
-            messages: messages.clone(),
-            rows,
+            items,
+            selection,
             list_title: builder
                 .object("list_title")
                 .expect("mailbag.ui: list_title"),
@@ -95,51 +114,67 @@ impl MailUi {
             content_status: reader.content_status,
             content_action: reader.content_action,
             sender_avatar: reader.avatar,
-            listed_mailbox: RefCell::new(None),
+            listed_rows: RefCell::new(None),
+            open_message: RefCell::new(None),
+            content_request: RefCell::new(None),
         });
         let weak = Rc::downgrade(&mail);
-        messages.connect_row_activated(move |_, row| {
+        messages.connect_activate(move |_, position| {
             if let Some(mail) = weak.upgrade() {
-                mail.open_message(row.index());
+                mail.open_message(position);
             }
         });
         mail.close_reader();
         mail
     }
 
-    /// Shows the rows of a stored mailbox, keeping the list and the open
-    /// message when the rows on screen are the same: the same read, or a new
-    /// read after a load that left them as they were.
-    pub fn show_rows(&self, account_id: &AccountId, mailbox: &Rc<[Message]>) {
-        let mut listed = self.listed_mailbox.borrow_mut();
-        if let Some((listed_account, listed_mailbox)) = listed.as_mut()
-            && listed_account == account_id
-            && (Rc::ptr_eq(listed_mailbox, mailbox) || listed_mailbox[..] == mailbox[..])
-        {
-            // Later renders compare pointers only.
-            *listed_mailbox = mailbox.clone();
+    /// Sets how the reader asks for an opened message's stored content; the
+    /// answer comes back through `show_content`.
+    pub fn connect_content_request(&self, request: impl Fn(&AccountId, &str) + 'static) {
+        *self.content_request.borrow_mut() = Some(Box::new(request));
+    }
+
+    /// Shows the rows of a stored mailbox. A new read updates the list by its
+    /// difference with the rows shown and keeps the open message while it is
+    /// listed, reading its content again; the same read changes nothing.
+    pub fn show_rows(&self, account_id: &AccountId, rows: &Rc<[MessageListRow]>) {
+        let (same_account, same_read) = match &*self.listed_rows.borrow() {
+            Some((listed_account, listed)) => {
+                let same_account = listed_account == account_id;
+                (same_account, same_account && Rc::ptr_eq(listed, rows))
+            }
+            None => (false, false),
+        };
+        if same_read {
             return;
         }
-        drop(listed);
-        self.rows.remove_all();
-        for position in 0..mailbox.len() {
-            self.rows.append(&glib::BoxedAnyObject::new(ListedMessage {
-                mailbox: mailbox.clone(),
-                position,
-            }));
+        // Identities name messages within one account.
+        if !same_account {
+            self.clear();
         }
-        *self.listed_mailbox.borrow_mut() = Some((account_id.clone(), mailbox.clone()));
-        self.close_reader();
+        update_list_by_difference(&self.items, rows);
+        *self.listed_rows.borrow_mut() = Some((account_id.clone(), rows.clone()));
+        let Some(identity) = self.open_message.borrow().clone() else {
+            return;
+        };
+        match position_of(&self.items, &identity) {
+            Some(position) => {
+                self.selection.set_selected(position);
+                self.show_envelope(&rows[position as usize]);
+                self.request_content(account_id, &identity);
+            }
+            None => self.close_reader(),
+        }
     }
 
     /// Empties the list and the reader, as a mailbox without stored rows
     /// does.
     pub fn clear(&self) {
-        if self.listed_mailbox.borrow().is_none() {
+        if self.listed_rows.borrow().is_none() {
             return;
         }
-        self.rows.remove_all();
-        *self.listed_mailbox.borrow_mut() = None;
+        self.items.remove_all();
+        *self.listed_rows.borrow_mut() = None;
         self.close_reader();
     }
 
@@ -156,30 +191,80 @@ impl MailUi {
         self.list_page.set_title(title);
     }
 
-    /// Opens the row's message from the stored mailbox on screen.
-    fn open_message(&self, row_position: i32) {
-        let Some(listed) = self.rows.item(row_position as u32) else {
+    /// The account and identity of the message the reader shows.
+    fn open_message_of(&self) -> Option<(AccountId, String)> {
+        let identity = self.open_message.borrow().clone()?;
+        let (account_id, _) = self.listed_rows.borrow().clone()?;
+        Some((account_id, identity))
+    }
+
+    /// Shows a read of the open message's stored content: its text, why it
+    /// has none, or the read's failure with Retry reading the stored mail
+    /// again. An answer for a message no longer open is dropped; a message
+    /// the store no longer holds closes the reader.
+    pub fn show_content(
+        &self,
+        account_id: &AccountId,
+        identity: &str,
+        content: Result<Option<ReceivedContent>, Failure>,
+    ) {
+        if self.open_message_of() != Some((account_id.clone(), identity.to_owned())) {
+            return;
+        }
+        match content {
+            Ok(Some(content)) => {
+                if let ReceivedContent::Text(text) = &content {
+                    show_inert_text(&self.reader_body, &inert_text(text));
+                }
+                let failure = declare_content(&content);
+                self.show_body_or_failure(
+                    failure
+                        .as_ref()
+                        .map(|failure| (failure, RetriedOperation::RefreshMailbox)),
+                );
+            }
+            Ok(None) => self.close_reader(),
+            Err(failure) => {
+                let retried = RetriedOperation::ReadStoredMail;
+                self.show_body_or_failure(Some((&declare_failure(&failure, retried), retried)));
+            }
+        }
+    }
+
+    /// Opens the row's message: its envelope from the row at once, its
+    /// content when the window has read it.
+    fn open_message(&self, position: u32) {
+        let Some(item) = self.items.item(position).and_downcast::<MessageItem>() else {
             return;
         };
-        let listed = listed
-            .downcast::<glib::BoxedAnyObject>()
-            .expect("message row item");
-        let listed = listed.borrow::<ListedMessage>();
-        let message = &listed.mailbox[listed.position];
+        let Some((account_id, _)) = self.listed_rows.borrow().clone() else {
+            return;
+        };
+        let listed = item.listed();
         tracing::debug!(
-            account = self
-                .listed_mailbox
-                .borrow()
-                .as_ref()
-                .map(|(account_id, _)| account_id.as_str()),
-            identity = message.identity.as_str(),
+            account = account_id.as_str(),
+            identity = listed.identity.as_str(),
             "message opened"
         );
-        show_inert_text(&self.reader_subject, &subject_text(&message.fields));
-        self.reader_sender.set_text(&sender_text(&message.fields));
+        *self.open_message.borrow_mut() = Some(listed.identity.clone());
+        self.selection.set_selected(position);
+        self.show_envelope(listed);
+        // The body stays empty until the content is read.
+        self.reader_body.set_text("");
+        self.show_body_or_failure(None);
+        self.singleton_slot.set_visible(true);
+        self.reader_stack.set_visible_child_name("message");
+        self.mail_split.set_show_content(true);
+        self.request_content(&account_id, &listed.identity);
+    }
+
+    /// The open message's subject, sender, recipients and date.
+    fn show_envelope(&self, listed: &MessageListRow) {
+        show_inert_text(&self.reader_subject, &subject_text(&listed.fields));
+        self.reader_sender.set_text(&sender_text(&listed.fields));
         self.sender_avatar
-            .set_text(Some(&sender_text(&message.fields)));
-        match &message.fields.to {
+            .set_text(Some(&sender_text(&listed.fields)));
+        match &listed.fields.to {
             Some(recipients) => {
                 self.reader_to.set_text(&inert_text(recipients));
                 self.reader_to.set_visible(true);
@@ -187,40 +272,95 @@ impl MailUi {
             None => self.reader_to.set_visible(false),
         }
         self.reader_date
-            .set_text(&received_date_text(message.received_unix, "%c"));
-        if let ReceivedContent::Text(text) = &message.content {
-            show_inert_text(&self.reader_body, &inert_text(text));
-        }
-        self.show_body_or_failure(declare_content(&message.content).as_ref());
-        self.singleton_slot.set_visible(true);
-        self.reader_stack.set_visible_child_name("message");
-        self.mail_split.set_show_content(true);
+            .set_text(&received_date_text(listed.received_unix, "%c"));
     }
 
-    /// Shows why the message has no text in the body's place, or the body
-    /// when it has one.
-    fn show_body_or_failure(&self, failure: Option<&DeclaredFailure>) {
+    fn request_content(&self, account_id: &AccountId, identity: &str) {
+        if let Some(request) = &*self.content_request.borrow() {
+            request(account_id, identity);
+        }
+    }
+
+    /// Shows why the message has no text in the body's place, with the
+    /// operation its Retry repeats, or the body when it has one.
+    fn show_body_or_failure(&self, failure: Option<(&DeclaredFailure, RetriedOperation)>) {
         self.body_slot.set_visible(failure.is_none());
         self.content_status.set_visible(failure.is_some());
-        let Some(failure) = failure else {
+        let Some((failure, retried)) = failure else {
             return;
         };
         self.content_status.set_title(failure.title);
         self.content_status
             .set_description(Some(&status_description(failure)));
-        show_action_button(
-            &self.content_action,
-            failure.action,
-            RetriedOperation::RefreshMailbox,
-        );
+        show_action_button(&self.content_action, failure.action, retried);
     }
 
     fn close_reader(&self) {
-        self.messages.unselect_all();
+        *self.open_message.borrow_mut() = None;
+        self.selection.set_selected(gtk::INVALID_LIST_POSITION);
         self.singleton_slot.set_visible(false);
         self.reader_stack.set_visible_child_name("unselected");
         self.mail_split.set_show_content(false);
     }
+}
+
+/// Makes the list's row objects follow `rows`: the common beginning and end
+/// stay, with their read state changed in place; one splice replaces the
+/// middle, keeping the object of a message still listed there unchanged, so
+/// the arrival or removal of a few messages rebuilds no other row
+/// (specs/009-synchronization/research.md §9).
+fn update_list_by_difference(items: &gio::ListStore, rows: &[MessageListRow]) {
+    let item_at = |position: usize| {
+        items
+            .item(position as u32)
+            .and_downcast::<MessageItem>()
+            .expect("the list holds message items")
+    };
+    let shown = items.n_items() as usize;
+    let mut same_start = 0;
+    while same_start < shown.min(rows.len())
+        && item_at(same_start).lists_same_message(&rows[same_start])
+    {
+        same_start += 1;
+    }
+    let mut same_end = 0;
+    while same_end < (shown - same_start).min(rows.len() - same_start)
+        && item_at(shown - 1 - same_end).lists_same_message(&rows[rows.len() - 1 - same_end])
+    {
+        same_end += 1;
+    }
+    let removed: HashMap<String, MessageItem> = (same_start..shown - same_end)
+        .map(|position| {
+            let item = item_at(position);
+            (item.listed().identity.clone(), item)
+        })
+        .collect();
+    let added: Vec<MessageItem> = rows[same_start..rows.len() - same_end]
+        .iter()
+        .map(|row| match removed.get(&row.identity) {
+            Some(item) if item.lists_same_message(row) => item.clone(),
+            _ => MessageItem::new(row.clone()),
+        })
+        .collect();
+    if !removed.is_empty() || !added.is_empty() {
+        items.splice(same_start as u32, removed.len() as u32, &added);
+    }
+    for (position, row) in rows.iter().enumerate() {
+        let item = item_at(position);
+        if item.unread() == row.seen {
+            item.set_unread(!row.seen);
+        }
+    }
+}
+
+/// Where the message with this identity is listed.
+fn position_of(items: &gio::ListStore, identity: &str) -> Option<u32> {
+    (0..items.n_items()).find(|position| {
+        items
+            .item(*position)
+            .and_downcast::<MessageItem>()
+            .is_some_and(|item| item.listed().identity == identity)
+    })
 }
 
 /// The reader widgets that exist once for the window.
@@ -304,38 +444,6 @@ fn build_reader(window: &gtk::Builder) -> ReaderWidgets {
             .expect("message-content.ui: content_action"),
         avatar: envelope.object("avatar").expect("envelope.ui: avatar"),
     }
-}
-
-/// Builds one list row from the approved row form.
-fn build_message_row(listed: &glib::Object) -> gtk::ListBoxRow {
-    let listed = listed
-        .downcast_ref::<glib::BoxedAnyObject>()
-        .expect("message row item");
-    let listed = listed.borrow::<ListedMessage>();
-    let message = &listed.mailbox[listed.position];
-    let builder = gtk::Builder::from_string(include_str!("../resources/ui/message-row.ui"));
-    let row: gtk::ListBoxRow = builder.object("row").expect("message-row.ui: row");
-    label(&builder, "sender").set_text(&sender_text(&message.fields));
-    label(&builder, "subject").set_text(&subject_text(&message.fields));
-    label(&builder, "time").set_text(&received_date_text(message.received_unix, "%x"));
-    // Previews and conversations are outside this feature.
-    label(&builder, "preview").set_visible(false);
-    builder
-        .object::<gtk::Image>("dot")
-        .expect("message-row.ui: dot")
-        .set_visible(!message.seen);
-    // The dot is decorative, so the row itself speaks the read state.
-    row.update_property(
-        &[gtk::accessible::Property::Description(match message.seen {
-            true => "Read",
-            false => "Unread",
-        })],
-    );
-    row
-}
-
-fn label(builder: &gtk::Builder, name: &str) -> gtk::Label {
-    builder.object(name).expect("message-row.ui: label")
 }
 
 fn sender_text(fields: &DisplayFields) -> String {

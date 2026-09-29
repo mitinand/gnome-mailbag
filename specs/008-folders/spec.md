@@ -25,7 +25,9 @@ keyboard focus and Tab are decided (Assumptions). Amended after a spike on
 2026-09-28: the tree is a list box over the platform's tree model, the
 arrow keys select, and the space between accounts sits above their rows
 (FR-006, FR-010, Assumptions); checked on the installed build the same
-day.
+day. FR-010 amended on 2026-09-29 by
+[Synchronization](../009-synchronization/spec.md): the reader stays open
+while its message is listed.
 **Input**: Support for several mailboxes per account: their discovery, role
 recognition, nesting, storage and display in the sidebar. Deleting mailboxes
 is not built. Once mailboxes are shown, the account itself can no longer be
@@ -637,7 +639,9 @@ rows and the failure shown after each.
   folder list's outcome shows whenever a mailbox of the account or the
   account is shown, and the account's next load replaces it (007 FR-005,
   FR-007). The
-  reader closes when the shown folder's rows are replaced (007). Nothing is
+  reader stays open while its message is listed (amended by 009 FR-013,
+  which replaces "the reader closes when the shown folder's rows are
+  replaced"). Nothing is
   selected, and the list asks the user to select a mailbox, when: the user
   collapses the shown folder's parent or account; a completed folder list no
   longer holds the shown folder; the account's folders appear for the first

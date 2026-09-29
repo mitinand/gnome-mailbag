@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use super::message_item::MessageItem;
 use super::*;
 use crate::accounts::Selection;
 use crate::failure_declarations::{declare_content, declare_failure, declare_short_list};
@@ -13,7 +14,7 @@ use goa_adapter::{
 };
 use mailbag_domain::{
     AccountId, ContentExplanation, Failure, FailureKind, Folder, FolderRef, FolderRole,
-    IncompleteList, RemoteSource, RemoteText, ServerStep,
+    IncompleteList, Message, RemoteSource, RemoteText, ServerStep,
 };
 use mailbag_providers::{CancelsLoadOnDrop, LoadResult, LoadTarget, LoadsMail, MailProvider};
 use mailbag_store::{Store, StoreWrite};
@@ -450,13 +451,36 @@ impl WindowWidgets {
             .is_visible()
     }
 
-    fn rows(&self) -> Vec<gtk::ListBoxRow> {
-        let messages: gtk::ListBox = self.builder.object("messages").expect("messages");
-        let mut rows = Vec::new();
-        while let Some(row) = messages.row_at_index(rows.len() as i32) {
-            rows.push(row);
-        }
-        rows
+    fn messages(&self) -> gtk::ListView {
+        self.builder.object("messages").expect("messages")
+    }
+
+    /// The list's row objects, which its shown rows are bound to.
+    fn rows(&self) -> Vec<MessageItem> {
+        let model = self.messages().model().expect("the list's model");
+        (0..model.n_items())
+            .map(|position| {
+                model
+                    .item(position)
+                    .and_downcast::<MessageItem>()
+                    .expect("a message item")
+            })
+            .collect()
+    }
+
+    /// Opens the row at `position`, as a click or Enter does.
+    fn open_row(&self, position: u32) {
+        self.messages().emit_by_name::<()>("activate", &[&position]);
+    }
+
+    /// The position of the selected row, which marks the open message.
+    fn selected_row(&self) -> Option<u32> {
+        let model = self.messages().model().expect("the list's model");
+        let selected = model
+            .downcast::<gtk::SingleSelection>()
+            .expect("a single selection")
+            .selected();
+        (selected != gtk::INVALID_LIST_POSITION).then_some(selected)
     }
 
     fn reader_body(&self) -> String {
@@ -539,19 +563,23 @@ fn description_of(status: &adw::StatusPage) -> String {
         .unwrap_or_default()
 }
 
-fn row_texts(row: &gtk::ListBoxRow) -> String {
-    descendants::<gtk::Label>(&row.clone().upcast())
+/// The texts of the list's row widgets built so far.
+fn shown_labels(widgets: &WindowWidgets) -> Vec<String> {
+    descendants::<gtk::Label>(&widgets.messages().upcast())
         .into_iter()
+        .filter(|label| label.is_mapped())
         .map(|label| label.text().to_string())
-        .collect::<Vec<_>>()
-        .join(" ")
+        .collect()
 }
 
-fn shows_unread_dot(row: &gtk::ListBoxRow) -> bool {
-    descendants::<gtk::Image>(&row.clone().upcast())
-        .into_iter()
-        .filter(|image| image.icon_name().as_deref() == Some("media-record-symbolic"))
-        .any(|dot| dot.is_visible())
+/// What the row template shows of the item: sender, subject and date.
+fn row_texts(item: &MessageItem) -> String {
+    format!("{} {} {}", item.sender(), item.subject(), item.date_text())
+}
+
+/// Whether the row template shows the item's unread dot.
+fn shows_unread_dot(item: &MessageItem) -> bool {
+    item.unread()
 }
 
 /// Whether the failure dialog offers a shown button with this action.
@@ -792,7 +820,7 @@ fn mail_ui_transitions() {
 
     // Opening a message shows stored content and sends no request. A
     // message without text shows why in the body's place; its row stays.
-    rows[1].emit_by_name::<()>("activate", &[]);
+    widgets.open_row(1);
     settle(&ui);
     assert_eq!(widgets.reader_page(), "message");
     let content_failure =
@@ -803,7 +831,7 @@ fn mail_ui_transitions() {
     assert_eq!(widgets.reader_subject(), "First subject");
     assert!(widgets.reader_body().contains("First sender"));
     assert_eq!(loader.running_loads(), 0);
-    rows[0].emit_by_name::<()>("activate", &[]);
+    widgets.open_row(0);
     settle(&ui);
     assert!(widgets.content_status().is_none());
     assert!(widgets.reader_body_label().is_visible());
@@ -828,9 +856,9 @@ fn mail_ui_transitions() {
     assert_eq!(widgets.list_page(), "messages");
     assert!(widgets.shows_load_feedback());
 
-    // A list the server refused to finish replaces the rows and closes the
-    // reader; the banner stays while that list is on screen, and another
-    // folder does not show it.
+    // A list the server refused to finish replaces the rows and keeps the
+    // open message, still listed, selected; the banner stays while that list
+    // is on screen, and another folder does not show it.
     let refusal = IncompleteList::ServerRefused {
         reply: "Some messages could not be FETCHed".to_owned(),
         code: None,
@@ -839,7 +867,8 @@ fn mail_ui_transitions() {
     settle(&ui);
     assert_eq!(widgets.rows().len(), 1);
     assert_eq!(widgets.list_page(), "messages");
-    assert_eq!(widgets.reader_page(), "unselected");
+    assert_eq!(widgets.reader_page(), "message");
+    assert_eq!(widgets.selected_row(), Some(0));
     let short_list_title = Some(declare_short_list(&refusal).title.to_owned());
     assert_eq!(widgets.banner_title(), short_list_title);
     widgets.select(&ui, &generic, Some("Projects"));
@@ -863,10 +892,10 @@ fn mail_ui_transitions() {
     settle(&ui);
     // The next complete load leaves no banner behind.
     assert_eq!(widgets.banner_title(), None);
-    let long_rows = widgets.rows();
-    long_rows[0].emit_by_name::<()>("activate", &[]);
-    // The wrapping is checked before the layout runs, because word wrapping
-    // would take minutes here instead of failing.
+    widgets.open_row(0);
+    // The content comes from the store with its wrapping chosen; were word
+    // wrapping chosen, this wait would lay it out for minutes and time out.
+    settle(&ui);
     assert_eq!(
         widgets.reader_body_label().wrap_mode(),
         gtk::pango::WrapMode::Char
@@ -876,7 +905,8 @@ fn mail_ui_transitions() {
         unwrapped < Duration::from_secs(5),
         "opening took {unwrapped:?}"
     );
-    long_rows[1].emit_by_name::<()>("activate", &[]);
+    widgets.open_row(1);
+    settle(&ui);
     assert_eq!(
         widgets.reader_body_label().wrap_mode(),
         gtk::pango::WrapMode::WordChar
@@ -888,9 +918,9 @@ fn mail_ui_transitions() {
     );
     // A name from the message in the reader's status page is laid out as
     // fast: that page wraps its description by word.
-    long_rows[2].emit_by_name::<()>("activate", &[]);
+    widgets.open_row(2);
     let started = Instant::now();
-    dispatch_pending();
+    settle(&ui);
     let content_status = widgets.content_status().expect("the reader's status page");
     content_status.measure(gtk::Orientation::Horizontal, -1);
     content_status.measure(gtk::Orientation::Vertical, 800);
@@ -1007,10 +1037,10 @@ fn mail_ui_transitions() {
     assert_eq!(restarted_widgets.banner_title(), None);
     assert!(row_texts(&restored_rows[0]).contains("Second subject"));
     assert!(shows_unread_dot(&restored_rows[0]));
-    restored_rows[0].emit_by_name::<()>("activate", &[]);
+    restarted_widgets.open_row(0);
     settle(&restarted);
     assert_eq!(restarted_widgets.reader_body_label().text(), "Second body");
-    restored_rows[1].emit_by_name::<()>("activate", &[]);
+    restarted_widgets.open_row(1);
     settle(&restarted);
     let restored_status = restarted_widgets
         .content_status()
@@ -1172,11 +1202,15 @@ fn mailbox_navigation() {
             .position_of_row(&generic, Some("INBOX"))
             .is_none()
     );
-    assert_eq!(store.read_mailbox(&inbox).expect("the store reads"), None);
+    assert_eq!(
+        store.read_folder_rows(&inbox).expect("the store reads"),
+        None
+    );
 
     // Two Gmail labels hold the same messages. A load of one label that
-    // changes a message shows the change in the other label on screen; a
-    // load that changes nothing keeps its open message (FR-004).
+    // changes a message shows the change in the other label on screen, and
+    // either load keeps the open message and its selected row (FR-004; 009
+    // FR-013).
     let google = account("synthetic-google");
     widgets.select(&ui, &google, None);
     settle(&ui);
@@ -1191,22 +1225,65 @@ fn mailbox_navigation() {
     }
     let mut read_elsewhere = two_messages();
     read_elsewhere[0].seen = true;
-    // The first load marks a message read: the Inbox on screen shows it and,
-    // its list changed, closes the open message; the second changes nothing.
-    for (load_changes, reader_page) in [("a read", "unselected"), ("nothing", "message")] {
+    // The first load marks a message read, which the Inbox on screen shows;
+    // the second changes nothing.
+    for load_changes in ["a read", "nothing"] {
         widgets.select(&ui, &google, Some("Projects"));
         settle(&ui);
         refresh_mailbox.activate(None);
         settle(&ui);
         widgets.select(&ui, &google, Some("INBOX"));
         settle(&ui);
-        widgets.rows()[1].emit_by_name::<()>("activate", &[]);
+        widgets.open_row(1);
         settle(&ui);
         loader.report_stored(&read_elsewhere, None);
         settle(&ui);
         assert!(!shows_unread_dot(&widgets.rows()[0]), "{load_changes}");
-        assert_eq!(widgets.reader_page(), reader_page, "{load_changes}");
+        assert_eq!(widgets.reader_page(), "message", "{load_changes}");
+        assert_eq!(widgets.selected_row(), Some(1), "{load_changes}");
     }
+    // A load of the Inbox that removes the open message closes the reader.
+    refresh_mailbox.activate(None);
+    settle(&ui);
+    loader.report_stored(&read_elsewhere[..1], None);
+    settle(&ui);
+    assert_eq!(widgets.rows().len(), 1);
+    assert_eq!(widgets.reader_page(), "unselected");
+    assert_eq!(widgets.selected_row(), None);
+
+    // A folder of 100 000 messages is listed whole, and the list scrolls to
+    // its end, without stalling the window (009 SC-007). The times are for
+    // the reader of the output; the machine decides them.
+    let many: Vec<Message> = (0..100_000)
+        .map(|number| Message {
+            identity: format!("gmail:{number}"),
+            fields: DisplayFields {
+                subject: Some(format!("Subject {number}")),
+                from: Some(format!("Sender {number}")),
+                to: None,
+            },
+            received_unix: Some(1_700_000_000 - number),
+            seen: number % 2 == 0,
+            content: ReceivedContent::TextNotReturned,
+        })
+        .collect();
+    store
+        .replace_mailbox(&folder_of(&google, "Projects"), &many, || false)
+        .expect("the test store takes the messages");
+    let started = Instant::now();
+    widgets.select(&ui, &google, Some("Projects"));
+    settle(&ui);
+    assert_eq!(widgets.rows().len(), 100_000);
+    println!("100 000 rows read and listed in {:?}", started.elapsed());
+    // The shown rows are the template's, bound to their items.
+    wait_until(|| shown_labels(&widgets).contains(&"Sender 1".to_owned()));
+    let started = Instant::now();
+    widgets
+        .messages()
+        .activate_action("list.scroll-to-item", Some(&99_999_u32.to_variant()))
+        .expect("the list scrolls to an item");
+    wait_until(|| shown_labels(&widgets).contains(&"Sender 99999".to_owned()));
+    println!("scrolled to the last row in {:?}", started.elapsed());
     window.destroy();
 }
 
@@ -1442,4 +1519,126 @@ fn text_without_a_place_to_break_a_line_is_recognized() {
         longest_unbroken_run(&link) <= LONGEST_WORD_WRAPPED_RUN,
         "{link}"
     );
+}
+
+fn listed_row(identity: &str, seen: bool) -> MessageListRow {
+    MessageListRow {
+        identity: identity.to_owned(),
+        fields: DisplayFields {
+            subject: Some(format!("Subject of {identity}")),
+            from: None,
+            to: None,
+        },
+        received_unix: None,
+        seen,
+    }
+}
+
+/// Each change of a list's items as `(position, removed, added)`.
+type ItemChanges = Rc<RefCell<Vec<(u32, u32, u32)>>>;
+
+/// A list shown from `identities`, all unread, and every later change of
+/// its items.
+fn listed_items(identities: &[&str]) -> (gio::ListStore, ItemChanges) {
+    let items = gio::ListStore::new::<MessageItem>();
+    let rows: Vec<MessageListRow> = identities
+        .iter()
+        .map(|identity| listed_row(identity, false))
+        .collect();
+    update_list_by_difference(&items, &rows);
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let recorded = changes.clone();
+    items.connect_items_changed(move |_, position, removed, added| {
+        recorded.borrow_mut().push((position, removed, added));
+    });
+    (items, changes)
+}
+
+fn item_list(items: &gio::ListStore) -> Vec<MessageItem> {
+    (0..items.n_items())
+        .map(|position| items.item(position).and_downcast().expect("a message item"))
+        .collect()
+}
+
+fn identities(items: &gio::ListStore) -> Vec<String> {
+    item_list(items)
+        .iter()
+        .map(|item| item.identity())
+        .collect()
+}
+
+#[test]
+fn rows_arriving_at_the_end_are_appended_without_touching_the_others() {
+    let (items, changes) = listed_items(&["a", "b"]);
+    let before = item_list(&items);
+    let rows = ["a", "b", "c", "d"].map(|identity| listed_row(identity, false));
+    update_list_by_difference(&items, &rows);
+    assert_eq!(identities(&items), ["a", "b", "c", "d"]);
+    assert_eq!(*changes.borrow(), [(2, 0, 2)]);
+    assert_eq!(item_list(&items)[..2], before[..]);
+}
+
+#[test]
+fn a_row_arriving_at_the_top_is_inserted_there() {
+    let (items, changes) = listed_items(&["b", "c"]);
+    let rows = ["a", "b", "c"].map(|identity| listed_row(identity, false));
+    update_list_by_difference(&items, &rows);
+    assert_eq!(identities(&items), ["a", "b", "c"]);
+    assert_eq!(*changes.borrow(), [(0, 0, 1)]);
+}
+
+#[test]
+fn a_row_removed_in_the_middle_leaves_its_neighbours_in_place() {
+    let (items, changes) = listed_items(&["a", "b", "c"]);
+    let before = item_list(&items);
+    let rows = ["a", "c"].map(|identity| listed_row(identity, false));
+    update_list_by_difference(&items, &rows);
+    assert_eq!(identities(&items), ["a", "c"]);
+    assert_eq!(*changes.borrow(), [(1, 1, 0)]);
+    assert_eq!(item_list(&items), [before[0].clone(), before[2].clone()]);
+}
+
+#[test]
+fn a_changed_read_state_changes_its_item_in_place() {
+    let (items, changes) = listed_items(&["a", "b"]);
+    let before = item_list(&items);
+    let rows = [listed_row("a", false), listed_row("b", true)];
+    update_list_by_difference(&items, &rows);
+    assert!(changes.borrow().is_empty());
+    assert_eq!(item_list(&items), before);
+    assert!(before[0].unread());
+    assert!(!before[1].unread());
+    assert_eq!(before[1].read_state_text(), "Read");
+}
+
+#[test]
+fn a_message_listed_again_between_changes_keeps_its_item() {
+    let (items, _) = listed_items(&["a", "b", "c"]);
+    let kept = item_list(&items)[1].clone();
+    // "a" and "c" leave, "b" stays between them, "d" arrives.
+    let rows = ["b", "d"].map(|identity| listed_row(identity, false));
+    update_list_by_difference(&items, &rows);
+    assert_eq!(identities(&items), ["b", "d"]);
+    assert_eq!(item_list(&items)[0], kept);
+}
+
+#[test]
+fn a_message_whose_fields_changed_gets_a_new_item() {
+    let (items, _) = listed_items(&["a"]);
+    let before = item_list(&items);
+    let mut renamed = listed_row("a", false);
+    renamed.fields.subject = Some("Edited".to_owned());
+    update_list_by_difference(&items, &[renamed]);
+    assert_ne!(item_list(&items), before);
+    assert_eq!(item_list(&items)[0].subject(), "Edited");
+}
+
+#[test]
+fn the_same_rows_change_nothing() {
+    let (items, changes) = listed_items(&["a", "b", "c"]);
+    let before = item_list(&items);
+    let rows = ["a", "b", "c"].map(|identity| listed_row(identity, false));
+    update_list_by_difference(&items, &rows);
+    assert!(changes.borrow().is_empty());
+    assert_eq!(item_list(&items), before);
 }

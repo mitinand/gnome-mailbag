@@ -117,8 +117,9 @@ user's word, *mailbox*, where it names the refreshed folder
   and sets it on the list view that `mailbag.ui` declares.
 - `MailUi::show_rows(account, rows: Rc<[MessageListRow]>)` updates the list
   by the difference with the rows shown (research §9): read states in
-  place, arrivals and removals in one splice; it keeps the selected row and
-  the open message, two identities kept apart, when they are still listed.
+  place, arrivals and removals in one splice; it keeps the open message,
+  whose row is the selected one, while it is listed, and reads its content
+  again.
   A portion of any folder of the shown folder's account makes the window
   read the shown folder again.
 - Opening a message reads its content with `read_message_content` on GIO's

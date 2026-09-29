@@ -309,10 +309,19 @@ text, unread), which the window creates from the stored rows. The model is
 updated by the difference between the shown and the stored rows, compared
 by identity: a changed read state is set on the listed object in place;
 arrived and removed messages change the list in one splice between the
-common beginning and end; the selected row and the open message are two
-identities kept apart (a row selected with the arrow keys need not be the
-open one), and each is found again by its own after a splice (spec
-FR-013).
+common beginning and end; the open message is found again by its identity
+after a splice and its row selected, or the reader closes when it is gone
+(spec FR-013). One click or Enter opens a message, as the list box did: the
+list view activates on a single click and its rows are not selectable by
+the user, so the selected row is always the open message; the arrow keys
+move the focus, which GTK keeps on its row (maintainer's decision
+2026-09-29; checked in GTK 4.22.5 `gtklistfactorywidget.c`: with
+`single-click-activate` a selectable row is selected on hover, and a row
+that is not selectable ignores the pointer's and the keys' selection).
+Tab leaves the list after one row (`tab-behavior` `item`) instead of
+visiting every row. The row texts are made when a shown row reads them:
+building 100 000 row objects with their dates formatted took 0.76 s on
+GTK's thread in a release build, and 0.13 s without.
 
 **Rationale**:
 - A list box builds every row: about 1 s per 1 000 rows (measured for 007);
@@ -333,8 +342,14 @@ row widget class or data attached to widgets, so it is not simpler;
 rebuilding the model on each read: 100 000 items per portion, and the
 selection lost.
 
-**Unknown until portion 1**: whether Cambalache edits a list item template
-with property bindings; if not, that form is edited as text.
+**Checked in portion 1** (Cambalache 1.0.3, 2026-09-29): Cambalache does
+not edit this form, so `message-row.ui` is edited as text. Cambalache reads
+`<template>` as a new class whose base class is its `parent` attribute. Without
+`parent`, the project loads but the form does not open. With
+`parent="GObject"`, loading the property bindings fails and the whole
+project with it (`cmb_db.py` looks up the base class `object`, which its
+catalog lacks). GTK refuses any other `parent`: a list item template's
+parent must be `GObject`.
 
 ## §10 `MailboxChanged` stays for one case
 

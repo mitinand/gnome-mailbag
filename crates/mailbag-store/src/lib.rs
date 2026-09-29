@@ -25,10 +25,12 @@ mod tests;
 
 use failure::{StoreError, StoreOperation, storage_failure};
 use folders::{
-    delete_messages_without_folder, delete_unlisted_folders, read_folder_messages, stored_folder,
-    upsert_folders, write_mailbox,
+    delete_messages_without_folder, delete_unlisted_folders, read_listed_rows, stored_content,
+    stored_folder, upsert_folders, write_mailbox,
 };
-use mailbag_domain::{AccountId, Failure, Folder, FolderRef, Message};
+use mailbag_domain::{
+    AccountId, Failure, Folder, FolderRef, Message, MessageListRow, ReceivedContent,
+};
 use open::{configure_connection, create_schema, open_store};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::{
@@ -141,9 +143,13 @@ impl Store {
         })
     }
 
-    /// The folder's stored messages in the load's order, or `None` when no
-    /// load of it completed or the store does not hold the folder.
-    pub fn read_mailbox(&self, folder: &FolderRef) -> Result<Option<Vec<Message>>, Failure> {
+    /// The folder's stored messages as the list shows them, without their
+    /// content, in the load's order; `None` when no load of it completed or
+    /// the store does not hold the folder.
+    pub fn read_folder_rows(
+        &self,
+        folder: &FolderRef,
+    ) -> Result<Option<Vec<MessageListRow>>, Failure> {
         self.with_connection(StoreOperation::Read, |connection| {
             let loaded_folder: Option<i64> = connection
                 .query_row(
@@ -153,9 +159,29 @@ impl Store {
                 )
                 .optional()?;
             match loaded_folder {
-                Some(folder_id) => Ok(Some(read_folder_messages(connection, folder_id)?)),
+                Some(folder_id) => Ok(Some(read_listed_rows(connection, folder_id)?)),
                 None => Ok(None),
             }
+        })
+    }
+
+    /// The content of the account's message, which the reader shows when it
+    /// is opened; `None` when the store no longer holds the message.
+    pub fn read_message_content(
+        &self,
+        account: &AccountId,
+        identity: &str,
+    ) -> Result<Option<ReceivedContent>, Failure> {
+        self.with_connection(StoreOperation::Read, |connection| {
+            let content = connection
+                .query_row(
+                    "SELECT content_kind, content_detail FROM message \
+                     WHERE account = ?1 AND identity = ?2",
+                    params![account.as_str(), identity],
+                    stored_content,
+                )
+                .optional()?;
+            Ok(content)
         })
     }
 

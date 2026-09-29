@@ -17,10 +17,17 @@ use crate::refreshes::{RefreshOutcome, Refreshes};
 use crate::sidebar_ui::{PageAction, SidebarUi, show_check_progress};
 use adw::{gio, glib, gtk, prelude::*};
 use goa_adapter::AccountUpdate;
-use mailbag_domain::{AccountId, Failure, FailureKind, Folder, FolderRef, Message, catch_panic};
+use mailbag_domain::{
+    AccountId, Failure, FailureKind, Folder, FolderRef, MessageListRow, catch_panic,
+};
 use mailbag_providers::{LoadResult, LoadTarget, LoadsMail, MailProvider};
 use mailbag_store::Store;
-use std::{cell::RefCell, collections::BTreeSet, rc::Rc, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::BTreeSet,
+    rc::Rc,
+    sync::Arc,
+};
 
 pub struct WindowUi {
     sidebar: Rc<RefCell<SidebarUi>>,
@@ -48,6 +55,8 @@ pub struct WindowUi {
     read_stored_mail: gio::SimpleAction,
     /// The sidebar box that shows the spinner while a load runs.
     loading_spinner_box: gtk::Box,
+    /// How many reads of an opened message's content are running.
+    content_reads: Cell<u32>,
 }
 
 /// The shown accounts' folder lists as the window last read them. The
@@ -61,7 +70,7 @@ struct FolderListsRead {
     failure: Option<Failure>,
 }
 
-/// The selected mailbox's stored messages as the window last read them.
+/// The selected mailbox's stored rows as the window last read them.
 #[derive(Default)]
 struct ShownMailbox {
     folder: Option<FolderRef>,
@@ -80,7 +89,7 @@ enum StoredMailbox {
         again: bool,
     },
     /// What the read found: `None` when no load of the mailbox completed.
-    Read(Option<Rc<[Message]>>),
+    Read(Option<Rc<[MessageListRow]>>),
     ReadFailed(Failure),
 }
 
@@ -92,7 +101,7 @@ enum ShownMail {
     /// The stored rows, and the latest refresh's failure or short list.
     Messages {
         account_id: AccountId,
-        messages: Rc<[Message]>,
+        rows: Rc<[MessageListRow]>,
         banner: Option<Banner>,
     },
     /// A stored mailbox without messages, and why its list may be short.
@@ -158,6 +167,7 @@ impl WindowUi {
             refresh_account: gio::SimpleAction::new("refresh-account", None),
             read_stored_mail: gio::SimpleAction::new("read-stored-mail", None),
             loading_spinner_box,
+            content_reads: Cell::new(0),
         });
         let refreshing = Rc::downgrade(&window);
         window.refresh_mailbox.connect_activate(move |_, _| {
@@ -175,10 +185,20 @@ impl WindowUi {
         window.read_stored_mail.connect_activate(move |_, _| {
             if let Some(window) = reading.upgrade() {
                 window.read_folder_lists();
+                // A new read of the shown mailbox reads the open message's
+                // content again.
                 window.read_shown_mailbox();
                 window.render();
             }
         });
+        let opening = Rc::downgrade(&window);
+        window
+            .mail
+            .connect_content_request(move |account_id, identity| {
+                if let Some(window) = opening.upgrade() {
+                    window.read_message_content(account_id.clone(), identity.to_owned());
+                }
+            });
         let explaining = Rc::downgrade(&window);
         window.failure_details.connect_clicked(move |_| {
             if let Some(window) = explaining.upgrade() {
@@ -446,7 +466,7 @@ impl WindowUi {
         }
     }
 
-    /// Reads the selected mailbox's stored messages on GIO's thread pool and
+    /// Reads the selected mailbox's stored rows on GIO's thread pool and
     /// shows what the latest read found. A panic in the read ends it as a
     /// failure, and a failed read writes its error line.
     fn read_shown_mailbox(self: &Rc<Self>) {
@@ -460,7 +480,7 @@ impl WindowUi {
             let account = folder.account.clone();
             // A panic in the read is the read's failure (006 FR-014).
             let answer = run_on_pool(FailureKind::StoredMailUnreadable, move || {
-                store.read_mailbox(&folder)
+                store.read_folder_rows(&folder)
             })
             .await;
             if let Err(failure) = &answer {
@@ -477,6 +497,34 @@ impl WindowUi {
             if latest {
                 window.render();
             }
+        });
+    }
+
+    /// Reads an opened message's stored content on GIO's thread pool and
+    /// hands it to the reader, which drops it when another message is open
+    /// by then. A failed read writes its error line.
+    fn read_message_content(self: &Rc<Self>, account_id: AccountId, identity: String) {
+        self.content_reads.set(self.content_reads.get() + 1);
+        let store = self.store.clone();
+        let window = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let (read_account, read_identity) = (account_id.clone(), identity.clone());
+            let answer = run_on_pool(FailureKind::StoredMailUnreadable, move || {
+                store.read_message_content(&read_account, &read_identity)
+            })
+            .await;
+            if let Err(failure) = &answer {
+                tracing::error!(
+                    account = account_id.as_str(),
+                    cause = ?failure.kind,
+                    "stored message content read failed"
+                );
+            }
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            window.content_reads.set(window.content_reads.get() - 1);
+            window.mail.show_content(&account_id, &identity, answer);
         });
     }
 
@@ -497,10 +545,8 @@ impl WindowUi {
         let shown_mail = self.shown_mail();
         match &shown_mail {
             ShownMail::Messages {
-                account_id,
-                messages,
-                ..
-            } => self.mail.show_rows(account_id, messages),
+                account_id, rows, ..
+            } => self.mail.show_rows(account_id, rows),
             // A mailbox read again keeps its rows until the read answers, so
             // a read that finds them unchanged keeps the open message.
             ShownMail::Reading { again: true } => {}
@@ -599,13 +645,11 @@ impl WindowUi {
             _ => &StoredMailbox::NotRead,
         };
         match (stored, outcome) {
-            (StoredMailbox::Read(Some(messages)), _) if !messages.is_empty() => {
-                ShownMail::Messages {
-                    account_id: account.clone(),
-                    messages: messages.clone(),
-                    banner,
-                }
-            }
+            (StoredMailbox::Read(Some(rows)), _) if !rows.is_empty() => ShownMail::Messages {
+                account_id: account.clone(),
+                rows: rows.clone(),
+                banner,
+            },
             (StoredMailbox::Reading { again }, _) => ShownMail::Reading { again: *again },
             _ if loading.is_some() => ShownMail::Status {
                 title: match loading {
@@ -691,7 +735,8 @@ impl WindowUi {
     /// to wait for.
     #[cfg(test)]
     pub fn reads_stored_mail(&self) -> bool {
-        self.folder_lists.borrow().reading
+        self.content_reads.get() > 0
+            || self.folder_lists.borrow().reading
             || matches!(
                 self.shown_mailbox.borrow().stored,
                 StoredMailbox::Reading { .. }
@@ -775,12 +820,16 @@ impl ShownMailbox {
     }
 
     /// Keeps what read `read` found, if no newer read started meanwhile.
-    fn finish_read(&mut self, read: u64, answer: Result<Option<Vec<Message>>, Failure>) -> bool {
+    fn finish_read(
+        &mut self,
+        read: u64,
+        answer: Result<Option<Vec<MessageListRow>>, Failure>,
+    ) -> bool {
         if read != self.latest_read {
             return false;
         }
         self.stored = match answer {
-            Ok(messages) => StoredMailbox::Read(messages.map(Rc::from)),
+            Ok(rows) => StoredMailbox::Read(rows.map(Rc::from)),
             Err(failure) => StoredMailbox::ReadFailed(failure),
         };
         true

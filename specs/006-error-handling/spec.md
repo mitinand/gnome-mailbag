@@ -10,7 +10,9 @@ application as domain values decided the same day and built in portion 6
 at sizing, at the specification challenge and on the prototype are
 recorded under Clarifications. FR-004 and the contract amended on
 2026-09-27 by [Folders](../008-folders/spec.md), built and accepted with it
-the same day.
+the same day. User Story 5's first scenario amended on 2026-09-29 by
+[Synchronization](../009-synchronization/spec.md): the reader stays open
+while its message is listed.
 **Input**: One lasting model for how Mailbag reports failures, from the
 component that meets them to what the user sees. Today each failure is
 presented the way its feature happened to choose: a status page for a failed
@@ -167,7 +169,8 @@ the envelope.
 
 1. **Given** the server did not return one message's text, **when** the user
    opens it, **then** the status page under the envelope says so and offers
-   Retry, which refreshes the whole Inbox and closes the reader; until then
+   Retry, which refreshes the whole mailbox and keeps the reader open while
+   the message is listed (009 FR-013); until then
    the list and the other messages are untouched.
 2. **Given** one message's structure cannot be read, **when** the load ends,
    **then** the load succeeds with that message's row present and no notice

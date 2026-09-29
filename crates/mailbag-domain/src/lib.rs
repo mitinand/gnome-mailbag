@@ -125,6 +125,18 @@ pub struct Message {
     pub content: ReceivedContent,
 }
 
+/// A message as the list shows it, without its content, which the reader
+/// reads when the message is opened (specs/009-synchronization FR-013).
+#[derive(Clone, PartialEq, Eq)]
+pub struct MessageListRow {
+    /// The message's `Message::identity`.
+    pub identity: String,
+    pub fields: DisplayFields,
+    /// The received date as seconds since the Unix epoch.
+    pub received_unix: Option<i64>,
+    pub seen: bool,
+}
+
 /// Subject, sender and recipients for the list and the reader.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DisplayFields {
@@ -323,6 +335,16 @@ impl fmt::Debug for Message {
             .field("identity", &self.identity)
             .field("seen", &self.seen)
             .field("content", &self.content)
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for MessageListRow {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MessageListRow")
+            .field("identity", &self.identity)
+            .field("seen", &self.seen)
             .finish_non_exhaustive()
     }
 }

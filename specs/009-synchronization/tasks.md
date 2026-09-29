@@ -46,7 +46,7 @@ difference, and a message's content is read when it is opened; loads still
 deliver the newest 100 and replace the folder. On screen, the only change
 is that the open message stays open when a load leaves it in the list.
 
-- [ ] T002 [US1] Amend the documents first: specs/002-imap-integration/
+- [x] T002 [US1] Amend the documents first: specs/002-imap-integration/
   contracts/ui.md (the messages list is a list view with a row template;
   the row's read state and hidden preview live in the template),
   specs/007-mail-storage/spec.md FR-005 and specs/008-folders/spec.md
@@ -56,14 +56,14 @@ is that the open message stays open when a load leaves it in the list.
   lib.rs: `MessageListRow { identity, fields: DisplayFields, received_unix,
   seen }` with a privacy-safe `Debug` (identity and seen only), as the
   contract describes.
-- [ ] T003 [US1] [US5] In crates/mailbag-store/src/lib.rs and
+- [x] T003 [US1] [US5] In crates/mailbag-store/src/lib.rs and
   src/folders.rs: `read_folder_rows(folder) -> Option<Vec<MessageListRow>>`
   (today's order by position, no `content_detail` read; `None` when the
   folder is not loaded) and `read_message_content(account, identity) ->
   Option<ReceivedContent>`; `read_mailbox` stays until nothing calls it,
   then goes in this portion; tests in crates/mailbag-store/src/tests.rs
   for both reads (order, no text in rows, a missing message is `None`).
-- [ ] T004 [US1] Forms, following Workbench's "List View" demo: in
+- [x] T004 [US1] Forms, following Workbench's "List View" demo: in
   crates/mailbag/resources/ui/mailbag.ui the `messages` `GtkListBox`
   becomes a `GtkListView`; crates/mailbag/resources/ui/message-row.ui
   becomes `<template class="GtkListItem">` whose child is the approved row,
@@ -77,7 +77,7 @@ is that the open message stays open when a load leaves it in the list.
   view. Open message-row.ui in
   Cambalache and record in research §9 whether it edits the template and
   its bindings.
-- [ ] T005 [US1] [US2] In crates/mailbag/src/mail_ui.rs and a new
+- [x] T005 [US1] [US2] In crates/mailbag/src/mail_ui.rs and a new
   src/mail_ui/message_item.rs: `MessageItem` (a GObject with the
   properties of T004 and `identity`, registered before the forms are
   built), made from
@@ -86,17 +86,17 @@ is that the open message stays open when a load leaves it in the list.
   `GtkSingleSelection` set in code; `show_rows(account, rows)` calls
   `update_list_by_difference`: set `unread` of listed items in place, keep
   the common start and end compared by identity and every shown field,
-  splice the middle, then find the selected row and the open message
-  again, each by its own identity (a row selected with the arrow keys need
-  not be the open one), or close the reader when its message is gone;
-  activating a row opens the message by its identity.
-- [ ] T006 [US1] [US5] In crates/mailbag/src/window_ui.rs: the shown
+  splice the middle, then find the open message again by its identity and
+  select its row, or close the reader when its message is gone; one click
+  or Enter opens the message by its identity, the arrow keys move the
+  focus (research §9, decided 2026-09-29).
+- [x] T006 [US1] [US5] In crates/mailbag/src/window_ui.rs: the shown
   mailbox is read with `read_folder_rows`; opening a message reads
   `read_message_content` on GIO's pool (a numbered read; an answer for
   another message or account is dropped; a failure is shown in the
   reader's status page with Retry reading the stored mail again, 007
   FR-013's operation); the reader shows the content as today.
-- [ ] T007 [P] [US1] [US2] Tests: unit tests of `update_list_by_difference`
+- [x] T007 [P] [US1] [US2] Tests: unit tests of `update_list_by_difference`
   (append at the end, insert at the top, removal in the middle, read state
   in place, nothing changed) in crates/mailbag/src/mail_ui/tests.rs; the
   GTK test `mailbox_navigation` extended: a second load that changes one
@@ -106,8 +106,8 @@ is that the open message stays open when a load leaves it in the list.
   loop stalling (SC-007; the time is written to the test's output, not
   asserted); a render of the list
   before and after (offscreen paintable to PNG, outside the repository)
-  and a keyboard check (arrows select, Enter opens, the focused row is
-  outlined) for the maintainer.
+  and a keyboard check (arrows move the focus, Enter opens, the focused
+  row is outlined) for the maintainer.
 - [ ] T008 STOP: run ./scripts/check.sh, git diff --check and each GTK test
   one per process; compare the size with plan.md (window ≈ 200, store
   ≈ 40, domain ≈ 15); show the render; report, suggest the commit and wait
