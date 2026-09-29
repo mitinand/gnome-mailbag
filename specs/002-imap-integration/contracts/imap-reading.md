@@ -1,5 +1,10 @@
 # IMAP Acquisition Contract
 
+**Status**: The selected window, the rows and a vanished message amended on
+2026-09-29 by [Synchronization](../../009-synchronization/spec.md): a cycle
+lists every message with `UID FETCH 1:*`, reads rows by UID, and skips a
+message that disappeared (009 research §2, §3).
+
 One selected account is loaded asynchronously on a worker's GLib MainContext.
 GTK and GOA observation remain on the main context. The worker owns all GIO
 streams and IMAP sessions. There is no IDLE, polling or general reconnect policy.
@@ -82,6 +87,15 @@ UID FETCH <uids> (UID BODYSTRUCTURE)
 The first command establishes the rows. The second uses the UIDs returned by the
 first, so both describe the same messages even if the Inbox changes in between.
 
+*Amended by 009*: a cycle first lists every message, `UID FETCH 1:* (UID
+FLAGS)` (Gmail adds `X-GM-MSGID`), read as a stream, and N = 0 lists nothing
+without a command. The listing is complete only when the command ended with
+OK; a NO or BAD leaves it incomplete and a lost connection fails the step.
+The missing messages' rows are then read by UID, a hundred at a time,
+`UID FETCH <uids> (UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO
+SUBJECT)])`, highest UID first; the sequence-number command below goes, and
+so does the window of 100.
+
 Here low/high stand for calculated numbers. Do not SEARCH ALL, request older
 history or use an open-ended * range. The stable result is min(N, 100) messages,
 sorted by descending UID. INTERNALDATE is display data, not the sort key.
@@ -124,7 +138,7 @@ closed before the completion, as an error after the responses.
 
 | Command | A requested message without data, after a tagged OK | ... after a tagged NO |
 |---|---|---|
-| Rows | Absent. No row at all although EXISTS was not zero: the Inbox changed. | Absent, and the rows that arrived are kept with the server's text, which reports the list as incomplete. No row at all: the metadata step fails with that text. |
+| Rows | Absent. No row at all although EXISTS was not zero: the Inbox changed. *Amended by 009*: absent, it disappeared; nothing fails. | Absent, and the rows that arrived are kept with the server's text, which reports the list as incomplete. No row at all: the metadata step fails with that text. *Amended by 009*: no row at all is still the incomplete list with the server's text; the listing proved the rest. |
 | Structures | It disappeared; omit its row. | Its row stays with an unreadable-structure explanation. |
 | Text | It disappeared; omit its row. | Its row stays with a text-not-received explanation. |
 
@@ -222,7 +236,9 @@ tagged OK, text not received after a NO or with NIL or a missing section. An
 incomplete literal is a load failure.
 
 If every UID from a nonempty window disappears, report that Inbox changed and
-allow Refresh. Do not infer
+allow Refresh. *Amended by 009*: messages that disappeared are skipped, even
+all of them; only a reconnection that meets another UIDVALIDITY reports that
+the mailbox changed (009 research §10). Do not infer
 empty Inbox from missing results. Do not refill gaps with older mail; new arrivals
 wait for the next manual refresh.
 

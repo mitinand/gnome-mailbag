@@ -5,7 +5,9 @@
 **Revised**: 2026-09-19
 **Status**: Approved by the maintainer 2026-09-19; FR-002, FR-003 and FR-012
 amended on 2026-09-27 by [Folders](../008-folders/spec.md), built and accepted
-with it the same day
+with it the same day. FR-002 and FR-003 amended on 2026-09-29 by
+[Synchronization](../009-synchronization/spec.md): Refresh Mailbox runs a
+cycle over the whole folder
 **Input**: On an explicit refresh, load recent Inbox message metadata and plain-text body parts into
 memory without attachment contents, fill the message list, and open the received
 text without another mail request.
@@ -213,6 +215,9 @@ has no network failure or server-identity reconciliation of its own.
   *Amended 2026-09-27 by [Folders](../008-folders/spec.md): a load reads the folder
   the user selected, by its identity, rather than the Inbox; the batch is
   that folder's newest 100 messages (008 FR-007, FR-010).*
+  *Amended 2026-09-29 by [Synchronization](../009-synchronization/spec.md): a
+  cycle reads the whole folder, newest first, in portions of 100; rows are
+  ordered by received date (009 FR-003, FR-013).*
 - **FR-003 — Loading and refresh**: Only activating Refresh Inbox MUST start a
   load. It MUST clear the selected account's list and reader, obtain a batch
   including message content and show it when complete. Selecting an account
@@ -227,6 +232,11 @@ has no network failure or server-identity reconciliation of its own.
   *Amended 2026-09-27 by [Folders](../008-folders/spec.md): Refresh Mailbox loads the
   selected folder and Refresh Account the account's folder list; selecting
   an account or a folder never starts a load (008 FR-001, FR-010).*
+  *Amended 2026-09-29 by [Synchronization](../009-synchronization/spec.md):
+  the rows stay while a cycle runs and change as its portions are stored;
+  a refused listing removes nothing and reports the list as incomplete, and
+  a refused row fetch keeps the removals the complete listing proved (009
+  FR-004, FR-011, FR-013).*
 - **FR-004 — Received text**: Mailbag MUST obtain message metadata and the
   description of its parts, then download the plain-text body parts needed for
   reading during batch loading. It MUST NOT download

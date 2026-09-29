@@ -20,7 +20,7 @@ use goa_adapter::AccountUpdate;
 use mailbag_domain::{
     AccountId, Failure, FailureKind, Folder, FolderRef, MessageListRow, catch_panic,
 };
-use mailbag_providers::{LoadResult, LoadTarget, LoadsMail, MailProvider};
+use mailbag_providers::{LoadEvent, LoadResult, LoadTarget, LoadsMail, MailProvider};
 use mailbag_store::Store;
 use std::{
     cell::{Cell, RefCell},
@@ -77,6 +77,12 @@ struct ShownMailbox {
     /// The number of the latest read, as for the folder lists.
     latest_read: u64,
     stored: StoredMailbox,
+    /// A read after a stored portion runs, while the rows and the banner on
+    /// screen stay as they are.
+    rereading: bool,
+    /// A portion was stored while a read ran: one more read follows it, so
+    /// reads never pile up (specs/009-synchronization/research.md §7).
+    read_due: bool,
 }
 
 #[derive(Default)]
@@ -346,14 +352,20 @@ impl WindowUi {
         let window = Rc::downgrade(self);
         let loaded_account = account_id.clone();
         let loaded_target = target.clone();
-        // The result arrives later on this context, never inside start_load.
+        // Events arrive later on this context, never inside start_load.
         let cancellation = self.loader.start_load(
             &account_id,
             provider,
             target.clone(),
-            Box::new(move |result| {
-                if let Some(window) = window.upgrade() {
-                    window.finish_load(&loaded_account, loaded_target, result);
+            Box::new(move |event| {
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
+                match event {
+                    LoadEvent::PortionStored => window.show_stored_portion(&loaded_account),
+                    LoadEvent::Finished(result) => {
+                        window.finish_load(&loaded_account, loaded_target.clone(), result)
+                    }
                 }
             }),
         );
@@ -378,14 +390,27 @@ impl WindowUi {
         self.render();
     }
 
+    /// A cycle stored a portion: the shown mailbox is read again when it
+    /// belongs to the loaded account, since a portion of one folder can change
+    /// messages another folder of the account holds too (a Gmail label, a
+    /// moved Microsoft 365 message).
+    fn show_stored_portion(self: &Rc<Self>, account_id: &AccountId) {
+        if self
+            .selected_mailbox()
+            .is_some_and(|folder| folder.account == *account_id)
+        {
+            self.read_shown_mailbox_again();
+        }
+    }
+
     /// Records how the load ended. A completed folder list is read again
     /// with every other; it left the selected mailbox's rows as they were, so
     /// they are read only when the window does not hold them: the load's
-    /// start forgot a failed read of them (007 FR-013). A completed load of
-    /// a mailbox replaced its stored messages and updated those that other
-    /// mailboxes of its account hold too (a Gmail label, a message moved on
-    /// Microsoft 365), so the selected mailbox of that account is read again
-    /// (specs/008-folders FR-004).
+    /// start forgot a failed read of them (007 FR-013). A completed cycle of
+    /// a mailbox may have changed messages that other mailboxes of its
+    /// account hold too (a Gmail label, a message moved on Microsoft 365), so
+    /// the selected mailbox of that account is read again, its rows staying
+    /// meanwhile (specs/008-folders FR-004).
     fn finish_load(
         self: &Rc<Self>,
         account_id: &AccountId,
@@ -411,7 +436,7 @@ impl WindowUi {
                         .as_ref()
                         .is_some_and(|shown| shown.account == folder.account) =>
             {
-                self.read_shown_mailbox()
+                self.read_shown_mailbox_again()
             }
             _ => {}
         }
@@ -474,6 +499,33 @@ impl WindowUi {
             return;
         };
         let read = self.shown_mailbox.borrow_mut().start_read(&folder);
+        self.spawn_rows_read(folder, read);
+    }
+
+    /// Reads the shown mailbox's rows again after a stored portion, while the
+    /// rows and the banner on screen stay; during a running read it only
+    /// marks one more read.
+    fn read_shown_mailbox_again(self: &Rc<Self>) {
+        let Some(folder) = self.selected_mailbox() else {
+            return;
+        };
+        let mut shown = self.shown_mailbox.borrow_mut();
+        if !shown.holds(&folder) {
+            drop(shown);
+            return self.read_shown_mailbox();
+        }
+        if shown.is_reading() {
+            shown.read_due = true;
+            return;
+        }
+        let read = shown.start_reread();
+        drop(shown);
+        self.spawn_rows_read(folder, read);
+    }
+
+    /// Runs read number `read` of the folder's rows, then shows what it found
+    /// if it is still the latest, and starts the read a portion marked due.
+    fn spawn_rows_read(self: &Rc<Self>, folder: FolderRef, read: u64) {
         let store = self.store.clone();
         let window = Rc::downgrade(self);
         glib::spawn_future_local(async move {
@@ -494,9 +546,13 @@ impl WindowUi {
                 return;
             };
             let latest = window.shown_mailbox.borrow_mut().finish_read(read, answer);
-            if latest {
-                window.render();
+            if !latest {
+                return;
             }
+            if std::mem::take(&mut window.shown_mailbox.borrow_mut().read_due) {
+                window.read_shown_mailbox_again();
+            }
+            window.render();
         });
     }
 
@@ -737,10 +793,7 @@ impl WindowUi {
     pub fn reads_stored_mail(&self) -> bool {
         self.content_reads.get() > 0
             || self.folder_lists.borrow().reading
-            || matches!(
-                self.shown_mailbox.borrow().stored,
-                StoredMailbox::Reading { .. }
-            )
+            || self.shown_mailbox.borrow().is_reading()
     }
 }
 
@@ -806,9 +859,16 @@ impl ShownMailbox {
             )
     }
 
+    /// Whether a read of the shown mailbox runs.
+    fn is_reading(&self) -> bool {
+        self.rereading || matches!(self.stored, StoredMailbox::Reading { .. })
+    }
+
     /// Starts a read of the mailbox's stored messages and returns its number.
     fn start_read(&mut self, folder: &FolderRef) -> u64 {
         self.latest_read += 1;
+        self.rereading = false;
+        self.read_due = false;
         let again = self.folder.as_ref() == Some(folder)
             && matches!(
                 self.stored,
@@ -816,6 +876,14 @@ impl ShownMailbox {
             );
         self.folder = Some(folder.clone());
         self.stored = StoredMailbox::Reading { again };
+        self.latest_read
+    }
+
+    /// Starts a read of the rows on screen, which stay meanwhile, and returns
+    /// its number.
+    fn start_reread(&mut self) -> u64 {
+        self.latest_read += 1;
+        self.rereading = true;
         self.latest_read
     }
 
@@ -828,6 +896,7 @@ impl ShownMailbox {
         if read != self.latest_read {
             return false;
         }
+        self.rereading = false;
         self.stored = match answer {
             Ok(rows) => StoredMailbox::Read(rows.map(Rc::from)),
             Err(failure) => StoredMailbox::ReadFailed(failure),
@@ -854,6 +923,8 @@ impl ShownMailbox {
         self.latest_read += 1;
         self.folder = None;
         self.stored = StoredMailbox::NotRead;
+        self.rereading = false;
+        self.read_due = false;
     }
 
     fn forget_read_failure(&mut self) {

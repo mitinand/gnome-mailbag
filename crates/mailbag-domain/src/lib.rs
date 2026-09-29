@@ -222,8 +222,8 @@ pub enum FailureKind {
     ServerNotResponding(ServerStep),
     /// The mail server offers no sign-in method the account can use.
     NoSignInMethod,
-    /// The mailbox was replaced, or all its listed messages disappeared,
-    /// during the load.
+    /// The mailbox was replaced during the load: a reconnection found
+    /// another UIDVALIDITY, so the numbers the load held name other messages.
     MailboxChanged,
     /// The mail service could not be reached: no connection, a refused
     /// certificate or a broken transfer.

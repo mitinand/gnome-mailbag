@@ -3,6 +3,7 @@
 
 mod acquisition;
 mod gmail;
+mod listing;
 mod mailboxes;
 mod record;
 mod sections;
@@ -14,7 +15,7 @@ mod timeouts;
 
 use crate::{
     Credential, Encryption, ImapAccount, ImapError, ImapFailure, ImapStep, MailboxReader,
-    OpenOptions, RowItems,
+    MessageList, OpenOptions, RowItems,
     test_server::{FixtureMessage, FixtureSetup, ImapFixture, StartTlsBehavior},
 };
 use std::{
@@ -46,6 +47,14 @@ fn plain_messages(count: u32) -> Vec<FixtureMessage> {
     (1..=count)
         .map(|number| FixtureMessage::plain_text(number * 10, &format!("Text {number}")))
         .collect()
+}
+
+/// Lists the mailbox and reads the rows of every listed message, as a first
+/// fill does.
+async fn fetch_all_rows(reader: &mut MailboxReader) -> Result<MessageList, ImapError> {
+    let listing = reader.list_messages(RowItems::Standard).await?;
+    let uids: Vec<u32> = listing.messages.iter().map(|message| message.uid).collect();
+    reader.fetch_rows_by_uid(&uids, RowItems::Standard).await
 }
 
 fn open_reader(fixture: &ImapFixture) -> MailboxReader {
@@ -222,7 +231,7 @@ fn host_trust_decides_the_connection() {
     match std::env::var("MAILBAG_IMAP_EXPECT").as_deref() {
         Ok("success") | Err(_) => {
             let mut reader = expect_success(opened);
-            let listed = expect_success(run(reader.fetch_rows(RowItems::Standard, 100)));
+            let listed = expect_success(run(fetch_all_rows(&mut reader)));
             println!(
                 "{host} accepted by the host's trust store: {} rows",
                 listed.rows.len()

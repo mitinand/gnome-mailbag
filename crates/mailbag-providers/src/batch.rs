@@ -9,7 +9,7 @@
 use goa_adapter::AccessError;
 use mailbag_domain::{DisplayFields, Failure, FolderRef, IncompleteList, ReceivedContent};
 use mailbag_graph::GraphError;
-use mailbag_imap::{GmailRow, ImapError};
+use mailbag_imap::ImapError;
 use std::fmt;
 
 /// How many of the newest messages of a folder one load delivers, for every
@@ -21,8 +21,20 @@ pub(crate) const BATCH_SIZE: u32 = 100;
 pub enum LoadTarget {
     /// The account's folder list, which Refresh Account loads.
     FolderList,
-    /// One folder's newest messages, which Refresh Mailbox loads.
+    /// One cycle of a folder, which Refresh Mailbox runs
+    /// (specs/009-synchronization FR-001).
     Mailbox(FolderRef),
+}
+
+/// What a load tells whoever started it, on that caller's context: any number
+/// of stored portions, then exactly one end (specs/009-synchronization
+/// research §7).
+#[derive(Debug)]
+pub enum LoadEvent {
+    /// The cycle stored a portion of its folder; the window reads the store
+    /// again.
+    PortionStored,
+    Finished(LoadResult),
 }
 
 impl LoadTarget {
@@ -35,7 +47,8 @@ impl LoadTarget {
     }
 }
 
-/// One folder's messages as a single load received them.
+/// One Microsoft 365 folder's newest messages as a single load received
+/// them, until that folder synchronizes too.
 #[derive(Debug)]
 pub(crate) struct ReceivedBatch {
     pub(crate) folder: FolderRef,
@@ -45,25 +58,16 @@ pub(crate) struct ReceivedBatch {
     pub(crate) incomplete: Option<IncompleteList>,
 }
 
-/// One message of a batch. Raw MIME is released once it is decoded.
+/// One message of a batch.
 pub(crate) struct ReceivedMessage {
-    pub(crate) identity: MessageIdentity,
+    /// Microsoft Graph's immutable identifier, which survives moves between
+    /// folders.
+    pub(crate) graph_id: String,
     pub(crate) fields: DisplayFields,
-    /// INTERNALDATE as seconds since the Unix epoch.
+    /// The received date as seconds since the Unix epoch.
     pub(crate) internal_date: Option<i64>,
     pub(crate) seen: bool,
     pub(crate) content: ReceivedContent,
-    /// Gmail's own identifier and labels; `None` for every other provider.
-    pub(crate) gmail: Option<GmailRow>,
-}
-
-/// How the message's provider identifies it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum MessageIdentity {
-    /// The IMAP UID in the folder the load read.
-    ImapUid(u32),
-    /// Microsoft Graph's identifier, which survives moves between folders.
-    GraphImmutableId(String),
 }
 
 /// Why a refresh delivered no mail, at the step where it stopped, in the
@@ -108,7 +112,7 @@ impl fmt::Debug for ReceivedMessage {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ReceivedMessage")
-            .field("identity", &self.identity)
+            .field("graph_id", &self.graph_id)
             .field("seen", &self.seen)
             .field("content", &self.content)
             .finish_non_exhaustive()

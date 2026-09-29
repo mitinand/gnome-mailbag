@@ -1,44 +1,24 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The Gmail loads: the same steps as the Generic IMAP loads, with what Gmail
-//! offers beyond RFC 3501 that they ask for — a named client, its own message
-//! identifier and labels on every row — and without the container its system
-//! labels are listed under.
+//! The Gmail folder list, and what Gmail is asked for beyond RFC 3501: a
+//! named client, and without the container its system labels are listed
+//! under. Its label folders synchronize through the IMAP cycle.
 
-use crate::{
-    batch::{BATCH_SIZE, ReceivedBatch},
-    folders::gmail_folders,
-    imap_batch::{imap_account, load_batch_from_rows},
-};
+use crate::{folders::gmail_folders, imap_texts::imap_account};
 use goa_adapter::ImapAccess;
-use mailbag_domain::{Folder, FolderRef};
-use mailbag_imap::{
-    ClientIdentity, ImapError, MailboxReader, MessageRow, OpenOptions, RowItems, list_mailboxes,
-};
+use mailbag_domain::Folder;
+use mailbag_imap::{ClientIdentity, ImapError, MessageRow, OpenOptions, list_mailboxes};
 
 pub(crate) async fn list_gmail_folders(access: ImapAccess) -> Result<Vec<Folder>, ImapError> {
     let listed = list_mailboxes(imap_account(access), gmail_options()).await?;
     Ok(gmail_folders(&listed))
 }
 
-pub(crate) async fn load_gmail_mailbox(
-    access: ImapAccess,
-    folder: FolderRef,
-) -> Result<ReceivedBatch, ImapError> {
-    let mut reader =
-        MailboxReader::open(imap_account(access), gmail_options(), &folder.identity).await?;
-    let listed = reader
-        .fetch_rows(RowItems::WithGmailAttributes, BATCH_SIZE)
-        .await?;
-    log_gmail_rows(&listed.rows);
-    load_batch_from_rows(&mut reader, listed, folder).await
-}
-
 /// What Gmail is asked for beyond a Generic IMAP sign-in. Google asks clients
 /// to name themselves and to leave a contact address
 /// (specs/004-gmail-integration/research.md §6).
-fn gmail_options() -> OpenOptions {
+pub(crate) fn gmail_options() -> OpenOptions {
     OpenOptions {
         client_identity: Some(ClientIdentity {
             name: "Mailbag".to_owned(),
@@ -50,10 +30,10 @@ fn gmail_options() -> OpenOptions {
     }
 }
 
-/// Writes Gmail's fields of each row to the record; the rows carry them on
-/// into the batch. Label names are folder-like names and stay at debug
-/// (specs/003-logging FR-010).
-fn log_gmail_rows(rows: &[MessageRow]) {
+/// Writes Gmail's fields of each received row to the record
+/// (specs/004-gmail-integration FR-008). Label names are folder-like names
+/// and stay at debug (specs/003-logging FR-010).
+pub(crate) fn log_gmail_rows(rows: &[MessageRow]) {
     for row in rows {
         let Some(gmail) = &row.gmail else {
             continue;

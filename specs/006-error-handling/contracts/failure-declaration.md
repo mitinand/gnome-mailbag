@@ -95,7 +95,7 @@ chooses the kind; reading a protocol's codes happens there.
 | `ServerStepFailed(ServerStep)` | providers | Any other `ImapFailure::Failed(step)` |
 | `ServerNotResponding(ServerStep)` | providers | `ImapFailure::TimedOut(step)` |
 | `NoSignInMethod` | providers | `ImapFailure::NoSignInMethod` |
-| `MailboxChanged` | providers | `ImapFailure::MailboxChanged` |
+| `MailboxChanged` | providers | `ImapFailure::MailboxChanged`; since 009 only a reconnection that met another UIDVALIDITY (009 research §10) |
 | `ServiceUnreachable` | providers | `GraphFailure::ConnectionFailed` |
 | `ServiceNotResponding` | providers | `GraphFailure::TimedOut` |
 | `ServiceRejectedSignIn` | providers | `GraphFailure::Refused` with status 401 |

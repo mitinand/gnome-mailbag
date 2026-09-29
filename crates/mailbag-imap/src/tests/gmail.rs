@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! What a Gmail account needs from the protocol: a sign-in that carries an
-//! access token instead of a password, UTF-8 names, a named client and the
-//! two Gmail attributes on every row.
+//! access token instead of a password, UTF-8 names, a named client and
+//! Gmail's message identifier in the listing.
 
 use super::test_record::CapturedRecord;
 use super::{expect_failure, expect_success, run};
 use crate::{
-    ClientIdentity, Credential, GmailRow, ImapFailure, ImapStep, MailboxReader, OpenOptions,
+    ClientIdentity, Credential, ImapFailure, ImapStep, ListedUid, MailboxReader, OpenOptions,
     RowItems,
     test_server::{
         FixtureMessage, FixtureSetup, ID_CONNECTION_TOKEN, ID_REMOTE_HOST, ImapFixture,
@@ -192,39 +192,32 @@ fn the_identification_reply_reaches_the_record_without_its_private_fields() {
 }
 
 #[test]
-fn gmail_attributes_arrive_only_when_the_row_fetch_asks_for_them() {
+fn gmails_identifier_is_listed_only_when_asked_for() {
     let fixture = ImapFixture::start(gmail_setup());
     let mut reader = expect_success(run(MailboxReader::open(
         fixture.account_with_token(),
         gmail_options(),
         "INBOX",
     )));
-    let with_attributes =
-        expect_success(run(reader.fetch_rows(RowItems::WithGmailAttributes, 100)));
+    let with_identifier = expect_success(run(reader.list_messages(RowItems::WithGmailAttributes)));
     assert_eq!(
-        with_attributes.rows[0].gmail,
-        Some(GmailRow {
-            message_id: 1_278_455_344_230_334_865,
-            labels: vec!["\\Important".to_owned(), "Работа/Счета".to_owned()],
-        })
+        with_identifier.messages,
+        [ListedUid {
+            uid: 10,
+            seen: false,
+            gmail_message_id: Some(1_278_455_344_230_334_865),
+        }]
     );
-    let standard = expect_success(run(reader.fetch_rows(RowItems::Standard, 100)));
-    assert_eq!(standard.rows[0].gmail, None);
-    let items = fixture.log().fetches;
-    assert!(
-        items[0].items.contains(&"X-GM-MSGID".to_owned())
-            && items[0].items.contains(&"X-GM-LABELS".to_owned()),
-        "{items:?}"
-    );
-    assert!(
-        !items[1].items.contains(&"X-GM-MSGID".to_owned()),
-        "{items:?}"
-    );
+    let standard = expect_success(run(reader.list_messages(RowItems::Standard)));
+    assert_eq!(standard.messages[0].gmail_message_id, None);
+    let fetches = fixture.log().fetches;
+    assert_eq!(fetches[0].items, ["UID", "FLAGS", "X-GM-MSGID"]);
+    assert_eq!(fetches[1].items, ["UID", "FLAGS"]);
 }
 
-/// A row the server answered without the attributes is not invented.
+/// A message the server listed without the identifier is not given one.
 #[test]
-fn a_row_without_gmail_attributes_keeps_none() {
+fn a_message_listed_without_gmails_identifier_keeps_none() {
     let fixture = ImapFixture::start(FixtureSetup {
         messages: vec![FixtureMessage::plain_text(10, "Text")],
         ..gmail_setup()
@@ -234,8 +227,8 @@ fn a_row_without_gmail_attributes_keeps_none() {
         gmail_options(),
         "INBOX",
     )));
-    let listed = expect_success(run(reader.fetch_rows(RowItems::WithGmailAttributes, 100)));
-    assert_eq!(listed.rows[0].gmail, None);
+    let listed = expect_success(run(reader.list_messages(RowItems::WithGmailAttributes)));
+    assert_eq!(listed.messages[0].gmail_message_id, None);
 }
 
 #[test]
@@ -245,7 +238,7 @@ fn the_token_never_reaches_the_record_accepted_or_refused() {
         let account = fixture.account_with_credential(Credential::AccessToken(token.to_owned()));
         let record = CapturedRecord::start(tracing::Level::DEBUG);
         if let Ok(mut reader) = run(MailboxReader::open(account, gmail_options(), "INBOX")) {
-            expect_success(run(reader.fetch_rows(RowItems::WithGmailAttributes, 100)));
+            expect_success(run(reader.list_messages(RowItems::WithGmailAttributes)));
         }
         assert!(!record.text().contains(token), "{}", record.text());
     }

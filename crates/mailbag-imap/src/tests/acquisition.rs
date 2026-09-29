@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use super::{expect_failure, expect_success, open_reader, plain_messages, run};
+use super::{expect_failure, expect_success, fetch_all_rows, open_reader, plain_messages, run};
 use crate::{
     ImapFailure, ImapStep, MailboxReader, MessagePart, OpenOptions, RowItems, ServerReply,
     TextParts, TextRequest,
@@ -12,41 +12,48 @@ use crate::{
 
 fn row_uids(fixture: &ImapFixture) -> Vec<u32> {
     let mut reader = open_reader(fixture);
-    let rows = expect_success(run(reader.fetch_rows(RowItems::Standard, 100))).rows;
+    let rows = expect_success(run(fetch_all_rows(&mut reader))).rows;
     rows.iter().map(|row| row.uid).collect()
 }
 
+/// One command lists every message; rows are then read by UID.
 #[test]
-fn the_newest_hundred_messages_are_listed_by_descending_uid() {
+fn the_listing_names_every_message_in_one_command() {
     for count in [1, 100, 101] {
         let fixture = ImapFixture::start(FixtureSetup {
             messages: plain_messages(count),
             ..FixtureSetup::default()
         });
-        let expected: Vec<u32> = (1..=count)
-            .rev()
-            .take(100)
-            .map(|number| number * 10)
-            .collect();
-        assert_eq!(row_uids(&fixture), expected, "{count} messages");
-        let first = count.saturating_sub(99).max(1);
+        let mut reader = open_reader(&fixture);
+        let listing = expect_success(run(reader.list_messages(RowItems::Standard)));
+        let expected: Vec<u32> = (1..=count).map(|number| number * 10).collect();
+        let listed: Vec<u32> = listing.messages.iter().map(|message| message.uid).collect();
+        assert_eq!(listed, expected, "{count} messages");
+        assert_eq!(listing.refusal, None);
         assert_eq!(
             fixture.log().fetches,
             [RecordedFetch {
                 connection: 1,
-                by_uid: false,
-                message_set: format!("{first}:{count}"),
-                items: [
-                    "UID",
-                    "FLAGS",
-                    "INTERNALDATE",
-                    "BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT)]"
-                ]
-                .map(str::to_owned)
-                .to_vec(),
+                by_uid: true,
+                message_set: "1:*".to_owned(),
+                items: ["UID", "FLAGS"].map(str::to_owned).to_vec(),
             }]
         );
     }
+}
+
+#[test]
+fn rows_are_read_by_uid_newest_first() {
+    let fixture = ImapFixture::start(FixtureSetup {
+        messages: plain_messages(3),
+        ..FixtureSetup::default()
+    });
+    let mut reader = open_reader(&fixture);
+    let rows = expect_success(run(reader.fetch_rows_by_uid(&[10, 30], RowItems::Standard))).rows;
+    assert_eq!(rows.iter().map(|row| row.uid).collect::<Vec<_>>(), [30, 10]);
+    let fetch = &fixture.log().fetches[0];
+    assert!(fetch.by_uid);
+    assert_eq!(fetch.message_set, "10,30");
 }
 
 #[test]
@@ -70,13 +77,12 @@ fn rows_keep_their_flags_date_and_headers_despite_flag_changes() {
             ..FixtureSetup::default()
         });
         let mut reader = open_reader(&fixture);
-        let rows = expect_success(run(reader.fetch_rows(RowItems::Standard, 100))).rows;
+        let rows = expect_success(run(fetch_all_rows(&mut reader))).rows;
         assert_eq!(rows.len(), 2);
         for (row, message) in rows.iter().zip(messages.iter().rev()) {
             assert_eq!(row.uid, message.uid);
             assert_eq!(row.seen, message.seen);
-            // 17 September 2026 10:00 at +03:00.
-            assert_eq!(row.internal_date, Some(1_789_628_400));
+            assert_eq!(row.internal_date, Some(message.received_unix));
             assert_eq!(row.list_headers, message.header);
         }
     }
@@ -92,7 +98,7 @@ fn an_alert_from_a_successful_fetch_explains_a_later_failure() {
     });
     let mut reader = open_reader(&fixture);
     assert_eq!(
-        expect_success(run(reader.fetch_rows(RowItems::Standard, 100)))
+        expect_success(run(reader.fetch_rows_by_uid(&[10], RowItems::Standard)))
             .rows
             .len(),
         1
@@ -120,9 +126,7 @@ fn examine_alerts_explain_a_later_text_failure() {
     });
     let mut reader = open_reader(&fixture);
     assert_eq!(
-        expect_success(run(reader.fetch_rows(RowItems::Standard, 100)))
-            .rows
-            .len(),
+        expect_success(run(fetch_all_rows(&mut reader))).rows.len(),
         1
     );
     let error = expect_failure(run(reader.fetch_text(
@@ -136,14 +140,17 @@ fn examine_alerts_explain_a_later_text_failure() {
     assert_eq!(error.alerts, ["Maintenance tonight", "Backup in progress"]);
 }
 
+/// EXAMINE counted messages that another client deleted before the listing:
+/// the completed listing proves them gone.
 #[test]
-fn a_mailbox_emptied_after_examine_is_not_reported_as_empty() {
+fn a_mailbox_emptied_after_examine_lists_no_message() {
     let fixture = ImapFixture::start(FixtureSetup::default());
     let mut reader = open_reader(&fixture);
-    // EXAMINE counted three messages that another client deleted before FETCH.
     reader.mailbox.message_count = 3;
-    let error = expect_failure(run(reader.fetch_rows(RowItems::Standard, 100)));
-    assert_eq!(error.failure, ImapFailure::MailboxChanged);
+    let listing = expect_success(run(reader.list_messages(RowItems::Standard)));
+    assert!(listing.messages.is_empty());
+    assert_eq!(listing.refusal, None);
+    assert_eq!(fixture.log().fetches[0].message_set, "1:*");
 }
 
 #[test]
@@ -155,7 +162,7 @@ fn rows_received_before_a_no_completion_are_kept_with_the_refusal() {
         ..FixtureSetup::default()
     });
     let mut reader = open_reader(&fixture);
-    let listed = expect_success(run(reader.fetch_rows(RowItems::Standard, 100)));
+    let listed = expect_success(run(fetch_all_rows(&mut reader)));
     assert_eq!(
         listed.rows.iter().map(|row| row.uid).collect::<Vec<_>>(),
         [30, 10]
@@ -178,23 +185,25 @@ fn a_complete_list_carries_no_refusal() {
     });
     let mut reader = open_reader(&fixture);
     assert_eq!(
-        expect_success(run(reader.fetch_rows(RowItems::Standard, 100))).refusal,
+        expect_success(run(fetch_all_rows(&mut reader))).refusal,
         None
     );
 }
 
+/// A refused row fetch that answered for nothing is still a refusal with
+/// the server's words, not a failure: the listing already proved the rest.
 #[test]
-fn a_no_completion_without_rows_fails_with_the_server_text() {
+fn a_refused_row_fetch_without_rows_keeps_the_server_text() {
     let fixture = ImapFixture::start(FixtureSetup {
         messages: plain_messages(2),
         unfetchable_uids: vec![10, 20],
         ..FixtureSetup::default()
     });
     let mut reader = open_reader(&fixture);
-    let error = expect_failure(run(reader.fetch_rows(RowItems::Standard, 100)));
-    assert_eq!(error.failure, ImapFailure::Failed(ImapStep::FetchMessages));
+    let listed = expect_success(run(reader.fetch_rows_by_uid(&[20, 10], RowItems::Standard)));
+    assert!(listed.rows.is_empty());
     assert_eq!(
-        error.server_reply,
+        listed.refusal,
         Some(ServerReply {
             code: None,
             text: "Some messages could not be FETCHed".to_owned(),
@@ -249,9 +258,12 @@ fn a_message_that_disappears_during_the_load_is_left_out() {
     let mut reader = open_reader(&fixture);
     let structures = expect_success(run(reader.fetch_structures(&[30, 20, 10])));
     assert_eq!(structures.keys().copied().collect::<Vec<_>>(), [10, 30]);
-    // When every listed message disappears, the mailbox changed.
-    let error = expect_failure(run(reader.fetch_structures(&[20])));
-    assert_eq!(error.failure, ImapFailure::MailboxChanged);
+    // A group whose every message disappeared is empty, not a failure.
+    let structures = expect_success(run(reader.fetch_structures(&[20])));
+    assert!(structures.is_empty());
+    // The listing still reports it; the rows leave it out.
+    let rows = expect_success(run(fetch_all_rows(&mut reader))).rows;
+    assert_eq!(rows.iter().map(|row| row.uid).collect::<Vec<_>>(), [30, 10]);
 }
 
 #[test]
@@ -316,7 +328,7 @@ fn loading_sends_only_read_only_commands() {
     });
     let mut reader = open_reader(&fixture);
     run(async {
-        let rows = expect_success(reader.fetch_rows(RowItems::Standard, 100).await).rows;
+        let rows = expect_success(fetch_all_rows(&mut reader).await).rows;
         let uids: Vec<u32> = rows.iter().map(|row| row.uid).collect();
         expect_success(reader.fetch_structures(&uids).await);
         let requests = uids
@@ -336,7 +348,8 @@ fn loading_sends_only_read_only_commands() {
             "AUTHENTICATE",
             "CAPABILITY",
             "EXAMINE",
-            "FETCH",
+            "UID FETCH",
+            "UID FETCH",
             "UID FETCH",
             "UID FETCH"
         ]
@@ -359,9 +372,7 @@ fn a_warning_before_the_examine_completion_does_not_fail_it() {
     });
     let mut reader = open_reader(&fixture);
     assert_eq!(
-        expect_success(run(reader.fetch_rows(RowItems::Standard, 100)))
-            .rows
-            .len(),
+        expect_success(run(fetch_all_rows(&mut reader))).rows.len(),
         1
     );
 }
@@ -401,7 +412,7 @@ fn the_read_flag_is_recognized_in_any_case() {
         ..FixtureSetup::default()
     });
     let mut reader = open_reader(&fixture);
-    let rows = expect_success(run(reader.fetch_rows(RowItems::Standard, 100))).rows;
+    let rows = expect_success(run(fetch_all_rows(&mut reader))).rows;
     assert!(rows[0].seen);
 }
 
@@ -453,12 +464,12 @@ fn a_flag_change_for_a_vanished_message_leaves_it_unanswered() {
         ..FixtureSetup::default()
     });
     let mut reader = open_reader(&fixture);
-    let uids: Vec<u32> = expect_success(run(reader.fetch_rows(RowItems::Standard, 100)))
-        .rows
+    let uids: Vec<u32> = expect_success(run(reader.list_messages(RowItems::Standard)))
+        .messages
         .iter()
-        .map(|row| row.uid)
+        .map(|message| message.uid)
         .collect();
-    assert_eq!(uids, [20, 10]);
+    assert_eq!(uids, [10, 20]);
     let structures = expect_success(run(reader.fetch_structures(&uids)));
     assert_eq!(structures.keys().copied().collect::<Vec<_>>(), [20]);
 }

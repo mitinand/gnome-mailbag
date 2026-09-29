@@ -172,7 +172,7 @@ working through `replace_mailbox`, adjusted to the new schema.
 Goal: Refresh Mailbox on a Generic IMAP or Gmail folder runs a cycle; the
 window follows its portions; Microsoft 365 still loads its newest 100.
 
-- [ ] T015 Amend the documents first: specs/002-imap-integration/spec.md
+- [x] T015 Amend the documents first: specs/002-imap-integration/spec.md
   (FR-002, FR-003) and contracts/imap-reading.md (the `1:*` listing, rows
   by UID, a vanished message skipped), specs/004-gmail-integration/spec.md
   (FR-003: after a session the server ended, one attempt with a different
@@ -182,7 +182,7 @@ window follows its portions; Microsoft 365 still loads its newest 100.
   Story 3: a refused listing of a cycle; `MailboxChanged` kept for a
   reconnect; "Text not received" without Retry), each with a status line
   naming this feature.
-- [ ] T016 [US1] [US2] [US3] In crates/mailbag-imap/src/reader.rs,
+- [x] T016 [US1] [US2] [US3] In crates/mailbag-imap/src/reader.rs,
   src/fetch_responses.rs and src/lib.rs: `MailboxReader::list_messages(
   row_items) -> FolderListing` (`UID FETCH 1:* (UID FLAGS)`, with
   `X-GM-MSGID` for Gmail rows, read from the stream into `ListedUid`
@@ -196,20 +196,20 @@ window follows its portions; Microsoft 365 still loads its newest 100.
   stays; `ImapError` tells that the server ended the session with BYE
   (today `command_failure` in src/session.rs folds NO, BAD and BYE into one
   failure; research §13).
-- [ ] T017 [P] [US1] [US2] [US3] In crates/mailbag-imap/src/test_server.rs
+- [x] T017 [P] [US1] [US2] [US3] In crates/mailbag-imap/src/test_server.rs
   and tests: the scripted server answers `UID FETCH 1:*` with flags and
   Gmail identifiers, EXPUNGE during the listing, a NO after some
   responses, a dropped connection, rows by UID with one UID missing, a NO
   after partial rows, an empty mailbox, and a BYE that ends an OAuth
   session after a given command with the next sign-in accepting a new
   token; tests for each.
-- [ ] T018 [US1] [US4] In crates/mailbag-providers/src/worker.rs,
+- [x] T018 [US1] [US4] In crates/mailbag-providers/src/worker.rs,
   src/lib.rs and src/batch.rs: `LoadEvent { PortionStored,
   Finished(LoadResult) }`; the outcome channel unbounded, received in a
   loop; `LoadsMail::start_load(…, on_event)`; the scripted loader of the
   GTK tests and crates/mailbag/src/window_ui.rs adapted (Finished as
   today's report).
-- [ ] T019 [US1] [US2] [US3] [US4] [US5] In a new
+- [x] T019 [US1] [US2] [US3] [US4] [US5] In a new
   crates/mailbag-providers/src/cycle.rs, with src/store_load.rs and
   src/imap_batch.rs: `synchronize_folder` choosing the provider once;
   `synchronize_imap_folder(access, options, identify, folder, store,
@@ -230,7 +230,7 @@ window follows its portions; Microsoft 365 still loads its newest 100.
   complete listing ends the same way and keeps the removals the listing
   proved; neither saves the completed state;
   `store_portion` sends `PortionStored`.
-- [ ] T020 [US1] [US6] In a new crates/mailbag-providers/src/renewal.rs and
+- [x] T020 [US1] [US6] In a new crates/mailbag-providers/src/renewal.rs and
   src/lib.rs: the renewal channel of research §13: `MailLoader::start_load`
   gives the load a sender and answers requests on GTK's context with the
   load's own Online Accounts request; the Gmail cycle, on a BYE after its
@@ -240,7 +240,7 @@ window follows its portions; Microsoft 365 still loads its newest 100.
   interrupted request (the listing or the portion); with the same token,
   or after a second end, the cycle ends with Gmail's reason; a cancelled
   load drops the request.
-- [ ] T021 [P] [US1] [US2] [US3] [US4] [US5] [US6] Tests in
+- [x] T021 [P] [US1] [US2] [US3] [US4] [US5] [US6] Tests in
   crates/mailbag-providers/src/tests.rs against the scripted server and an
   in-memory store: a first fill newest first in portions with texts only
   within 30 days; a second cycle that changes nothing and fetches no
@@ -264,13 +264,13 @@ window follows its portions; Microsoft 365 still loads its newest 100.
   the fill completes (SC-010), and a BYE with the token unchanged, or a
   second BYE, ends the cycle with Gmail's reason; an account excluded
   mid-fill stores no later portion.
-- [ ] T022 [US1] [US4] In crates/mailbag/src/window_ui.rs: on
+- [x] T022 [US1] [US4] In crates/mailbag/src/window_ui.rs: on
   `PortionStored` for any folder of the shown folder's account, read the
   shown folder's rows again while the rows and the banner on screen stay
   (a "read due" mark), as a completed load already rules today; a portion during a
   read marks one more read; the refresh actions stay unavailable while a
   cycle runs.
-- [ ] T023 [P] [US1] [US4] GTK test in crates/mailbag/src/mail_ui/tests.rs:
+- [x] T023 [P] [US1] [US4] GTK test in crates/mailbag/src/mail_ui/tests.rs:
   the scripted loader stores portions and reports them; the list grows
   without losing the selection or the open message; a portion of another
   folder of the same account that changes a shared message's read state,
@@ -363,13 +363,18 @@ path, `replace_mailbox` and `MoreAvailable` are gone.
 
 ## Phase 6: polish
 
-- [ ] T033 [US1] [US2] Record lines (specs/003-logging rules): one line
+- [x] T033 [US1] [US2] Record lines (specs/003-logging rules): one line
   when a cycle ends, with counts of listed, removed, read-state changes,
   related, arrived and texts; folder names at debug only; no test pins the
   text.
 - [ ] T034 Align the documents with what was built: the spec's status, the
   plan's function map and size notes (no measured sizes written back), the
   data model, the contract, and the status lines of the amended specs.
+  Rename the spec's *portion* to *batch* in the documents and the code
+  (`FolderPortion`, `store_portion`, `PortionStored`), since *portion* also
+  names a commit's share of the work (AGENTS.md); done here, after
+  portion 4 removed the old batch path (maintainer's decision
+  2026-09-29).
 - [ ] T035 After the GTK tests one by one: `simplify-review` of the branch
   diff in a fresh subagent; bring findings that change behaviour or add
   scope to the maintainer.

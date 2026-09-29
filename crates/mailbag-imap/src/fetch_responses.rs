@@ -5,7 +5,9 @@
 //! and the text parts of the messages it addressed, and how the command
 //! ended. Nothing here touches the session; the reader runs the commands.
 
-use crate::{GmailRow, MessagePart, MessageRow, MessageText, ReceivedPart, ServerReply, TextParts};
+use crate::{
+    GmailRow, ListedUid, MessagePart, MessageRow, MessageText, ReceivedPart, ServerReply, TextParts,
+};
 use async_imap::{
     error::Error,
     imap_proto::{MessageSection, SectionPath},
@@ -28,21 +30,42 @@ pub(crate) enum FetchEnd {
     Failed(Error),
 }
 
-/// A sequence-number FETCH can return each field separately. Sequence numbers
-/// stay stable during this command; unsolicited updates outside its window do
-/// not establish rows. UID FETCH uses UIDs instead because EXPUNGE is allowed.
-pub(crate) fn collect_rows(fetches: &[Fetch], first: u32, last: u32) -> Vec<MessageRow> {
-    let mut by_sequence = BTreeMap::<u32, Vec<&Fetch>>::new();
+/// Adds one response of a listing. A message's flags and Gmail's identifier
+/// may arrive in separate responses, and a flag change made meanwhile by
+/// another client arrives as one more: the latest flags count. A response
+/// without a UID names no message and is left out.
+pub(crate) fn keep_listed(fetch: &Fetch, listed: &mut BTreeMap<u32, ListedUid>) {
+    let Some(uid) = fetch.uid else {
+        return;
+    };
+    let message = listed.entry(uid).or_insert(ListedUid {
+        uid,
+        seen: false,
+        gmail_message_id: None,
+    });
+    if fetch.has_flags() {
+        message.seen = fetch.flags().any(|flag| matches!(flag, Flag::Seen));
+    }
+    if let Some(message_id) = fetch.gmail_msg_id() {
+        message.gmail_message_id = Some(*message_id);
+    }
+}
+
+/// The rows of the requested messages among the responses, in descending
+/// UID order. A message may be answered in several responses, mixed with
+/// flag changes; one without its header lines has no row.
+pub(crate) fn collect_rows(fetches: &[Fetch], uids: &[u32]) -> Vec<MessageRow> {
+    let mut by_uid = BTreeMap::<u32, Vec<&Fetch>>::new();
     for fetch in fetches {
-        if (first..=last).contains(&fetch.message) {
-            by_sequence.entry(fetch.message).or_default().push(fetch);
+        if let Some(uid) = fetch.uid.filter(|uid| uids.contains(uid)) {
+            by_uid.entry(uid).or_default().push(fetch);
         }
     }
     let header_path = SectionPath::Full(MessageSection::Header);
-    let mut rows: Vec<_> = by_sequence
-        .into_values()
-        .filter_map(|responses| {
-            let uid = responses.iter().find_map(|fetch| fetch.uid)?;
+    by_uid
+        .into_iter()
+        .rev()
+        .filter_map(|(uid, responses)| {
             let list_headers = responses
                 .iter()
                 .find_map(|fetch| fetch.section(&header_path))?;
@@ -60,9 +83,7 @@ pub(crate) fn collect_rows(fetches: &[Fetch], first: u32, last: u32) -> Vec<Mess
                 gmail: gmail_attributes(&responses),
             })
         })
-        .collect();
-    rows.sort_unstable_by_key(|row| std::cmp::Reverse(row.uid));
-    rows
+        .collect()
 }
 
 /// Gmail's attributes among one message's responses. A server that answered

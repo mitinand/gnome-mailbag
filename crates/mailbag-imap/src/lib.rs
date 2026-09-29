@@ -74,11 +74,12 @@ pub struct ClientIdentity {
     pub support_url: String,
 }
 
-/// Which fields the message list asks for.
+/// Which fields the listing and the rows of a mailbox ask for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RowItems {
     Standard,
-    /// Also Gmail's message identifier and labels.
+    /// Also Gmail's message identifier in the listing, and its identifier and
+    /// labels in the rows.
     WithGmailAttributes,
 }
 
@@ -124,7 +125,8 @@ pub enum ImapFailure {
     TimedOut(ImapStep),
     /// The server offers neither AUTHENTICATE PLAIN nor LOGIN.
     NoSignInMethod,
-    /// The mailbox was replaced, or all its selected messages disappeared.
+    /// The mailbox was replaced while the reader reconnected, so its UIDs
+    /// name other messages.
     MailboxChanged,
 }
 
@@ -135,6 +137,10 @@ pub struct ImapError {
     pub server_reply: Option<ServerReply>,
     /// ALERT texts the server sent during this attempt.
     pub alerts: Vec<String>,
+    /// Whether the server ended the session with BYE, as Gmail does when an
+    /// access token expires or a limit is reached
+    /// (specs/009-synchronization/research.md §13).
+    pub ended_by_server: bool,
 }
 
 impl From<ImapFailure> for ImapError {
@@ -144,6 +150,7 @@ impl From<ImapFailure> for ImapError {
             failure,
             server_reply: None,
             alerts: Vec::new(),
+            ended_by_server: false,
         }
     }
 }
@@ -160,6 +167,7 @@ impl fmt::Debug for ImapError {
                 &self.server_reply.as_ref().map(|reply| &reply.code),
             )
             .field("alert_count", &self.alerts.len())
+            .field("ended_by_server", &self.ended_by_server)
             .finish()
     }
 }
@@ -207,6 +215,28 @@ pub struct MailboxList {
     pub utf8_names: bool,
 }
 
+/// Every message of a mailbox by its UID, as one listing reported it
+/// (specs/009-synchronization/research.md §2).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FolderListing {
+    /// In ascending UID order.
+    pub messages: Vec<ListedUid>,
+    /// What the server said when it refused to finish the listing, which
+    /// then proves nothing about the messages it did not report. `None` when
+    /// the listing completed.
+    pub refusal: Option<ServerReply>,
+}
+
+/// One message of a listing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ListedUid {
+    pub uid: u32,
+    pub seen: bool,
+    /// X-GM-MSGID, asked for with `RowItems::WithGmailAttributes` and absent
+    /// when the server did not answer with it.
+    pub gmail_message_id: Option<u64>,
+}
+
 /// List fields of one message.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MessageRow {
@@ -221,10 +251,10 @@ pub struct MessageRow {
     pub gmail: Option<GmailRow>,
 }
 
-/// The message list as one command delivered it.
+/// The rows one command delivered.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MessageList {
-    /// Newest first.
+    /// In descending UID order.
     pub rows: Vec<MessageRow>,
     /// What the server said when it refused to finish the command, which
     /// means the list is missing messages it did not answer for. `None` when

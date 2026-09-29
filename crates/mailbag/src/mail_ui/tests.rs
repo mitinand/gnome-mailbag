@@ -13,10 +13,12 @@ use goa_adapter::{
     ErrorCause,
 };
 use mailbag_domain::{
-    AccountId, ContentExplanation, Failure, FailureKind, Folder, FolderRef, FolderRole,
-    IncompleteList, Message, RemoteSource, RemoteText, ServerStep,
+    AccountId, ContentExplanation, Failure, FailureKind, Folder, FolderPortion, FolderRef,
+    FolderRole, IncompleteList, Message, RemoteSource, RemoteText, ServerStep,
 };
-use mailbag_providers::{CancelsLoadOnDrop, LoadResult, LoadTarget, LoadsMail, MailProvider};
+use mailbag_providers::{
+    CancelsLoadOnDrop, LoadEvent, LoadResult, LoadTarget, LoadsMail, MailProvider,
+};
 use mailbag_store::{Store, StoreWrite};
 use std::{
     cell::Cell,
@@ -29,7 +31,7 @@ struct StartedLoad {
     account_id: AccountId,
     provider: MailProvider,
     target: LoadTarget,
-    report: Box<dyn FnOnce(LoadResult)>,
+    on_event: Box<dyn FnMut(LoadEvent)>,
     /// Set when the window drops the load's step, which cancels it.
     cancelled: Rc<Cell<bool>>,
 }
@@ -66,14 +68,14 @@ impl LoadsMail for ScriptedLoader {
         account_id: &AccountId,
         provider: MailProvider,
         target: LoadTarget,
-        report: Box<dyn FnOnce(LoadResult)>,
+        on_event: Box<dyn FnMut(LoadEvent)>,
     ) -> Box<dyn CancelsLoadOnDrop> {
         let cancelled = Rc::new(Cell::new(false));
         self.started_loads.borrow_mut().push(StartedLoad {
             account_id: account_id.clone(),
             provider,
             target,
-            report,
+            on_event,
             cancelled: cancelled.clone(),
         });
         Box::new(CountedStep {
@@ -93,9 +95,9 @@ impl LoadsMail for SharedLoader {
         account_id: &AccountId,
         provider: MailProvider,
         target: LoadTarget,
-        report: Box<dyn FnOnce(LoadResult)>,
+        on_event: Box<dyn FnMut(LoadEvent)>,
     ) -> Box<dyn CancelsLoadOnDrop> {
-        self.0.start_load(account_id, provider, target, report)
+        self.0.start_load(account_id, provider, target, on_event)
     }
 }
 
@@ -145,7 +147,22 @@ impl ScriptedLoader {
 
     /// Ends the running load the way the worker would.
     fn report(&self, result: LoadResult) {
-        (self.take_running_load().report)(result);
+        (self.take_running_load().on_event)(LoadEvent::Finished(result));
+    }
+
+    /// Stores a portion of the running mailbox load into `folder`, which may
+    /// be another folder of its account, and reports it, as a cycle does;
+    /// the load goes on.
+    fn report_portion(&self, folder: &FolderRef, portion: &FolderPortion) {
+        let mut loads = self.started_loads.borrow_mut();
+        let started = loads.last_mut().expect("a load is running");
+        let write = self
+            .store
+            .store_portion(folder, portion, || started.cancelled.get())
+            .expect("the test store takes the portion");
+        if write == StoreWrite::Stored {
+            (started.on_event)(LoadEvent::PortionStored);
+        }
     }
 
     /// Ends the running folder-list load as a completed one, as the worker
@@ -155,15 +172,16 @@ impl ScriptedLoader {
     fn report_folders(&self, folders: &[Folder]) {
         let started = self.take_running_load();
         assert_eq!(started.target, LoadTarget::FolderList);
+        let mut report = started.on_event;
         if folders.is_empty() {
-            (started.report)(LoadResult::Stored { incomplete: None });
+            report(LoadEvent::Finished(LoadResult::Stored { incomplete: None }));
             return;
         }
         let write = self
             .store
             .replace_folders(&started.account_id, folders, || started.cancelled.get())
             .expect("the test store takes the folder list");
-        (started.report)(stored_or_cancelled(write, None));
+        report(LoadEvent::Finished(stored_or_cancelled(write, None)));
     }
 
     /// Ends the running mailbox load as a completed one, as the worker does:
@@ -178,7 +196,8 @@ impl ScriptedLoader {
             .store
             .replace_mailbox(folder, messages, || started.cancelled.get())
             .expect("the test store takes the load");
-        (started.report)(stored_or_cancelled(write, incomplete));
+        let mut report = started.on_event;
+        report(LoadEvent::Finished(stored_or_cancelled(write, incomplete)));
     }
 }
 
@@ -1285,6 +1304,91 @@ fn mailbox_navigation() {
         .expect("the list scrolls to an item");
     wait_until(|| shown_labels(&widgets).contains(&"Sender 99999".to_owned()));
     println!("scrolled to the last row in {:?}", started.elapsed());
+    window.destroy();
+}
+
+/// A cycle's portions reach the window as they are stored: the list grows
+/// and keeps the open message, a portion of another label of the account
+/// changes a shared message on screen, and the previous refresh's banner
+/// stays revealed while the rows are read again (009 FR-013, research §7).
+#[test]
+#[ignore = "requires a graphical GTK session"]
+fn portions_update_the_shown_folder() {
+    adw::init().expect("GTK display");
+    let store = Arc::new(Store::in_memory());
+    let (window, ui, loader, widgets) = open_window(store.clone());
+    let refresh_mailbox = ui.refresh_mailbox_action().clone();
+    let google = account("synthetic-google");
+    let (inbox, projects) = (folder_of(&google, "INBOX"), folder_of(&google, "Projects"));
+    ui.apply_account_update(&imap_and_google_accounts());
+    settle(&ui);
+    widgets.select(&ui, &google, None);
+    settle(&ui);
+    ui.refresh_account_action().activate(None);
+    settle(&ui);
+    loader.report_folders(&inbox_and_projects());
+    settle(&ui);
+    widgets.select(&ui, &google, Some("INBOX"));
+    settle(&ui);
+
+    // A first fill: the newest portion is listed before the load ends.
+    refresh_mailbox.activate(None);
+    settle(&ui);
+    let arrivals = |messages: &[Message]| FolderPortion {
+        arrived: messages.to_vec(),
+        ..FolderPortion::default()
+    };
+    let [newer, older] = two_messages().try_into().expect("two messages");
+    loader.report_portion(&inbox, &arrivals(std::slice::from_ref(&newer)));
+    settle(&ui);
+    assert_eq!(widgets.list_page(), "messages");
+    assert_eq!(widgets.rows().len(), 1);
+    assert!(widgets.shows_load_feedback());
+    widgets.open_row(0);
+    settle(&ui);
+    loader.report_portion(&inbox, &arrivals(std::slice::from_ref(&older)));
+    settle(&ui);
+    assert_eq!(widgets.rows().len(), 2);
+    assert_eq!(widgets.reader_page(), "message");
+    assert_eq!(widgets.selected_row(), Some(0));
+    assert_eq!(widgets.reader_body_label().text(), "Second body");
+    loader.report(LoadResult::Failed(rejected_sign_in()));
+    settle(&ui);
+    let rejected = declare_failure(&rejected_sign_in(), RetriedOperation::RefreshMailbox);
+    assert_eq!(widgets.banner_title(), Some(rejected.title.to_owned()));
+
+    // A cycle of another label relates the newer message there, read. The
+    // Inbox on screen shows it read at once, and its banner, still the
+    // latest outcome for it, never hides while the rows are read again.
+    widgets.select(&ui, &google, Some("Projects"));
+    settle(&ui);
+    refresh_mailbox.activate(None);
+    settle(&ui);
+    widgets.select(&ui, &google, Some("INBOX"));
+    settle(&ui);
+    widgets.open_row(0);
+    settle(&ui);
+    assert!(widgets.banner().is_revealed());
+    let related = FolderPortion {
+        known_arrived: vec![(newer.identity.clone(), true)],
+        ..FolderPortion::default()
+    };
+    loader.report_portion(&projects, &related);
+    // Anything that redraws the window during the read, such as an Online
+    // Accounts update, keeps the rows and the banner.
+    ui.apply_account_update(&imap_and_google_accounts());
+    assert!(widgets.banner().is_revealed());
+    assert_eq!(widgets.rows().len(), 2);
+    while ui.reads_stored_mail() {
+        dispatch_pending();
+        assert!(widgets.banner().is_revealed());
+    }
+    assert!(!shows_unread_dot(&widgets.rows()[0]));
+    assert_eq!(widgets.reader_page(), "message");
+    loader.report(LoadResult::Failed(rejected_sign_in()));
+    settle(&ui);
+    assert!(!shows_unread_dot(&widgets.rows()[0]));
+    assert_eq!(widgets.rows().len(), 2);
     window.destroy();
 }
 

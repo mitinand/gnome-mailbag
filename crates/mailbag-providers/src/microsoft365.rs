@@ -7,7 +7,7 @@
 //! so no MIME is read (specs/005-microsoft-graph-integration/spec.md FR-005).
 
 use crate::{
-    batch::{BATCH_SIZE, MessageIdentity, ReceivedBatch, ReceivedMessage},
+    batch::{BATCH_SIZE, ReceivedBatch, ReceivedMessage},
     folders::graph_folders,
 };
 use goa_adapter::GraphAccess;
@@ -59,14 +59,13 @@ fn received_message(message: GraphMessage) -> ReceivedMessage {
             from: display_names(message.from.iter().map(name_and_address)),
             to: display_names(message.to.iter().map(name_and_address)),
         },
-        identity: MessageIdentity::GraphImmutableId(message.immutable_id),
+        graph_id: message.immutable_id,
         internal_date: message.received_unix,
         seen: message.is_read,
         content: match message.body_text {
             Some(text) => ReceivedContent::Text(text),
             None => ReceivedContent::TextNotReturned,
         },
-        gmail: None,
     }
 }
 

@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use super::{expect_failure, expect_success, open_reader, run, wait_until};
+use super::{expect_failure, expect_success, fetch_all_rows, open_reader, run, wait_until};
 use crate::{
-    ImapFailure, ImapStep, MailboxReader, MessageText, OpenOptions, RowItems, TextParts,
-    TextRequest,
+    ImapFailure, ImapStep, MailboxReader, MessageText, OpenOptions, TextParts, TextRequest,
     test_server::{FaultKind, FaultyCommand, FixtureMessage, FixtureSetup, ImapFixture},
 };
 
@@ -20,7 +19,7 @@ fn text_is_received_after_the_last_isolated_structure_fails() {
             ..FixtureSetup::default()
         });
         let mut reader = open_reader(&fixture);
-        let rows = expect_success(run(reader.fetch_rows(RowItems::Standard, 100))).rows;
+        let rows = expect_success(run(fetch_all_rows(&mut reader))).rows;
         let uids: Vec<_> = rows.iter().map(|row| row.uid).collect();
         let structures = expect_success(run(reader.fetch_structures(&uids)));
         assert_eq!(structures[&20], None);
@@ -84,7 +83,7 @@ fn unreadable_structures_keep_their_rows_and_the_others_are_read() {
         });
         let mut reader = open_reader(&fixture);
         let (rows, structures) = run(async {
-            let rows = expect_success(reader.fetch_rows(RowItems::Standard, 100).await).rows;
+            let rows = expect_success(fetch_all_rows(&mut reader).await).rows;
             let uids: Vec<u32> = rows.iter().map(|row| row.uid).collect();
             (rows, expect_success(reader.fetch_structures(&uids).await))
         });
@@ -96,7 +95,12 @@ fn unreadable_structures_keep_their_rows_and_the_others_are_read() {
         assert_eq!(structures.len(), 5);
 
         // After each parse failure the next command runs on a fresh connection.
-        let fetches = fixture.log().fetches;
+        let fetches: Vec<_> = fixture
+            .log()
+            .fetches
+            .into_iter()
+            .filter(|fetch| fetch.items.contains(&"BODYSTRUCTURE".to_owned()))
+            .collect();
         for (fetch, next) in fetches.iter().zip(&fetches[1..]) {
             let failed = fetch.message_set.contains(',')
                 || unreadable.contains(&fetch.message_set.parse().unwrap_or_default());

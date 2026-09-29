@@ -305,10 +305,12 @@ pub fn declare_content(content: &ReceivedContent) -> Option<DeclaredFailure> {
                 .to_owned(),
             None,
         ),
+        // A refresh does not fetch a stored message's text again, so there is
+        // nothing to repeat (specs/009-synchronization, Clarifications).
         ReceivedContent::TextNotReturned => (
             "Text not received",
             "This message's text was not received.".to_owned(),
-            Some(FailureAction::Retry),
+            None,
         ),
         ReceivedContent::NotDownloaded => (
             "Text not downloaded",
