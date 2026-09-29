@@ -184,12 +184,10 @@ the envelope.
 **Acceptance Scenarios**:
 
 1. **Given** the server did not return one message's text, **when** the user
-   opens it, **then** the status page under the envelope says so and offers
-   Retry, which refreshes the whole mailbox and keeps the reader open while
-   the message is listed (009 FR-013); until then
-   the list and the other messages are untouched. *Amended 2026-09-29 by
-   Synchronization*: no Retry is offered, since a refresh does not fetch a
-   stored message's text again (009 Clarifications).
+   opens it, **then** the status page under the envelope says so, with no
+   Retry, and the list and the other messages are untouched. *Amended
+   2026-09-29 by Synchronization*: the Retry is gone, since a refresh does
+   not fetch a stored message's text again (009 Clarifications).
 2. **Given** one message's structure cannot be read, **when** the load ends,
    **then** the load succeeds with that message's row present and no notice
    for the list or the account.

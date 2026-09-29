@@ -2304,6 +2304,54 @@ fn a_full_reading_after_a_rejected_page_removes_what_this_cycle_stored() {
     assert_eq!(identities(&stored), [graph_identity(1)]);
 }
 
+/// A full reading that replaced a rejected fill place and then stopped is
+/// started again as a full reading, never as a first fill that removes
+/// nothing: a message deleted meanwhile leaves at its end (FR-004).
+#[test]
+fn a_stopped_full_reading_after_a_rejected_place_starts_again_in_full() {
+    use graph_service::{ScriptedNext::*, delta_entry};
+    let stopping = graph_service::ScriptedService::start_with_changes(graph_mailbox(
+        vec![
+            ("first", delta_page(vec![delta_entry(1)], More("page-2"))),
+            (
+                "page-2",
+                graph_service::ScriptedPage::Refused(graph_service::ScriptedAnswer::throttled()),
+            ),
+        ],
+        inbox_messages(&[1]),
+    ));
+    let store = Arc::new(Store::in_memory());
+    let inbox = folder_of("synthetic-microsoft365", "inbox");
+    store_inbox(&store, &inbox);
+    // A paused first fill: a message deleted meanwhile, and a place the
+    // service no longer knows.
+    let paused = FolderBatch {
+        arrived: vec![Message {
+            identity: graph_identity(9),
+            ..stored_earlier_message()
+        }],
+        state: Some(FolderState {
+            server_position: None,
+            fill_place: Some(format!(
+                "{}/me/mailFolders/inbox/messages/delta?$skiptoken=expired",
+                stopping.url()
+            )),
+            synchronized: false,
+        }),
+        ..FolderBatch::default()
+    };
+    store.store_batch(&inbox, &paused, || false).unwrap();
+    let (outcome, _, _) = synchronize_kind_again(microsoft365_kind(&stopping), &store);
+    assert!(matches!(outcome, LoadResult::Failed(_)), "{outcome:?}");
+    let completing = graph_service::ScriptedService::start_with_changes(graph_mailbox(
+        vec![("first", delta_page(vec![delta_entry(1)], Done("round-1")))],
+        inbox_messages(&[1]),
+    ));
+    let (outcome, stored, _) = synchronize_kind_again(microsoft365_kind(&completing), &store);
+    assert!(matches!(outcome, LoadResult::Stored { .. }), "{outcome:?}");
+    assert_eq!(identities(&stored), [graph_identity(1)]);
+}
+
 /// FR-008: a round whose first page removed every row and whose next page
 /// failed leaves the folder not completed, never shown as empty, and the
 /// next cycle starts that round again from its start.

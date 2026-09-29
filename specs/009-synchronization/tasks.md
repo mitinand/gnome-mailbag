@@ -110,7 +110,7 @@ is that the open message stays open when a load leaves it in the list.
   before and after (offscreen paintable to PNG, outside the repository)
   and a keyboard check (arrows move the focus, Enter opens, the focused
   row is outlined) for the maintainer.
-- [ ] T008 STOP: run ./scripts/check.sh, git diff --check and each GTK test
+- [x] T008 STOP: run ./scripts/check.sh, git diff --check and each GTK test
   one per process; compare the size with plan.md (window ≈ 200, store
   ≈ 40, domain ≈ 15); show the render; report, suggest the commit and wait
   before portion 2.
@@ -139,8 +139,8 @@ working through `replace_mailbox`, adjusted to the new schema.
   text of this message was not downloaded." with a short reason about the
   last 30 days; no action; impersonal, AGENTS.md "UI wording").
 - [x] T011 [US1] [US4] In crates/mailbag-store/src/schema.sql and
-  src/content.rs: `folder.server_position`, `folder.synchronized` (was
-  `loaded`); no numbering version column; `membership` without `position`;
+  src/content.rs: `folder.server_position`, `folder.fill_place`,
+  `folder.synchronized` (was `loaded`); no numbering version column; `membership` without `position`;
   content code `not_downloaded`; check the rows read with `EXPLAIN QUERY
   PLAN` on a store of 100 000 rows and record in research §6 that no index
   is needed, or add the one the plan shows.
@@ -165,7 +165,7 @@ working through `replace_mailbox`, adjusted to the new schema.
   `stored_identities` over two folders of one account; a folder marked
   not completed with no rows reads as `None`; a store of 008's structure
   is discarded at start.
-- [ ] T014 STOP: run ./scripts/check.sh and git diff --check; compare the
+- [x] T014 STOP: run ./scripts/check.sh and git diff --check; compare the
   size with plan.md (domain ≈ 55, store ≈ 175); report, suggest the commit
   and wait before portion 3.
 
@@ -206,14 +206,17 @@ window follows its batches; Microsoft 365 still loads its newest 100.
   session after a given command with the next sign-in accepting a new
   token; tests for each.
 - [x] T018 [US1] [US4] In crates/mailbag-providers/src/worker.rs,
-  src/lib.rs and src/batch.rs: `LoadEvent { BatchStored,
+  src/lib.rs and src/batch.rs (renamed load.rs in T034): `LoadEvent { BatchStored,
   Finished(LoadResult) }`; the outcome channel unbounded, received in a
   loop; `LoadsMail::start_load(…, on_event)`; the scripted loader of the
   GTK tests and crates/mailbag/src/window_ui.rs adapted (Finished as
   today's report).
 - [x] T019 [US1] [US2] [US3] [US4] [US5] In a new
   crates/mailbag-providers/src/cycle.rs, with src/store_load.rs and
-  src/imap_batch.rs: `synchronize_folder` choosing the provider once;
+  src/imap_batch.rs (built as src/cycle/imap.rs, with
+  `synchronize_imap_folder(access, identity_rule, renewal, batches)` and
+  `IdentityRule` in place of the two identity functions; see the plan's
+  function map): `synchronize_folder` choosing the provider once;
   `synchronize_imap_folder(access, options, identify, folder, store,
   events)` as the plan's function map (open, `read_folder_sync`, the
   listing, the batch of removals and read states when the listing
@@ -254,8 +257,8 @@ window follows its batches; Microsoft 365 still loads its newest 100.
   IMAP folder (a new UIDVALIDITY with the same UIDs for other messages):
   the old rows leave, the new messages arrive, and no old row or text is
   attached to a new message; a renumbered Gmail folder matched by identity;
-  rows stored without a numbering version in their identity leave with the
-  first complete listing; a stopped refill leaves the folder "no mail
+  (rows stored without a numbering version cannot remain: the store is
+  discarded when its structure changes, 007 FR-012); a stopped refill leaves the folder "no mail
   loaded", not empty; a first fill of 10 000 scripted messages whose first
   batch is stored before the rest and a second cycle that fetches
   nothing (SC-001, SC-002; times written to the output, not asserted); a message gone between the listing
@@ -278,7 +281,7 @@ window follows its batches; Microsoft 365 still loads its newest 100.
   folder of the same account that changes a shared message's read state,
   followed by a failed end, updates the shown folder; and a failure banner
   from the previous refresh does not blink.
-- [ ] T024 STOP: run ./scripts/check.sh, git diff --check and each GTK test
+- [x] T024 STOP: run ./scripts/check.sh, git diff --check and each GTK test
   one per process; compare the size with plan.md (imap ≈ 170, providers
   ≈ 330 so far, window ≈ 80); report, suggest the commit and wait before
   portion 4.
@@ -356,10 +359,12 @@ path, `replace_mailbox` and `MoreAvailable` are gone.
   changes whose two arrivals are a month apart reads two texts, not the
   month between; a continued first fill that reads one more round; a
   rejected position
-  (rows kept, unlisted removed at the end) and a rejected place; a token
+  (rows kept, unlisted removed at the end) and a rejected place whose full
+  reading stops and is started again in full (added at the final review,
+  2026-09-30); a token
   refused mid-fill renewed once (SC-010), refused twice or answered with
   the same token is the sign-in failure.
-- [ ] T032 STOP: run ./scripts/check.sh, git diff --check and each GTK test
+- [x] T032 STOP: run ./scripts/check.sh, git diff --check and each GTK test
   one per process; compare the size with plan.md (graph ≈ 210, providers
   ≈ 540 in all); report, suggest the commit and wait before the polish.
 

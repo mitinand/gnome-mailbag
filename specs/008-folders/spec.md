@@ -608,8 +608,8 @@ rows and the failure shown after each.
   used and an account's departure apply unchanged; an account's departure
   removes its folders with its mail. *Amended by 009 FR-001 and FR-008*:
   a folder's messages and relations are what its cycles stored; the folder
-  state is the saved server position and whether its latest cycle
-  completed; a relation carries no position.
+  state is the saved server position, the place an unfinished first fill
+  continues from, and whether its latest cycle completed; a relation carries no position.
 - **FR-008 — The window reads folders from the store**: The sidebar's folders
   and a selected folder's rows MUST be read from the store, never from a
   load's result directly (007 FR-001): at start, when an account appears,

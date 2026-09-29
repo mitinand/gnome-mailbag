@@ -488,7 +488,8 @@ documentation does not say how, and FR-007's rule covers either form.
   reading's last, mark the folder as not completed, so a folder that a
   stopped cycle left without rows is never shown as empty (007 FR-006);
   and each page of an unfinished first fill on Microsoft 365 saves the
-  place where it continues (FR-010). *Amended 2026-09-29 after an external
+  place where it continues (FR-010), and its last page, of a continued
+  fill, saves the next round's position before the one more round. *Amended 2026-09-29 after an external
   review*: a Microsoft 365 round whose first page removed every row and
   whose next page failed left the folder shown as empty.
 
@@ -727,8 +728,9 @@ To be applied with this feature, in the owning documents:
 
 - 007 FR-002 (a folder's messages "as its latest completed load left
   them"; the reader content is the text, a reason for none, or not
-  downloaded) and FR-003: the folder state is built as the saved position
-  and whether the latest cycle completed; the numbering version is part of
+  downloaded) and FR-003: the folder state is built as the saved position,
+  the place an unfinished first fill continues from, and whether the
+  latest cycle completed; the numbering version is part of
   a Generic IMAP message's identity instead of a folder field; the IMAP
   number with its numbering version on each relation stays deferred to
   read and star, since no cycle needs it: a Generic IMAP message's identity

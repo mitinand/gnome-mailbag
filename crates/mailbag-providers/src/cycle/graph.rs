@@ -133,7 +133,9 @@ pub(super) async fn synchronize_graph_folder(
 }
 
 /// Where the reading starts: the saved place of an unfinished first fill,
-/// the saved position of the next round, or a first reading.
+/// the saved position of the next round, or a first reading. A first
+/// reading of a folder that holds rows is a stopped full reading, started
+/// again in full so that it removes what it does not list.
 fn where_to_start(stored: &FolderSync, folder_id: &str) -> (ChangesFrom, Reading) {
     match (&stored.state.fill_place, &stored.state.server_position) {
         (Some(place), _) => (
@@ -141,6 +143,12 @@ fn where_to_start(stored: &FolderSync, folder_id: &str) -> (ChangesFrom, Reading
             Reading::FirstFill { continued: true },
         ),
         (None, Some(position)) => (ChangesFrom::Link(position.clone()), Reading::Round),
+        (None, None) if !stored.stored.is_empty() => (
+            ChangesFrom::FirstReading(folder_id.to_owned()),
+            Reading::FullRereading {
+                listed: HashSet::new(),
+            },
+        ),
         (None, None) => (
             ChangesFrom::FirstReading(folder_id.to_owned()),
             Reading::FirstFill { continued: false },

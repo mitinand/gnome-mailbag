@@ -24,15 +24,18 @@ user's word, *mailbox*, where it names the refreshed folder
   stored messages whose fields the service reported again), each with its
   content or `NotDownloaded`; `state` is present in the batch that
   completes the cycle, in the first batch of a cycle that has messages
-  to fetch (marking the folder not completed), and in each page's batch
-  of a Microsoft 365 first fill (spec FR-008).
+  to fetch (marking the folder not completed), and on Microsoft 365 in
+  each page that is not a reading's last (not completed: a first fill's
+  page with its fill place, a round's or full reading's page with the
+  round's start position) and in a continued first fill's last page
+  (its delta link, not completed, before the one more round) (spec FR-008).
 - `MessageListRow { identity, fields: DisplayFields, received_unix, seen }`:
   a message as the list shows it, without its content.
 - `ReceivedContent::NotDownloaded`: the reader says the text was not
   downloaded (spec FR-009).
 - `FailureKind::MailboxChanged` stays only for a UIDVALIDITY that changed
-  during a reconnect after an unreadable structure (research §10; its other
-  three producers go); `IncompleteList::MoreAvailable` and its
+  during a reconnect: after an unreadable structure, or after Gmail's
+  session was renewed (research §10, §13; its other three producers go); `IncompleteList::MoreAvailable` and its
   wording go with their last producer.
 
 ## Loads (`mailbag-providers`)

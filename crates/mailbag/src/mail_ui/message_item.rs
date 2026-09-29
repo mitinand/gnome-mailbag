@@ -23,8 +23,6 @@ mod imp {
         /// The stored row the item was made from; its read state may be
         /// older than `unread`.
         pub(super) listed: OnceCell<MessageListRow>,
-        #[property(get = Self::identity)]
-        identity: PhantomData<String>,
         #[property(get = Self::sender)]
         sender: PhantomData<String>,
         #[property(get = Self::subject)]
@@ -51,10 +49,6 @@ mod imp {
     impl MessageItem {
         fn listed(&self) -> &MessageListRow {
             self.listed.get().expect("made from a row")
-        }
-
-        fn identity(&self) -> String {
-            self.listed().identity.clone()
         }
 
         fn sender(&self) -> String {

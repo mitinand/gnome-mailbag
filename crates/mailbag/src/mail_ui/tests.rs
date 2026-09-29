@@ -1669,7 +1669,7 @@ fn item_list(items: &gio::ListStore) -> Vec<MessageItem> {
 fn identities(items: &gio::ListStore) -> Vec<String> {
     item_list(items)
         .iter()
-        .map(|item| item.identity())
+        .map(|item| item.listed().identity.clone())
         .collect()
 }
 

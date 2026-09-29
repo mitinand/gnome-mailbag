@@ -14,10 +14,10 @@ the store's version; all tables are `STRICT`.
 |---|---|---|
 | `server_position` | TEXT, null | Microsoft 365 only: the `@odata.deltaLink` the next round of changes starts from, once a first reading completed; null otherwise |
 | `fill_place` | TEXT, null | Microsoft 365 only: the `@odata.nextLink` an unfinished first fill continues from; null otherwise. Kept apart from `server_position` so that neither link's meaning depends on `synchronized` (external review, 2026-09-29) |
-| `synchronized` | INTEGER, 0 or 1 | Whether the folder's latest cycle completed; replaces 008's `loaded`. The first batch of an IMAP cycle that has messages to fetch, and each Microsoft 365 page that is not a reading's last, set it to 0; the completing batch sets it to 1 |
+| `synchronized` | INTEGER, 0 or 1 | Whether the folder's latest cycle completed; replaces 008's `loaded`. The first batch of an IMAP cycle that has messages to fetch, and each Microsoft 365 page that is not a reading's last, and a continued first fill's last page, set it to 0; the completing batch sets it to 1 |
 
 The other columns are 008's. Replacing a folder list (008 FR-001) keeps
-these two columns of a folder it keeps. No numbering version is stored:
+these three columns of a folder it keeps. No numbering version is stored:
 it is part of a Generic IMAP message's identity (below).
 
 ### `message` — changed identity and content codes
@@ -55,7 +55,7 @@ memberships (the primary key's prefix) and sorts them.
   5. insert the arrival's membership in the folder if missing, and the
      memberships of the batch's messages the account already held,
      setting their `seen` as listed;
-  6. when the batch carries a folder state, write the two state
+  6. when the batch carries a folder state, write the three state
      columns.
   A folder the store does not hold fails the write, as 008's loads do.
 - **Reading a folder's rows**: `None` when `synchronized = 0` and the folder

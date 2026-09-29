@@ -297,8 +297,9 @@ window shows and what the record says.
   IMAP UID, which is valid only with the folder's UIDVALIDITY, and a message
   may belong to several folders. No stored message is ever addressed by a UID
   of another UIDVALIDITY. *Amended by 009 (FR-005, Key Entities)*: the
-  folder state is built as the saved server position and whether the
-  folder's latest cycle completed; UIDVALIDITY is part of a Generic IMAP
+  folder state is built as the saved server position, the place an
+  unfinished first fill continues from, and whether the folder's latest
+  cycle completed; UIDVALIDITY is part of a Generic IMAP
   message's identity, `imap:<folder>/<UIDVALIDITY>/<UID>`, instead of a
   folder field; the UID on each membership stays deferred to read and star
   (FR-014(c)), since no cycle needs it.

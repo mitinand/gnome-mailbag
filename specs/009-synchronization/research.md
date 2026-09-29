@@ -199,7 +199,9 @@ one number per line.
   without case), means the saved position or place is no longer accepted;
   the cycle then reads the whole folder, keeps the listed identities in
   memory, and at its end removes the stored messages it did not list; if it
-  stops, the next cycle starts it again (spec FR-007, FR-010).
+  stops, the next cycle starts it again (spec FR-007, FR-010): with no
+  saved link and rows stored, a first reading is such a full reading,
+  never a first fill that removes nothing (final review, 2026-09-30).
 
 **Rationale**:
 - The delta query returns created, updated and removed items, updates may
@@ -254,8 +256,8 @@ more code for the same result as a date range.
 ## §6 The store: folder state, batches, reads without text
 
 **Decision** ([data-model.md](data-model.md)):
-- `folder` gains `server_position`; `loaded` becomes `synchronized` ("the
-  folder's latest cycle completed"). No numbering version is stored (§2).
+- `folder` gains `server_position` and `fill_place`; `loaded` becomes
+  `synchronized` ("the folder's latest cycle completed"). No numbering version is stored (§2).
   The first batch of a cycle that has messages to fetch sets
   `synchronized` to 0, so a stopped cycle that left no row is shown as "no
   mail loaded", never as an empty folder.
@@ -381,17 +383,18 @@ project with it (`cmb_db.py` looks up the base class `object`, which its
 catalog lacks). GTK refuses any other `parent`: a list item template's
 parent must be `GObject`.
 
-## §10 `MailboxChanged` stays for one case
+## §10 `MailboxChanged` stays for a reconnect
 
 **Decision**: The failure kind and its wording stay. Of its four producers
 today, three go: rows of a sequence-number FETCH that all vanished
 (`reader.rs`, `fetch_rows`), structures that all vanished
 (`fetch_structures`) and a newest-100 load whose messages all vanished
 (`imap_batch.rs`, `load_batch_from_rows`); a vanished message is a missing
-answer to a UID FETCH, which the cycle skips. One producer remains: after a structure the
+answer to a UID FETCH, which the cycle skips. A reconnect remains: after a structure the
 parser cannot read, the reader reconnects, and if the folder's UIDVALIDITY
 changed meanwhile the numbers the cycle holds name other messages, so the
-cycle stops with `MailboxChanged` (`reader.rs`, `reconnect`). The next
+cycle stops with `MailboxChanged` (`reader.rs`, `reconnect`); a Gmail
+folder reopened after a renewed session does the same (§13). The next
 cycle's identities carry the new numbering version (spec FR-005).
 
 **Rationale**: storing a message's fields under an identity of the old

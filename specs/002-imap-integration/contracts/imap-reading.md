@@ -94,7 +94,8 @@ OK; a NO or BAD leaves it incomplete and a lost connection fails the step.
 The missing messages' rows are then read by UID, a hundred at a time,
 `UID FETCH <uids> (UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO
 SUBJECT)])`, highest UID first; the sequence-number command below goes, and
-so does the window of 100.
+so do the window of 100, its min(N, 100) result and the rule against an
+open-ended range.
 
 Here low/high stand for calculated numbers. Do not SEARCH ALL, request older
 history or use an open-ended * range. The stable result is min(N, 100) messages,
