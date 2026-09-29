@@ -201,10 +201,11 @@ fn a_short_list_carries_the_refusal_only_when_the_server_refused() {
     assert_eq!(sources(&refused), [RemoteSource::ServerReply]);
     assert_eq!(refused.details, "Server code: LIMIT");
 
-    let more = declare_short_list(&IncompleteList::MoreAvailable);
-    assert_eq!(more.action, None);
-    assert!(more.remote_texts.is_empty());
-    assert!(more.details.is_empty());
+    let without_code = declare_short_list(&IncompleteList::ServerRefused {
+        reply: "Try later".to_owned(),
+        code: None,
+    });
+    assert!(without_code.details.is_empty());
 }
 
 #[test]

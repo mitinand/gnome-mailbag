@@ -6,21 +6,22 @@
 //! to GTK's context and the answer comes back
 //! (specs/009-synchronization/research.md §13).
 
-use goa_adapter::{GoaAdapter, ImapAccess};
+use goa_adapter::{AccessError, AccessRequest};
 use mailbag_domain::AccountId;
 
 /// Where the answer to one renewal request goes.
-type RenewalReply = async_channel::Sender<Option<ImapAccess>>;
+type RenewalReply<Access> = async_channel::Sender<Option<Access>>;
 
-/// A running load's way to ask for its account's access again.
-pub(crate) struct AccessRenewal {
-    requests: async_channel::Sender<RenewalReply>,
+/// A running load's way to ask for its account's access again: IMAP's
+/// settings and token, or Microsoft Graph's token.
+pub(crate) struct AccessRenewal<Access> {
+    requests: async_channel::Sender<RenewalReply<Access>>,
 }
 
-impl AccessRenewal {
+impl<Access> AccessRenewal<Access> {
     /// The access Online Accounts gives now; `None` when it gave none or
     /// the load's requests are no longer answered.
-    pub(crate) async fn renew(&self) -> Option<ImapAccess> {
+    pub(crate) async fn renew(&self) -> Option<Access> {
         let (reply, answer) = async_channel::bounded(1);
         self.requests.send(reply).await.ok()?;
         answer.recv().await.ok().flatten()
@@ -28,17 +29,24 @@ impl AccessRenewal {
 }
 
 /// A renewal for a load of `account_id`, answered on the calling context,
-/// GTK's, with the request the load started with. It answers until the load
-/// drops its renewal.
-pub(crate) fn answer_renewals(accounts: GoaAdapter, account_id: AccountId) -> AccessRenewal {
-    let (requests, received) = async_channel::unbounded::<RenewalReply>();
+/// GTK's, with `request`, the Online Accounts request the load started with.
+/// It answers until the load drops its renewal.
+pub(crate) fn answer_renewals<Access: 'static>(
+    account_id: AccountId,
+    request: impl Fn(&AccountId, Box<dyn FnOnce(Result<Access, AccessError>)>) -> AccessRequest
+    + 'static,
+) -> AccessRenewal<Access> {
+    let (requests, received) = async_channel::unbounded::<RenewalReply<Access>>();
     glib::spawn_future_local(async move {
         while let Ok(reply) = received.recv().await {
             let (sender, answer) = async_channel::bounded(1);
             // Kept until Online Accounts answers; dropping it would cancel it.
-            let _request = accounts.request_imap_access(&account_id, move |access| {
-                sender.try_send(access.ok()).ok();
-            });
+            let _request = request(
+                &account_id,
+                Box::new(move |access| {
+                    sender.try_send(access.ok()).ok();
+                }),
+            );
             let access = answer.recv().await.ok().flatten();
             tracing::info!(
                 account = account_id.as_str(),
@@ -52,9 +60,9 @@ pub(crate) fn answer_renewals(accounts: GoaAdapter, account_id: AccountId) -> Ac
 }
 
 #[cfg(test)]
-impl AccessRenewal {
+impl<Access> AccessRenewal<Access> {
     /// A renewal the test answers through the returned receiver.
-    pub(crate) fn answered_by_test() -> (Self, async_channel::Receiver<RenewalReply>) {
+    pub(crate) fn answered_by_test() -> (Self, async_channel::Receiver<RenewalReply<Access>>) {
         let (requests, received) = async_channel::unbounded();
         (Self { requests }, received)
     }

@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Lists the folders of a Microsoft 365 mailbox and reads the messages of one
-//! of them from Microsoft Graph.
+//! Lists the folders of a Microsoft 365 mailbox and reads the changes of one
+//! of them, and its messages' texts, from Microsoft Graph.
 //!
 //! This crate owns the web request: its address, query and headers, the
 //! answer's JSON and the service's refusals. It has no notion of Online
@@ -22,16 +22,28 @@ use glib::translate::IntoGlib;
 use soup::prelude::*;
 use std::fmt;
 
-/// How long the service may stay silent, as the IMAP wait limit of
-/// specs/002-imap-integration. libsoup has no limit by default.
-const WAIT_LIMIT_SECONDS: u32 = 30;
+/// How long the service may stay silent. Single pages of a delta reading took
+/// up to 15 seconds (specs/009-synchronization/research.md §11); libsoup has
+/// no limit by default.
+const WAIT_LIMIT_SECONDS: u32 = 60;
 /// The change-tracking listing, which gives the whole folder tree flat, page
 /// by page (specs/008-folders/research.md §5).
 const FOLDER_LISTING_PATH: &str = "/me/mailFolders/delta";
 const FOLDER_FIELDS: &str = "id,displayName,parentFolderId,isHidden";
-const LISTED_FIELDS: &str = "id,subject,from,toRecipients,receivedDateTime,isRead,body";
+/// A message's list fields, which a delta entry carries in full for a listed
+/// message and in part for a change.
+pub(crate) const CHANGE_FIELDS: [&str; 5] = [
+    "subject",
+    "from",
+    "toRecipients",
+    "receivedDateTime",
+    "isRead",
+];
 /// Identifiers that survive folder moves, and bodies rendered as text.
 const PREFERENCES: &str = r#"IdType="ImmutableId", outlook.body-content-type="text""#;
+/// A delta reading's pages hold at most 500 entries; the service caps them at
+/// 512 whatever is asked (specs/009-synchronization/research.md §5).
+const DELTA_PREFERENCES: &str = r#"IdType="ImmutableId", odata.maxpagesize=500"#;
 
 /// A folder of the mailbox, as the listing names it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,15 +91,6 @@ impl WellKnownFolder {
     }
 }
 
-/// The newest messages of a folder, as one answer delivered them.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MessagePage {
-    /// Newest first.
-    pub messages: Vec<GraphMessage>,
-    /// The service offered a further page, which was not requested.
-    pub more_available: bool,
-}
-
 /// One message of the answer. Fields the service left out, or sent in another
 /// form, are `None` or empty.
 #[derive(Clone, PartialEq, Eq)]
@@ -117,6 +120,52 @@ impl fmt::Debug for GraphMessage {
     }
 }
 
+/// Messages' texts by identifier; `None` for a message the service gave no
+/// text for.
+pub type MessageTexts = Vec<(String, Option<String>)>;
+
+/// Where a delta reading of a folder's messages starts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ChangesFrom {
+    /// A first reading of the folder with this id, newest first.
+    FirstReading(String),
+    /// A link the service gave: a next page, or the round after a completed
+    /// reading.
+    Link(String),
+}
+
+/// One page of a delta reading.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChangePage {
+    /// In the service's order; the same message may appear more than once.
+    pub changes: Vec<MessageChange>,
+    pub next: NextPage,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NextPage {
+    /// The reading goes on at this link.
+    More(String),
+    /// The reading is complete; the next round of changes starts at this link.
+    Done(String),
+}
+
+/// One entry of a delta page.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MessageChange {
+    /// The message left the folder.
+    Removed(String),
+    /// The message with every list field: an arrival or a full update.
+    Listed(GraphMessage),
+    /// Only what changed: the read state when it did, and whether other list
+    /// fields changed too (specs/009-synchronization/research.md §5).
+    Changed {
+        id: String,
+        is_read: Option<bool>,
+        other_fields: bool,
+    },
+}
+
 /// A sender or recipient as the service names it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Mailbox {
@@ -128,6 +177,9 @@ pub struct Mailbox {
 pub enum GraphFailure {
     /// No connection, a refused certificate or a broken transfer.
     ConnectionFailed,
+    /// The service no longer accepts a saved delta link: status 410, or a
+    /// 4xx whose error code is `syncStateNotFound`.
+    PositionRejected,
     /// The service stopped responding within the wait limit.
     TimedOut,
     /// The service answered with a status other than 200.
@@ -233,64 +285,180 @@ async fn find_well_known_folder(
     Ok(Some(folder_id))
 }
 
-/// Asks the service at `service_url` for the newest `batch_size` messages of
-/// the folder `folder_id` with their text, in one request. A well-known name
-/// such as `inbox` serves as the id.
-pub async fn list_mailbox_messages(
+/// Reads one page of a delta reading of a folder's messages, the service's
+/// changes since a saved link or a first reading newest first
+/// (specs/009-synchronization/research.md §5). A link is followed as the
+/// service gave it. A link the service no longer accepts fails with
+/// `GraphFailure::PositionRejected`.
+pub async fn read_message_changes(
     service_url: &str,
     access_token: &str,
-    folder_id: &str,
-    batch_size: u32,
-) -> Result<MessagePage, GraphError> {
-    list_mailbox_messages_within(
-        service_url,
-        access_token,
-        folder_id,
-        batch_size,
-        WAIT_LIMIT_SECONDS,
-    )
-    .await
+    from: &ChangesFrom,
+) -> Result<ChangePage, GraphError> {
+    read_message_changes_within(service_url, access_token, from, WAIT_LIMIT_SECONDS).await
 }
 
 /// Tests shorten the wait limit to observe a silent service quickly.
 #[cfg(any(test, feature = "test-support"))]
-pub async fn list_mailbox_messages_with_short_wait_limit(
+pub async fn read_message_changes_with_short_wait_limit(
     service_url: &str,
     access_token: &str,
-    folder_id: &str,
-    batch_size: u32,
+    from: &ChangesFrom,
     wait_limit_seconds: u32,
-) -> Result<MessagePage, GraphError> {
-    list_mailbox_messages_within(
-        service_url,
-        access_token,
-        folder_id,
-        batch_size,
-        wait_limit_seconds,
-    )
-    .await
+) -> Result<ChangePage, GraphError> {
+    read_message_changes_within(service_url, access_token, from, wait_limit_seconds).await
 }
 
-async fn list_mailbox_messages_within(
+async fn read_message_changes_within(
+    service_url: &str,
+    access_token: &str,
+    from: &ChangesFrom,
+    wait_limit_seconds: u32,
+) -> Result<ChangePage, GraphError> {
+    let session = open_session(wait_limit_seconds);
+    let address = match from {
+        ChangesFrom::FirstReading(folder_id) => format!(
+            "{service_url}/me/mailFolders/{}/messages/delta?$select={}\
+             &$orderby=receivedDateTime%20desc",
+            escaped(folder_id),
+            CHANGE_FIELDS.join(",")
+        ),
+        ChangesFrom::Link(link) => link.clone(),
+    };
+    let request = build_request(&address, access_token)?;
+    prefer(&request, DELTA_PREFERENCES);
+    let answer = send(&session, &request).await?;
+    check_status(&request, &answer).map_err(rejected_position)?;
+    let page = reply::read_change_page(&answer).map_err(|failure| failed(failure, None))?;
+    tracing::debug!(
+        bytes = answer.len(),
+        changes = page.changes.len(),
+        last_page = matches!(page.next, NextPage::Done(_)),
+        "changes received"
+    );
+    Ok(page)
+}
+
+/// A refusal of a saved delta link, told apart from other refusals.
+fn rejected_position(error: GraphError) -> GraphError {
+    match &error.failure {
+        GraphFailure::Refused { status: 410, .. } => {
+            failed(GraphFailure::PositionRejected, error.reason)
+        }
+        GraphFailure::Refused {
+            status,
+            code: Some(code),
+        } if (400..500).contains(status) && code.eq_ignore_ascii_case("syncStateNotFound") => {
+            failed(GraphFailure::PositionRejected, error.reason)
+        }
+        _ => error,
+    }
+}
+
+/// The texts of the folder's messages received from `from_unix` to
+/// `to_unix`, both included, by identifier: one request for a first
+/// reading's page, whose messages lie between those dates
+/// (specs/009-synchronization/research.md §5), paged by the service.
+pub async fn read_texts_received_between(
     service_url: &str,
     access_token: &str,
     folder_id: &str,
-    batch_size: u32,
-    wait_limit_seconds: u32,
-) -> Result<MessagePage, GraphError> {
-    let session = open_session(wait_limit_seconds);
-    let request = build_messages_request(service_url, access_token, folder_id, batch_size)?;
-    let answer = send(&session, &request).await?;
-    let status = check_status(&request, &answer)?;
-    let page = reply::read_message_page(&answer).map_err(|failure| failed(failure, None))?;
-    tracing::debug!(
-        status,
-        bytes = answer.len(),
-        messages = page.messages.len(),
-        more_available = page.more_available,
-        "answer received"
+    from_unix: i64,
+    to_unix: i64,
+) -> Result<MessageTexts, GraphError> {
+    let session = open_session(WAIT_LIMIT_SECONDS);
+    let filter = format!(
+        "receivedDateTime%20ge%20{}%20and%20receivedDateTime%20le%20{}",
+        iso_8601(from_unix),
+        iso_8601(to_unix)
     );
-    Ok(page)
+    let mut address = format!(
+        "{service_url}/me/mailFolders/{}/messages?$filter={filter}&$select=id,body&$top=500",
+        escaped(folder_id)
+    );
+    let mut texts = Vec::new();
+    loop {
+        let request = build_request(&address, access_token)?;
+        prefer(&request, PREFERENCES);
+        let answer = send(&session, &request).await?;
+        check_status(&request, &answer)?;
+        let (page, next_link) =
+            reply::read_text_page(&answer).map_err(|failure| failed(failure, None))?;
+        texts.extend(page);
+        match next_link {
+            Some(next_link) => address = next_link,
+            None => return Ok(texts),
+        }
+    }
+}
+
+/// One message's text as the service renders it; `None` when it has none or
+/// is gone.
+pub async fn read_message_text(
+    service_url: &str,
+    access_token: &str,
+    message_id: &str,
+) -> Result<Option<String>, GraphError> {
+    let address = format!(
+        "{service_url}/me/messages/{}?$select=body",
+        escaped(message_id)
+    );
+    let Some(answer) = read_one(&address, access_token).await? else {
+        return Ok(None);
+    };
+    reply::read_message_text(&answer).map_err(|failure| failed(failure, None))
+}
+
+/// One message with its list fields and the id of the folder it is in now;
+/// `None` when it is gone.
+pub async fn read_message(
+    service_url: &str,
+    access_token: &str,
+    message_id: &str,
+) -> Result<Option<(GraphMessage, String)>, GraphError> {
+    let address = format!(
+        "{service_url}/me/messages/{}?$select={},parentFolderId",
+        escaped(message_id),
+        CHANGE_FIELDS.join(",")
+    );
+    let Some(answer) = read_one(&address, access_token).await? else {
+        return Ok(None);
+    };
+    reply::read_one_message(&answer)
+        .map(Some)
+        .map_err(|failure| failed(failure, None))
+}
+
+/// The answer about one message, or `None` for a 404.
+async fn read_one(address: &str, access_token: &str) -> Result<Option<glib::Bytes>, GraphError> {
+    let session = open_session(WAIT_LIMIT_SECONDS);
+    let request = build_request(address, access_token)?;
+    prefer(&request, PREFERENCES);
+    let answer = send(&session, &request).await?;
+    if request.status() == soup::Status::NotFound {
+        return Ok(None);
+    }
+    check_status(&request, &answer)?;
+    Ok(Some(answer))
+}
+
+fn prefer(request: &soup::Message, preferences: &str) {
+    request
+        .request_headers()
+        .expect("a new request has headers")
+        .append("Prefer", preferences);
+}
+
+fn escaped(path_part: &str) -> glib::GString {
+    glib::Uri::escape_string(path_part, None, false)
+}
+
+/// A time as the service's filters write it, in UTC.
+fn iso_8601(unix: i64) -> String {
+    glib::DateTime::from_unix_utc(unix)
+        .and_then(|time| time.format("%Y-%m-%dT%H:%M:%SZ"))
+        .map(|text| text.to_string())
+        .unwrap_or_default()
 }
 
 /// A session for one load. It verifies the service's certificate against the
@@ -300,25 +468,6 @@ fn open_session(wait_limit_seconds: u32) -> soup::Session {
     session.set_timeout(wait_limit_seconds);
     session.set_user_agent(concat!("Mailbag/", env!("CARGO_PKG_VERSION")));
     session
-}
-
-fn build_messages_request(
-    service_url: &str,
-    access_token: &str,
-    folder_id: &str,
-    batch_size: u32,
-) -> Result<soup::Message, GraphError> {
-    let folder_id = glib::Uri::escape_string(folder_id, None, false);
-    let address = format!(
-        "{service_url}/me/mailFolders/{folder_id}/messages?$top={batch_size}\
-         &$orderby=receivedDateTime%20desc&$select={LISTED_FIELDS}"
-    );
-    let request = build_request(&address, access_token)?;
-    let headers = request
-        .request_headers()
-        .expect("a new request has headers");
-    headers.append("Prefer", PREFERENCES);
-    Ok(request)
 }
 
 /// A request with the token and the JSON answer asked for. Folder ids are the

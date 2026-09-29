@@ -211,14 +211,16 @@ reports them (spec FR-001, FR-007). The service documents that changes can
 reach delta answers with a delay ("replication delays", checked), so no
 cycle promises more than the service reports.
 
-**Open check before the Microsoft 365 portion**: whether a change made
-during a paused first fill is reported at all is not documented; a probe
-with the maintainer changes a message in another client while the probe
-waits (a change that stays: a message marked read and left read, and a
-message moved to another folder; a change undone before the probe resumes
-would prove nothing), then finishes the reading and reads the next round.
-If the change is never reported, a continued first fill ends with a full
-re-reading instead.
+**Checked before the Microsoft 365 portion** (probe with the maintainer,
+2026-09-29, one run): a delta reading of the Inbox was paused after its
+first page of 50; meanwhile the maintainer marked a message of that page
+read, moved another to a different folder, and changed the subject of a
+draft in a Drafts reading that had completed. The continued reading
+(3 425 entries) reported none of these changes. The next round reported
+each: the moved message as `@removed`, the read state as an entry carrying
+only `isRead`, and the draft as an entry with every selected field. So a
+continued first fill reads one more round, as below, and needs no full
+re-reading.
 
 **Alternatives**: `$select=body` on the delta query: downloads every
 message's text, against spec FR-009; JSON batching of per-message requests:

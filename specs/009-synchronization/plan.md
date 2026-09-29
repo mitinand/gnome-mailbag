@@ -12,7 +12,8 @@ under "Decisions for the maintainer". Supporting documents:
 
 Budget agreed at the feature-start on 2026-09-28 and raised by the
 maintainer the same day, when the plan added renewing access during a
-cycle: at most 1 600 production lines and 1 500 test lines; no thread, timer or queue of the feature's own;
+cycle, then raised again on 2026-09-29 after the IMAP cycles came out larger
+than estimated: at most 2 000 production lines and 1 500 test lines; no thread, timer or queue of the feature's own;
 no new dependency; no change to the IMAP library forks. The estimates below
 include doc comments and formatting, which the estimates of 007 and 008
 left out and came out 1.6 to 1.9 times low. Reassess with the maintainer

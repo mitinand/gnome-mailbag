@@ -28,10 +28,10 @@ use folders::{
     delete_memberships, delete_messages_without_folder, delete_unlisted_folders,
     read_folder_identities, read_folder_state, read_listed_rows, read_stored_identities,
     relate_known, set_read_states, store_arrived, stored_content, stored_folder, stored_folder_id,
-    upsert_folders, write_folder_state, write_mailbox,
+    upsert_folders, write_folder_state,
 };
 use mailbag_domain::{
-    AccountId, Failure, Folder, FolderPortion, FolderRef, FolderState, Message, MessageListRow,
+    AccountId, Failure, Folder, FolderPortion, FolderRef, FolderState, MessageListRow,
     ReceivedContent,
 };
 use open::{configure_connection, create_schema, open_store};
@@ -117,28 +117,6 @@ impl Store {
         })
     }
 
-    /// Replaces the folder's messages with a completed load's, in one
-    /// transaction (specs/008-folders FR-004): a failure leaves
-    /// the previous state whole. A message another folder holds is kept once
-    /// with the fields of this load; a message no folder holds any more is
-    /// deleted. A folder the store does not hold fails the write.
-    pub fn replace_mailbox(
-        &self,
-        folder: &FolderRef,
-        messages: &[Message],
-        load_cancelled: impl FnOnce() -> bool,
-    ) -> Result<StoreWrite, Failure> {
-        self.with_connection(StoreOperation::Write, |connection| {
-            if load_cancelled() {
-                return Ok(StoreWrite::LoadCancelled);
-            }
-            let transaction = connection.transaction()?;
-            write_mailbox(&transaction, folder, messages)?;
-            transaction.commit()?;
-            Ok(StoreWrite::Stored)
-        })
-    }
-
     /// What a cycle needs of the folder at its start: its state and the
     /// messages it holds with their read state. A folder the store does not
     /// hold fails as a write would, since the cycle cannot store into it.
@@ -161,6 +139,32 @@ impl Store {
     ) -> Result<HashSet<String>, Failure> {
         self.with_connection(StoreOperation::Read, |connection| {
             Ok(read_stored_identities(connection, account, identities)?)
+        })
+    }
+
+    /// Which of `identities` another folder of the folder's account holds,
+    /// so a cycle reads such a message again before it applies a change
+    /// that may be older than the other folder's state
+    /// (specs/009-synchronization/research.md §5).
+    pub fn identities_in_other_folders(
+        &self,
+        folder: &FolderRef,
+        identities: &[String],
+    ) -> Result<HashSet<String>, Failure> {
+        self.with_connection(StoreOperation::Read, |connection| {
+            let mut select = connection.prepare(
+                "SELECT 1 FROM message JOIN membership ON membership.message = message.id \
+                 JOIN folder ON folder.id = membership.folder \
+                 WHERE message.account = ?1 AND message.identity = ?2 AND folder.identity != ?3",
+            )?;
+            let mut held = HashSet::new();
+            for identity in identities {
+                let key = params![folder.account.as_str(), identity, folder.identity];
+                if select.exists(key)? {
+                    held.insert(identity.clone());
+                }
+            }
+            Ok(held)
         })
     }
 

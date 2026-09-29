@@ -60,6 +60,7 @@ pub enum IncompleteList {
     /// The server refused to finish the message list.
     ServerRefused { reply: String, code: Option<String> },
     /// The mail service offered more messages than one request holds.
+    /// Removed by 009: a Microsoft 365 cycle reads every page.
     MoreAvailable,
 }
 

@@ -2,22 +2,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::*;
-use crate::batch::{ReceivedBatch, ReceivedMessage};
-use crate::microsoft365::load_microsoft365_mailbox;
 use crate::renewal::AccessRenewal;
-use crate::store_load::{store_folder_list, store_mailbox};
+use crate::store_load::{PortionWriter, store_folder_list};
 use crate::test_record::CapturedRecord;
 use crate::worker::{LoadKind, MailWorker, report_events};
 use goa_adapter::{GraphAccess, ImapAccess, ImapCredential, ImapEncryption};
 use mailbag_domain::{
-    AccountId, ContentExplanation, DisplayFields, Failure, FailureKind, Folder, FolderRef,
-    FolderRole, IncompleteList, Message, ReceivedContent,
+    AccountId, ContentExplanation, DisplayFields, Failure, FailureKind, Folder, FolderPortion,
+    FolderRef, FolderRole, FolderState, IncompleteList, Message, ReceivedContent,
 };
-use mailbag_graph::{GraphError, test_server as graph_service};
+use mailbag_graph::test_server as graph_service;
 use mailbag_imap::test_server::{
     FaultKind, FaultyCommand, FixtureMessage, FixtureSetup, ImapFixture, PRIVATE_MARKERS,
     TEST_ACCESS_TOKEN, TEST_LOGIN, TEST_PASSWORD, test_certificates_trusted,
 };
+use mailbag_store::StoreWrite;
 use std::{
     path::PathBuf,
     time::{Duration, Instant},
@@ -195,10 +194,6 @@ async fn wait_until(mut condition: impl FnMut() -> bool) {
         assert!(Instant::now() < deadline, "test server deadline");
         glib::timeout_future(Duration::from_millis(10)).await;
     }
-}
-
-fn received_batch<E: std::fmt::Debug>(loaded: Result<ReceivedBatch, E>) -> ReceivedBatch {
-    loaded.expect("the load received a batch")
 }
 
 fn text_of(content: &ReceivedContent) -> &str {
@@ -611,9 +606,7 @@ fn a_refused_sign_in_is_one_error_line_of_the_load() {
     // (specs/007-mail-storage FR-004).
     let inbox = folder_of(access.account_id.as_str(), "INBOX");
     store_inbox(&store, &inbox);
-    store
-        .replace_mailbox(&inbox, &[stored_earlier_message()], || false)
-        .unwrap();
+    store_completed_cycle(&store, &inbox, &[stored_earlier_message()], || false).unwrap();
     let (outcome, record) = load_inbox_with_account(access, &store, tracing::Level::DEBUG);
     let text = record.text();
     assert!(matches!(outcome, LoadResult::Failed(_)), "{outcome:?}");
@@ -826,109 +819,438 @@ fn gmail_reads_the_same_text_parts_and_gives_the_same_explanations() {
     assert_eq!(sections(&gmail), sections(&generic));
 }
 
-/// The Microsoft 365 load, with the scripted service in place of Microsoft
-/// Graph.
-fn microsoft365_kind(service: &graph_service::ScriptedService) -> LoadKind {
+/// A Microsoft 365 load of the scripted service's Inbox with `token`, whose
+/// renewal Online Accounts answers once with `renewed`, as a thread of its
+/// own stands in for GTK's context.
+fn microsoft365_kind_with(
+    service: &graph_service::ScriptedService,
+    token: &str,
+    renewed: Option<&str>,
+) -> LoadKind {
+    let (renewal, requests) = AccessRenewal::answered_by_test();
+    let account_id = AccountId::try_from("synthetic-microsoft365").unwrap();
+    let mut renewed = renewed.map(|token| GraphAccess {
+        account_id: account_id.clone(),
+        access_token: token.to_owned(),
+    });
+    std::thread::spawn(move || {
+        while let Ok(reply) = requests.recv_blocking() {
+            reply.send_blocking(renewed.take()).ok();
+        }
+    });
     LoadKind::Microsoft365 {
         access: GraphAccess {
-            account_id: AccountId::try_from("synthetic-microsoft365").unwrap(),
-            access_token: graph_service::TEST_ACCESS_TOKEN.to_owned(),
+            account_id,
+            access_token: token.to_owned(),
         },
         service_url: service.url().to_owned(),
+        renewal,
     }
 }
 
-/// Runs the Microsoft 365 load sequence to its end, without the worker and the
-/// store.
-fn load_microsoft365(
-    service: &graph_service::ScriptedService,
-) -> Result<ReceivedBatch, GraphError> {
-    let LoadKind::Microsoft365 {
-        access,
-        service_url,
-    } = microsoft365_kind(service)
-    else {
-        unreachable!("a Microsoft 365 load")
-    };
-    let inbox = folder_of("synthetic-microsoft365", "inbox");
-    run_on_context(load_microsoft365_mailbox(access, &service_url, inbox))
+/// The Microsoft 365 load of the scripted service with the test token, whose
+/// renewal nobody answers.
+fn microsoft365_kind(service: &graph_service::ScriptedService) -> LoadKind {
+    microsoft365_kind_with(service, graph_service::TEST_ACCESS_TOKEN, None)
 }
 
-#[test]
-fn a_microsoft_365_load_publishes_the_services_messages_and_text() {
-    let service = graph_service::ScriptedService::start(graph_service::ScriptedAnswer::inbox(3));
-    let batch = received_batch(load_microsoft365(&service));
-    assert_eq!(batch.folder, folder_of("synthetic-microsoft365", "inbox"));
-    assert_eq!(batch.incomplete, None);
-    let summary: Vec<_> = batch
-        .messages
+fn delta_page(
+    entries: Vec<serde_json::Value>,
+    next: graph_service::ScriptedNext,
+) -> graph_service::ScriptedPage {
+    graph_service::ScriptedPage::Entries { entries, next }
+}
+
+/// A scripted mailbox: its delta pages by token and its messages in the
+/// Inbox, as `GET /me/messages/{id}` answers them.
+fn graph_mailbox(
+    pages: Vec<(&str, graph_service::ScriptedPage)>,
+    messages: Vec<serde_json::Value>,
+) -> graph_service::ScriptedChanges {
+    graph_service::ScriptedChanges {
+        pages: pages
+            .into_iter()
+            .map(|(token, page)| (token.to_owned(), page))
+            .collect(),
+        messages,
+        token_accepted_requests: None,
+    }
+}
+
+fn inbox_messages(numbers: &[u32]) -> Vec<serde_json::Value> {
+    numbers
         .iter()
-        .map(|message| {
+        .map(|number| graph_service::stored_message(*number, "inbox"))
+        .collect()
+}
+
+fn graph_identity(number: u32) -> String {
+    format!("graph:{}", graph_service::fixture_immutable_id(number))
+}
+
+/// The paths the service was asked for, in order.
+fn graph_paths(service: &graph_service::ScriptedService) -> Vec<String> {
+    service
+        .received_requests()
+        .into_iter()
+        .map(|request| request.path)
+        .collect()
+}
+
+/// SC-004: a first fill page by page, texts by each page's date range and
+/// only within 30 days, the place saved with each page.
+#[test]
+fn a_microsoft_365_first_fill_stores_page_by_page_with_recent_texts() {
+    use graph_service::{ScriptedNext::*, delta_entry};
+    // Message 800 arrived 33 days before the others.
+    let service = graph_service::ScriptedService::start_with_changes(graph_mailbox(
+        vec![
             (
-                &message.graph_id,
-                &message.fields,
-                message.internal_date,
-                message.seen,
-                &message.content,
-            )
-        })
+                "first",
+                delta_page(vec![delta_entry(1), delta_entry(2)], More("page-2")),
+            ),
+            (
+                "page-2",
+                delta_page(vec![delta_entry(3), delta_entry(800)], Done("round-1")),
+            ),
+        ],
+        inbox_messages(&[1, 2, 3, 800]),
+    ));
+    let store = Arc::new(Store::in_memory());
+    let kind = microsoft365_kind(&service);
+    let inbox = inbox_of(&kind);
+    store_inbox(&store, &inbox);
+    let (outcome, stored, portions) = synchronize_kind_again(kind, &store);
+    assert!(
+        matches!(outcome, LoadResult::Stored { incomplete: None }),
+        "{outcome:?}"
+    );
+    assert_eq!(portions, 2);
+    assert_eq!(identities(&stored), [1, 2, 3, 800].map(graph_identity));
+    assert_eq!(text_of(&stored[0].content), "Text 1");
+    // Message 3 has no body in the service.
+    assert_eq!(stored[2].content, ReceivedContent::TextNotReturned);
+    assert_eq!(stored[3].content, ReceivedContent::NotDownloaded);
+    let state = store.read_folder_sync(&inbox).unwrap().state;
+    assert!(state.synchronized);
+    assert!(
+        state
+            .server_position
+            .is_some_and(|link| link.ends_with("$deltatoken=round-1"))
+    );
+    // One delta page and one text range per page; the old message's date
+    // is outside the second range.
+    let requests = service.received_requests();
+    let text_ranges: Vec<&String> = requests
+        .iter()
+        .filter(|request| request.query.contains("$filter="))
+        .map(|request| &request.query)
         .collect();
-    let fields = |number, to: Option<&str>| DisplayFields {
-        subject: Some(format!("Subject {number}")),
-        from: Some(format!("Sender {number}")),
-        to: to.map(str::to_owned),
-    };
-    let identity = |number| graph_service::fixture_immutable_id(number);
-    let received = |number| Some(graph_service::fixture_received_unix(number));
-    assert_eq!(
-        summary,
-        [
+    assert_eq!(text_ranges.len(), 2, "{requests:?}");
+}
+
+/// SC-005 and research §5: a first fill stopped after a page continues from
+/// its saved place without reading that page again, then reads one more
+/// round, which reports the changes made during the pause.
+#[test]
+fn a_continued_microsoft_365_first_fill_reads_one_more_round() {
+    use graph_service::{ScriptedNext::*, delta_entry};
+    let mut mailbox = graph_mailbox(
+        vec![
+            ("first", delta_page(vec![delta_entry(1)], More("page-2"))),
+            ("page-2", delta_page(vec![delta_entry(2)], Done("round-1"))),
             (
-                &identity(1),
-                &fields(1, Some("Recipient")),
-                received(1),
-                true,
-                &ReceivedContent::Text("Text 1".to_owned()),
+                "round-1",
+                delta_page(
+                    vec![
+                        serde_json::json!({"id": graph_service::fixture_immutable_id(2), "isRead": true}),
+                    ],
+                    Done("round-2"),
+                ),
             ),
-            (
-                &identity(2),
-                &fields(2, None),
-                received(2),
-                false,
-                &ReceivedContent::Text("Text 2".to_owned()),
-            ),
-            (
-                &identity(3),
-                &fields(3, Some("Recipient")),
-                received(3),
-                true,
-                &ReceivedContent::TextNotReturned,
-            ),
-        ]
+        ],
+        inbox_messages(&[1, 2]),
+    );
+    // The token runs out after the first page and its texts.
+    mailbox.token_accepted_requests = Some(2);
+    let service = graph_service::ScriptedService::start_with_changes(mailbox);
+    let store = Arc::new(Store::in_memory());
+    let inbox = folder_of("synthetic-microsoft365", "inbox");
+    store_inbox(&store, &inbox);
+    let (outcome, stored, _) = synchronize_kind_again(microsoft365_kind(&service), &store);
+    assert_eq!(failure_of(outcome).kind, FailureKind::ServiceRejectedSignIn);
+    assert_eq!(identities(&stored), [graph_identity(1)]);
+    let place = store.read_folder_sync(&inbox).unwrap().state;
+    assert!(!place.synchronized);
+    assert!(
+        place
+            .server_position
+            .is_some_and(|link| link.ends_with("$skiptoken=page-2"))
+    );
+    let asked_before = service.received_requests().len();
+    let kind = microsoft365_kind_with(&service, "another-token", None);
+    let (outcome, stored, _) = synchronize_kind_again(kind, &store);
+    assert!(matches!(outcome, LoadResult::Stored { .. }), "{outcome:?}");
+    assert_eq!(identities(&stored), [graph_identity(1), graph_identity(2)]);
+    // Message 2 was unread when listed and read in the round after.
+    assert!(stored[1].seen);
+    let later: Vec<String> = service.received_requests()[asked_before..]
+        .iter()
+        .map(|request| request.query.clone())
+        .collect();
+    assert!(later[0].contains("$skiptoken=page-2"), "{later:?}");
+    assert!(
+        later
+            .iter()
+            .any(|query| query.contains("$deltatoken=round-1")),
+        "{later:?}"
+    );
+    let state = store.read_folder_sync(&inbox).unwrap().state;
+    assert!(state.synchronized);
+    assert!(
+        state
+            .server_position
+            .is_some_and(|link| link.ends_with("$deltatoken=round-2"))
     );
 }
 
-#[test]
-fn only_a_microsoft_365_page_cut_short_is_published_as_incomplete() {
-    // The Inbox holds more than one batch: the service offers a further page
-    // after a full one, which is complete.
-    let full =
-        graph_service::ScriptedService::start(graph_service::ScriptedAnswer::page_with_more(100));
-    let batch = received_batch(load_microsoft365(&full));
-    assert_eq!(batch.messages.len(), 100);
-    assert_eq!(batch.incomplete, None);
+/// A first fill that completed, then a round of changes into `store`.
+fn graph_round(
+    round: Vec<serde_json::Value>,
+    messages: Vec<serde_json::Value>,
+    store: &Arc<Store>,
+) -> (graph_service::ScriptedService, LoadResult, Vec<Message>) {
+    use graph_service::{ScriptedNext::*, delta_entry};
+    let service = graph_service::ScriptedService::start_with_changes(graph_mailbox(
+        vec![
+            (
+                "first",
+                delta_page((1..=3).map(delta_entry).collect(), Done("round-1")),
+            ),
+            ("round-1", delta_page(round, Done("round-2"))),
+        ],
+        messages,
+    ));
+    store_inbox(store, &folder_of("synthetic-microsoft365", "inbox"));
+    synchronize_kind_again(microsoft365_kind(&service), store);
+    let (outcome, stored, _) = synchronize_kind_again(microsoft365_kind(&service), store);
+    (service, outcome, stored)
+}
 
-    let cut_short =
-        graph_service::ScriptedService::start(graph_service::ScriptedAnswer::page_with_more(1));
-    let batch = received_batch(load_microsoft365(&cut_short));
-    assert_eq!(batch.messages.len(), 1);
-    assert_eq!(batch.incomplete, Some(IncompleteList::MoreAvailable));
+/// SC-004: removals, repeated and reordered entries, a partial entry that
+/// changes a stored message's fields, and a read state of a message the
+/// store lacks.
+#[test]
+fn a_microsoft_365_round_applies_removals_partial_entries_and_arrivals() {
+    let id = graph_service::fixture_immutable_id;
+    let mut renamed = graph_service::stored_message(3, "inbox");
+    renamed["subject"] = "Renamed".into();
+    let mut messages = inbox_messages(&[1, 2, 4]);
+    messages.push(renamed);
+    let store = Arc::new(Store::in_memory());
+    let (_, outcome, stored) = graph_round(
+        vec![
+            serde_json::json!({"id": id(2), "isRead": false}),
+            serde_json::json!({"id": id(1), "@removed": {"reason": "deleted"}}),
+            serde_json::json!({"id": id(3), "subject": "Renamed"}),
+            // Repeated, the later entry wins.
+            serde_json::json!({"id": id(2), "isRead": true}),
+            // A read state of a message the store lacks: it is read in full.
+            serde_json::json!({"id": id(4), "isRead": false}),
+        ],
+        messages,
+        &store,
+    );
+    assert!(matches!(outcome, LoadResult::Stored { .. }), "{outcome:?}");
+    assert_eq!(
+        identities(&stored),
+        [graph_identity(2), graph_identity(3), graph_identity(4)]
+    );
+    assert!(stored[0].seen);
+    assert_eq!(stored[1].fields.subject.as_deref(), Some("Renamed"));
+    // The stored content stays with the renamed message: the service had
+    // no text for message 3.
+    assert_eq!(stored[1].content, ReceivedContent::TextNotReturned);
+    assert_eq!(text_of(&stored[2].content), "Text 4");
+}
+
+/// Research §5: a message moved from the Inbox to Archive and marked unread
+/// there; an older read-state entry in the Inbox's round must not mark it
+/// read. The message is read again and, being in Archive now, left alone.
+#[test]
+fn an_entry_for_a_message_another_folder_holds_is_read_again_first() {
+    use graph_service::{ScriptedNext::*, delta_entry};
+    let id = graph_service::fixture_immutable_id;
+    let mut messages = inbox_messages(&[1, 3]);
+    messages.push(graph_service::stored_message(2, "archive"));
+    let service = graph_service::ScriptedService::start_with_changes(graph_mailbox(
+        vec![
+            (
+                "first",
+                delta_page((1..=3).map(delta_entry).collect(), Done("round-1")),
+            ),
+            (
+                "round-1",
+                delta_page(
+                    vec![serde_json::json!({"id": id(2), "isRead": true})],
+                    Done("round-2"),
+                ),
+            ),
+        ],
+        messages,
+    ));
+    let store = Arc::new(Store::in_memory());
+    let account = AccountId::try_from("synthetic-microsoft365").unwrap();
+    let folders = ["inbox", "archive"].map(|identity| Folder {
+        identity: identity.to_owned(),
+        name: identity.to_owned(),
+        parent: None,
+        role: None,
+        selectable: true,
+    });
+    store.replace_folders(&account, &folders, || false).unwrap();
+    synchronize_kind_again(microsoft365_kind(&service), &store);
+    // Archive's own cycle related the message there, unread.
+    let archive = folder_of("synthetic-microsoft365", "archive");
+    let archived = FolderPortion {
+        known_arrived: vec![(graph_identity(2), false)],
+        ..FolderPortion::default()
+    };
+    store.store_portion(&archive, &archived, || false).unwrap();
+    synchronize_kind_again(microsoft365_kind(&service), &store);
+    assert!(!stored_messages(&store, &archive)[0].seen);
+    assert!(
+        graph_paths(&service).contains(&format!("/me/messages/{}", id(2))),
+        "{:?}",
+        graph_paths(&service)
+    );
+}
+
+/// Research §5: the arrivals of a round of changes are scattered in time, so
+/// each text is read by its identifier, never by a range between them.
+#[test]
+fn a_rounds_arrivals_get_their_texts_one_by_one() {
+    use graph_service::delta_entry;
+    let store = Arc::new(Store::in_memory());
+    // Message 600 arrived 25 days before message 4.
+    let (service, _, stored) = graph_round(
+        vec![delta_entry(4), delta_entry(600)],
+        inbox_messages(&[1, 2, 3, 4, 600]),
+        &store,
+    );
+    assert_eq!(stored.len(), 5);
+    assert!(stored.iter().all(|message| matches!(
+        message.content,
+        ReceivedContent::Text(_) | ReceivedContent::TextNotReturned
+    )));
+    let requests = service.received_requests();
+    let ranges = requests
+        .iter()
+        .filter(|request| request.query.contains("$filter="))
+        .count();
+    // Only the first fill's page used a range.
+    assert_eq!(ranges, 1, "{requests:?}");
+    for number in [4, 600] {
+        let path = format!(
+            "/me/messages/{}",
+            graph_service::fixture_immutable_id(number)
+        );
+        assert!(graph_paths(&service).contains(&path), "{path}");
+    }
+}
+
+/// FR-007: a saved position the service rejects starts a full reading that
+/// keeps the listed messages and removes the others at its end.
+#[test]
+fn a_rejected_position_rereads_the_folder_and_removes_what_it_did_not_list() {
+    use graph_service::{ScriptedNext::*, delta_entry};
+    let service = graph_service::ScriptedService::start_with_changes(graph_mailbox(
+        vec![(
+            "first",
+            delta_page(vec![delta_entry(1), delta_entry(2)], Done("round-1")),
+        )],
+        inbox_messages(&[1, 2]),
+    ));
+    let store = Arc::new(Store::in_memory());
+    let inbox = folder_of("synthetic-microsoft365", "inbox");
+    store_inbox(&store, &inbox);
+    // A message deleted meanwhile, and a position the service no longer knows.
+    let earlier = FolderPortion {
+        arrived: vec![Message {
+            identity: graph_identity(9),
+            ..stored_earlier_message()
+        }],
+        state: Some(FolderState {
+            server_position: Some(format!(
+                "{}/me/mailFolders/inbox/messages/delta?$deltatoken=expired",
+                service.url()
+            )),
+            synchronized: true,
+        }),
+        ..FolderPortion::default()
+    };
+    store.store_portion(&inbox, &earlier, || false).unwrap();
+    let (outcome, stored, _) = synchronize_kind_again(microsoft365_kind(&service), &store);
+    assert!(matches!(outcome, LoadResult::Stored { .. }), "{outcome:?}");
+    assert_eq!(identities(&stored), [graph_identity(1), graph_identity(2)]);
+    let state = store.read_folder_sync(&inbox).unwrap().state;
+    assert!(
+        state
+            .server_position
+            .is_some_and(|link| link.ends_with("$deltatoken=round-1"))
+    );
+}
+
+/// SC-010: a token refused mid-fill is asked for once more and a different
+/// one completes the fill; the same token, or a second refusal, is the
+/// refused sign-in.
+#[test]
+fn a_token_refused_mid_fill_is_renewed_once() {
+    use graph_service::{ScriptedNext::*, delta_entry};
+    let mailbox = || {
+        let mut mailbox = graph_mailbox(
+            vec![
+                ("first", delta_page(vec![delta_entry(1)], More("page-2"))),
+                ("page-2", delta_page(vec![delta_entry(2)], Done("round-1"))),
+            ],
+            inbox_messages(&[1, 2]),
+        );
+        mailbox.token_accepted_requests = Some(2);
+        mailbox
+    };
+    for (renewed, completes) in [
+        (Some("renewed-token"), true),
+        (Some(graph_service::TEST_ACCESS_TOKEN), false),
+        (None, false),
+    ] {
+        let service = graph_service::ScriptedService::start_with_changes(mailbox());
+        let store = Arc::new(Store::in_memory());
+        store_inbox(&store, &folder_of("synthetic-microsoft365", "inbox"));
+        let kind = microsoft365_kind_with(&service, graph_service::TEST_ACCESS_TOKEN, renewed);
+        let (outcome, stored, _) = synchronize_kind_again(kind, &store);
+        match completes {
+            true => {
+                assert!(matches!(outcome, LoadResult::Stored { .. }), "{outcome:?}");
+                assert_eq!(stored.len(), 2);
+            }
+            false => assert_eq!(
+                failure_of(outcome).kind,
+                FailureKind::ServiceRejectedSignIn,
+                "{renewed:?}"
+            ),
+        }
+    }
 }
 
 #[test]
 fn a_refused_microsoft_365_request_fails_the_load_after_one_request() {
-    let service =
-        graph_service::ScriptedService::start(graph_service::ScriptedAnswer::sign_in_refused());
+    let service = graph_service::ScriptedService::start_with_changes(graph_mailbox(
+        vec![(
+            "first",
+            graph_service::ScriptedPage::Refused(graph_service::ScriptedAnswer::sign_in_refused()),
+        )],
+        Vec::new(),
+    ));
     match load_with_kind(microsoft365_kind(&service), &Arc::new(Store::in_memory())) {
         LoadResult::Failed(failure) => assert_eq!(
             failure.details,
@@ -941,9 +1263,16 @@ fn a_refused_microsoft_365_request_fails_the_load_after_one_request() {
 
 #[test]
 fn a_microsoft_365_load_names_each_message_and_never_the_token() {
-    let service = graph_service::ScriptedService::start(graph_service::ScriptedAnswer::inbox(3));
+    use graph_service::{ScriptedNext::*, delta_entry};
+    let service = graph_service::ScriptedService::start_with_changes(graph_mailbox(
+        vec![(
+            "first",
+            delta_page((1..=3).map(delta_entry).collect(), Done("round-1")),
+        )],
+        inbox_messages(&[1, 2, 3]),
+    ));
     let record = CapturedRecord::start(tracing::Level::DEBUG);
-    received_batch(load_microsoft365(&service));
+    synchronize_inbox(microsoft365_kind(&service));
     let text = record.text();
     for number in 1..=3 {
         let named = format!(
@@ -959,16 +1288,6 @@ fn a_microsoft_365_load_names_each_message_and_never_the_token() {
         );
     }
     assert!(!text.contains(graph_service::TEST_ACCESS_TOKEN), "{text}");
-}
-
-fn received_message(number: u32, content: ReceivedContent) -> ReceivedMessage {
-    ReceivedMessage {
-        graph_id: format!("message-{number}"),
-        fields: DisplayFields::default(),
-        internal_date: None,
-        seen: false,
-        content,
-    }
 }
 
 /// The identity and the content of each stored message, the text without the
@@ -993,7 +1312,16 @@ fn each_providers_load_stores_its_messages_and_reports_them_stored() {
         ..FixtureSetup::default()
     });
     let gmail = gmail_fixture(plain_messages(2));
-    let service = graph_service::ScriptedService::start(graph_service::ScriptedAnswer::inbox(3));
+    let service = graph_service::ScriptedService::start_with_changes(graph_mailbox(
+        vec![(
+            "first",
+            delta_page(
+                (1..=3).map(graph_service::delta_entry).collect(),
+                graph_service::ScriptedNext::Done("round-1"),
+            ),
+        )],
+        inbox_messages(&[1, 2, 3]),
+    ));
     let text = |text: &str| ReceivedContent::Text(text.to_owned());
     let graph = |number| format!("graph:{}", graph_service::fixture_immutable_id(number));
     let loads = [
@@ -1095,21 +1423,35 @@ fn store_inbox(store: &Store, inbox: &FolderRef) {
         .unwrap();
 }
 
+/// A message with `content`, as a cycle stores it.
+fn message_with(number: u32, content: ReceivedContent) -> Message {
+    Message {
+        identity: format!("message-{number}"),
+        fields: DisplayFields::default(),
+        received_unix: None,
+        seen: false,
+        content,
+    }
+}
+
 #[test]
-fn a_load_cancelled_before_its_write_stores_nothing() {
+fn a_portion_of_a_cancelled_load_is_not_stored() {
     let inbox = folder_of("synthetic-account", "INBOX");
     let store = store_with_inbox(&inbox);
-    let batch = ReceivedBatch {
-        folder: inbox.clone(),
-        messages: vec![received_message(
-            10,
-            ReceivedContent::Text("Text".to_owned()),
-        )],
-        incomplete: None,
+    let (cancel, cancelled) = async_channel::bounded::<()>(1);
+    drop(cancel);
+    let (events, reported) = async_channel::unbounded();
+    let mut portions = PortionWriter::new(&store, inbox.clone(), &cancelled, &events);
+    let portion = FolderPortion {
+        arrived: vec![message_with(10, ReceivedContent::Text("Text".to_owned()))],
+        ..FolderPortion::default()
     };
-    let outcome = store_mailbox(&store, batch, || true);
-    assert!(matches!(outcome, LoadResult::Cancelled), "{outcome:?}");
+    assert!(matches!(
+        portions.store(&portion),
+        Err(LoadResult::Cancelled)
+    ));
     assert_eq!(read_stored_messages(&store, &inbox), Ok(None));
+    assert!(reported.is_empty());
 }
 
 #[test]
@@ -1117,26 +1459,32 @@ fn unreadable_content_and_a_refused_list_each_warn_without_server_text() {
     let inbox = folder_of("account_1726920000_0", "INBOX");
     let store = store_with_inbox(&inbox);
     let record = CapturedRecord::start(tracing::Level::DEBUG);
-    let batch = ReceivedBatch {
-        folder: inbox,
-        incomplete: Some(IncompleteList::ServerRefused {
-            reply: "private refusal text".to_owned(),
-            code: Some("LIMIT".to_owned()),
-        }),
-        messages: vec![
-            received_message(30, ReceivedContent::Text("Text".to_owned())),
+    let (_cancel, cancelled) = async_channel::bounded::<()>(1);
+    let (events, _reported) = async_channel::unbounded();
+    let mut portions = PortionWriter::new(&store, inbox, &cancelled, &events);
+    let portion = FolderPortion {
+        arrived: vec![
+            message_with(30, ReceivedContent::Text("Text".to_owned())),
             // Not supported by design, so counted at info and not warned about.
-            received_message(
+            message_with(
                 20,
                 ReceivedContent::Explained(ContentExplanation::NoPlainText { has_html: true }),
             ),
-            received_message(
+            message_with(
                 10,
                 ReceivedContent::Explained(ContentExplanation::UnknownCharset("x".to_owned())),
             ),
         ],
+        ..FolderPortion::default()
     };
-    store_mailbox(&store, batch, || false);
+    portions.store(&portion).expect("the portion is stored");
+    portions.finish(
+        3,
+        Some(IncompleteList::ServerRefused {
+            reply: "private refusal text".to_owned(),
+            code: Some("LIMIT".to_owned()),
+        }),
+    );
     let text = record.text();
     let warnings = record.lines_at("WARN");
     assert_eq!(warnings.len(), 2, "{text}");
@@ -1611,9 +1959,7 @@ fn a_row_without_a_numbering_version_leaves_with_the_first_complete_listing() {
         identity: "imap:INBOX/10".to_owned(),
         ..stored_earlier_message()
     };
-    store
-        .replace_mailbox(&inbox, &[unversioned], || false)
-        .unwrap();
+    store_completed_cycle(&store, &inbox, &[unversioned], || false).unwrap();
     let (_, stored, _) = synchronize_again(&imap_server(plain_messages(1)), &store);
     assert_eq!(identities(&stored), [imap_identity(10)]);
 }
@@ -1863,4 +2209,43 @@ fn a_gmail_session_end_stands_with_the_same_token_or_a_second_end() {
         );
         assert!(stored.is_empty());
     }
+}
+
+/// Stores `messages` as the folder's whole content, as a completed cycle
+/// leaves it: stored messages not among them leave.
+fn store_completed_cycle(
+    store: &Store,
+    folder: &FolderRef,
+    messages: &[Message],
+    load_cancelled: impl FnOnce() -> bool,
+) -> Result<StoreWrite, Failure> {
+    let removed = store
+        .read_folder_rows(folder)?
+        .unwrap_or_default()
+        .into_iter()
+        .map(|row| row.identity)
+        .filter(|identity| !messages.iter().any(|message| message.identity == *identity))
+        .collect();
+    let portion = FolderPortion {
+        removed,
+        arrived: messages.to_vec(),
+        state: Some(FolderState {
+            server_position: None,
+            synchronized: true,
+        }),
+        ..FolderPortion::default()
+    };
+    store.store_portion(folder, &portion, load_cancelled)
+}
+
+/// Only a saved link is answered with a full reading: a rejected first
+/// reading ends the cycle instead of asking again forever.
+#[test]
+fn a_rejected_first_reading_fails_the_cycle() {
+    // The scripted service knows no page, so it rejects the first reading.
+    let service =
+        graph_service::ScriptedService::start_with_changes(graph_mailbox(Vec::new(), Vec::new()));
+    let (outcome, _) = synchronize_inbox(microsoft365_kind(&service));
+    assert_eq!(failure_of(outcome).kind, FailureKind::RequestRefused);
+    assert_eq!(service.received_requests().len(), 1);
 }

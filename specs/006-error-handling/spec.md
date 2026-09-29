@@ -15,7 +15,9 @@ the same day. User Story 5's first scenario amended on 2026-09-29 by
 while its message is listed. User Story 3, User Story 5's first scenario
 and the `MailboxChanged` kind amended the same day by Synchronization: a
 refused listing of a cycle, "Text not received" without Retry, and
-`MailboxChanged` only after a reconnection.
+`MailboxChanged` only after a reconnection; the list short because the mail
+service offered more than one request holds no longer arises and its
+wording is removed.
 **Input**: One lasting model for how Mailbag reports failures, from the
 component that meets them to what the user sees. Today each failure is
 presented the way its feature happened to choose: a status page for a failed
@@ -123,7 +125,8 @@ banner after the load and its absence after the next complete load.
    and comes back, **then** the banner is there again with the same rows.
 
 *Amended 2026-09-29 by [Synchronization](../009-synchronization/spec.md):
-on IMAP the list a server refuses to finish is a cycle's listing, which then
+a Microsoft 365 cycle reads every page, so "the mail service offered more
+than one request holds" no longer arises; on IMAP the list a server refuses to finish is a cycle's listing, which then
 removes nothing, or a portion's rows after a complete listing, whose proven
 removals stay; either way the rows stored so far are shown under the banner
 (009 FR-004, FR-011).*
@@ -155,7 +158,9 @@ the marker in its place and none of the fixture's private markers.
 3. **Given** the list is short because the mail service offered more than
    one request holds, **when** the banner is shown, **then** its button opens
    the dialog with the explanation alone: no action, since nothing the user
-   does helps, and no technical lines.
+   does helps, and no technical lines. *Removed 2026-09-29 by
+   Synchronization*: a Microsoft 365 cycle reads every page, so this case no
+   longer arises.
 
 ### User Story 5 — One message's problem stays with that message (Priority: P3)
 

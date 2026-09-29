@@ -75,54 +75,6 @@ pub(crate) fn stored_folder_id(
     )
 }
 
-/// Replaces the folder's memberships with the load's, stores each message
-/// once by its identity with the load's fields, deletes the messages no
-/// folder holds any more and marks the folder synchronized. A folder the
-/// store does not hold fails with no row found.
-pub(crate) fn write_mailbox(
-    transaction: &Transaction,
-    folder: &FolderRef,
-    messages: &[Message],
-) -> rusqlite::Result<()> {
-    let folder_id = stored_folder_id(transaction, folder)?;
-    transaction.execute("DELETE FROM membership WHERE folder = ?1", [folder_id])?;
-    let mut upsert_message = transaction.prepare(
-        "INSERT INTO message (account, identity, subject, sender, recipients, received, seen, \
-         content_kind, content_detail) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
-         ON CONFLICT (account, identity) DO UPDATE SET subject = excluded.subject, \
-         sender = excluded.sender, recipients = excluded.recipients, \
-         received = excluded.received, seen = excluded.seen, \
-         content_kind = excluded.content_kind, content_detail = excluded.content_detail \
-         RETURNING id",
-    )?;
-    let mut insert_membership =
-        transaction.prepare("INSERT INTO membership (folder, message) VALUES (?1, ?2)")?;
-    for message in messages {
-        let (content_kind, content_detail) = content_columns(&message.content);
-        let message_id: i64 = upsert_message.query_row(
-            params![
-                folder.account.as_str(),
-                message.identity,
-                message.fields.subject,
-                message.fields.from,
-                message.fields.to,
-                message.received_unix,
-                message.seen,
-                content_kind,
-                content_detail,
-            ],
-            |row| row.get(0),
-        )?;
-        insert_membership.execute(params![folder_id, message_id])?;
-    }
-    delete_messages_without_folder(transaction, &folder.account)?;
-    transaction.execute(
-        "UPDATE folder SET synchronized = 1 WHERE id = ?1",
-        [folder_id],
-    )?;
-    Ok(())
-}
-
 /// The folder's saved state.
 pub(crate) fn read_folder_state(
     connection: &Connection,

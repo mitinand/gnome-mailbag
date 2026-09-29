@@ -6,13 +6,13 @@
 //! joins Online Accounts, the protocol crates, the content crate and the
 //! store; it owns no widget and no application state.
 
-mod batch;
 mod cycle;
 mod failure;
 mod folders;
 mod gmail;
 mod imap;
 mod imap_texts;
+mod load;
 mod microsoft365;
 mod renewal;
 mod store_load;
@@ -25,10 +25,10 @@ mod test_record;
 #[cfg(test)]
 mod tests;
 
-pub use batch::{CancelsLoadOnDrop, LoadEvent, LoadResult, LoadTarget};
+pub use load::{CancelsLoadOnDrop, LoadEvent, LoadResult, LoadTarget};
 
-use batch::LoadFailure;
 use goa_adapter::{AccessError, AccessRequest, GoaAdapter, ImapAccess};
+use load::LoadFailure;
 use mailbag_domain::AccountId;
 use mailbag_store::Store;
 use renewal::answer_renewals;
@@ -116,11 +116,15 @@ impl LoadsMail for MailLoader {
                 let renewed_account = account_id.clone();
                 let gmail = move |access| LoadKind::Gmail {
                     access,
-                    renewal: answer_renewals(accounts, renewed_account),
+                    renewal: answer_renewals(renewed_account, move |account_id, answer| {
+                        accounts.request_imap_access(account_id, answer)
+                    }),
                 };
                 request_imap_load(&self.accounts, account_id, gmail, start_transfer)
             }
             MailProvider::Microsoft365 => {
+                let accounts = self.accounts.clone();
+                let renewed_account = account_id.clone();
                 self.accounts
                     .request_graph_access(account_id, move |access| {
                         start_transfer(access.map(|access| {
@@ -128,6 +132,12 @@ impl LoadsMail for MailLoader {
                             LoadKind::Microsoft365 {
                                 access,
                                 service_url: MICROSOFT_GRAPH.to_owned(),
+                                renewal: answer_renewals(
+                                    renewed_account,
+                                    move |account_id, answer| {
+                                        accounts.request_graph_access(account_id, answer)
+                                    },
+                                ),
                             }
                         }))
                     })

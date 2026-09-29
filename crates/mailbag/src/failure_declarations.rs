@@ -277,16 +277,6 @@ pub fn declare_short_list(incomplete: &IncompleteList) -> DeclaredFailure {
             }],
             details: incomplete.technical_details(),
         },
-        IncompleteList::MoreAvailable => DeclaredFailure {
-            title: "Not all messages loaded",
-            explanation: "The mail service offered more messages than one load brings. \
-                          The newest are shown."
-                .to_owned(),
-            advice: None,
-            action: None,
-            remote_texts: Vec::new(),
-            details: String::new(),
-        },
     }
 }
 

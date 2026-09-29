@@ -75,6 +75,9 @@ impl LoadFailure {
             },
             Self::MicrosoftGraph(error) => match error.failure {
                 GraphFailure::ConnectionFailed => FailureKind::ServiceUnreachable,
+                // A cycle answers a rejected position with a full reading, so
+                // this reaches the user only if that reading is rejected too.
+                GraphFailure::PositionRejected => FailureKind::RequestRefused,
                 GraphFailure::TimedOut => FailureKind::ServiceNotResponding,
                 GraphFailure::Refused { .. } if self.credentials_rejected() => {
                     FailureKind::ServiceRejectedSignIn

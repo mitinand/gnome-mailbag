@@ -10,7 +10,7 @@ use super::*;
 use crate::{test_directory::TestDirectory, test_record::CapturedRecord};
 use mailbag_domain::{
     ContentExplanation, DisplayFields, FailureKind, FolderPortion, FolderRole, FolderState,
-    ReceivedContent,
+    Message, ReceivedContent,
 };
 use std::{fs, os::unix::fs::PermissionsExt, path::Path};
 
@@ -63,9 +63,7 @@ fn store_with(account: &AccountId, loaded: &[(&str, &[Message])]) -> Store {
         .collect();
     store.replace_folders(account, &folders, || false).unwrap();
     for (identity, messages) in loaded {
-        store
-            .replace_mailbox(&folder_of(account, identity), messages, || false)
-            .unwrap();
+        store_completed_cycle(&store, &folder_of(account, identity), messages, || false).unwrap();
     }
     store
 }
@@ -210,7 +208,7 @@ fn a_mailbox_reads_back_newest_first_with_every_field() {
         .unwrap();
     let inbox = folder_of(&loaded, "INBOX");
     assert_eq!(
-        store.replace_mailbox(&inbox, &messages, || false),
+        store_completed_cycle(&store, &inbox, &messages, || false),
         Ok(StoreWrite::Stored)
     );
     // Newest first; messages without a date last, the last stored first.
@@ -229,9 +227,7 @@ fn a_content_is_read_by_its_message_and_a_message_no_longer_stored_has_none() {
         store.read_message_content(&loaded, "first"),
         Ok(Some(ReceivedContent::Text("Text of first".to_owned())))
     );
-    store
-        .replace_mailbox(&folder_of(&loaded, "INBOX"), &[], || false)
-        .unwrap();
+    store_completed_cycle(&store, &folder_of(&loaded, "INBOX"), &[], || false).unwrap();
     assert_eq!(store.read_message_content(&loaded, "first"), Ok(None));
     // Another account's message of the same identity is not this one's.
     let other = store_with(&account("other"), &[("INBOX", &[text_message("first")])]);
@@ -246,9 +242,7 @@ fn a_new_load_of_a_mailbox_replaces_its_messages_and_deletes_those_left_nowhere(
         &[("INBOX", &[text_message("first"), text_message("second")])],
     );
     let newer = vec![text_message("third")];
-    store
-        .replace_mailbox(&folder_of(&loaded, "INBOX"), &newer, || false)
-        .unwrap();
+    store_completed_cycle(&store, &folder_of(&loaded, "INBOX"), &newer, || false).unwrap();
     assert_eq!(
         read_stored_messages(&store, &folder_of(&loaded, "INBOX")),
         Ok(Some(newer))
@@ -268,13 +262,13 @@ fn a_message_in_two_folders_is_stored_once_with_its_latest_fields() {
         seen: true,
         ..labelled
     };
-    store
-        .replace_mailbox(
-            &folder_of(&loaded, "Travel"),
-            std::slice::from_ref(&read_later),
-            || false,
-        )
-        .unwrap();
+    store_completed_cycle(
+        &store,
+        &folder_of(&loaded, "Travel"),
+        std::slice::from_ref(&read_later),
+        || false,
+    )
+    .unwrap();
     for identity in ["Work", "Travel"] {
         assert_eq!(
             read_stored_messages(&store, &folder_of(&loaded, identity)),
@@ -310,13 +304,13 @@ fn a_folder_never_loaded_is_not_an_empty_one() {
 fn a_load_of_a_folder_the_store_does_not_hold_is_not_saved() {
     let loaded = account("loaded");
     let store = store_with(&loaded, &[("INBOX", &[])]);
-    let failure = store
-        .replace_mailbox(
-            &folder_of(&loaded, "Unknown"),
-            &[text_message("first")],
-            || false,
-        )
-        .unwrap_err();
+    let failure = store_completed_cycle(
+        &store,
+        &folder_of(&loaded, "Unknown"),
+        &[text_message("first")],
+        || false,
+    )
+    .unwrap_err();
     assert_eq!(failure.kind, FailureKind::MailNotSaved);
     assert_eq!(stored_message_count(&store), 0);
 }
@@ -331,7 +325,8 @@ fn a_cancelled_load_writes_nothing() {
         Ok(StoreWrite::LoadCancelled)
     );
     assert_eq!(
-        store.replace_mailbox(
+        store_completed_cycle(
+            &store,
             &folder_of(&loaded, "INBOX"),
             &[text_message("second")],
             || true
@@ -353,13 +348,13 @@ fn keeping_accounts_deletes_every_other_accounts_folders_and_mail_and_names_them
         store
             .replace_folders(account, &[folder("INBOX")], || false)
             .unwrap();
-        store
-            .replace_mailbox(
-                &folder_of(account, "INBOX"),
-                &[text_message("other")],
-                || false,
-            )
-            .unwrap();
+        store_completed_cycle(
+            &store,
+            &folder_of(account, "INBOX"),
+            &[text_message("other")],
+            || false,
+        )
+        .unwrap();
     }
     let deleted = store
         .delete_other_accounts(&BTreeSet::from([kept.clone()]))
@@ -393,13 +388,13 @@ fn a_write_that_fails_midway_leaves_the_previous_state_whole() {
         })
         .unwrap();
     let inbox = folder_of(&refreshed, "INBOX");
-    let failure = store
-        .replace_mailbox(
-            &inbox,
-            &[text_message("third"), text_message("fourth")],
-            || false,
-        )
-        .unwrap_err();
+    let failure = store_completed_cycle(
+        &store,
+        &inbox,
+        &[text_message("third"), text_message("fourth")],
+        || false,
+    )
+    .unwrap_err();
     assert_eq!(failure.kind, FailureKind::MailNotSaved);
     assert!(
         failure
@@ -430,9 +425,7 @@ fn a_full_disk_is_storage_full_and_leaves_the_previous_state_whole() {
         ..text_message("large")
     };
     let inbox = folder_of(&refreshed, "INBOX");
-    let failure = store
-        .replace_mailbox(&inbox, &[large], || false)
-        .unwrap_err();
+    let failure = store_completed_cycle(&store, &inbox, &[large], || false).unwrap_err();
     assert_eq!(
         failure.kind,
         FailureKind::StorageFull,
@@ -458,9 +451,7 @@ fn a_store_opened_again_from_its_file_reads_the_same_mail() {
     store
         .replace_folders(&loaded, &[folder("INBOX")], || false)
         .unwrap();
-    store
-        .replace_mailbox(&folder_of(&loaded, "INBOX"), &messages, || false)
-        .unwrap();
+    store_completed_cycle(&store, &folder_of(&loaded, "INBOX"), &messages, || false).unwrap();
     drop(store);
     let reopened = Store::at(directory.store_path());
     assert_eq!(
@@ -506,7 +497,7 @@ fn a_store_that_cannot_be_used_starts_empty_with_one_warning_naming_why() {
         store
             .replace_folders(&loaded, &[folder("INBOX")], || false)
             .unwrap();
-        store.replace_mailbox(&inbox, &large, || false).unwrap();
+        store_completed_cycle(&store, &inbox, &large, || false).unwrap();
         drop(store);
         spoil(&path);
         let record = CapturedRecord::start(tracing::Level::WARN);
@@ -841,4 +832,54 @@ fn stored_identities_are_those_any_folder_of_the_account_holds() {
         Ok(HashSet::from(["in-inbox", "in-work"].map(str::to_owned)))
     );
     assert_eq!(store.stored_identities(&other, &asked), Ok(HashSet::new()));
+}
+
+#[test]
+fn identities_in_other_folders_are_those_another_folder_of_the_account_holds() {
+    let synced = account("synced");
+    let store = store_listing(&synced, &["INBOX", "Archive"]);
+    let (inbox, archive) = (folder_of(&synced, "INBOX"), folder_of(&synced, "Archive"));
+    let store_in = |folder: &FolderRef, identity: &str| {
+        let portion = FolderPortion {
+            arrived: vec![dated_message(identity, 1)],
+            ..FolderPortion::default()
+        };
+        store.store_portion(folder, &portion, || false).unwrap();
+    };
+    store_in(&inbox, "only-here");
+    store_in(&archive, "only-there");
+    store_in(&inbox, "both");
+    store_in(&archive, "both");
+    let asked = ["only-here", "only-there", "both", "unknown"].map(str::to_owned);
+    assert_eq!(
+        store.identities_in_other_folders(&inbox, &asked),
+        Ok(HashSet::from(["only-there", "both"].map(str::to_owned)))
+    );
+}
+
+/// Stores `messages` as the folder's whole content, as a completed cycle
+/// leaves it: stored messages not among them leave.
+fn store_completed_cycle(
+    store: &Store,
+    folder: &FolderRef,
+    messages: &[Message],
+    load_cancelled: impl FnOnce() -> bool,
+) -> Result<StoreWrite, Failure> {
+    let removed = store
+        .read_folder_rows(folder)?
+        .unwrap_or_default()
+        .into_iter()
+        .map(|row| row.identity)
+        .filter(|identity| !messages.iter().any(|message| message.identity == *identity))
+        .collect();
+    let portion = FolderPortion {
+        removed,
+        arrived: messages.to_vec(),
+        state: Some(FolderState {
+            server_position: None,
+            synchronized: true,
+        }),
+        ..FolderPortion::default()
+    };
+    store.store_portion(folder, &portion, load_cancelled)
 }

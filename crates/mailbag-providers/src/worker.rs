@@ -37,12 +37,14 @@ pub(crate) enum LoadKind {
     /// With the renewal a cycle uses once after Gmail ended its session.
     Gmail {
         access: ImapAccess,
-        renewal: AccessRenewal,
+        renewal: AccessRenewal<ImapAccess>,
     },
-    /// `service_url` is Microsoft Graph's address, or a test service's.
+    /// `service_url` is Microsoft Graph's address, or a test service's; the
+    /// renewal is used once after the service refused the token.
     Microsoft365 {
         access: GraphAccess,
         service_url: String,
+        renewal: AccessRenewal<GraphAccess>,
     },
     /// Panics inside the load, as a hostile message could make a parser do.
     #[cfg(test)]
@@ -261,6 +263,7 @@ async fn list_folders(kind: LoadKind) -> Result<Vec<Folder>, LoadFailure> {
         LoadKind::Microsoft365 {
             access,
             service_url,
+            ..
         } => list_microsoft365_folders(access, &service_url)
             .await
             .map_err(LoadFailure::MicrosoftGraph),

@@ -1,18 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! A load's result into the store: a folder list replaced in one step, a
-//! cycle's portions each stored whole, or a Microsoft 365 folder's newest
-//! messages, and the record of how the load ended (specs/007-mail-storage
-//! FR-001; specs/008-folders FR-001; specs/009-synchronization FR-008).
+//! A load's result into the store: a folder list replaced in one step, or a
+//! cycle's portions each stored whole, and the record of how the load ended
+//! (specs/007-mail-storage FR-001; specs/008-folders FR-001;
+//! specs/009-synchronization FR-008).
 
-use crate::{
-    LoadEvent, LoadResult,
-    batch::{ReceivedBatch, ReceivedMessage},
-    failure::log_load_failure,
-};
+use crate::{LoadEvent, LoadResult, failure::log_load_failure};
 use mailbag_domain::{
-    AccountId, Failure, Folder, FolderPortion, FolderRef, IncompleteList, Message, ReceivedContent,
+    AccountId, Failure, Folder, FolderPortion, FolderRef, IncompleteList, ReceivedContent,
 };
 use mailbag_store::{FolderSync, Store, StoreWrite};
 use std::collections::HashSet;
@@ -59,16 +55,20 @@ impl<'a> PortionWriter<'a> {
         }
     }
 
-    /// Stores a Microsoft 365 folder's newest messages in place of its
-    /// stored ones, until its cycle exists.
-    pub(crate) fn store_newest_messages(&self, batch: ReceivedBatch) -> LoadResult {
-        store_mailbox(self.store, batch, || self.cancelled.is_closed())
-    }
-
     /// What the cycle starts from: the folder's state and stored messages.
     pub(crate) fn read_folder_sync(&self) -> Result<FolderSync, LoadResult> {
         self.store
             .read_folder_sync(&self.folder)
+            .map_err(|failure| failed_write(&self.folder.account, "mailbox", failure))
+    }
+
+    /// Which of `identities` another folder of the account holds.
+    pub(crate) fn identities_in_other_folders(
+        &self,
+        identities: &[String],
+    ) -> Result<HashSet<String>, LoadResult> {
+        self.store
+            .identities_in_other_folders(&self.folder, identities)
             .map_err(|failure| failed_write(&self.folder.account, "mailbox", failure))
     }
 
@@ -187,10 +187,6 @@ fn warn_about_content(account: &str, unreadable: usize, incomplete: Option<&Inco
             code = code.as_deref(),
             "the server refused to finish the message list"
         ),
-        Some(IncompleteList::MoreAvailable) => tracing::warn!(
-            account,
-            "the mail service offered more messages than one request holds"
-        ),
         None => {}
     }
 }
@@ -228,83 +224,7 @@ pub(crate) fn store_folder_list(
     }
 }
 
-/// Stores the batch as its folder's messages and says how the load ended,
-/// as `store_folder_list` does.
-pub(crate) fn store_mailbox(
-    store: &Store,
-    batch: ReceivedBatch,
-    load_cancelled: impl FnOnce() -> bool,
-) -> LoadResult {
-    let messages = kept_messages(batch.messages);
-    let written = store.replace_mailbox(&batch.folder, &messages, load_cancelled);
-    mailbox_load_result(written, &batch.folder, &messages, batch.incomplete)
-}
-
-fn mailbox_load_result(
-    written: Result<StoreWrite, Failure>,
-    folder: &FolderRef,
-    messages: &[Message],
-    incomplete: Option<IncompleteList>,
-) -> LoadResult {
-    match written {
-        Ok(StoreWrite::Stored) => {
-            log_received_batch(folder, messages, incomplete.as_ref());
-            LoadResult::Stored { incomplete }
-        }
-        // The cancellation was recorded where it was requested.
-        Ok(StoreWrite::LoadCancelled) => LoadResult::Cancelled,
-        Err(failure) => failed_write(&folder.account, "mailbox", failure),
-    }
-}
-
 fn failed_write(account: &AccountId, record_name: &'static str, failure: Failure) -> LoadResult {
     log_load_failure(account, record_name, failure.kind, None, None, 0);
     LoadResult::Failed(failure)
-}
-
-/// The received messages as the application keeps them, each under Microsoft
-/// Graph's immutable identifier (specs/008-folders FR-004).
-fn kept_messages(received: Vec<ReceivedMessage>) -> Vec<Message> {
-    received
-        .into_iter()
-        .map(|received| Message {
-            identity: format!("graph:{}", received.graph_id),
-            fields: received.fields,
-            received_unix: received.internal_date,
-            seen: received.seen,
-            content: received.content,
-        })
-        .collect()
-}
-
-/// How a stored load ended, with warnings for what the reader cannot show.
-/// The folder's name stays at debug (specs/003-logging FR-010).
-fn log_received_batch(
-    folder: &FolderRef,
-    messages: &[Message],
-    incomplete: Option<&IncompleteList>,
-) {
-    let account = folder.account.as_str();
-    let classes = messages
-        .iter()
-        .map(|message| content_class(&message.content));
-    let unsupported = classes
-        .clone()
-        .filter(|class| matches!(class, ContentClass::Unsupported))
-        .count();
-    let unreadable = classes
-        .filter(|class| matches!(class, ContentClass::Unreadable))
-        .count();
-    tracing::debug!(
-        account,
-        folder = folder.identity,
-        "the load read this mailbox"
-    );
-    tracing::info!(
-        account,
-        messages = messages.len(),
-        unsupported,
-        "mailbox load finished"
-    );
-    warn_about_content(account, unreadable, incomplete);
 }

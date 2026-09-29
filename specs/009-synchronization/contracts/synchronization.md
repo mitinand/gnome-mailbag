@@ -69,6 +69,11 @@ user's word, *mailbox*, where it names the refreshed folder
 - `stored_identities(&self, account: &AccountId, identities: &[String]) ->
   Result<HashSet<String>, Failure>`: which of a portion's identities the
   account already holds.
+- `identities_in_other_folders(&self, folder: &FolderRef, identities:
+  &[String]) -> Result<HashSet<String>, Failure>`: which of a Microsoft 365
+  page's identities another folder of the account holds, so the cycle reads
+  such a message again before applying an entry that may be older than that
+  folder's state (research §5; added in portion 4).
 - `read_folder_rows(&self, folder: &FolderRef) ->
   Result<Option<Vec<MessageListRow>>, Failure>`: newest first; `None` for
   "no mail loaded".

@@ -14,7 +14,7 @@ use goa_adapter::{
 };
 use mailbag_domain::{
     AccountId, ContentExplanation, Failure, FailureKind, Folder, FolderPortion, FolderRef,
-    FolderRole, IncompleteList, Message, RemoteSource, RemoteText, ServerStep,
+    FolderRole, FolderState, IncompleteList, Message, RemoteSource, RemoteText, ServerStep,
 };
 use mailbag_providers::{
     CancelsLoadOnDrop, LoadEvent, LoadResult, LoadTarget, LoadsMail, MailProvider,
@@ -192,10 +192,9 @@ impl ScriptedLoader {
         let LoadTarget::Mailbox(folder) = &started.target else {
             panic!("a mailbox load is running");
         };
-        let write = self
-            .store
-            .replace_mailbox(folder, messages, || started.cancelled.get())
-            .expect("the test store takes the load");
+        let write =
+            store_completed_cycle(&self.store, folder, messages, || started.cancelled.get())
+                .expect("the test store takes the load");
         let mut report = started.on_event;
         report(LoadEvent::Finished(stored_or_cancelled(write, incomplete)));
     }
@@ -271,8 +270,7 @@ fn store_mail(store: &Store, account: &AccountId, messages: &[Message]) {
     store
         .replace_folders(account, &inbox_and_projects(), || false)
         .expect("the test store takes the folder list");
-    store
-        .replace_mailbox(&folder_of(account, "INBOX"), messages, || false)
+    store_completed_cycle(store, &folder_of(account, "INBOX"), messages, || false)
         .expect("the test store takes the messages");
 }
 
@@ -1018,19 +1016,19 @@ fn mail_ui_transitions() {
     settle(&ui);
     assert_eq!(widgets.status_title(), "Mailbox is empty");
     assert_eq!(widgets.banner_title(), None);
-    // A service that offered more than it sent leaves the notice over it.
+    // A list the server refused to finish leaves the notice over it.
     refresh_mailbox.activate(None);
     settle(&ui);
-    loader.report_stored(&[], Some(IncompleteList::MoreAvailable));
+    let refused = IncompleteList::ServerRefused {
+        reply: "Listing not available now".to_owned(),
+        code: None,
+    };
+    loader.report_stored(&[], Some(refused.clone()));
     settle(&ui);
     assert_eq!(widgets.status_title(), "Mailbox is empty");
     assert_eq!(
         widgets.banner_title(),
-        Some(
-            declare_short_list(&IncompleteList::MoreAvailable)
-                .title
-                .to_owned()
-        )
+        Some(declare_short_list(&refused).title.to_owned())
     );
 
     // A new window over the same store shows the same folders, rows and
@@ -1239,9 +1237,10 @@ fn mailbox_navigation() {
     loader.report_folders(&inbox_and_projects());
     settle(&ui);
     for label in ["INBOX", "Projects"] {
-        store
-            .replace_mailbox(&folder_of(&google, label), &two_messages(), || false)
-            .expect("the test store takes the messages");
+        store_completed_cycle(&store, &folder_of(&google, label), &two_messages(), || {
+            false
+        })
+        .expect("the test store takes the messages");
     }
     let mut read_elsewhere = two_messages();
     read_elsewhere[0].seen = true;
@@ -1287,8 +1286,7 @@ fn mailbox_navigation() {
             content: ReceivedContent::TextNotReturned,
         })
         .collect();
-    store
-        .replace_mailbox(&folder_of(&google, "Projects"), &many, || false)
+    store_completed_cycle(&store, &folder_of(&google, "Projects"), &many, || false)
         .expect("the test store takes the messages");
     let started = Instant::now();
     widgets.select(&ui, &google, Some("Projects"));
@@ -1746,4 +1744,31 @@ fn the_same_rows_change_nothing() {
     update_list_by_difference(&items, &rows);
     assert!(changes.borrow().is_empty());
     assert_eq!(item_list(&items), before);
+}
+
+/// Stores `messages` as the folder's whole content, as a completed cycle
+/// leaves it: stored messages not among them leave.
+fn store_completed_cycle(
+    store: &Store,
+    folder: &FolderRef,
+    messages: &[Message],
+    load_cancelled: impl FnOnce() -> bool,
+) -> Result<StoreWrite, Failure> {
+    let removed = store
+        .read_folder_rows(folder)?
+        .unwrap_or_default()
+        .into_iter()
+        .map(|row| row.identity)
+        .filter(|identity| !messages.iter().any(|message| message.identity == *identity))
+        .collect();
+    let portion = FolderPortion {
+        removed,
+        arrived: messages.to_vec(),
+        state: Some(FolderState {
+            server_position: None,
+            synchronized: true,
+        }),
+        ..FolderPortion::default()
+    };
+    store.store_portion(folder, &portion, load_cancelled)
 }

@@ -762,6 +762,7 @@ dependencies = [
  "mailbag-graph",
  "mailbag-imap",
  "mailbag-store",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
 ]

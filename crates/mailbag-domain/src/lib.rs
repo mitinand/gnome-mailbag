@@ -282,14 +282,12 @@ pub enum RemoteSource {
     System,
 }
 
-/// Why fewer messages arrived than the Inbox offered.
+/// Why fewer messages arrived than the mailbox offered.
 #[derive(Clone, PartialEq, Eq)]
 pub enum IncompleteList {
     /// The server refused to finish the message list: its reply, with the
     /// sign-in name replaced, and its code.
     ServerRefused { reply: String, code: Option<String> },
-    /// The mail service offered more messages than one request holds.
-    MoreAvailable,
 }
 
 impl IncompleteList {
@@ -299,7 +297,7 @@ impl IncompleteList {
             Self::ServerRefused {
                 code: Some(code), ..
             } => format!("Server code: {code}"),
-            Self::ServerRefused { code: None, .. } | Self::MoreAvailable => String::new(),
+            Self::ServerRefused { code: None, .. } => String::new(),
         }
     }
 }
@@ -420,7 +418,6 @@ impl fmt::Debug for IncompleteList {
                 .debug_struct("ServerRefused")
                 .field("code", code)
                 .finish_non_exhaustive(),
-            Self::MoreAvailable => write!(formatter, "MoreAvailable"),
         }
     }
 }

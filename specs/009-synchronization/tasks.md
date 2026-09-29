@@ -286,7 +286,7 @@ window follows its portions; Microsoft 365 still loads its newest 100.
 Goal: Refresh Mailbox on a Microsoft 365 folder runs a cycle; the newest-100
 path, `replace_mailbox` and `MoreAvailable` are gone.
 
-- [ ] T025 With the maintainer, the open check of research §5: a probe
+- [x] T025 With the maintainer, the open check of research §5: a probe
   (outside the repository) starts a delta reading of the Inbox, stores its
   next link and waits; the maintainer makes changes that stay: marks one
   message read and leaves it read, moves one message to another folder,
@@ -296,7 +296,7 @@ path, `replace_mailbox` and `MoreAvailable` are gone.
   form (a partial entry or a listed one); if it is never reported, T029
   ends a continued first fill with a full re-reading; the maintainer undoes
   the changes afterwards.
-- [ ] T026 Amend the documents first:
+- [x] T026 Amend the documents first:
   specs/005-microsoft-graph-integration/spec.md (FR-002: a token refused
   mid-cycle is asked for once more and a different one used; FR-003 and
   FR-008: pages are read, and the one repeat after renewal is the only
@@ -304,7 +304,7 @@ path, `replace_mailbox` and `MoreAvailable` are gone.
   specs/006-error-handling (`MoreAvailable` and its wording removed; User
   Story 3's Microsoft 365 case), each with a status line naming this
   feature.
-- [ ] T027 [US1] [US2] [US3] [US4] In crates/mailbag-graph/src/lib.rs and
+- [x] T027 [US1] [US2] [US3] [US4] In crates/mailbag-graph/src/lib.rs and
   src/reply.rs: `read_message_changes(service_url, token, from:
   ChangesFrom) -> ChangePage` (the first reading's `$select`, `$orderby`
   and `Prefer` headers, a link followed as given), entries parsed as
@@ -316,13 +316,13 @@ path, `replace_mailbox` and `MoreAvailable` are gone.
   `read_message` returning the message with its `parentFolderId`, a 404 as
   `None`; the wait limit at 60 s;
   `list_mailbox_messages` removed.
-- [ ] T028 [P] [US1] [US2] [US3] [US4] In crates/mailbag-graph/src/
+- [x] T028 [P] [US1] [US2] [US3] [US4] In crates/mailbag-graph/src/
   test_server.rs and src/tests.rs: delta pages with a next link and a
   delta link, removed, listed and partial entries, a repeated entry, a
   410 and a `syncStateNotFound`, a date-range text page and its paging, a
   message read by id and a 404, a 401 followed by success with a new
   token; tests for each.
-- [ ] T029 [US1] [US2] [US3] [US4] [US6] In
+- [x] T029 [US1] [US2] [US3] [US4] [US6] In
   crates/mailbag-providers/src/cycle.rs and src/renewal.rs:
   `synchronize_graph_folder` as the plan's function map (`where_to_start`;
   pages as portions with entries merged per message; partial and unknown
@@ -337,13 +337,13 @@ path, `replace_mailbox` and `MoreAvailable` are gone.
   cycle's first successful request asks for the token once and makes one
   attempt only with a different token; the same token, or a second 401,
   is the refused sign-in.
-- [ ] T030 [US1] Remove what the cycles replaced:
+- [x] T030 [US1] Remove what the cycles replaced:
   `IncompleteList::MoreAvailable` (crates/mailbag-domain/src/lib.rs, its
   producer and its wording in crates/mailbag/src/failure_declarations.rs
   and their tests), `BATCH_SIZE` and the batch path in
   crates/mailbag-providers (batch.rs, imap.rs, gmail.rs, microsoft365.rs,
   store_load.rs), and `replace_mailbox` in crates/mailbag-store.
-- [ ] T031 [P] [US1] [US2] [US3] [US4] [US6] Tests in
+- [x] T031 [P] [US1] [US2] [US3] [US4] [US6] Tests in
   crates/mailbag-providers/src/tests.rs against the scripted Graph service:
   a first fill page by page with texts only within 30 days; a first fill
   stopped and continued from its saved place; changes, repeated and

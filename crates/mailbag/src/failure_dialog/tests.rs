@@ -5,8 +5,8 @@
 //! graphical tests (`mail_ui/tests.rs`).
 
 use super::*;
-use crate::failure_declarations::{declare_failure, declare_short_list};
-use mailbag_domain::{Failure, FailureKind, IncompleteList, RemoteSource, RemoteText, ServerStep};
+use crate::failure_declarations::{declare_content, declare_failure};
+use mailbag_domain::{Failure, FailureKind, ReceivedContent, RemoteSource, RemoteText, ServerStep};
 
 #[test]
 fn the_report_holds_the_dialog_text_in_its_order_with_the_sign_in_name_replaced() {
@@ -42,7 +42,7 @@ fn the_report_holds_the_dialog_text_in_its_order_with_the_sign_in_name_replaced(
 
 #[test]
 fn the_report_leaves_out_what_the_failure_does_not_have() {
-    let failure = declare_short_list(&IncompleteList::MoreAvailable);
+    let failure = declare_content(&ReceivedContent::NotDownloaded).expect("an explanation");
     assert_eq!(
         report_text(&failure),
         format!("{}\n\n{}", failure.title, failure.explanation)
