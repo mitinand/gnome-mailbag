@@ -2,16 +2,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The rows behind the store's operations: folders, the messages they hold
-//! and the memberships between them (specs/008-folders/data-model.md). Each
-//! function runs inside the caller's transaction or read.
+//! and the memberships between them (specs/009-synchronization/data-model.md).
+//! Each function runs inside the caller's transaction or read.
 
 use crate::content::{content_columns, content_from_columns};
 use mailbag_domain::{
-    AccountId, DisplayFields, Folder, FolderRef, FolderRole, Message, MessageListRow,
+    AccountId, DisplayFields, Folder, FolderRef, FolderRole, FolderState, Message, MessageListRow,
     ReceivedContent,
 };
 use rusqlite::{Connection, Row, Transaction, params, types::Type};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// Deletes the account's folders that `listed` does not hold, with their
 /// memberships.
@@ -36,15 +36,15 @@ pub(crate) fn delete_unlisted_folders(
     Ok(())
 }
 
-/// Updates the listed folders the store holds, keeping whether they were
-/// loaded, and inserts the others as not loaded.
+/// Updates the listed folders the store holds, keeping their state, and
+/// inserts the others as never synchronized.
 pub(crate) fn upsert_folders(
     transaction: &Transaction,
     account: &AccountId,
     folders: &[Folder],
 ) -> rusqlite::Result<()> {
     let mut upsert = transaction.prepare(
-        "INSERT INTO folder (account, identity, name, parent, role, selectable, loaded) \
+        "INSERT INTO folder (account, identity, name, parent, role, selectable, synchronized) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0) \
          ON CONFLICT (account, identity) DO UPDATE SET name = excluded.name, \
          parent = excluded.parent, role = excluded.role, selectable = excluded.selectable",
@@ -62,20 +62,29 @@ pub(crate) fn upsert_folders(
     Ok(())
 }
 
-/// Replaces the folder's memberships with the load's, in the load's order,
-/// stores each message once by its identity with the load's fields, deletes
-/// the messages no folder holds any more and marks the folder loaded. A
-/// folder the store does not hold fails with no row found.
+/// The store's row of the folder; a folder the store does not hold fails
+/// with no row found.
+pub(crate) fn stored_folder_id(
+    connection: &Connection,
+    folder: &FolderRef,
+) -> rusqlite::Result<i64> {
+    connection.query_row(
+        "SELECT id FROM folder WHERE account = ?1 AND identity = ?2",
+        params![folder.account.as_str(), folder.identity],
+        |row| row.get(0),
+    )
+}
+
+/// Replaces the folder's memberships with the load's, stores each message
+/// once by its identity with the load's fields, deletes the messages no
+/// folder holds any more and marks the folder synchronized. A folder the
+/// store does not hold fails with no row found.
 pub(crate) fn write_mailbox(
     transaction: &Transaction,
     folder: &FolderRef,
     messages: &[Message],
 ) -> rusqlite::Result<()> {
-    let folder_id: i64 = transaction.query_row(
-        "SELECT id FROM folder WHERE account = ?1 AND identity = ?2",
-        params![folder.account.as_str(), folder.identity],
-        |row| row.get(0),
-    )?;
+    let folder_id = stored_folder_id(transaction, folder)?;
     transaction.execute("DELETE FROM membership WHERE folder = ?1", [folder_id])?;
     let mut upsert_message = transaction.prepare(
         "INSERT INTO message (account, identity, subject, sender, recipients, received, seen, \
@@ -86,9 +95,9 @@ pub(crate) fn write_mailbox(
          content_kind = excluded.content_kind, content_detail = excluded.content_detail \
          RETURNING id",
     )?;
-    let mut insert_membership = transaction
-        .prepare("INSERT INTO membership (folder, message, position) VALUES (?1, ?2, ?3)")?;
-    for (position, message) in (0_i64..).zip(messages) {
+    let mut insert_membership =
+        transaction.prepare("INSERT INTO membership (folder, message) VALUES (?1, ?2)")?;
+    for message in messages {
         let (content_kind, content_detail) = content_columns(&message.content);
         let message_id: i64 = upsert_message.query_row(
             params![
@@ -104,10 +113,168 @@ pub(crate) fn write_mailbox(
             ],
             |row| row.get(0),
         )?;
-        insert_membership.execute(params![folder_id, message_id, position])?;
+        insert_membership.execute(params![folder_id, message_id])?;
     }
     delete_messages_without_folder(transaction, &folder.account)?;
-    transaction.execute("UPDATE folder SET loaded = 1 WHERE id = ?1", [folder_id])?;
+    transaction.execute(
+        "UPDATE folder SET synchronized = 1 WHERE id = ?1",
+        [folder_id],
+    )?;
+    Ok(())
+}
+
+/// The folder's saved state.
+pub(crate) fn read_folder_state(
+    connection: &Connection,
+    folder_id: i64,
+) -> rusqlite::Result<FolderState> {
+    connection.query_row(
+        "SELECT server_position, synchronized FROM folder WHERE id = ?1",
+        [folder_id],
+        |row| {
+            Ok(FolderState {
+                server_position: row.get(0)?,
+                synchronized: row.get(1)?,
+            })
+        },
+    )
+}
+
+/// The identity and read state of every message the folder holds.
+pub(crate) fn read_folder_identities(
+    connection: &Connection,
+    folder_id: i64,
+) -> rusqlite::Result<HashMap<String, bool>> {
+    connection
+        .prepare(
+            "SELECT identity, seen FROM membership JOIN message ON message.id = membership.message \
+             WHERE membership.folder = ?1",
+        )?
+        .query_map([folder_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect()
+}
+
+/// Which of `identities` the account holds.
+pub(crate) fn read_stored_identities(
+    connection: &Connection,
+    account: &AccountId,
+    identities: &[String],
+) -> rusqlite::Result<HashSet<String>> {
+    let mut select =
+        connection.prepare("SELECT 1 FROM message WHERE account = ?1 AND identity = ?2")?;
+    let mut stored = HashSet::new();
+    for identity in identities {
+        if select.exists(params![account.as_str(), identity])? {
+            stored.insert(identity.clone());
+        }
+    }
+    Ok(stored)
+}
+
+/// Deletes the folder's memberships of messages proven gone from it.
+pub(crate) fn delete_memberships(
+    transaction: &Transaction,
+    folder_id: i64,
+    account: &AccountId,
+    removed: &[String],
+) -> rusqlite::Result<()> {
+    let mut delete = transaction.prepare(
+        "DELETE FROM membership WHERE folder = ?1 AND message = \
+         (SELECT id FROM message WHERE account = ?2 AND identity = ?3)",
+    )?;
+    for identity in removed {
+        delete.execute(params![folder_id, account.as_str(), identity])?;
+    }
+    Ok(())
+}
+
+/// Sets the read state of the account's messages.
+pub(crate) fn set_read_states(
+    transaction: &Transaction,
+    account: &AccountId,
+    read_states: &[(String, bool)],
+) -> rusqlite::Result<()> {
+    let mut update =
+        transaction.prepare("UPDATE message SET seen = ?3 WHERE account = ?1 AND identity = ?2")?;
+    for (identity, seen) in read_states {
+        update.execute(params![account.as_str(), identity, seen])?;
+    }
+    Ok(())
+}
+
+/// Stores each full record once by its identity and relates it to the
+/// folder. Its content replaces the stored one, except that a text not
+/// downloaded never replaces a content another folder's cycle stored.
+pub(crate) fn store_arrived(
+    transaction: &Transaction,
+    folder_id: i64,
+    account: &AccountId,
+    arrived: &[Message],
+) -> rusqlite::Result<()> {
+    let mut upsert_message = transaction.prepare(
+        "INSERT INTO message (account, identity, subject, sender, recipients, received, seen, \
+         content_kind, content_detail) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
+         ON CONFLICT (account, identity) DO UPDATE SET subject = excluded.subject, \
+         sender = excluded.sender, recipients = excluded.recipients, \
+         received = excluded.received, seen = excluded.seen, \
+         content_kind = iif(excluded.content_kind = 'not_downloaded', content_kind, \
+         excluded.content_kind), \
+         content_detail = iif(excluded.content_kind = 'not_downloaded', content_detail, \
+         excluded.content_detail) \
+         RETURNING id",
+    )?;
+    let mut relate = transaction
+        .prepare("INSERT OR IGNORE INTO membership (folder, message) VALUES (?1, ?2)")?;
+    for message in arrived {
+        let (content_kind, content_detail) = content_columns(&message.content);
+        let message_id: i64 = upsert_message.query_row(
+            params![
+                account.as_str(),
+                message.identity,
+                message.fields.subject,
+                message.fields.from,
+                message.fields.to,
+                message.received_unix,
+                message.seen,
+                content_kind,
+                content_detail,
+            ],
+            |row| row.get(0),
+        )?;
+        relate.execute(params![folder_id, message_id])?;
+    }
+    Ok(())
+}
+
+/// Relates messages the account already holds to the folder, with their
+/// listed read state. A message the store no longer holds is left out; the
+/// folder's next cycle fetches it.
+pub(crate) fn relate_known(
+    transaction: &Transaction,
+    folder_id: i64,
+    account: &AccountId,
+    known_arrived: &[(String, bool)],
+) -> rusqlite::Result<()> {
+    let mut relate = transaction.prepare(
+        "INSERT OR IGNORE INTO membership (folder, message) \
+         SELECT ?1, id FROM message WHERE account = ?2 AND identity = ?3",
+    )?;
+    for (identity, _) in known_arrived {
+        relate.execute(params![folder_id, account.as_str(), identity])?;
+    }
+    set_read_states(transaction, account, known_arrived)
+}
+
+/// Saves the folder's state.
+pub(crate) fn write_folder_state(
+    transaction: &Transaction,
+    folder_id: i64,
+    state: &FolderState,
+) -> rusqlite::Result<()> {
+    transaction.execute(
+        "UPDATE folder SET server_position = ?2, synchronized = ?3 WHERE id = ?1",
+        params![folder_id, state.server_position, state.synchronized],
+    )?;
     Ok(())
 }
 
@@ -124,8 +291,9 @@ pub(crate) fn delete_messages_without_folder(
     Ok(())
 }
 
-/// The rows of the messages a folder holds, in its load's order, without
-/// their content.
+/// The rows of the messages a folder holds, without their content, newest
+/// first by received date, then by the order they were stored in, newest
+/// first; a message without a date comes last.
 pub(crate) fn read_listed_rows(
     connection: &Connection,
     folder_id: i64,
@@ -134,7 +302,7 @@ pub(crate) fn read_listed_rows(
         .prepare(
             "SELECT identity, subject, sender, recipients, received, seen \
              FROM membership JOIN message ON message.id = membership.message \
-             WHERE membership.folder = ?1 ORDER BY membership.position",
+             WHERE membership.folder = ?1 ORDER BY message.received DESC, message.id DESC",
         )?
         .query_map([folder_id], |row| {
             Ok(MessageListRow {

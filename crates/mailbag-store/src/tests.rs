@@ -8,7 +8,10 @@
 
 use super::*;
 use crate::{test_directory::TestDirectory, test_record::CapturedRecord};
-use mailbag_domain::{ContentExplanation, DisplayFields, FailureKind, FolderRole, ReceivedContent};
+use mailbag_domain::{
+    ContentExplanation, DisplayFields, FailureKind, FolderPortion, FolderRole, FolderState,
+    ReceivedContent,
+};
 use std::{fs, os::unix::fs::PermissionsExt, path::Path};
 
 fn account(name: &str) -> AccountId {
@@ -39,6 +42,15 @@ fn text_message(identity: &str) -> Message {
         received_unix: None,
         seen: false,
         content: ReceivedContent::Text(format!("Text of {identity}")),
+    }
+}
+
+/// A text message received `day` days after the epoch, so rows read in the
+/// order of their days, newest first.
+fn dated_message(identity: &str, day: i64) -> Message {
+    Message {
+        received_unix: Some(day * 86_400),
+        ..text_message(identity)
     }
 }
 
@@ -162,7 +174,7 @@ fn a_new_folder_list_drops_unlisted_folders_with_their_own_mail_and_keeps_the_re
 }
 
 #[test]
-fn a_mailbox_reads_back_in_the_loads_order_with_every_field() {
+fn a_mailbox_reads_back_newest_first_with_every_field() {
     use ContentExplanation::*;
     let contents = [
         ReceivedContent::Text("Hello".to_owned()),
@@ -176,7 +188,7 @@ fn a_mailbox_reads_back_in_the_loads_order_with_every_field() {
         ReceivedContent::StructureUnreadable,
         ReceivedContent::TextNotReturned,
     ];
-    // Newest first, as a load delivers them; absent fields stay absent.
+    // Older as the number grows; absent fields stay absent.
     let messages: Vec<Message> = (0..)
         .zip(contents)
         .map(|(number, content)| Message {
@@ -186,7 +198,7 @@ fn a_mailbox_reads_back_in_the_loads_order_with_every_field() {
                 from: (number % 3 != 0).then(|| format!("Sender {number}")),
                 to: (number % 4 != 0).then(|| format!("Recipient {number}")),
             },
-            received_unix: (number % 5 != 0).then_some(1_700_000_000 + i64::from(number)),
+            received_unix: (number % 5 != 0).then_some(1_700_000_000 - i64::from(number)),
             seen: number % 2 == 1,
             content,
         })
@@ -201,7 +213,12 @@ fn a_mailbox_reads_back_in_the_loads_order_with_every_field() {
         store.replace_mailbox(&inbox, &messages, || false),
         Ok(StoreWrite::Stored)
     );
-    assert_eq!(read_stored_messages(&store, &inbox), Ok(Some(messages)));
+    // Newest first; messages without a date last, the last stored first.
+    let newest_first = [1, 2, 3, 4, 6, 7, 8, 9, 5, 0].map(|number| messages[number].clone());
+    assert_eq!(
+        read_stored_messages(&store, &inbox),
+        Ok(Some(newest_first.to_vec()))
+    );
 }
 
 #[test]
@@ -364,7 +381,7 @@ fn keeping_accounts_deletes_every_other_accounts_folders_and_mail_and_names_them
 #[test]
 fn a_write_that_fails_midway_leaves_the_previous_state_whole() {
     let refreshed = account("refreshed");
-    let previous = vec![text_message("first"), text_message("second")];
+    let previous = vec![dated_message("second", 2), dated_message("first", 1)];
     let store = store_with(&refreshed, &[("INBOX", &previous)]);
     store
         .with_connection(StoreOperation::Write, |connection| {
@@ -436,7 +453,7 @@ fn a_full_disk_is_storage_full_and_leaves_the_previous_state_whole() {
 fn a_store_opened_again_from_its_file_reads_the_same_mail() {
     let directory = TestDirectory::new();
     let loaded = account("loaded");
-    let messages = vec![text_message("second"), text_message("first")];
+    let messages = vec![dated_message("second", 2), dated_message("first", 1)];
     let store = Store::at(directory.store_path());
     store
         .replace_folders(&loaded, &[folder("INBOX")], || false)
@@ -544,4 +561,284 @@ fn the_stores_directory_is_readable_by_the_user_only() {
         let rights = fs::metadata(&store_directory).unwrap().permissions().mode() & 0o777;
         assert_eq!(rights, 0o700, "{existing_rights:?}");
     }
+}
+
+/// A store listing the account's folders, none synchronized yet.
+fn store_listing(account: &AccountId, folders: &[&str]) -> Store {
+    let store = Store::in_memory();
+    let listed: Vec<Folder> = folders.iter().map(|identity| folder(identity)).collect();
+    store.replace_folders(account, &listed, || false).unwrap();
+    store
+}
+
+fn completed(server_position: Option<&str>) -> Option<FolderState> {
+    Some(FolderState {
+        server_position: server_position.map(str::to_owned),
+        synchronized: true,
+    })
+}
+
+fn identities_of(store: &Store, folder: &FolderRef) -> Vec<String> {
+    store
+        .read_folder_rows(folder)
+        .unwrap()
+        .expect("the folder has rows")
+        .into_iter()
+        .map(|row| row.identity)
+        .collect()
+}
+
+#[test]
+fn a_portion_removes_changes_relates_and_adds_in_one_write() {
+    let synced = account("synced");
+    let store = store_listing(&synced, &["INBOX", "Work"]);
+    let (inbox, work) = (folder_of(&synced, "INBOX"), folder_of(&synced, "Work"));
+    let first = FolderPortion {
+        arrived: vec![
+            dated_message("kept", 3),
+            dated_message("gone", 2),
+            dated_message("read", 1),
+        ],
+        state: completed(None),
+        ..FolderPortion::default()
+    };
+    store.store_portion(&inbox, &first, || false).unwrap();
+    let elsewhere = FolderPortion {
+        arrived: vec![dated_message("shared", 4)],
+        ..FolderPortion::default()
+    };
+    store.store_portion(&work, &elsewhere, || false).unwrap();
+
+    let second = FolderPortion {
+        removed: vec!["gone".to_owned()],
+        read_states: vec![("read".to_owned(), true)],
+        known_arrived: vec![("shared".to_owned(), true)],
+        arrived: vec![dated_message("new", 5)],
+        state: None,
+    };
+    assert_eq!(
+        store.store_portion(&inbox, &second, || false),
+        Ok(StoreWrite::Stored)
+    );
+    assert_eq!(
+        identities_of(&store, &inbox),
+        ["new", "shared", "kept", "read"]
+    );
+    let sync = store.read_folder_sync(&inbox).unwrap();
+    assert_eq!(
+        sync.stored,
+        HashMap::from(
+            [
+                ("new", false),
+                ("shared", true),
+                ("kept", false),
+                ("read", true)
+            ]
+            .map(|(identity, seen)| (identity.to_owned(), seen))
+        )
+    );
+    // The removed message was in no other folder, so it is gone; the shared
+    // one stays in its first folder too.
+    assert_eq!(store.read_message_content(&synced, "gone"), Ok(None));
+    assert_eq!(identities_of(&store, &work), ["shared"]);
+    assert_eq!(stored_message_count(&store), 4);
+}
+
+#[test]
+fn a_text_not_downloaded_never_replaces_a_stored_content() {
+    let synced = account("synced");
+    let store = store_listing(&synced, &["INBOX", "Archive"]);
+    let recent = dated_message("message", 1);
+    let with_text = FolderPortion {
+        arrived: vec![recent.clone()],
+        ..FolderPortion::default()
+    };
+    store
+        .store_portion(&folder_of(&synced, "INBOX"), &with_text, || false)
+        .unwrap();
+    let without_text = FolderPortion {
+        arrived: vec![Message {
+            seen: true,
+            content: ReceivedContent::NotDownloaded,
+            ..recent.clone()
+        }],
+        ..FolderPortion::default()
+    };
+    store
+        .store_portion(&folder_of(&synced, "Archive"), &without_text, || false)
+        .unwrap();
+    assert_eq!(
+        store.read_message_content(&synced, "message"),
+        Ok(Some(recent.content.clone()))
+    );
+    // Its fields are the latest record's all the same: it is read now.
+    let inbox = store
+        .read_folder_sync(&folder_of(&synced, "INBOX"))
+        .unwrap();
+    assert!(inbox.stored["message"]);
+    // A text replaces a text.
+    let newer = FolderPortion {
+        arrived: vec![Message {
+            content: ReceivedContent::Text("Newer".to_owned()),
+            ..recent
+        }],
+        ..FolderPortion::default()
+    };
+    store
+        .store_portion(&folder_of(&synced, "Archive"), &newer, || false)
+        .unwrap();
+    assert_eq!(
+        store.read_message_content(&synced, "message"),
+        Ok(Some(ReceivedContent::Text("Newer".to_owned())))
+    );
+}
+
+#[test]
+fn the_folder_state_changes_only_with_a_portion_that_carries_it() {
+    let synced = account("synced");
+    let store = store_listing(&synced, &["INBOX"]);
+    let inbox = folder_of(&synced, "INBOX");
+    let never = FolderState::default();
+    assert_eq!(store.read_folder_sync(&inbox).unwrap().state, never);
+    let completing = FolderPortion {
+        state: completed(Some("position")),
+        ..FolderPortion::default()
+    };
+    store.store_portion(&inbox, &completing, || false).unwrap();
+    let without_state = FolderPortion {
+        arrived: vec![dated_message("message", 1)],
+        ..FolderPortion::default()
+    };
+    store
+        .store_portion(&inbox, &without_state, || false)
+        .unwrap();
+    assert_eq!(
+        store.read_folder_sync(&inbox).unwrap().state,
+        completed(Some("position")).unwrap()
+    );
+    // A new folder list keeps a listed folder's state.
+    store
+        .replace_folders(&synced, &[folder("INBOX")], || false)
+        .unwrap();
+    assert_eq!(
+        store.read_folder_sync(&inbox).unwrap().state,
+        completed(Some("position")).unwrap()
+    );
+}
+
+#[test]
+fn a_cancelled_or_failing_portion_leaves_the_folder_as_it_was() {
+    let synced = account("synced");
+    let store = store_listing(&synced, &["INBOX"]);
+    let inbox = folder_of(&synced, "INBOX");
+    let first = FolderPortion {
+        arrived: vec![dated_message("first", 1)],
+        state: completed(None),
+        ..FolderPortion::default()
+    };
+    store.store_portion(&inbox, &first, || false).unwrap();
+    let before = store.read_folder_sync(&inbox).unwrap();
+    let changes = FolderPortion {
+        removed: vec!["first".to_owned()],
+        arrived: vec![dated_message("second", 2), dated_message("third", 3)],
+        state: Some(FolderState::default()),
+        ..FolderPortion::default()
+    };
+    assert_eq!(
+        store.store_portion(&inbox, &changes, || true),
+        Ok(StoreWrite::LoadCancelled)
+    );
+    assert_eq!(store.read_folder_sync(&inbox).unwrap(), before);
+    store
+        .with_connection(StoreOperation::Write, |connection| {
+            Ok(connection.execute_batch(
+                "CREATE TEMP TRIGGER fail_the_third_message BEFORE INSERT ON main.message \
+                 WHEN NEW.identity = 'third' \
+                 BEGIN SELECT RAISE(ABORT, 'a failure for the test'); END;",
+            )?)
+        })
+        .unwrap();
+    let failure = store.store_portion(&inbox, &changes, || false).unwrap_err();
+    assert_eq!(failure.kind, FailureKind::MailNotSaved);
+    assert_eq!(store.read_folder_sync(&inbox).unwrap(), before);
+    assert_eq!(identities_of(&store, &inbox), ["first"]);
+}
+
+#[test]
+fn a_folder_the_store_does_not_hold_takes_no_portion() {
+    let synced = account("synced");
+    let store = store_listing(&synced, &["INBOX"]);
+    let unknown = folder_of(&synced, "Unknown");
+    assert_eq!(
+        store.read_folder_sync(&unknown).unwrap_err().kind,
+        FailureKind::MailNotSaved
+    );
+    let portion = FolderPortion {
+        arrived: vec![dated_message("message", 1)],
+        ..FolderPortion::default()
+    };
+    assert_eq!(
+        store
+            .store_portion(&unknown, &portion, || false)
+            .unwrap_err()
+            .kind,
+        FailureKind::MailNotSaved
+    );
+    assert_eq!(stored_message_count(&store), 0);
+}
+
+/// "No mail loaded" and an empty folder differ: a folder shows rows once a
+/// portion stored some, and an empty list only after a completed cycle.
+#[test]
+fn a_folder_without_rows_is_empty_only_after_a_completed_cycle() {
+    let synced = account("synced");
+    let store = store_listing(&synced, &["INBOX"]);
+    let inbox = folder_of(&synced, "INBOX");
+    assert_eq!(store.read_folder_rows(&inbox), Ok(None));
+    let not_completed = Some(FolderState::default());
+    let started = FolderPortion {
+        state: not_completed.clone(),
+        ..FolderPortion::default()
+    };
+    store.store_portion(&inbox, &started, || false).unwrap();
+    assert_eq!(store.read_folder_rows(&inbox), Ok(None));
+    let some_rows = FolderPortion {
+        arrived: vec![dated_message("message", 1)],
+        ..FolderPortion::default()
+    };
+    store.store_portion(&inbox, &some_rows, || false).unwrap();
+    assert_eq!(identities_of(&store, &inbox), ["message"]);
+    let emptied = FolderPortion {
+        removed: vec!["message".to_owned()],
+        state: completed(None),
+        ..FolderPortion::default()
+    };
+    store.store_portion(&inbox, &emptied, || false).unwrap();
+    assert_eq!(store.read_folder_rows(&inbox), Ok(Some(Vec::new())));
+    assert_eq!(
+        store.read_folder_rows(&folder_of(&synced, "Unknown")),
+        Ok(None)
+    );
+}
+
+#[test]
+fn stored_identities_are_those_any_folder_of_the_account_holds() {
+    let synced = account("synced");
+    let store = store_listing(&synced, &["INBOX", "Work"]);
+    for (identity, name) in [("in-inbox", "INBOX"), ("in-work", "Work")] {
+        let portion = FolderPortion {
+            arrived: vec![dated_message(identity, 1)],
+            ..FolderPortion::default()
+        };
+        store
+            .store_portion(&folder_of(&synced, name), &portion, || false)
+            .unwrap();
+    }
+    let other = account("other");
+    let asked = ["in-inbox", "in-work", "unknown"].map(str::to_owned);
+    assert_eq!(
+        store.stored_identities(&synced, &asked),
+        Ok(HashSet::from(["in-inbox", "in-work"].map(str::to_owned)))
+    );
+    assert_eq!(store.stored_identities(&other, &asked), Ok(HashSet::new()));
 }

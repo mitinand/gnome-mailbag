@@ -22,6 +22,7 @@ pub(crate) fn content_columns(content: &ReceivedContent) -> (&'static str, Optio
         },
         ReceivedContent::StructureUnreadable => ("structure_unreadable", None),
         ReceivedContent::TextNotReturned => ("text_not_returned", None),
+        ReceivedContent::NotDownloaded => ("not_downloaded", None),
     }
 }
 
@@ -41,6 +42,7 @@ pub(crate) fn content_from_columns(code: &str, detail: Option<String>) -> Option
         ("undecodable", _) => explained(ContentExplanation::Undecodable),
         ("structure_unreadable", _) => ReceivedContent::StructureUnreadable,
         ("text_not_returned", _) => ReceivedContent::TextNotReturned,
+        ("not_downloaded", _) => ReceivedContent::NotDownloaded,
         _ => return None,
     })
 }

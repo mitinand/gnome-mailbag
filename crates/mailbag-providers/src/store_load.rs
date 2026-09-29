@@ -118,7 +118,7 @@ fn log_received_batch(
     let (unsupported, unreadable) = messages.iter().fold(
         (0, 0),
         |(unsupported, unreadable), message| match &message.content {
-            ReceivedContent::Text(_) => (unsupported, unreadable),
+            ReceivedContent::Text(_) | ReceivedContent::NotDownloaded => (unsupported, unreadable),
             ReceivedContent::Explained(explanation) if explanation.is_by_design() => {
                 (unsupported + 1, unreadable)
             }

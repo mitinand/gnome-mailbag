@@ -307,7 +307,8 @@ fn unwrapped_and_ordinary_messages() -> Vec<Message> {
                 from: Some("Long sender".to_owned()),
                 to: None,
             },
-            received_unix: Some(1_700_000_000),
+            // Newest first, as the list orders them.
+            received_unix: Some(1_700_000_000 - number),
             seen: true,
             content: body,
         })

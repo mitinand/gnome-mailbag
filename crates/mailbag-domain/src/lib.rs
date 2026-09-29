@@ -125,6 +125,35 @@ pub struct Message {
     pub content: ReceivedContent,
 }
 
+/// What a folder remembers between cycles (specs/009-synchronization,
+/// Key Entities).
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct FolderState {
+    /// Microsoft 365 only: after a completed cycle, where the next one reads
+    /// changes from; during an unfinished first fill, where it continues.
+    pub server_position: Option<String>,
+    /// Whether the folder's latest cycle completed.
+    pub synchronized: bool,
+}
+
+/// One whole part of a cycle's result, which the store writes in one
+/// transaction (specs/009-synchronization FR-008).
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct FolderPortion {
+    /// Identities proven gone from the folder.
+    pub removed: Vec<String>,
+    /// The new read state of messages the folder holds.
+    pub read_states: Vec<(String, bool)>,
+    /// Messages the folder did not hold but its account did, with their
+    /// listed read state: related to the folder without fetching them.
+    pub known_arrived: Vec<(String, bool)>,
+    /// Full records to insert or update, each with its content or
+    /// `ReceivedContent::NotDownloaded`.
+    pub arrived: Vec<Message>,
+    /// The folder's state, when this portion changes it.
+    pub state: Option<FolderState>,
+}
+
 /// A message as the list shows it, without its content, which the reader
 /// reads when the message is opened (specs/009-synchronization FR-013).
 #[derive(Clone, PartialEq, Eq)]
@@ -285,6 +314,9 @@ pub enum ReceivedContent {
     StructureUnreadable,
     /// The server or the service did not return the message's text.
     TextNotReturned,
+    /// A cycle stored no text for the message: it was received more than 30
+    /// days before the cycle (specs/009-synchronization FR-009).
+    NotDownloaded,
 }
 
 /// Why a message shows no text, in terms the reader explains.
@@ -339,6 +371,29 @@ impl fmt::Debug for Message {
     }
 }
 
+impl fmt::Debug for FolderState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("FolderState")
+            .field("server_position", &self.server_position.is_some())
+            .field("synchronized", &self.synchronized)
+            .finish()
+    }
+}
+
+impl fmt::Debug for FolderPortion {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("FolderPortion")
+            .field("removed", &self.removed)
+            .field("read_states", &self.read_states)
+            .field("known_arrived", &self.known_arrived)
+            .field("arrived", &self.arrived)
+            .field("state", &self.state)
+            .finish()
+    }
+}
+
 impl fmt::Debug for MessageListRow {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -377,6 +432,7 @@ impl fmt::Debug for ReceivedContent {
             Self::Explained(explanation) => write!(formatter, "Explained({explanation:?})"),
             Self::StructureUnreadable => write!(formatter, "StructureUnreadable"),
             Self::TextNotReturned => write!(formatter, "TextNotReturned"),
+            Self::NotDownloaded => write!(formatter, "NotDownloaded"),
         }
     }
 }

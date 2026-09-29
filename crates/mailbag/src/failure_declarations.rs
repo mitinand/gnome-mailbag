@@ -310,6 +310,13 @@ pub fn declare_content(content: &ReceivedContent) -> Option<DeclaredFailure> {
             "This message's text was not received.".to_owned(),
             Some(FailureAction::Retry),
         ),
+        ReceivedContent::NotDownloaded => (
+            "Text not downloaded",
+            "The text of this message was not downloaded. Texts are downloaded for messages \
+             received in the last 30 days."
+                .to_owned(),
+            None,
+        ),
     };
     Some(DeclaredFailure {
         title,

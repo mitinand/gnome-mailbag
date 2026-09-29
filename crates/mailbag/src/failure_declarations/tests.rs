@@ -219,4 +219,8 @@ fn only_a_message_without_text_declares_a_failure() {
     let not_returned =
         declare_content(&ReceivedContent::TextNotReturned).expect("a missing text is a failure");
     assert_eq!(not_returned.action, Some(FailureAction::Retry));
+    // A text left for later offers nothing to repeat: a refresh keeps it so.
+    let not_downloaded =
+        declare_content(&ReceivedContent::NotDownloaded).expect("a text not downloaded is said so");
+    assert_eq!(not_downloaded.action, None);
 }

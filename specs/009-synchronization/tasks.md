@@ -118,7 +118,7 @@ is that the open message stays open when a load leaves it in the list.
 Goal: the store holds folder state and writes portions; loads keep
 working through `replace_mailbox`, adjusted to the new schema.
 
-- [ ] T009 Amend the documents first: specs/007-mail-storage/spec.md
+- [x] T009 Amend the documents first: specs/007-mail-storage/spec.md
   (FR-002 not downloaded; FR-003 folder state built as the saved position
   and completion, the numbering version in the Generic IMAP identity, IMAP
   UIDs on relations still deferred; FR-004, FR-010 and FR-014(a), (b), (e),
@@ -129,20 +129,20 @@ working through `replace_mailbox`, adjusted to the new schema.
   membership position and labels, Assumptions' newest 100, SC-002),
   data-model.md and contracts/folders.md; each with a status line naming
   this feature.
-- [ ] T010 [US1] [US2] [US3] [US5] In crates/mailbag-domain/src/lib.rs:
+- [x] T010 [US1] [US2] [US3] [US5] In crates/mailbag-domain/src/lib.rs:
   `FolderState`, `FolderPortion { removed, read_states, known_arrived,
   arrived, state }`, `ReceivedContent::NotDownloaded`; privacy-safe `Debug`
   (counts and identities only); the reader's wording for `NotDownloaded`
   in crates/mailbag/src/failure_declarations.rs, `declare_content` ("The
   text of this message was not downloaded." with a short reason about the
   last 30 days; no action; impersonal, AGENTS.md "UI wording").
-- [ ] T011 [US1] [US4] In crates/mailbag-store/src/schema.sql and
+- [x] T011 [US1] [US4] In crates/mailbag-store/src/schema.sql and
   src/content.rs: `folder.server_position`, `folder.synchronized` (was
   `loaded`); no numbering version column; `membership` without `position`;
   content code `not_downloaded`; check the rows read with `EXPLAIN QUERY
   PLAN` on a store of 100 000 rows and record in research §6 that no index
   is needed, or add the one the plan shows.
-- [ ] T012 [US1] [US2] [US3] [US4] In crates/mailbag-store/src/lib.rs and
+- [x] T012 [US1] [US2] [US3] [US4] In crates/mailbag-store/src/lib.rs and
   src/folders.rs: `read_folder_sync(folder) -> FolderSync`,
   `stored_identities(account, identities) -> HashSet<String>`,
   `store_portion(folder, portion, load_cancelled) -> StoreWrite` in the
@@ -152,7 +152,7 @@ working through `replace_mailbox`, adjusted to the new schema.
   ordered by received date then id;
   `replace_mailbox` adjusted (no position, sets `synchronized`) and kept
   until portion 4.
-- [ ] T013 [P] [US1] [US2] [US3] [US4] Tests in
+- [x] T013 [P] [US1] [US2] [US3] [US4] Tests in
   crates/mailbag-store/src/tests.rs: a portion with removals, read states,
   known arrivals and arrivals round-trips; orphans go; a stored text
   survives a `NotDownloaded` arrival from another folder; the state is

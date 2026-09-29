@@ -935,21 +935,23 @@ fn each_providers_load_stores_its_messages_and_reports_them_stored() {
     let service = graph_service::ScriptedService::start(graph_service::ScriptedAnswer::inbox(3));
     let text = |text: &str| ReceivedContent::Text(text.to_owned());
     let graph = |number| format!("graph:{}", graph_service::fixture_immutable_id(number));
+    // The scripted IMAP server gives every message one received date, so its
+    // rows read with the last stored first: the load stores UID 20 first.
     let loads = [
         (
             LoadKind::GenericImap(account_access(&imap)),
             "synthetic-account",
             vec![
-                ("imap:INBOX/20".to_owned(), text("Text 2")),
                 ("imap:INBOX/10".to_owned(), text("Text 1")),
+                ("imap:INBOX/20".to_owned(), text("Text 2")),
             ],
         ),
         (
             LoadKind::Gmail(gmail_access(&gmail)),
             "synthetic-account",
             vec![
-                ("gmail:20000".to_owned(), text("Text 2")),
                 ("gmail:10000".to_owned(), text("Text 1")),
+                ("gmail:20000".to_owned(), text("Text 2")),
             ],
         ),
         (
@@ -1291,7 +1293,8 @@ fn a_mailbox_load_stores_the_messages_of_the_folder_it_names() {
         .iter()
         .map(|message| message.identity.as_str())
         .collect();
-    assert_eq!(identities, ["imap:Work/20", "imap:Work/10"]);
+    // One received date for every scripted message: the last stored first.
+    assert_eq!(identities, ["imap:Work/10", "imap:Work/20"]);
     assert_eq!(
         read_stored_messages(&store, &folder_of("synthetic-account", "INBOX")),
         Ok(None)

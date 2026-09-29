@@ -2,12 +2,15 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 
 -- The stored form of each account's folders and their messages
--- (specs/008-folders/data-model.md). The hash of this text is the store's
+-- (specs/009-synchronization/data-model.md). The hash of this text is the store's
 -- version: any change to it discards an existing store at start, since
 -- nothing is converted before the first release.
 
--- A folder as the account's latest completed folder list left it. `loaded`
--- means that a load of it completed; without memberships it is then empty.
+-- A folder as the account's latest completed folder list left it, with what
+-- it remembers between cycles. `server_position` is where a Microsoft 365
+-- cycle reads changes from, or continues an unfinished first fill.
+-- `synchronized` means that its latest cycle completed; without memberships
+-- it is then empty.
 CREATE TABLE folder (
     id INTEGER PRIMARY KEY,
     account TEXT NOT NULL,
@@ -26,7 +29,8 @@ CREATE TABLE folder (
         'all_mail'
     )),
     selectable INTEGER NOT NULL CHECK (selectable IN (0, 1)),
-    loaded INTEGER NOT NULL CHECK (loaded IN (0, 1)),
+    server_position TEXT,
+    synchronized INTEGER NOT NULL CHECK (synchronized IN (0, 1)),
     UNIQUE (account, identity)
 ) STRICT;
 
@@ -50,18 +54,18 @@ CREATE TABLE message (
         'unknown_encoding',
         'undecodable',
         'structure_unreadable',
-        'text_not_returned'
+        'text_not_returned',
+        'not_downloaded'
     )),
     content_detail TEXT,
     UNIQUE (account, identity)
 ) STRICT;
 
--- A message's place in a folder; `position` keeps the load's order, newest
--- first.
+-- A message's place in a folder; a folder's rows are ordered by the message's
+-- received date.
 CREATE TABLE membership (
     folder INTEGER NOT NULL REFERENCES folder (id) ON DELETE CASCADE,
     message INTEGER NOT NULL REFERENCES message (id) ON DELETE CASCADE,
-    position INTEGER NOT NULL,
     PRIMARY KEY (folder, message)
 ) STRICT;
 
