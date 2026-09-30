@@ -204,6 +204,16 @@ impl WindowUi {
                     window.read_message_content(account_id.clone(), identity.to_owned());
                 }
             });
+        let filtering = Rc::downgrade(&window);
+        builder
+            .object::<gtk::ToggleButton>("unread_filter")
+            .expect("mailbag.ui: unread_filter")
+            .connect_toggled(move |toggle| {
+                if let Some(window) = filtering.upgrade() {
+                    window.mail.set_unread_filter(toggle.is_active());
+                    window.render();
+                }
+            });
         let explaining = Rc::downgrade(&window);
         window.failure_details.connect_clicked(move |_| {
             if let Some(window) = explaining.upgrade() {
@@ -652,7 +662,8 @@ impl WindowUi {
     }
 
     /// What the list shows, the first that applies: stored folder lists that
-    /// cannot be read; nothing selected; for a mailbox, its stored rows, a
+    /// cannot be read; nothing selected; for a mailbox, a note that the unread
+    /// filter leaves none of its stored rows, its stored rows, a
     /// read running, a load of it running, a failed read, a failed refresh,
     /// an empty stored mailbox or nothing stored (specs/007-mail-storage
     /// FR-005, FR-006, FR-013; specs/008-folders FR-008 to FR-010).
@@ -704,6 +715,14 @@ impl WindowUi {
             _ => &StoredMailbox::NotRead,
         };
         match (stored, outcome) {
+            (StoredMailbox::Read(Some(rows)), _)
+                if !rows.is_empty() && self.mail.filter_leaves_no_row(rows) =>
+            {
+                ShownMail::Status {
+                    title: "No unread messages",
+                    description: Some("Every message in this folder is read."),
+                }
+            }
             (StoredMailbox::Read(Some(rows)), _) if !rows.is_empty() => ShownMail::Messages {
                 account_id: account.clone(),
                 rows: rows.clone(),

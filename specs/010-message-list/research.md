@@ -179,8 +179,10 @@ the form; code binds handlers only.
 `<child>` of a widget in a list item template is added to that widget;
 `<signal handler="…" object="trash_reveal"/>` and `object="GtkListItem"`
 resolve inside the template and the handlers run when the signals are
-emitted; `gtk::BuilderRustScope` exists in gtk4 0.11.4 and appends the
-named object to the values a callback receives. Cambalache cannot open a
+emitted; `gtk::BuilderRustScope` exists in gtk4 0.11.4 and hands the named
+object to the callback; since a signal with an object is swapped by
+default, the object comes first among the values (checked at the
+implementation on 2026-10-01). Cambalache cannot open a
 `GtkListItem` template (009 research §9), so the form is edited as text
 and presented for approval as a diff with a rendering.
 

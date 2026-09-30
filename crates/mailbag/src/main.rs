@@ -130,13 +130,11 @@ fn create_window(app: &adw::Application) -> gtk::Builder {
         }
     });
 
-    // Mail data and operations are not implemented yet.
-    for name in ["search_button", "unread_filter"] {
-        builder
-            .object::<gtk::Widget>(name)
-            .expect("mailbag.ui: mail control")
-            .set_sensitive(false);
-    }
+    // Search is not implemented yet.
+    builder
+        .object::<gtk::Widget>("search_button")
+        .expect("mailbag.ui: search_button")
+        .set_sensitive(false);
 
     let app_weak = app.downgrade();
     register_action(app, "quit", Some("<Primary>q"), move || {

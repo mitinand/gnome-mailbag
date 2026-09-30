@@ -4,7 +4,8 @@
 **Created**: 2026-09-30 · **Branch**: `claude/message-list` · **Status**:
 Documents written, challenged (the spec and the plan, in fresh
 sessions) and approved on 2026-09-30 (T001); portion 2 implemented on
-2026-09-30 and committed; portion 3 implemented on 2026-10-01, awaiting review.
+2026-09-30 and committed; portion 3 implemented and committed on 2026-10-01; portion 4 implemented
+on 2026-10-01 (form approved), awaiting review.
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -174,7 +175,7 @@ Goal: the row shows the preview, the date wording in the user's locale
 and the trash button revealed on hover (without its action yet),
 and the unread filter narrows the list; nothing animates yet.
 
-- [ ] T015 [US1] [US4] [US5] Form, edited as text (Cambalache cannot open
+- [x] T015 [US1] [US4] [US5] Form, edited as text (Cambalache cannot open
   a list item template, research §9), presented as a diff with a rendering
   for approval before the code is written: crates/mailbag/resources/ui/
   message-row.ui as research §9 describes — the outer `row_reveal`
@@ -194,7 +195,7 @@ and the unread filter narrows the list; nothing animates yet.
   `object="trash_reveal"`; `thread_count` and the old delete column
   removed. Workbench: "List View" for the template, "Revealer" for the
   transitions; no demo fits a mail row.
-- [ ] T016 [US1] [US5] In crates/mailbag/src/mail_ui/message_item.rs:
+- [x] T016 [US1] [US5] In crates/mailbag/src/mail_ui/message_item.rs:
   `preview` (the stored preview, made when read; the label's two lines
   cut it), `date_text` by the rule of research §14 (today's time as
   `%-I:%M %p` when the locale's `%X` holds its `%p` marker, else
@@ -204,12 +205,12 @@ and the unread filter narrows the list; nothing animates yet.
   unit tests of the date rule against a fixed "now" and of
   `locale_time_form` with samples of a 12-hour and a 24-hour locale in
   crates/mailbag/src/mail_ui/tests.rs (spec SC-007's cases).
-- [ ] T017 [US1] In crates/mailbag/src/mail_ui.rs: the factory built with
+- [x] T017 [US1] In crates/mailbag/src/mail_ui.rs: the factory built with
   a `gtk::BuilderRustScope` holding `row_entered` and `row_left` (the
   revealer they receive shown or hidden) and `trash_row`, a no-op until
   T025 gives it its action (the button then visibly does nothing; the
   portion's report says so); the row's content bound by the form.
-- [ ] T018 [US4] In crates/mailbag/src/mail_ui.rs: the stored rows kept
+- [x] T018 [US4] In crates/mailbag/src/mail_ui.rs: the stored rows kept
   apart from the shown rows; `shown_rows(rows, filter_on, open,
   read_in_window)` as a pure function (all, or the unread ones and the
   open message, research §11; the set is filled in T024);
@@ -220,7 +221,7 @@ and the unread filter narrows the list; nothing animates yet.
   unread messages" / "Every message in this folder is read.") when the
   filter leaves no row of a folder that has rows; crates/mailbag/src/
   main.rs no longer makes `unread_filter` insensitive.
-- [ ] T019 [P] [US1] [US4] [US5] Tests in crates/mailbag/src/mail_ui/
+- [x] T019 [P] [US1] [US4] [US5] Tests in crates/mailbag/src/mail_ui/
   tests.rs: unit tests of `shown_rows` (the filter's cases); GUI tests,
   one per process: rows show the preview and the date wording; the
   filter lists only unread rows in order, keeps the open
@@ -229,7 +230,7 @@ and the unread filter narrows the list; nothing animates yet.
   with previews scrolled to its end without the main loop stalling (SC-006,
   time written to the output); a rendering of the row before and after
   (offscreen paintable to PNG, outside the repository) for the maintainer.
-- [ ] T020 STOP: run ./scripts/check.sh, git diff --check and each GTK test
+- [x] T020 STOP: run ./scripts/check.sh, git diff --check and each GTK test
   one per process; compare the size with plan.md (row object ≈ 60, scope
   ≈ 25, filter and window ≈ 95; tests ≈ 170); show the rendering; report,
   suggest the commit and wait before portion 5.

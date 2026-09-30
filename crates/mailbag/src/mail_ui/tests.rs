@@ -1290,7 +1290,7 @@ fn mailbox_navigation() {
             received_unix: Some(1_700_000_000 - number),
             seen: number % 2 == 0,
             content: ReceivedContent::TextNotReturned,
-            preview: String::new(),
+            preview: format!("The first words of message {number}, long enough to wrap"),
         })
         .collect();
     store_completed_cycle(&store, &folder_of(&google, "Projects"), &many, || false)
@@ -1308,6 +1308,11 @@ fn mailbox_navigation() {
         .activate_action("list.scroll-to-item", Some(&99_999_u32.to_variant()))
         .expect("the list scrolls to an item");
     wait_until(|| shown_labels(&widgets).contains(&"Sender 99999".to_owned()));
+    assert!(
+        shown_labels(&widgets)
+            .iter()
+            .any(|label| label.starts_with("The first words of message 99999"))
+    );
     println!("scrolled to the last row in {:?}", started.elapsed());
     window.destroy();
 }
@@ -1555,6 +1560,159 @@ fn stored_mail_leaves_with_its_account() {
     window.destroy();
 }
 
+/// A message of the unread-filter test, received `hours_ago` before now.
+fn message_received(identity: &str, hours_ago: i64, seen: bool) -> Message {
+    let now = glib::DateTime::now_local().expect("the clock").to_unix();
+    Message {
+        identity: identity.to_owned(),
+        fields: DisplayFields {
+            subject: Some(format!("Subject of {identity}")),
+            from: Some(format!("Sender of {identity}")),
+            to: None,
+        },
+        received_unix: Some(now - hours_ago * 3600),
+        seen,
+        content: ReceivedContent::NotDownloaded,
+        preview: format!("Preview of {identity}"),
+    }
+}
+
+/// The identities of the list's rows, in their order.
+fn listed_identities(widgets: &WindowWidgets) -> Vec<String> {
+    widgets
+        .rows()
+        .iter()
+        .map(|item| item.listed().identity.clone())
+        .collect()
+}
+
+/// A row shows its preview and its date in words, and reveals its trash
+/// button while the pointer is over it; the unread filter lists only the
+/// unread rows and the open message, stays on across folders, and says
+/// when it leaves no row (010 FR-002, FR-004, FR-008; SC-004 without read
+/// on opening).
+#[test]
+#[ignore = "requires a graphical GTK session"]
+fn rows_with_previews_and_the_unread_filter() {
+    adw::init().expect("GTK display");
+    let store = Arc::new(Store::in_memory());
+    let generic = account("synthetic-generic");
+    let inbox_messages = [
+        message_received("uid:40", 0, false),
+        message_received("uid:30", 30, true),
+        message_received("uid:20", 50, false),
+        message_received("uid:10", 60, true),
+    ];
+    store_mail(&store, &generic, &inbox_messages);
+    store_completed_cycle(
+        &store,
+        &folder_of(&generic, "Projects"),
+        &[message_received("uid:50", 1, true)],
+        || false,
+    )
+    .expect("the test store takes the messages");
+    let (window, ui, loader, widgets) = open_window(store.clone());
+    ui.apply_account_update(&imap_and_google_accounts());
+    settle(&ui);
+    widgets.select(&ui, &generic, Some("INBOX"));
+    settle(&ui);
+
+    // Each row shows its preview; the date is worded as the list words it.
+    assert_eq!(
+        listed_identities(&widgets),
+        ["uid:40", "uid:30", "uid:20", "uid:10"]
+    );
+    wait_until(|| shown_labels(&widgets).contains(&"Preview of uid:40".to_owned()));
+    let rows = widgets.rows();
+    let received = |message: &Message| {
+        glib::DateTime::from_unix_local(message.received_unix.expect("a date")).expect("a time")
+    };
+    let now = glib::DateTime::now_local().expect("the clock");
+    for (item, message) in rows.iter().zip(&inbox_messages) {
+        assert_eq!(item.date_text(), date_wording(&received(message), &now));
+    }
+    assert!(shown_labels(&widgets).contains(&rows[0].date_text().to_string()));
+
+    // The pointer over a row reveals its trash button, which does nothing yet.
+    let first_row = descendants::<gtk::Overlay>(&widgets.messages().upcast())
+        .into_iter()
+        .find(|overlay| overlay.is_mapped())
+        .expect("a shown row");
+    let trash = descendants::<gtk::Revealer>(&first_row.clone().upcast())
+        .into_iter()
+        .find(|revealer| revealer.transition_type() == gtk::RevealerTransitionType::Crossfade)
+        .expect("the trash button's revealer");
+    let pointer = descendants::<gtk::Box>(&first_row.upcast())
+        .into_iter()
+        .flat_map(|row_box| {
+            row_box
+                .observe_controllers()
+                .into_iter()
+                .collect::<Vec<_>>()
+        })
+        .find_map(|controller| {
+            controller
+                .ok()?
+                .downcast::<gtk::EventControllerMotion>()
+                .ok()
+        })
+        .expect("the row's pointer controller");
+    assert!(!trash.reveals_child());
+    pointer.emit_by_name::<()>("enter", &[&1.0_f64, &1.0_f64]);
+    assert!(trash.reveals_child());
+    descendants::<gtk::Button>(&trash.clone().upcast())[0].emit_clicked();
+    assert_eq!(widgets.rows().len(), 4);
+    pointer.emit_by_name::<()>("leave", &[]);
+    assert!(!trash.reveals_child());
+
+    // The filter lists the unread rows in their order.
+    let filter: gtk::ToggleButton = widgets.builder.object("unread_filter").expect("filter");
+    assert!(filter.is_sensitive());
+    filter.set_active(true);
+    settle(&ui);
+    assert_eq!(listed_identities(&widgets), ["uid:40", "uid:20"]);
+
+    // The open message stays listed when a refresh reports it read, and
+    // leaves when another message opens.
+    widgets.open_row(0);
+    settle(&ui);
+    ui.refresh_mailbox_action().activate(None);
+    settle(&ui);
+    let mut read_elsewhere = inbox_messages.clone();
+    read_elsewhere[0].seen = true;
+    loader.report_stored(&read_elsewhere, None);
+    settle(&ui);
+    assert_eq!(listed_identities(&widgets), ["uid:40", "uid:20"]);
+    assert!(!shows_unread_dot(&widgets.rows()[0]));
+    assert_eq!(widgets.selected_row(), Some(0));
+    widgets.open_row(1);
+    settle(&ui);
+    assert_eq!(listed_identities(&widgets), ["uid:20"]);
+    assert_eq!(widgets.selected_row(), Some(0));
+    assert_eq!(widgets.reader_subject(), "Subject of uid:20");
+
+    // Another folder keeps the filter; one without unread messages says so,
+    // and turning the filter off lists its rows.
+    widgets.select(&ui, &generic, Some("Projects"));
+    settle(&ui);
+    assert_eq!(widgets.list_page(), "empty");
+    assert_eq!(widgets.status_title(), "No unread messages");
+    assert_eq!(
+        widgets.status_description(),
+        "Every message in this folder is read."
+    );
+    filter.set_active(false);
+    settle(&ui);
+    assert_eq!(widgets.list_page(), "messages");
+    assert_eq!(listed_identities(&widgets), ["uid:50"]);
+    filter.set_active(true);
+    settle(&ui);
+    widgets.select(&ui, &generic, Some("INBOX"));
+    settle(&ui);
+    assert_eq!(listed_identities(&widgets), ["uid:20"]);
+    window.destroy();
+}
+
 /// Runs the window's pending work until `condition` holds; the store's work
 /// runs on GIO's thread pool.
 fn wait_until(mut condition: impl FnMut() -> bool) {
@@ -1645,6 +1803,12 @@ fn listed_row(identity: &str, seen: bool) -> MessageListRow {
     }
 }
 
+/// Makes the list show every one of `rows`, as the list does without the
+/// unread filter.
+fn update_list(items: &gio::ListStore, rows: &[MessageListRow]) {
+    update_list_by_difference(items, &rows.iter().collect::<Vec<_>>());
+}
+
 /// Each change of a list's items as `(position, removed, added)`.
 type ItemChanges = Rc<RefCell<Vec<(u32, u32, u32)>>>;
 
@@ -1656,7 +1820,7 @@ fn listed_items(identities: &[&str]) -> (gio::ListStore, ItemChanges) {
         .iter()
         .map(|identity| listed_row(identity, false))
         .collect();
-    update_list_by_difference(&items, &rows);
+    update_list(&items, &rows);
     let changes = Rc::new(RefCell::new(Vec::new()));
     let recorded = changes.clone();
     items.connect_items_changed(move |_, position, removed, added| {
@@ -1683,7 +1847,7 @@ fn rows_arriving_at_the_end_are_appended_without_touching_the_others() {
     let (items, changes) = listed_items(&["a", "b"]);
     let before = item_list(&items);
     let rows = ["a", "b", "c", "d"].map(|identity| listed_row(identity, false));
-    update_list_by_difference(&items, &rows);
+    update_list(&items, &rows);
     assert_eq!(identities(&items), ["a", "b", "c", "d"]);
     assert_eq!(*changes.borrow(), [(2, 0, 2)]);
     assert_eq!(item_list(&items)[..2], before[..]);
@@ -1693,7 +1857,7 @@ fn rows_arriving_at_the_end_are_appended_without_touching_the_others() {
 fn a_row_arriving_at_the_top_is_inserted_there() {
     let (items, changes) = listed_items(&["b", "c"]);
     let rows = ["a", "b", "c"].map(|identity| listed_row(identity, false));
-    update_list_by_difference(&items, &rows);
+    update_list(&items, &rows);
     assert_eq!(identities(&items), ["a", "b", "c"]);
     assert_eq!(*changes.borrow(), [(0, 0, 1)]);
 }
@@ -1703,7 +1867,7 @@ fn a_row_removed_in_the_middle_leaves_its_neighbours_in_place() {
     let (items, changes) = listed_items(&["a", "b", "c"]);
     let before = item_list(&items);
     let rows = ["a", "c"].map(|identity| listed_row(identity, false));
-    update_list_by_difference(&items, &rows);
+    update_list(&items, &rows);
     assert_eq!(identities(&items), ["a", "c"]);
     assert_eq!(*changes.borrow(), [(1, 1, 0)]);
     assert_eq!(item_list(&items), [before[0].clone(), before[2].clone()]);
@@ -1714,7 +1878,7 @@ fn a_changed_read_state_changes_its_item_in_place() {
     let (items, changes) = listed_items(&["a", "b"]);
     let before = item_list(&items);
     let rows = [listed_row("a", false), listed_row("b", true)];
-    update_list_by_difference(&items, &rows);
+    update_list(&items, &rows);
     assert!(changes.borrow().is_empty());
     assert_eq!(item_list(&items), before);
     assert!(before[0].unread());
@@ -1728,7 +1892,7 @@ fn a_message_listed_again_between_changes_keeps_its_item() {
     let kept = item_list(&items)[1].clone();
     // "a" and "c" leave, "b" stays between them, "d" arrives.
     let rows = ["b", "d"].map(|identity| listed_row(identity, false));
-    update_list_by_difference(&items, &rows);
+    update_list(&items, &rows);
     assert_eq!(identities(&items), ["b", "d"]);
     assert_eq!(item_list(&items)[0], kept);
 }
@@ -1739,7 +1903,7 @@ fn a_message_whose_fields_changed_gets_a_new_item() {
     let before = item_list(&items);
     let mut renamed = listed_row("a", false);
     renamed.fields.subject = Some("Edited".to_owned());
-    update_list_by_difference(&items, &[renamed]);
+    update_list(&items, &[renamed]);
     assert_ne!(item_list(&items), before);
     assert_eq!(item_list(&items)[0].subject(), "Edited");
 }
@@ -1749,7 +1913,7 @@ fn the_same_rows_change_nothing() {
     let (items, changes) = listed_items(&["a", "b", "c"]);
     let before = item_list(&items);
     let rows = ["a", "b", "c"].map(|identity| listed_row(identity, false));
-    update_list_by_difference(&items, &rows);
+    update_list(&items, &rows);
     assert!(changes.borrow().is_empty());
     assert_eq!(item_list(&items), before);
 }
@@ -1780,4 +1944,101 @@ fn store_completed_cycle(
         ..FolderBatch::default()
     };
     store.store_batch(folder, &batch, load_cancelled)
+}
+
+#[test]
+fn without_the_filter_every_stored_row_is_shown() {
+    let rows = [listed_row("a", true), listed_row("b", false)];
+    let shown: Vec<&str> = shown_rows(&rows, false, None)
+        .iter()
+        .map(|row| row.identity.as_str())
+        .collect();
+    assert_eq!(shown, ["a", "b"]);
+}
+
+#[test]
+fn the_filter_shows_the_unread_rows_and_the_open_message_in_their_order() {
+    let rows = [
+        listed_row("read", true),
+        listed_row("unread", false),
+        listed_row("open and read", true),
+        listed_row("open elsewhere", false),
+    ];
+    let identities = |open| -> Vec<&str> {
+        shown_rows(&rows, true, open)
+            .iter()
+            .map(|row| row.identity.as_str())
+            .collect()
+    };
+    assert_eq!(identities(None), ["unread", "open elsewhere"]);
+    assert_eq!(
+        identities(Some("open and read")),
+        ["unread", "open and read", "open elsewhere"]
+    );
+    assert_eq!(identities(Some("unread")), ["unread", "open elsewhere"]);
+    assert!(shown_rows(&rows[..1], true, None).is_empty());
+}
+
+/// A fixed "now": 30 September 2026, 15:00 local time.
+fn fixed_now() -> glib::DateTime {
+    glib::DateTime::from_local(2026, 9, 30, 15, 0, 0.0).expect("a valid time")
+}
+
+fn local_time(year: i32, month: i32, day: i32, hour: i32, minute: i32) -> glib::DateTime {
+    glib::DateTime::from_local(year, month, day, hour, minute, 0.0).expect("a valid time")
+}
+
+#[test]
+fn a_date_reads_like_a_calendar_seen_from_now() {
+    let now = fixed_now();
+    let time_form = locale_time_form(&formatted(&now, "%X"), &formatted(&now, "%p"));
+    let cases = [
+        // Today, earlier or later, shows the time without seconds.
+        (local_time(2026, 9, 30, 0, 1), time_form),
+        (local_time(2026, 9, 30, 23, 59), time_form),
+        // The day before, however late, is yesterday.
+        (local_time(2026, 9, 29, 23, 59), "Yesterday"),
+        (local_time(2026, 9, 29, 0, 0), "Yesterday"),
+        // Two to six days before: the weekday.
+        (local_time(2026, 9, 28, 12, 0), "%A"),
+        (local_time(2026, 9, 24, 12, 0), "%A"),
+        // Seven days before and earlier this year: day and month.
+        (local_time(2026, 9, 23, 12, 0), "%-d %B"),
+        (local_time(2026, 1, 1, 0, 0), "%-d %B"),
+        // Last year: the locale's short date.
+        (local_time(2025, 12, 31, 23, 59), "%x"),
+    ];
+    for (received, expected) in cases {
+        let expected = match expected {
+            "Yesterday" => "Yesterday".to_owned(),
+            format => formatted(&received, format),
+        };
+        assert_eq!(date_wording(&received, &now), expected, "{received:?}");
+    }
+    assert_eq!(row_date_text(None), "");
+}
+
+#[test]
+fn the_day_boundary_is_the_local_midnight() {
+    let now = local_time(2026, 9, 30, 0, 5);
+    assert_eq!(
+        date_wording(&local_time(2026, 9, 29, 23, 55), &now),
+        "Yesterday"
+    );
+    let time_form = locale_time_form(&formatted(&now, "%X"), &formatted(&now, "%p"));
+    let midnight = local_time(2026, 9, 30, 0, 0);
+    assert_eq!(
+        date_wording(&midnight, &now),
+        formatted(&midnight, time_form)
+    );
+}
+
+#[test]
+fn the_time_follows_the_locales_twelve_or_twenty_four_hour_form() {
+    // An English 12-hour locale, and a Japanese one that puts the marker first.
+    assert_eq!(locale_time_form("10:14:01 PM", "PM"), "%-I:%M %p");
+    assert_eq!(locale_time_form("午後10時14分01秒", "午後"), "%-I:%M %p");
+    // A 24-hour locale, with or without an AM/PM word of its own.
+    assert_eq!(locale_time_form("22:14:01", ""), "%H:%M");
+    assert_eq!(locale_time_form("22:14:01", "pm"), "%H:%M");
 }

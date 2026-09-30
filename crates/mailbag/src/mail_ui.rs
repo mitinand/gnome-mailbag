@@ -18,7 +18,11 @@ use crate::failure_dialog::{RetriedOperation, show_action_button, status_descrip
 use adw::{gio, glib, gtk, prelude::*};
 use mailbag_domain::{AccountId, DisplayFields, Failure, MessageListRow, ReceivedContent};
 use message_item::MessageItem;
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    rc::Rc,
+};
 
 /// How much text a GTK label shows, in UTF-8 bytes. Longer text is cut at a
 /// character boundary without an explanation; the stored text keeps its
@@ -64,6 +68,9 @@ pub struct MailUi {
     /// Whose stored rows the list shows, as the latest read found them, to
     /// update the list only when a new read answered.
     listed_rows: RefCell<Option<(AccountId, Rc<[MessageListRow]>)>>,
+    /// Whether the list shows only the unread messages and the open one; the
+    /// same for every folder and account (specs/010-message-list FR-008).
+    unread_only: Cell<bool>,
     /// The identity of the message the reader shows.
     open_message: RefCell<Option<String>>,
     content_request: RefCell<Option<ContentRequest>>,
@@ -76,7 +83,7 @@ impl MailUi {
         // The row template names the row object's type.
         MessageItem::ensure_type();
         let factory = gtk::BuilderListItemFactory::from_bytes(
-            None::<&gtk::BuilderScope>,
+            Some(&row_handlers()),
             &glib::Bytes::from_static(include_bytes!("../resources/ui/message-row.ui")),
         );
         messages.set_factory(Some(&factory));
@@ -115,6 +122,7 @@ impl MailUi {
             content_action: reader.content_action,
             sender_avatar: reader.avatar,
             listed_rows: RefCell::new(None),
+            unread_only: Cell::new(false),
             open_message: RefCell::new(None),
             content_request: RefCell::new(None),
         });
@@ -154,15 +162,39 @@ impl MailUi {
         if !same_account {
             self.clear();
         }
-        update_list_by_difference(&self.items, rows);
         *self.listed_rows.borrow_mut() = Some((account_id.clone(), rows.clone()));
-        let Some(identity) = self.open_message.borrow().clone() else {
+        self.update_shown();
+    }
+
+    /// Shows only the unread messages and the open one, or every message.
+    pub fn set_unread_filter(&self, unread_only: bool) {
+        self.unread_only.set(unread_only);
+        self.update_shown();
+    }
+
+    /// Whether the unread filter would leave none of `rows` in the list.
+    pub fn filter_leaves_no_row(&self, rows: &[MessageListRow]) -> bool {
+        let open = self.open_message.borrow();
+        shown_rows(rows, self.unread_only.get(), open.as_deref()).is_empty()
+    }
+
+    /// Makes the list show what the stored rows, the filter and the open
+    /// message call for, by difference with the rows shown, and keeps the
+    /// open message while it is listed, with its envelope from its new row.
+    fn update_shown(&self) {
+        let Some((_, rows)) = self.listed_rows.borrow().clone() else {
+            return;
+        };
+        let open = self.open_message.borrow().clone();
+        let shown = shown_rows(&rows, self.unread_only.get(), open.as_deref());
+        update_list_by_difference(&self.items, &shown);
+        let Some(identity) = open else {
             return;
         };
         match position_of(&self.items, &identity) {
             Some(position) => {
                 self.selection.set_selected(position);
-                self.show_envelope(&rows[position as usize]);
+                self.show_envelope(shown[position as usize]);
             }
             None => self.close_reader(),
         }
@@ -256,8 +288,14 @@ impl MailUi {
             "message opened"
         );
         *self.open_message.borrow_mut() = Some(listed.identity.clone());
-        self.selection.set_selected(position);
-        self.show_envelope(listed);
+        match self.unread_only.get() {
+            // The message open before may leave the list now.
+            true => self.update_shown(),
+            false => {
+                self.selection.set_selected(position);
+                self.show_envelope(listed);
+            }
+        }
         // The body stays empty until the content is read.
         self.reader_body.set_text("");
         self.show_body_or_failure(None);
@@ -318,7 +356,7 @@ impl MailUi {
 /// middle, keeping the object of a message still listed there unchanged, so
 /// the arrival or removal of a few messages rebuilds no other row
 /// (specs/009-synchronization/research.md §9).
-fn update_list_by_difference(items: &gio::ListStore, rows: &[MessageListRow]) {
+fn update_list_by_difference(items: &gio::ListStore, rows: &[&MessageListRow]) {
     let item_at = |position: usize| {
         items
             .item(position as u32)
@@ -328,13 +366,13 @@ fn update_list_by_difference(items: &gio::ListStore, rows: &[MessageListRow]) {
     let shown = items.n_items() as usize;
     let mut same_start = 0;
     while same_start < shown.min(rows.len())
-        && item_at(same_start).lists_same_message(&rows[same_start])
+        && item_at(same_start).lists_same_message(rows[same_start])
     {
         same_start += 1;
     }
     let mut same_end = 0;
     while same_end < (shown - same_start).min(rows.len() - same_start)
-        && item_at(shown - 1 - same_end).lists_same_message(&rows[rows.len() - 1 - same_end])
+        && item_at(shown - 1 - same_end).lists_same_message(rows[rows.len() - 1 - same_end])
     {
         same_end += 1;
     }
@@ -348,7 +386,7 @@ fn update_list_by_difference(items: &gio::ListStore, rows: &[MessageListRow]) {
         .iter()
         .map(|row| match removed.get(&row.identity) {
             Some(item) if item.lists_same_message(row) => item.clone(),
-            _ => MessageItem::new(row.clone()),
+            _ => MessageItem::new((*row).clone()),
         })
         .collect();
     if !removed.is_empty() || !added.is_empty() {
@@ -360,6 +398,41 @@ fn update_list_by_difference(items: &gio::ListStore, rows: &[MessageListRow]) {
             item.set_unread(!row.seen);
         }
     }
+}
+
+/// The rows the list shows: every stored row, or with the unread filter on
+/// the unread ones and the open message (specs/010-message-list FR-008).
+fn shown_rows<'a>(
+    rows: &'a [MessageListRow],
+    unread_only: bool,
+    open: Option<&str>,
+) -> Vec<&'a MessageListRow> {
+    rows.iter()
+        .filter(|row| !unread_only || !row.seen || open == Some(row.identity.as_str()))
+        .collect()
+}
+
+/// The handlers the row template names: the trash button shows while the
+/// pointer is over the row (specs/010-message-list FR-002).
+fn row_handlers() -> gtk::BuilderRustScope {
+    let scope = gtk::BuilderRustScope::new();
+    for (handler, reveal) in [("row_entered", true), ("row_left", false)] {
+        scope.add_callback(handler, move |values| {
+            // A signal with an object in the form passes that object first:
+            // here the trash button's revealer.
+            let revealer = values
+                .first()
+                .and_then(|value| value.get::<gtk::Revealer>().ok());
+            revealer
+                .expect("message-row.ui: trash_reveal")
+                .set_reveal_child(reveal);
+            None
+        });
+    }
+    // Pressing the button removes the row once removing in the window
+    // exists (specs/010-message-list FR-010); until then it does nothing.
+    scope.add_callback("trash_row", |_| None);
+    scope
 }
 
 /// Where the message with this identity is listed.
@@ -479,6 +552,60 @@ fn received_date_text(received_unix: Option<i64>, format: &str) -> String {
     };
     received
         .format(format)
+        .map(|text| text.to_string())
+        .unwrap_or_default()
+}
+
+/// The row's received date as the list words it, by the computer's clock,
+/// or nothing when the server sent no usable date
+/// (specs/010-message-list FR-004).
+fn row_date_text(received_unix: Option<i64>) -> String {
+    let received = received_unix.and_then(|seconds| glib::DateTime::from_unix_local(seconds).ok());
+    match (received, glib::DateTime::now_local()) {
+        (Some(received), Ok(now)) => date_wording(&received, &now),
+        _ => String::new(),
+    }
+}
+
+/// How the row words `received` at `now`, both in local time: today's time
+/// in the locale's form, "Yesterday", the weekday within the six days
+/// before, the day and month earlier this year, the locale's short date
+/// before that.
+fn date_wording(received: &glib::DateTime, now: &glib::DateTime) -> String {
+    let format = match days_before(received, now) {
+        0 => locale_time_form(&formatted(now, "%X"), &formatted(now, "%p")),
+        1 => return "Yesterday".to_owned(),
+        2..=6 => "%A",
+        _ if received.year() == now.year() => "%-d %B",
+        _ => "%x",
+    };
+    formatted(received, format)
+}
+
+/// How many local calendar days `received`'s day lies before `now`'s. A
+/// day changing to or from summer time is an hour shorter or longer, so the
+/// difference is rounded.
+fn days_before(received: &glib::DateTime, now: &glib::DateTime) -> i64 {
+    let day_start = |time: &glib::DateTime| {
+        glib::DateTime::from_local(time.year(), time.month(), time.day_of_month(), 0, 0, 0.0)
+            .expect("the start of a valid time's day")
+    };
+    let seconds = day_start(now).difference(&day_start(received)).as_seconds();
+    (seconds as f64 / 86_400.0).round() as i64
+}
+
+/// The locale's time without seconds: the 12-hour form when the locale's
+/// full time shows its AM/PM marker, else the 24-hour form
+/// (specs/010-message-list/research.md §14).
+fn locale_time_form(full_time: &str, am_pm: &str) -> &'static str {
+    match !am_pm.is_empty() && full_time.contains(am_pm) {
+        true => "%-I:%M %p",
+        false => "%H:%M",
+    }
+}
+
+fn formatted(time: &glib::DateTime, format: &str) -> String {
+    time.format(format)
         .map(|text| text.to_string())
         .unwrap_or_default()
 }
