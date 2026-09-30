@@ -57,11 +57,15 @@ binding across crates; bodies and private helpers are the plan's.
 
 ## Window (`mailbag`)
 
-- `MailUi::show_rows(account_id, rows, change: ListChange)` with
-  `ListChange::{AtOnce, Animated}` — the window passes `AtOnce` when the
-  folder shown differs from the previous read's or the list had no rows,
-  `Animated` otherwise (research §10); a new read empties the
-  read-in-window set (research §11).
+- `MailUi::show_rows(folder, rows)` — changes the list at once when the
+  folder differs from the rows' shown before or the list had no rows, with
+  animations otherwise (research §10); a new read empties the
+  read-in-window set (research §11). (The window chose the change until
+  2026-10-01; the list owns the folder it shows since.)
+- `MailUi::shows_no_row()` and `MailUi::unread_filter()` — whether the
+  filter or the rows taken out in the window leave no row, and whether the
+  filter is on, for the list's empty page; `MailUi::connect_row_removed`
+  tells the window to show that page after the trash button.
 - `MailUi::set_unread_filter(bool)` — the toggle's state (spec FR-008).
 - `MailUi::remove_in_window(identity)` — the trash button's removal (spec
   FR-010); applies FR-007 and the leaving animation; in a narrow window

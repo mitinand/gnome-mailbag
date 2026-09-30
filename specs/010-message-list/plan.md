@@ -17,7 +17,10 @@ the row: at most 750 production lines and 850 test lines; two timers
 (the removal animation's, the read on opening's) and one frame callback
 (the reveal of an arrived row on the next frames); no thread or queue of
 the feature's own; no new dependency; no change to the IMAP library
-forks. Estimates include doc comments and formatting. Reassess with the
+forks. The test budget was raised to 920 lines on 2026-10-01, when the
+row's portion took 261 test lines against its 170, and the budget was
+then accepted at ≈ 865 production and ≈ 995 test lines after portion 5
+and its simplify review (the maintainer's decisions). Estimates include doc comments and formatting. Reassess with the
 maintainer before exceeding the budget or about 1.5 times an item's
 estimate; the size so far is compared with this table at every review
 pause.
@@ -32,7 +35,7 @@ pause.
 | New fields in existing data | — | `message.preview`; `Message.preview`; `MessageListRow.preview`; `GraphMessage.body_preview` ([data-model.md](data-model.md)) |
 | Changes to other features' contracts or documents | 009, 007, 002 | As the spec's Amendments; 009's contract gains `Message.preview`; 002 contracts/ui.md's row table |
 | New dependencies | 0 | 0 (mail-parser's HTML conversion and raw decoders are already there) |
-| Tests | ≤ 850 | ≈ 800: content ≈ 230 (SC-001's forms, cut pieces, page words, normalising), imap ≈ 60 (a limited request and its partial answer), graph ≈ 20, providers ≈ 120 (previews in IMAP and Microsoft 365 batches, both pieces, a refused piece; scripted-server support ≈ 40 of these), store ≈ 30, window ≈ 340 (unit tests of the next-message rule, the shown-rows derivation and the locale's time form as pure functions, with and without the filter; one GUI test per behaviour: the trash removal, the filter with read on opening, an animated load and a folder shown anew, date wording, 100 000 rows) |
+| Tests | ≤ 920 (≤ 850 until 2026-10-01) | ≈ 800: content ≈ 230 (SC-001's forms, cut pieces, page words, normalising), imap ≈ 60 (a limited request and its partial answer), graph ≈ 20, providers ≈ 120 (previews in IMAP and Microsoft 365 batches, both pieces, a refused piece; scripted-server support ≈ 40 of these), store ≈ 30, window ≈ 340 (unit tests of the next-message rule, the shown-rows derivation and the locale's time form as pure functions, with and without the filter; one GUI test per behaviour: the trash removal, the filter with read on opening, an animated load and a folder shown anew, date wording, 100 000 rows) |
 
 ## Summary
 
@@ -146,8 +149,9 @@ flowchart TD
 - `MailUi::new`: the factory with a `BuilderRustScope` holding
   `row_entered`, `row_left` (reveal or hide the revealer they receive)
   and `trash_row` (the list item they receive → `remove_in_window`).
-- `show_rows(account, rows, change)`: keep the stored rows; empty the
-  read-in-window set; `shown_rows`; `update_shown(change)`.
+- `show_rows(folder, rows)`: `AtOnce` for another folder or an empty
+  list, else `Animated`; keep the stored rows; empty the read-in-window
+  set; `update_shown(change)`.
 - `shown_rows(rows, filter_on, open, read_in_window) -> Vec<row>`: a pure
   function: all rows, or the unread ones (not in the set) and the open
   message.
@@ -161,22 +165,23 @@ flowchart TD
      neighbours in the list as shown (leaving rows left out) are passed
      and the choice is opened by `open_message`; a refresh's removal of
      the open message closes the reader instead.
-  2. `update_list_by_difference` as today, with arrivals inserted hidden
-     and removals marked leaving when `change` is `Animated`, at once
-     otherwise; the read-state reset treats rows in the read-in-window
-     set as read; leaving rows are never "the same message" for a later
-     difference.
-  3. `reveal_on_second_frame` for the arrivals (a tick callback);
-     `remove_leaving_after` one 280 ms timeout for the removals, which
-     splices by row object, never by position.
+  2. When `Animated`, `close_leaving_rows` closes the rows that leave
+     and `update_after_closing` applies the change after one 280 ms
+     timeout (the last of the closings running); otherwise, or with
+     nothing to close, `change_list` applies it now:
+     `update_list_by_difference` as today, arrivals inserted hidden when
+     animated; the read states treat rows in the read-in-window set as
+     read (research §10, as changed at the implementation).
+  3. Arrivals and reopened rows shown on the second frame (a tick
+     callback) when animated, at once otherwise.
   4. `keep_top_in_view` — `scroll_to(0)` when the list was at its top
      before the change.
 - `open_message(position, bring_reader_forward)`: as today, refusing a
-  leaving row, plus `start_read_on_opening` (drop the pending timeout; a
+  closed row, plus `start_read_on_opening` (drop the pending timeout; a
   one-second timeout that puts the identity into the read-in-window set
   and sets the row object's `unread` false).
-- `close_reader` and `clear`: drop the pending read timeout and the
-  pending removal timeouts.
+- `close_reader` and `clear`: drop the pending read timeout; a closing's
+  timeout that fires after them finds nothing to change.
 
 **`mailbag::mail_ui::message_item`** — the row object: `preview` (the
 stored preview; the label's two lines cut it), `date_text` by the date
@@ -187,9 +192,9 @@ locale's full time format (research §14), `shown` and `transition_ms`,
 
 **`mailbag::window_ui`**
 
-- `render`: `show_rows` with `AtOnce` when the folder shown differs from
-  the previous read's or the list had no rows, `Animated` otherwise; the
-  filter's empty state.
+- `render`: `show_rows(folder, rows)`; when the filter or the trash
+  button leaves no row, "No unread messages" with the filter on, else
+  "Mailbox is empty"; the trash button asks for a render.
 - The `unread_filter` toggle: `set_unread_filter`; `main.rs` no longer
   makes it insensitive.
 

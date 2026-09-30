@@ -125,4 +125,10 @@ impl MessageItem {
             && listed.fields == row.fields
             && listed.received_unix == row.received_unix
     }
+
+    /// Opens or closes the row over `transition_ms`.
+    pub fn show_over(&self, shown: bool, transition_ms: u32) {
+        self.set_transition_ms(transition_ms);
+        self.set_shown(shown);
+    }
 }

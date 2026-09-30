@@ -198,11 +198,15 @@ focus.
 
 **Decision**: The row template's outer revealer (slide-down, 220 ms)
 binds `reveal-child` and `transition-duration` to two properties of the
-row object (`shown`, `transition-ms`). An arriving row is inserted with
-`shown` false and revealed on the second frame after the insert; a
-leaving row is set `shown` false with the duration and removed from the
-model by one timeout of 280 ms per change, whether or not its widget is
-still on screen. When the list was at its top before an insert, the list
+row object (`shown`, `transition-ms`). An animated change first closes
+the rows that leave (`shown` false with the duration) and leaves the
+list's model as it is; a timeout of 280 ms then applies the latest wanted
+rows by the ordinary difference update, which takes the closed rows out
+and inserts arriving rows with `shown` false, revealed on the second
+frame after the insert. Closings started meanwhile, such as a second row
+sent to the trash, are counted, and the list changes after the last. A
+list off screen changes at once, since it draws no frames. When the list
+was at its top before an insert, the list
 is scrolled to its first row right after it. A change animates unless
 the folder shown differs from the previous read's (the rows replace
 another folder's or an empty list), the unread filter changed what is
@@ -211,10 +215,13 @@ batches are appended below the rows shown, so only rows in view move
 (spec FR-006; the condition "only a folder whose latest refresh
 completed" was dropped at the challenge, since telling a fill from a
 refresh needed the folder's state from before the load and one more
-store answer). Pending removal timeouts are dropped when the list is
-cleared or the folder changes; leaving rows are spliced out by row
-object, never by position, since a read within the 280 ms may list the
-message again with a new row object; a leaving row cannot be opened.
+store answer). A closed row cannot be opened; a change at once, such as
+a folder shown anew, takes closed rows out with the rest, and the
+timeout then finds nothing to do. (Changed at the implementation on
+2026-10-01: the first version kept leaving rows in the model through
+later differences, merged by date, which made every step of the list
+tell leaving rows apart; closing first and changing the model once
+needs no state beyond `shown`.)
 
 **Checked** (throwaway GTK 4.22 scripts, one scenario per process): the
 list view has no animation of its own (its reference lists none; a

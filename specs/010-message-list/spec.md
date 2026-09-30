@@ -8,7 +8,9 @@ animation; no thread, queue, new dependency or change to the IMAP library
 forks); the decisions taken there are recorded under Clarifications. The
 same day the maintainer added read on opening and Move to Trash from the
 row as window-only behaviour (FR-009, FR-010): one more timer, and the
-budget confirmed as at most 750 production and 850 test lines. Challenged
+budget confirmed as at most 750 production and 850 test lines; the test
+budget raised to 920 lines on 2026-10-01, and the size accepted at
+about 865 production and 995 test lines the same day. Challenged
 on 2026-09-30 (the spec, then the plan's mechanisms, in fresh sessions);
 the decisions are under Clarifications.
 **Input**: The list pane shows a folder's messages so that a glance tells
@@ -276,6 +278,10 @@ compared with the rule in the user's locale.
   shown at once; the old rows are gone.
 - The unread filter is on and the folder was never refreshed: the list
   says no mail is loaded, as without the filter (007 FR-006).
+- The trash button takes out the last row shown: the list says "No
+  unread messages" with the filter on, else "Mailbox is empty", until the
+  next reading lists the rows again (decided at the implementation on
+  2026-10-01).
 - The trash button is pressed within the second after opening: the
   message leaves unread; the read timer is dropped with it.
 - A message removed by the trash button returns at the next reading of a

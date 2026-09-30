@@ -4,8 +4,9 @@
 **Created**: 2026-09-30 · **Branch**: `claude/message-list` · **Status**:
 Documents written, challenged (the spec and the plan, in fresh
 sessions) and approved on 2026-09-30 (T001); portion 2 implemented on
-2026-09-30 and committed; portion 3 implemented and committed on 2026-10-01; portion 4 implemented
-on 2026-10-01 (form approved), awaiting review.
+2026-09-30 and committed; portion 3 implemented and committed on 2026-10-01; portion 4 committed
+on 2026-10-01; portion 5 T021–T026 implemented on 2026-10-01 and
+simplify-reviewed (findings applied, size accepted); T027 next.
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -242,11 +243,11 @@ message opens by the rule when the user removes the open one, an opened
 message counts as read after a second, and the trash button removes the
 row, all as the spec's FR-006 to FR-010 say.
 
-- [ ] T021 [US3] In crates/mailbag/src/window_ui.rs: `render` passes
+- [x] T021 [US3] In crates/mailbag/src/window_ui.rs: `render` passes
   `ListChange::AtOnce` to `show_rows` when the folder shown differs from
   the previous read's folder or the list had no rows, and `Animated`
   otherwise (research §10); the filter toggle passes `AtOnce`.
-- [ ] T022 [US3] In crates/mailbag/src/mail_ui.rs: `update_shown(change)`
+- [x] T022 [US3] In crates/mailbag/src/mail_ui.rs: `update_shown(change)`
   — for `Animated`, arrivals inserted with `shown` false and
   `transition_ms` 220 and revealed on the second frame after the insert
   (a tick callback on the list view); removals marked leaving (`shown`
@@ -257,28 +258,28 @@ row, all as the spec's FR-006 to FR-010 say.
   removal timeouts; `keep_top_in_view` scrolls to the first row when the
   list was at its top before the change; for `AtOnce` the difference as
   today.
-- [ ] T023 [US2] In crates/mailbag/src/mail_ui.rs: `next_after_leaving
+- [x] T023 [US2] In crates/mailbag/src/mail_ui.rs: `next_after_leaving
   (above, below) -> Choice` as a pure function of the neighbours' states
   (none, read, unread) (spec FR-007, research §12), applied when the user
   removes the open message: its neighbours in the list as shown, leaving
   rows left out; the choice opened by `open_message` before the leaving
   animation; nothing when no neighbour; a refresh's removal of the open
   message closes the reader as today. Unit tests of the seven cases.
-- [ ] T024 [US2] [US4] In crates/mailbag/src/mail_ui.rs: read on opening
+- [x] T024 [US2] [US4] In crates/mailbag/src/mail_ui.rs: read on opening
   (research §13): `open_message` drops the pending timeout and starts a
   one-second one that puts the identity into the read-in-window set and
   sets the row object's `unread` false; `close_reader` and the message's
   leaving drop it; `show_rows` empties the set on a new read and the
   read-state reset of the difference update treats rows in the set as
   read.
-- [ ] T025 [US2] In crates/mailbag/src/mail_ui.rs: `remove_in_window
+- [x] T025 [US2] In crates/mailbag/src/mail_ui.rs: `remove_in_window
   (identity)` (spec FR-010): the row left out of the shown rows,
   `next_after_leaving` when it was the open message, the leaving
   animation; in a narrow window the next message opens without bringing
   the reader's page forward; the `trash_row` handler of T017 calls it
   with the list item's message; nothing is stored or sent, and the next
   read lists the message again.
-- [ ] T026 [P] [US2] [US3] [US4] Tests in crates/mailbag/src/mail_ui/
+- [x] T026 [P] [US2] [US3] [US4] Tests in crates/mailbag/src/mail_ui/
   tests.rs: unit tests of `next_after_leaving` and `shown_rows` for every
   case of spec FR-007 with and without the filter (SC-003); GUI tests, one
   per process: the trash button removes the row, opens the message the
@@ -300,7 +301,7 @@ row, all as the spec's FR-006 to FR-010 say.
 - [ ] T028 STOP: run ./scripts/check.sh, git diff --check and each GTK test
   one per process; compare the size with plan.md (animations ≈ 85, the
   next message ≈ 35, read on opening ≈ 25, the removal ≈ 35, window ≈ 20;
-  tests ≈ 170) and the budget (≤ 750 / ≤ 850); report, suggest the commit
+  tests ≈ 170) and the budget (≤ 750 / ≤ 920); report, suggest the commit
   and wait.
 
 ## Phase 6: final passes

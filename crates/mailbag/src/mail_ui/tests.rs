@@ -476,8 +476,22 @@ impl WindowWidgets {
         self.builder.object("messages").expect("messages")
     }
 
-    /// The list's row objects, which its shown rows are bound to.
+    /// The list's row objects, which its shown rows are bound to, once the
+    /// list has finished changing: every row open, none closing or about to
+    /// open.
     fn rows(&self) -> Vec<MessageItem> {
+        self.wait_until_rows_settled();
+        self.all_rows()
+    }
+
+    /// Waits until every row of the list is open: none closing, none about
+    /// to open.
+    fn wait_until_rows_settled(&self) {
+        wait_until(|| self.all_rows().iter().all(|item| item.shown()));
+    }
+
+    /// The list's row objects as they are now, closing ones included.
+    fn all_rows(&self) -> Vec<MessageItem> {
         let model = self.messages().model().expect("the list's model");
         (0..model.n_items())
             .map(|position| {
@@ -489,13 +503,17 @@ impl WindowWidgets {
             .collect()
     }
 
-    /// Opens the row at `position`, as a click or Enter does.
+    /// Opens the row at `position` once the list has finished changing, as
+    /// a click or Enter does.
     fn open_row(&self, position: u32) {
+        self.wait_until_rows_settled();
         self.messages().emit_by_name::<()>("activate", &[&position]);
     }
 
-    /// The position of the selected row, which marks the open message.
+    /// The position of the selected row, which marks the open message, once
+    /// the list has finished changing.
     fn selected_row(&self) -> Option<u32> {
+        self.wait_until_rows_settled();
         let model = self.messages().model().expect("the list's model");
         let selected = model
             .downcast::<gtk::SingleSelection>()
@@ -1633,7 +1651,7 @@ fn rows_with_previews_and_the_unread_filter() {
     }
     assert!(shown_labels(&widgets).contains(&rows[0].date_text().to_string()));
 
-    // The pointer over a row reveals its trash button, which does nothing yet.
+    // The pointer over a row reveals its trash button.
     let first_row = descendants::<gtk::Overlay>(&widgets.messages().upcast())
         .into_iter()
         .find(|overlay| overlay.is_mapped())
@@ -1660,8 +1678,6 @@ fn rows_with_previews_and_the_unread_filter() {
     assert!(!trash.reveals_child());
     pointer.emit_by_name::<()>("enter", &[&1.0_f64, &1.0_f64]);
     assert!(trash.reveals_child());
-    descendants::<gtk::Button>(&trash.clone().upcast())[0].emit_clicked();
-    assert_eq!(widgets.rows().len(), 4);
     pointer.emit_by_name::<()>("leave", &[]);
     assert!(!trash.reveals_child());
 
@@ -1713,6 +1729,189 @@ fn rows_with_previews_and_the_unread_filter() {
     window.destroy();
 }
 
+/// Runs the window's main loop for `duration`, so its frames and timers run.
+fn run_for(duration: Duration) {
+    let until = Instant::now() + duration;
+    while Instant::now() < until {
+        dispatch_pending();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// The trash button of the shown row whose sender reads `sender`.
+fn trash_button_of(widgets: &WindowWidgets, sender: &str) -> gtk::Button {
+    descendants::<gtk::Overlay>(&widgets.messages().upcast())
+        .into_iter()
+        .filter(|row| row.is_mapped())
+        .find(|row| {
+            descendants::<gtk::Label>(&row.clone().upcast())
+                .iter()
+                .any(|label| label.text() == sender)
+        })
+        .and_then(|row| descendants::<gtk::Button>(&row.upcast()).into_iter().next())
+        .expect("the row's trash button")
+}
+
+/// A generic account's Inbox holding `messages`, shown in a new window.
+fn window_with_inbox(
+    messages: &[Message],
+) -> (adw::Window, Rc<WindowUi>, Rc<ScriptedLoader>, WindowWidgets) {
+    let store = Arc::new(Store::in_memory());
+    let generic = account("synthetic-generic");
+    store_mail(&store, &generic, messages);
+    let (window, ui, loader, widgets) = open_window(store);
+    ui.apply_account_update(&imap_and_google_accounts());
+    settle(&ui);
+    widgets.select(&ui, &generic, Some("INBOX"));
+    settle(&ui);
+    (window, ui, loader, widgets)
+}
+
+/// The trash button takes the open row out of the list in the window, opens
+/// the neighbour the rule names, and changes nothing stored; the next read
+/// lists the row again (010 FR-007, FR-010; SC-003, SC-010).
+#[test]
+#[ignore = "requires a graphical GTK session"]
+fn the_trash_button_removes_the_row_in_the_window() {
+    adw::init().expect("GTK display");
+    let messages = [
+        message_received("uid:30", 1, true),
+        message_received("uid:20", 2, false),
+        message_received("uid:10", 3, false),
+    ];
+    let (window, ui, loader, widgets) = window_with_inbox(&messages);
+    widgets.open_row(0);
+    settle(&ui);
+    trash_button_of(&widgets, "Sender of uid:30").emit_clicked();
+    settle(&ui);
+    // The top row leaves; the unread one below opens and is highlighted.
+    assert_eq!(listed_identities(&widgets), ["uid:20", "uid:10"]);
+    assert_eq!(widgets.selected_row(), Some(0));
+    assert_eq!(widgets.reader_subject(), "Subject of uid:20");
+    // Nothing was stored or sent: a refresh lists the message again.
+    ui.refresh_mailbox_action().activate(None);
+    settle(&ui);
+    loader.report_stored(&messages, None);
+    settle(&ui);
+    assert_eq!(listed_identities(&widgets), ["uid:30", "uid:20", "uid:10"]);
+
+    // Under the filter the next unread row opens too, and the row taken out
+    // closes whole before it leaves.
+    let filter: gtk::ToggleButton = widgets.builder.object("unread_filter").expect("filter");
+    filter.set_active(true);
+    settle(&ui);
+    widgets.open_row(0);
+    settle(&ui);
+    trash_button_of(&widgets, "Sender of uid:20").emit_clicked();
+    dispatch_pending();
+    let closing = widgets.all_rows();
+    assert_eq!(closing.len(), 2);
+    assert!(!closing[0].shown());
+    assert_eq!(listed_identities(&widgets), ["uid:10"]);
+    assert_eq!(widgets.reader_subject(), "Subject of uid:10");
+    // Taking out the last row shown leaves the list saying why it is empty.
+    trash_button_of(&widgets, "Sender of uid:10").emit_clicked();
+    settle(&ui);
+    assert_eq!(widgets.reader_page(), "unselected");
+    assert_eq!(widgets.list_page(), "empty");
+    assert_eq!(widgets.status_title(), "No unread messages");
+    window.destroy();
+}
+
+/// An opened message counts as read in the window after a second, not
+/// before and not when left sooner; under the filter it stays listed until
+/// another opens; a read of the stored rows shows the stored state again
+/// (010 FR-008, FR-009; SC-004, SC-009).
+#[test]
+#[ignore = "requires a graphical GTK session"]
+fn an_opened_message_counts_as_read_after_a_second() {
+    adw::init().expect("GTK display");
+    let messages = [
+        message_received("uid:30", 1, false),
+        message_received("uid:20", 2, false),
+        message_received("uid:10", 3, false),
+    ];
+    let (window, ui, loader, widgets) = window_with_inbox(&messages);
+    let filter: gtk::ToggleButton = widgets.builder.object("unread_filter").expect("filter");
+    filter.set_active(true);
+    settle(&ui);
+    // Left within half a second, the message keeps its dot.
+    widgets.open_row(2);
+    run_for(Duration::from_millis(500));
+    widgets.open_row(0);
+    run_for(Duration::from_millis(800));
+    assert!(shows_unread_dot(&widgets.rows()[2]));
+    assert!(shows_unread_dot(&widgets.rows()[0]));
+    run_for(Duration::from_millis(700));
+    assert!(!shows_unread_dot(&widgets.rows()[0]));
+    // The read message stays listed while open and leaves when another opens.
+    assert_eq!(listed_identities(&widgets), ["uid:30", "uid:20", "uid:10"]);
+    widgets.open_row(1);
+    settle(&ui);
+    assert_eq!(listed_identities(&widgets), ["uid:20", "uid:10"]);
+    // The filter toggled does not bring the dot back.
+    filter.set_active(false);
+    settle(&ui);
+    assert!(!shows_unread_dot(&widgets.rows()[0]));
+    // A read of the stored rows shows their stored state.
+    ui.refresh_mailbox_action().activate(None);
+    settle(&ui);
+    loader.report_stored(&messages, None);
+    settle(&ui);
+    assert!(widgets.rows().iter().all(shows_unread_dot));
+    window.destroy();
+}
+
+/// A shown folder's arrivals come in closed and open on the next frames at
+/// the top in view, its removals close and leave after the animation, and a
+/// folder shown anew changes at once (010 FR-005, FR-006; SC-005's states).
+#[test]
+#[ignore = "requires a graphical GTK session"]
+fn a_shown_folder_changes_with_animations() {
+    adw::init().expect("GTK display");
+    let older = [
+        message_received("uid:20", 2, true),
+        message_received("uid:10", 3, true),
+    ];
+    let (window, ui, loader, widgets) = window_with_inbox(&older);
+    // A folder shown anew: its rows are open at once.
+    assert!(widgets.all_rows().iter().all(|item| item.shown()));
+    // Each row the list takes in, and whether it came in open.
+    let inserted = Rc::new(RefCell::new(Vec::new()));
+    let model = widgets.messages().model().expect("the list's model");
+    let recorded = inserted.clone();
+    model.connect_items_changed(move |model, position, _, added| {
+        for position in position..position + added {
+            let item = model
+                .item(position)
+                .and_downcast::<MessageItem>()
+                .expect("an item");
+            recorded
+                .borrow_mut()
+                .push((item.listed().identity.clone(), item.shown()));
+        }
+    });
+    ui.refresh_mailbox_action().activate(None);
+    settle(&ui);
+    let newer = [message_received("uid:30", 1, false), older[0].clone()];
+    loader.report_stored(&newer, None);
+    settle(&ui);
+    // The row that leaves closes in place first; the list has not changed.
+    let rows = widgets.all_rows();
+    assert_eq!(rows.len(), 2);
+    assert!(rows[0].shown() && !rows[1].shown());
+    assert_eq!(rows[1].transition_ms(), ROW_TRANSITION_MS);
+    assert!(inserted.borrow().is_empty());
+    // Once it is closed, the row that arrives comes in closed and opens.
+    assert_eq!(listed_identities(&widgets), ["uid:30", "uid:20"]);
+    // The row that stays keeps its object and stays open.
+    assert!(inserted.borrow().contains(&("uid:30".to_owned(), false)));
+    assert!(!inserted.borrow().contains(&("uid:20".to_owned(), false)));
+    let scrolling = widgets.messages().vadjustment().expect("a scrolled list");
+    assert_eq!(scrolling.value(), 0.0);
+    window.destroy();
+}
+
 /// Runs the window's pending work until `condition` holds; the store's work
 /// runs on GIO's thread pool.
 fn wait_until(mut condition: impl FnMut() -> bool) {
@@ -1727,11 +1926,7 @@ fn wait_until(mut condition: impl FnMut() -> bool) {
 /// Gives the deletions sent to GIO's thread pool time to run, where the test
 /// checks that they deleted nothing.
 fn let_deletions_run() {
-    let until = Instant::now() + Duration::from_millis(100);
-    while Instant::now() < until {
-        dispatch_pending();
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    run_for(Duration::from_millis(100));
 }
 
 fn click(widgets: &WindowWidgets, button: &str) {
@@ -1806,7 +2001,8 @@ fn listed_row(identity: &str, seen: bool) -> MessageListRow {
 /// Makes the list show every one of `rows`, as the list does without the
 /// unread filter.
 fn update_list(items: &gio::ListStore, rows: &[MessageListRow]) {
-    update_list_by_difference(items, &rows.iter().collect::<Vec<_>>());
+    let rows: Vec<&MessageListRow> = rows.iter().collect();
+    update_list_by_difference(items, &rows, ListChange::AtOnce, &HashSet::new());
 }
 
 /// Each change of a list's items as `(position, removed, added)`.
@@ -1949,7 +2145,7 @@ fn store_completed_cycle(
 #[test]
 fn without_the_filter_every_stored_row_is_shown() {
     let rows = [listed_row("a", true), listed_row("b", false)];
-    let shown: Vec<&str> = shown_rows(&rows, false, None)
+    let shown: Vec<&str> = shown_rows(&rows, false, None, &InWindow::default())
         .iter()
         .map(|row| row.identity.as_str())
         .collect();
@@ -1965,7 +2161,7 @@ fn the_filter_shows_the_unread_rows_and_the_open_message_in_their_order() {
         listed_row("open elsewhere", false),
     ];
     let identities = |open| -> Vec<&str> {
-        shown_rows(&rows, true, open)
+        shown_rows(&rows, true, open, &InWindow::default())
             .iter()
             .map(|row| row.identity.as_str())
             .collect()
@@ -1976,7 +2172,7 @@ fn the_filter_shows_the_unread_rows_and_the_open_message_in_their_order() {
         ["unread", "open and read", "open elsewhere"]
     );
     assert_eq!(identities(Some("unread")), ["unread", "open elsewhere"]);
-    assert!(shown_rows(&rows[..1], true, None).is_empty());
+    assert!(shown_rows(&rows[..1], true, None, &InWindow::default()).is_empty());
 }
 
 /// A fixed "now": 30 September 2026, 15:00 local time.
@@ -2041,4 +2237,66 @@ fn the_time_follows_the_locales_twelve_or_twenty_four_hour_form() {
     // A 24-hour locale, with or without an AM/PM word of its own.
     assert_eq!(locale_time_form("22:14:01", ""), "%H:%M");
     assert_eq!(locale_time_form("22:14:01", "pm"), "%H:%M");
+}
+
+#[test]
+fn the_next_message_is_the_unread_neighbour_or_else_the_one_below() {
+    use Neighbour::*;
+    let (read, unread) = (Some(false), Some(true));
+    let cases = [
+        // The only row, the top and the bottom.
+        (None, None, None),
+        (None, read, Some(Below)),
+        (unread, None, Some(Above)),
+        // Both read, one unread above or below, both unread.
+        (read, read, Some(Below)),
+        (unread, read, Some(Above)),
+        (read, unread, Some(Below)),
+        (unread, unread, Some(Below)),
+    ];
+    for (above, below, next) in cases {
+        assert_eq!(
+            next_after_leaving(above, below),
+            next,
+            "{above:?} {below:?}"
+        );
+    }
+}
+
+#[test]
+fn the_window_s_own_reads_and_removals_change_the_rows_shown() {
+    let rows = [
+        listed_row("removed", false),
+        listed_row("read in window", false),
+        listed_row("unread", false),
+    ];
+    let in_window = InWindow {
+        read: HashSet::from(["read in window".to_owned()]),
+        removed: HashSet::from(["removed".to_owned()]),
+    };
+    let identities = |unread_only| -> Vec<&str> {
+        shown_rows(&rows, unread_only, None, &in_window)
+            .iter()
+            .map(|row| row.identity.as_str())
+            .collect()
+    };
+    assert_eq!(identities(false), ["read in window", "unread"]);
+    assert_eq!(identities(true), ["unread"]);
+}
+
+#[test]
+fn an_animated_change_closes_the_rows_that_leave_and_brings_new_ones_in_closed() {
+    let (items, _) = listed_items(&["c", "b", "a"]);
+    let second = ["d", "c", "a"].map(|identity| listed_row(identity, false));
+    let second: Vec<&MessageListRow> = second.iter().collect();
+    // "b" closes in place; the list does not change yet.
+    assert!(close_leaving_rows(&items, &second));
+    let shown: Vec<bool> = item_list(&items).iter().map(|item| item.shown()).collect();
+    assert_eq!(shown, [true, false, true]);
+    assert!(!close_leaving_rows(&items, &second));
+    // Then the change comes in, "d" closed until it opens.
+    update_list_by_difference(&items, &second, ListChange::Animated, &HashSet::new());
+    assert_eq!(identities(&items), ["d", "c", "a"]);
+    let shown: Vec<bool> = item_list(&items).iter().map(|item| item.shown()).collect();
+    assert_eq!(shown, [false, true, true]);
 }
