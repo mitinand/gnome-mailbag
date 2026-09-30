@@ -685,6 +685,45 @@ fn a_text_not_downloaded_never_replaces_a_stored_content() {
     );
 }
 
+/// A text the service did not return, for a message whose fields it
+/// reported again, leaves the stored text in place; it replaces any other
+/// content, and a text replaces it.
+#[test]
+fn a_text_not_returned_never_replaces_a_stored_text() {
+    let synced = account("synced");
+    let store = store_listing(&synced, &["INBOX"]);
+    let inbox = folder_of(&synced, "INBOX");
+    let recent = dated_message("message", 1);
+    let store_content = |content: ReceivedContent| {
+        let batch = FolderBatch {
+            arrived: vec![Message {
+                content,
+                ..recent.clone()
+            }],
+            ..FolderBatch::default()
+        };
+        store.store_batch(&inbox, &batch, || false).unwrap();
+        store.read_message_content(&synced, "message").unwrap()
+    };
+    let text = ReceivedContent::Text("Text".to_owned());
+    assert_eq!(store_content(text.clone()), Some(text.clone()));
+    assert_eq!(
+        store_content(ReceivedContent::TextNotReturned),
+        Some(text.clone())
+    );
+    assert_eq!(store_content(ReceivedContent::NotDownloaded), Some(text));
+    assert_eq!(
+        store_content(ReceivedContent::StructureUnreadable),
+        Some(ReceivedContent::StructureUnreadable)
+    );
+    assert_eq!(
+        store_content(ReceivedContent::TextNotReturned),
+        Some(ReceivedContent::TextNotReturned)
+    );
+    let newer = ReceivedContent::Text("Newer".to_owned());
+    assert_eq!(store_content(newer.clone()), Some(newer));
+}
+
 #[test]
 fn the_folder_state_changes_only_with_a_batch_that_carries_it() {
     let synced = account("synced");

@@ -63,12 +63,9 @@ fn synchronize_imap_inbox(fixture: &ImapFixture) -> (LoadResult, Vec<Message>) {
     synchronize_inbox(LoadKind::GenericImap(account_access(fixture)))
 }
 
-/// A Gmail load of `fixture`, whose renewal nobody answers.
+/// A Gmail load of `fixture`.
 fn gmail_kind(fixture: &ImapFixture) -> LoadKind {
-    LoadKind::Gmail {
-        access: gmail_access(fixture),
-        renewal: AccessRenewal::answered_by_test().0,
-    }
+    LoadKind::Gmail(gmail_access(fixture))
 }
 
 /// A Generic IMAP message's identity in the fixture's Inbox, whose
@@ -95,9 +92,7 @@ fn failure_of(outcome: LoadResult) -> Failure {
 /// The Inbox of the kind's account, by the name its provider opens it by.
 fn inbox_of(kind: &LoadKind) -> FolderRef {
     let (account, identity) = match kind {
-        LoadKind::GenericImap(access) | LoadKind::Gmail { access, .. } => {
-            (&access.account_id, "INBOX")
-        }
+        LoadKind::GenericImap(access) | LoadKind::Gmail(access) => (&access.account_id, "INBOX"),
         LoadKind::Microsoft365 { access, .. } => (&access.account_id, "inbox"),
         LoadKind::PanicsForTest(account) => (account, "INBOX"),
     };
@@ -273,6 +268,32 @@ fn a_message_the_server_cannot_describe_keeps_its_row() {
     assert_eq!(identities(&stored), [imap_identity(20), imap_identity(10)]);
     assert_eq!(stored[0].content, ReceivedContent::StructureUnreadable);
     assert_eq!(text_of(&stored[1].content), "readable");
+}
+
+/// A refusal the server marks temporary (RFC 5530 `UNAVAILABLE`) of a batch's
+/// structures or texts fails the cycle as a temporarily unavailable server
+/// and stores none of the batch, so the next cycle fetches it again: nothing
+/// is kept as unreadable for a passing condition (spec FR-009).
+#[test]
+fn a_temporary_refusal_of_structures_or_text_stores_no_row_and_names_the_server() {
+    use mailbag_domain::ServerStep;
+    for (command, step) in [
+        (FaultyCommand::Structures, ServerStep::FetchMessages),
+        (FaultyCommand::Text, ServerStep::FetchText),
+    ] {
+        let fixture = ImapFixture::start(FixtureSetup {
+            messages: plain_messages(2),
+            unavailable_command: Some(command),
+            ..FixtureSetup::default()
+        });
+        let (outcome, stored) = synchronize_imap_inbox(&fixture);
+        assert_eq!(
+            failure_of(outcome).kind,
+            FailureKind::ServerUnavailable(step),
+            "{command:?}"
+        );
+        assert!(stored.is_empty(), "{command:?}");
+    }
 }
 
 #[test]
@@ -1077,7 +1098,8 @@ fn a_microsoft_365_round_applies_removals_partial_entries_and_arrivals() {
 
 /// Research §5: a message moved from the Inbox to Archive and marked unread
 /// there; an older read-state entry in the Inbox's round must not mark it
-/// read. The message is read again and, being in Archive now, left alone.
+/// read. The message is read again and, being in Archive now, leaves the
+/// Inbox.
 #[test]
 fn an_entry_for_a_message_another_folder_holds_is_read_again_first() {
     use graph_service::{ScriptedNext::*, delta_entry};
@@ -1125,6 +1147,45 @@ fn an_entry_for_a_message_another_folder_holds_is_read_again_first() {
         "{:?}",
         graph_paths(&service)
     );
+    let inbox = folder_of("synthetic-microsoft365", "inbox");
+    assert_eq!(
+        identities(&stored_messages(&store, &inbox)),
+        [graph_identity(1), graph_identity(3)]
+    );
+}
+
+/// Research §5: a removal met with another entry for the same message in
+/// one page is trusted neither way, whatever their order: the message is
+/// read as the service holds it now, and leaves the folder when it is
+/// elsewhere.
+#[test]
+fn a_removal_met_with_another_entry_in_one_page_reads_the_message_again() {
+    use graph_service::delta_entry;
+    let id = graph_service::fixture_immutable_id;
+    let removed = || serde_json::json!({"id": id(2), "@removed": {"reason": "deleted"}});
+    let read = || serde_json::json!({"id": id(2), "isRead": true});
+    for (round, moved_away) in [
+        (vec![read(), removed()], true),
+        (vec![removed(), read()], true),
+        (vec![removed(), delta_entry(2)], true),
+        (vec![removed(), read()], false),
+    ] {
+        let folder_now = if moved_away { "archive" } else { "inbox" };
+        let mut messages = inbox_messages(&[1, 3]);
+        messages.push(graph_service::stored_message(2, folder_now));
+        let store = Arc::new(Store::in_memory());
+        let (service, outcome, stored) = graph_round(round, messages, &store);
+        assert!(matches!(outcome, LoadResult::Stored { .. }), "{outcome:?}");
+        let expected = match moved_away {
+            true => vec![graph_identity(1), graph_identity(3)],
+            false => vec![graph_identity(1), graph_identity(2), graph_identity(3)],
+        };
+        assert_eq!(identities(&stored), expected, "moved away: {moved_away}");
+        assert!(
+            graph_paths(&service).contains(&format!("/me/messages/{}", id(2))),
+            "moved away: {moved_away}"
+        );
+    }
 }
 
 /// Research §5: the arrivals of a round of changes are scattered in time, so
@@ -1825,6 +1886,36 @@ fn a_second_cycle_without_changes_fetches_no_message_and_stores_nothing() {
     assert_eq!(later[0].message_set, "1:*");
 }
 
+/// SC-002 on Microsoft 365: a round without changes costs one request and
+/// changes no stored message.
+#[test]
+fn a_microsoft_365_round_without_changes_costs_one_request() {
+    use graph_service::{ScriptedNext::*, delta_entry};
+    let service = graph_service::ScriptedService::start_with_changes(graph_mailbox(
+        vec![
+            (
+                "first",
+                delta_page((1..=3).map(delta_entry).collect(), Done("round-1")),
+            ),
+            ("round-1", delta_page(Vec::new(), Done("round-2"))),
+        ],
+        inbox_messages(&[1, 2, 3]),
+    ));
+    let store = Arc::new(Store::in_memory());
+    store_inbox(&store, &folder_of("synthetic-microsoft365", "inbox"));
+    let (_, first, _) = synchronize_kind_again(microsoft365_kind(&service), &store);
+    let asked_before = service.received_requests().len();
+    let (outcome, second, _) = synchronize_kind_again(microsoft365_kind(&service), &store);
+    assert!(
+        matches!(outcome, LoadResult::Stored { incomplete: None }),
+        "{outcome:?}"
+    );
+    assert_eq!(second, first);
+    let later = &service.received_requests()[asked_before..];
+    assert_eq!(later.len(), 1, "{later:?}");
+    assert!(later[0].query.contains("$deltatoken=round-1"), "{later:?}");
+}
+
 /// SC-003: arrivals are fetched, read states change in place and messages
 /// the complete listing no longer reports leave.
 #[test]
@@ -2134,75 +2225,6 @@ fn a_large_folder_fills_in_batches_and_a_second_cycle_fetches_nothing() {
     );
     assert_eq!(stored[100].content, ReceivedContent::NotDownloaded);
     assert_eq!(fixture.log().fetches.len(), fetches_before + 1);
-}
-
-/// A Gmail load whose renewal Online Accounts answers once with `token`, as
-/// a thread of its own stands in for GTK's context.
-fn gmail_kind_renewed_with(fixture: &ImapFixture, token: &str) -> LoadKind {
-    let (renewal, requests) = AccessRenewal::answered_by_test();
-    let mut renewed = Some(ImapAccess {
-        credential: ImapCredential::AccessToken(token.to_owned()),
-        ..account_access(fixture)
-    });
-    std::thread::spawn(move || {
-        while let Ok(reply) = requests.recv_blocking() {
-            reply.send_blocking(renewed.take()).ok();
-        }
-    });
-    LoadKind::Gmail {
-        access: gmail_access(fixture),
-        renewal,
-    }
-}
-
-/// SC-010: Gmail ends the session mid-fill, the cycle signs in again once
-/// with a renewed token and completes.
-#[test]
-fn a_gmail_session_ended_mid_fill_is_renewed_once_and_the_fill_completes() {
-    let fixture = ImapFixture::start(FixtureSetup {
-        renewed_access_token: Some("renewed-token".to_owned()),
-        fault: Some((FaultyCommand::Rows, FaultKind::Bye)),
-        ..gmail_fixture_setup(plain_messages(2))
-    });
-    let store = Arc::new(store_with_inbox(&folder_of("synthetic-account", "INBOX")));
-    let kind = gmail_kind_renewed_with(&fixture, "renewed-token");
-    let (outcome, stored, _) = synchronize_kind_again(kind, &store);
-    assert!(
-        matches!(outcome, LoadResult::Stored { incomplete: None }),
-        "{outcome:?}"
-    );
-    assert_eq!(identities(&stored), ["gmail:20000", "gmail:10000"]);
-    assert_eq!(fixture.log().connections, 2);
-}
-
-/// Research §13: the same token, or a second end, stands with Gmail's words.
-#[test]
-fn a_gmail_session_end_stands_with_the_same_token_or_a_second_end() {
-    for (token, fault_times) in [(TEST_ACCESS_TOKEN, 1), ("renewed-token", 2)] {
-        let fixture = ImapFixture::start(FixtureSetup {
-            renewed_access_token: Some("renewed-token".to_owned()),
-            fault: Some((FaultyCommand::Listing, FaultKind::Bye)),
-            fault_times,
-            ..gmail_fixture_setup(plain_messages(1))
-        });
-        let store = Arc::new(store_with_inbox(&folder_of("synthetic-account", "INBOX")));
-        let kind = gmail_kind_renewed_with(&fixture, token);
-        let (outcome, stored, _) = synchronize_kind_again(kind, &store);
-        let failure = failure_of(outcome);
-        assert_eq!(
-            failure.kind,
-            FailureKind::ServerStepFailed(mailbag_domain::ServerStep::FetchMessages),
-            "{token}"
-        );
-        assert!(
-            failure
-                .remote_texts
-                .iter()
-                .any(|text| text.text == "Server is restarting"),
-            "{failure:?}"
-        );
-        assert!(stored.is_empty());
-    }
 }
 
 /// Stores `messages` as the folder's whole content, as a completed cycle

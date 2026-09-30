@@ -63,8 +63,6 @@ pub(crate) struct MailboxSession {
 pub(crate) struct StepFailure {
     pub(crate) failure: ImapFailure,
     pub(crate) server_reply: Option<ServerReply>,
-    /// Whether the command ended with the server's BYE.
-    pub(crate) ended_by_server: bool,
 }
 
 impl From<ImapFailure> for StepFailure {
@@ -72,7 +70,6 @@ impl From<ImapFailure> for StepFailure {
         Self {
             failure,
             server_reply: None,
-            ended_by_server: false,
         }
     }
 }
@@ -174,9 +171,6 @@ impl ServerNotices {
     /// server's texts here, and the reply is logged here as well.
     pub(crate) fn error(&mut self, sign_in_name: &str, failure: StepFailure) -> ImapError {
         self.collect(sign_in_name);
-        // A BYE ends the session whether it answered the command or arrived
-        // before the connection closed.
-        let ended_by_server = failure.ended_by_server || self.bye.is_some();
         let mut server_reply = failure.server_reply.or_else(|| self.bye.take());
         if let Some(reply) = &mut server_reply {
             reply.text = replace_sign_in_name(sign_in_name, &reply.text);
@@ -194,7 +188,6 @@ impl ServerNotices {
             failure: failure.failure,
             server_reply,
             alerts,
-            ended_by_server,
         }
     }
 }
@@ -574,7 +567,6 @@ pub(crate) fn command_failure(step: ImapStep, error: &Error) -> StepFailure {
         Error::No(status) | Error::Bad(status) | Error::Bye(status) => StepFailure {
             failure: ImapFailure::Failed(step),
             server_reply: Some(ServerReply::from(status)),
-            ended_by_server: matches!(error, Error::Bye(_)),
         },
         Error::Io(error) => io_failure(step, error).into(),
         _ => ImapFailure::Failed(step).into(),

@@ -1,27 +1,26 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Asking Online Accounts for an account's access again while its cycle runs
-//! on the mail worker, whose thread cannot call the adapter: the request goes
-//! to GTK's context and the answer comes back
+//! Asking Online Accounts for a Microsoft 365 account's token again while its
+//! cycle runs on the mail worker, whose thread cannot call the adapter: the
+//! request goes to GTK's context and the answer comes back
 //! (specs/009-synchronization/research.md §13).
 
-use goa_adapter::{AccessError, AccessRequest};
+use goa_adapter::{AccessError, AccessRequest, GraphAccess};
 use mailbag_domain::AccountId;
 
 /// Where the answer to one renewal request goes.
-type RenewalReply<Access> = async_channel::Sender<Option<Access>>;
+type RenewalReply = async_channel::Sender<Option<GraphAccess>>;
 
-/// A running load's way to ask for its account's access again: IMAP's
-/// settings and token, or Microsoft Graph's token.
-pub(crate) struct AccessRenewal<Access> {
-    requests: async_channel::Sender<RenewalReply<Access>>,
+/// A running load's way to ask for its account's Microsoft Graph token again.
+pub(crate) struct AccessRenewal {
+    requests: async_channel::Sender<RenewalReply>,
 }
 
-impl<Access> AccessRenewal<Access> {
+impl AccessRenewal {
     /// The access Online Accounts gives now; `None` when it gave none or
     /// the load's requests are no longer answered.
-    pub(crate) async fn renew(&self) -> Option<Access> {
+    pub(crate) async fn renew(&self) -> Option<GraphAccess> {
         let (reply, answer) = async_channel::bounded(1);
         self.requests.send(reply).await.ok()?;
         answer.recv().await.ok().flatten()
@@ -31,12 +30,12 @@ impl<Access> AccessRenewal<Access> {
 /// A renewal for a load of `account_id`, answered on the calling context,
 /// GTK's, with `request`, the Online Accounts request the load started with.
 /// It answers until the load drops its renewal.
-pub(crate) fn answer_renewals<Access: 'static>(
+pub(crate) fn answer_renewals(
     account_id: AccountId,
-    request: impl Fn(&AccountId, Box<dyn FnOnce(Result<Access, AccessError>)>) -> AccessRequest
+    request: impl Fn(&AccountId, Box<dyn FnOnce(Result<GraphAccess, AccessError>)>) -> AccessRequest
     + 'static,
-) -> AccessRenewal<Access> {
-    let (requests, received) = async_channel::unbounded::<RenewalReply<Access>>();
+) -> AccessRenewal {
+    let (requests, received) = async_channel::unbounded::<RenewalReply>();
     glib::spawn_future_local(async move {
         while let Ok(reply) = received.recv().await {
             let (sender, answer) = async_channel::bounded(1);
@@ -60,9 +59,9 @@ pub(crate) fn answer_renewals<Access: 'static>(
 }
 
 #[cfg(test)]
-impl<Access> AccessRenewal<Access> {
+impl AccessRenewal {
     /// A renewal the test answers through the returned receiver.
-    pub(crate) fn answered_by_test() -> (Self, async_channel::Receiver<RenewalReply<Access>>) {
+    pub(crate) fn answered_by_test() -> (Self, async_channel::Receiver<RenewalReply>) {
         let (requests, received) = async_channel::unbounded();
         (Self { requests }, received)
     }

@@ -91,7 +91,13 @@ batch's row FETCH keeps the rows received, stores them, and ends the
 cycle as an incomplete list (`IncompleteList::ServerRefused`) without the
 completed state, as today's `MessageList.refusal` does, so a folder never
 looks complete while the server withheld messages. The sequence-number
-FETCH goes.
+FETCH goes. A NO the server marks temporary (RFC 5530 `UNAVAILABLE`) on a
+batch's structures or texts fails the cycle as a temporarily unavailable
+server (006) and stores nothing of the batch, so the next cycle fetches it
+again; any other NO keeps 002's rule, the message stored as unreadable,
+since a server may refuse one damaged message for good (independent
+review, 2026-09-30: with the old rule a passing refusal left up to a batch
+of messages without text until the content cache, and Retry is gone).
 
 **Rationale**:
 - Texts with their rows (spec FR-003): the newest messages are readable as
@@ -154,7 +160,9 @@ one number per line.
   entry of A's round): the message is read with `GET /me/messages/{id}`
   including `parentFolderId`, its current fields and read state are
   stored, and it is related to this folder only if `parentFolderId` names
-  it (external review, 2026-09-29). This happens only while a moved
+  it; otherwise it leaves this folder, since the service placed it
+  elsewhere or no longer finds it (external review, 2026-09-29;
+  independent review, 2026-09-30). This happens only while a moved
   message is still listed in its old folder, so the extra requests are
   few.
 - An entry with `@removed` removes the message from the folder. An entry
@@ -166,6 +174,15 @@ one number per line.
   there means the message is gone meanwhile and it is left out. Entries of
   one page are merged per message in their order, so a later partial entry
   never drops an earlier `isRead`; a later page wins over an earlier one.
+  An `@removed` entry met with another entry for the same message in one
+  page is trusted neither way: the service documents that an entity can
+  appear several times and in no certain order, and a removal, once
+  reported, is not reported again, so a message read and then moved out
+  could stay listed for good if the later entry won; the message is read
+  again like an entry that changed other fields, and leaves the folder
+  when the service does not place it here (independent review,
+  2026-09-30). Across pages the order stands: a removal on one page and a
+  change on a later one apply in turn.
 - Texts on a first fill: a page of the first reading is ordered by
   received date, so the folder holds no message between its earliest and
   latest dates that the page lacks; its messages within 30 days get their
@@ -182,7 +199,12 @@ one number per line.
   its text again: a draft edited in another client keeps its identity,
   and so does the message once sent (spec FR-009; external review,
   2026-09-29). Probe, 2026-09-29: a draft whose text alone was edited in
-  Outlook on the web came in the next round as a listed entry.
+  Outlook on the web came in the next round as a listed entry. A text the
+  service then does not return leaves the stored one in place
+  (data-model.md): a full reading reports every message's fields again,
+  and a message deleted between its page and the text request, or one the
+  range answer misses, would otherwise lose the text it had (independent
+  review, 2026-09-30).
 - Texts in a round of changes: its arrived messages are scattered in time
   (a message moved in from a month ago beside today's), so each text is
   read by the message's identifier; a date range could cover a month of
@@ -195,9 +217,16 @@ one number per line.
   `server_position` as it was, so an interrupted round starts again from
   it and is never taken for a first fill (external review, 2026-09-29: one
   field held both links, told apart by `synchronized`).
-- A 410, or a 4xx whose `error.code` is `syncStateNotFound` (compared
-  without case), means the saved position or place is no longer accepted;
-  the cycle then reads the whole folder, keeps the listed identities in
+- A 410, or any other 4xx answering a saved link except the token's 401
+  and the throttling 429, means the saved position or place is no longer
+  accepted: the service documents a 410 and "a 40X-series error with error
+  codes such as `syncStateNotFound`" for a token it no longer holds (delta
+  query overview, "Token duration", checked 2026-09-30), so the code is not
+  relied on; a refused first reading is its own failure, and a link refused
+  for another reason costs one full reading that meets the same refusal
+  (independent review, 2026-09-30: with the narrow rule a folder whose link
+  the service refused with another code could never be refreshed again).
+  The cycle then reads the whole folder, keeps the listed identities in
   memory, and at its end removes the stored messages it did not list; if it
   stops, the next cycle starts it again (spec FR-007, FR-010): with no
   saved link and rows stored, a first reading is such a full reading,
@@ -383,18 +412,17 @@ project with it (`cmb_db.py` looks up the base class `object`, which its
 catalog lacks). GTK refuses any other `parent`: a list item template's
 parent must be `GObject`.
 
-## §10 `MailboxChanged` stays for a reconnect
+## §10 `MailboxChanged` stays for one case
 
 **Decision**: The failure kind and its wording stay. Of its four producers
 today, three go: rows of a sequence-number FETCH that all vanished
 (`reader.rs`, `fetch_rows`), structures that all vanished
 (`fetch_structures`) and a newest-100 load whose messages all vanished
 (`imap_batch.rs`, `load_batch_from_rows`); a vanished message is a missing
-answer to a UID FETCH, which the cycle skips. A reconnect remains: after a structure the
+answer to a UID FETCH, which the cycle skips. One producer remains: after a structure the
 parser cannot read, the reader reconnects, and if the folder's UIDVALIDITY
 changed meanwhile the numbers the cycle holds name other messages, so the
-cycle stops with `MailboxChanged` (`reader.rs`, `reconnect`); a Gmail
-folder reopened after a renewed session does the same (§13). The next
+cycle stops with `MailboxChanged` (`reader.rs`, `reconnect`). The next
 cycle's identities carry the new numbering version (spec FR-005).
 
 **Rationale**: storing a message's fields under an identity of the old
@@ -427,36 +455,33 @@ a second Refresh; the cost of a longer one is a real outage noticed after
 
 ## §13 Renewing access during a cycle
 
-**Decision**: When a request of a running cycle on an OAuth account meets
-a refused access after the cycle's first successful request (a 401 from
-Microsoft Graph) or the end of its session by the server (Gmail's BYE),
-the cycle asks for the account's access once more. When Online Accounts
-hands out a different token it makes one attempt to continue: on
-Microsoft 365 it repeats the request with the new token; on Gmail it drops
-the reader, opens the folder again with the new access through
-`MailboxReader::open`, compares `uid_validity()` with the one it holds (a
-change is `MailboxChanged`), and repeats the interrupted request (the
-listing or the batch). A different token does not prove the cause:
-Online Accounts renews a token that has less than ten minutes left,
-whatever ended the session, so a BYE Gmail sent for its limits can,
-rarely, be followed by one reconnect; 004's amendment says so. With the
-same token, and after a second refusal, the refusal stands with its real
-reason: a refused sign-in on Microsoft 365, Gmail's own text on Gmail. A
-password account is not renewed: a lost connection ends the cycle as
-today, and the next Refresh continues.
+**Decision**: When Microsoft Graph refuses the token of a running cycle
+(a 401), the cycle asks Online Accounts for the account's access once more.
+When Online Accounts hands out a different token, the cycle repeats the
+request once with it. With the same token, which Online Accounts gives
+again for a token just handed out, and after a second refusal, the
+refusal stands as a refused sign-in. A Gmail session is not renewed: a
+session Gmail ends stands with Gmail's own reason (004 FR-003), and a
+password account is not renewed either; a lost connection ends the cycle,
+and the next Refresh continues.
 
-**What `mailbag-imap` must tell**: today `command_failure` turns NO, BAD
-and BYE into one failure (`session.rs`); the cycle needs to know that the
-server ended the session, so `ImapError` carries that the session ended
-with BYE (a small addition in `mailbag-imap`; external review,
-2026-09-29).
+**Gmail, checked at the final review (2026-09-30)**: the plan assumed that
+Gmail ends an OAuth session when its token expires (004 research,
+secondary sources) and renewed the session after a BYE. A probe signed in
+to Gmail's IMAP with one token and kept it: 18 minutes after the token
+expired the open session still answered `FETCH` of flags and header
+fields every 4 minutes, while a new sign-in with the same token was
+refused (`AUTHENTICATIONFAILED`). Gmail checks the token at sign-in only,
+so a long cycle is not cut by the expiry; the renewal of Gmail sessions,
+its BYE mark in `mailbag-imap` and `MailboxReader::reopen` were removed
+(the maintainer's decision).
 
 **How the worker asks**: the mail worker cannot call Online Accounts, whose
-adapter belongs to GTK's context. `MailLoader` gives each load a renewal
-channel: the cycle sends a request with a reply channel, a task on GTK's
-context asks the adapter with the same request the load started with, and
-sends the new access back. A load cancelled meanwhile drops the request.
-Apart from the BYE mark, the renewal adds nothing to `mailbag-imap`,
+adapter belongs to GTK's context. `MailLoader` gives each Microsoft 365
+load a renewal channel: the cycle sends a request with a reply channel, a
+task on GTK's context asks the adapter with the same request the load
+started with, and sends the new access back. A load cancelled meanwhile
+drops the request. The renewal adds nothing to `mailbag-imap`,
 `mailbag-graph` or the window.
 
 **Rationale**:
@@ -468,14 +493,12 @@ Apart from the BYE mark, the renewal adds nothing to `mailbag-imap`,
   source, `goaoauth2provider.c`), so a cycle that started with a token
   eleven minutes from expiry and runs for fifteen meets a refusal.
 - A first fill of a large Microsoft 365 folder takes tens of minutes
-  (§5), and Gmail closes an OAuth session when its token expires (004
-  research, secondary sources).
+  (§5), and Microsoft Graph checks the token with every request.
 - Answering a refusal covers expiry, revocation and a wrong clock with one
   mechanism; predicting expiry from the lifetime would still need it.
 
 **Alternatives**: renewing before expiry from the returned lifetime: the
 adapter discards the lifetime today, and a refusal would still need
-handling; telling Gmail's expiry from its limits by the BYE's text: Google
-documents no wording; a failure shown and the next Refresh continuing:
+handling; a failure shown and the next Refresh continuing:
 rejected by the maintainer, since the user would see a false sign-in
 failure.

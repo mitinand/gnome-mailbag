@@ -204,8 +204,9 @@ user sees without the rule named.
   (FR-006). All Mail, Starred and Important are label folders like the
   others; refreshing All Mail fills the whole account.
 - **Microsoft Graph reports the same change twice**, or reports changes out
-  of order within one refresh: the last entry received for a message wins
-  (FR-007).
+  of order within one refresh: the last entry received for a message wins;
+  a removal met with another entry for the message in one page makes the
+  cycle read the message as the service holds it now (FR-007).
 - **Microsoft Graph reports a change for a message the store does not
   hold**: its list fields are fetched before it is stored; a partial record
   never becomes a row (FR-007).
@@ -317,7 +318,8 @@ documentation does not say how, and FR-007's rule covers either form.
   revoked token and a wrong clock.
 - Q: How is a Gmail session that ended because its token expired told
   apart from one Gmail ended for its limits, after which 004 forbids
-  reconnecting? → A: By Online Accounts' answer: the cycle continues only
+  reconnecting? → A: (Superseded on 2026-09-30: Gmail sessions are not
+  renewed, see the final review below.) By Online Accounts' answer: the cycle continues only
   when Online Accounts hands out a different token, which it does only for
   a token near or past its expiry; the same token means the refusal stands
   (FR-011). Google documents no wording for its BYE, so its text is not
@@ -353,7 +355,17 @@ documentation does not say how, and FR-007's rule covers either form.
   service holds it now, with its current folder (FR-007).
 - Q: What does a Gmail session renewal promise? → A: One attempt with a
   different token, without claiming that the token's expiry was the cause;
-  a second refusal keeps its real reason (FR-011).
+  a second refusal keeps its real reason (FR-011). (Superseded on
+  2026-09-30, below.)
+
+### Session 2026-09-30 (final review)
+
+- Q: Does a Gmail session need its access renewed during a cycle? → A: No.
+  A probe kept a Gmail IMAP session open with one token: 18 minutes after
+  the token expired the session still answered FETCH, while a new sign-in
+  with that token was refused. Gmail checks the token only at sign-in, so
+  the renewal of Gmail sessions was removed; Microsoft 365, which checks
+  the token with every request, keeps it (FR-011, research §13).
 
 ### Session 2026-09-28 (specification challenge)
 
@@ -440,8 +452,10 @@ documentation does not say how, and FR-007's rule covers either form.
   folder only when its server proves it is no longer in that folder. On
   IMAP the proof is a listing of every message of the folder that the
   server completed in the same cycle. On Microsoft 365 it is the service
-  reporting the message removed from the folder, or a completed full
-  reading of the folder that does not list it. An answer that is cut short,
+  reporting the message removed from the folder, the service placing the
+  message elsewhere or not finding it when the cycle reads it again
+  (FR-007), or a completed full reading of the folder that does not list
+  it. An answer that is cut short,
   refused or ended by a lost connection removes nothing. A message leaves
   the store when no folder holds it any more (008 FR-004).
 
@@ -469,13 +483,17 @@ documentation does not say how, and FR-007's rule covers either form.
   position, or when the service no longer accepts it, the cycle reads the
   whole folder page by page, keeping the stored rows until FR-004 lets them
   go. The last entry received for a message wins, whether the service
-  repeats a change or reports changes out of order. A change for a message
-  the store does not hold is completed by fetching its list fields, and its
-  text as FR-009 selects, before it is stored. A change for a message the
-  account also holds in another folder is not taken from the entry, which
-  may be older than that folder's state: the message is read as the
-  service holds it now, with the folder it is in, and it is related to
-  this folder only if it is there. A first fill continued from a saved
+  repeats a change or reports changes out of order, except that an entry
+  marking the message removed, met with another entry for it in one page,
+  is trusted neither way: the message is read as the service holds it now
+  (*amended 2026-09-30 after an independent review*). A change for a
+  message the store does not hold is completed by fetching its list fields,
+  and its text as FR-009 selects, before it is stored. A change for a
+  message the account also holds in another folder is not taken from the
+  entry, which may be older than that folder's state: the message is read
+  as the service holds it now, with the folder it is in; it is related to
+  this folder only if it is there, and leaves this folder when it is not
+  (FR-004). A first fill continued from a saved
   place reads one more round of changes before it completes, so changes
   made during the pause are included as far as the service reports them.
   Messages keep their immutable identifier (005 FR-004).
@@ -502,7 +520,13 @@ documentation does not say how, and FR-007's rule covers either form.
   365, a message of the last 30 days whose list fields the service
   reports again gets its text again: a draft edited elsewhere keeps its
   identity, also once sent (*amended 2026-09-29 after an external
-  review*). Other messages
+  review*); a text the service then does not return leaves the stored one
+  in place. A refusal the server marks temporary (RFC 5530 `UNAVAILABLE`)
+  of a batch's structures or texts stores nothing of the batch and fails
+  the cycle as 006's temporarily unavailable server, so the next cycle
+  fetches the batch again; any other refusal of a message's structure or
+  text is stored as its reason for no text (002 FR-004) (*both amended
+  2026-09-30 after an independent review*). Other messages
   keep no text; opening one says that its text was not downloaded and makes
   no request (constitution III: never shown as empty). A stored text stays
   until the message leaves the store; nothing is evicted before the content
@@ -527,21 +551,20 @@ documentation does not say how, and FR-007's rule covers either form.
 - **FR-011 — Failures and notices**: A failed or cancelled cycle is a failed
   or cancelled load under 006 and 007 FR-005: the stored rows stay with the
   banner that names the failure. A listing the server cut short or refused
-  is an incomplete list (006 User Story 3) and removes nothing (FR-004).
-  After a restart, a folder whose first fill did not complete shows its
+  is an incomplete list (006 User Story 3) and removes nothing (FR-004); a
+  refusal the server marks temporary of a batch's structures or texts is a
+  failed cycle (FR-009). After a restart, a folder whose first fill did not complete shows its
   stored rows with no notice until the next refresh, as 007 accepts for an
   incomplete list; the fill does not continue by itself (FR-015(c)). When
-  a service refuses the account's access or ends its sign-in session during
-  a cycle that already signed in, as happens when an OAuth token expires in
-  a long cycle, the cycle asks Online Accounts for the account's access
-  once more, on an OAuth account (Gmail, Microsoft 365), and makes one
-  attempt to continue from where it stopped when Online Accounts hands out
-  a different token. A different token does not prove that the token's
-  expiry was the cause: Gmail may have ended the session for its limits
-  while the token was also near its end, so this rule can, rarely, bring
-  one reconnect after such an end. With the same token, and after a second
-  refusal, the refusal stands with its real reason: the service's refused
-  sign-in, or Gmail's own text.
+  Microsoft 365 refuses the account's token during a cycle, as happens when
+  it expires in a long cycle, the cycle asks Online Accounts for the
+  account's access once more and makes one attempt to continue from where
+  it stopped when Online Accounts hands out a different token. With the
+  same token, and after a second refusal, the refusal stands as the
+  service's refused sign-in. A Gmail session is not renewed: Gmail checks
+  the token only at sign-in, and a session it ends stands with Gmail's own
+  reason (004 FR-003). *Amended 2026-09-30 at the final review*: the
+  renewal of Gmail sessions was removed after a probe (research §13).
 
 **The window and accounts**
 
@@ -694,8 +717,7 @@ rows is shown as an empty folder.
   10 000 messages runs ends Mailbag within 1 second; at the next start the
   store opens whole and holds every batch stored before the close.
 - **SC-010**: A scripted Microsoft 365 service that rejects the access token
-  in the middle of a first fill, and a scripted Gmail server that ends the
-  session in the middle of one, each accept a new token from the scripted
+  in the middle of a first fill accepts a new token from the scripted
   Online Accounts and the fill completes without a failure shown.
 
 ## Assumptions
@@ -754,16 +776,18 @@ To be applied with this feature, in the owning documents:
   read state and hidden preview move into the row template) and
   contracts/imap-reading.md (the listing uses `1:*`; rows by UID; a
   vanished message is skipped).
-- 004 FR-003 ("MUST NOT reconnect or retry automatically when Gmail ends a
-  session"), 005 FR-002 ("MUST NOT renew a token"; "a refused token MUST be
+- 005 FR-002 ("MUST NOT renew a token"; "a refused token MUST be
   reported as a rejected sign-in"), FR-003 and FR-008 ("MUST NOT retry a
   request … for any reason"): a cycle asks Online Accounts once more after
-  a refusal and makes one attempt with a different token (FR-011), which
-  may rarely follow a Gmail end for its limits; a token Online Accounts
-  hands out again unchanged, and a second refusal, stand with their real
-  reason. 008 FR-007 (a folder's mail as its latest completed load left
+  a refusal and makes one attempt with a different token (FR-011); a token
+  Online Accounts hands out again unchanged, and a second refusal, stand
+  as the rejected sign-in. 004 FR-003 stands: a Gmail session is not
+  renewed (amended 2026-09-30). 008 FR-007 (a folder's mail as its latest completed load left
   it) and 004's deferred Gmail model (All Mail with labels as relations)
   are replaced by FR-001 and FR-006 here.
+- 002 FR-004 (a structure or text the server refused is stored with its
+  explanation): a refusal the server marks temporary (RFC 5530
+  `UNAVAILABLE`) stores nothing and fails the cycle instead (FR-009).
 - 006: "the service offered more than one request holds" no longer arises
   for Microsoft 365, whose reading continues page by page (User Story 3
   keeps the refused listing); "Text not received" offers no Retry

@@ -137,8 +137,8 @@ impl MailUi {
     /// Shows the rows of a stored mailbox. A new read updates the list by its
     /// difference with the rows shown and keeps the open message while it is
     /// listed, with its envelope from the new row; the same read changes
-    /// nothing. The content is not read again: no cycle changes the stored
-    /// content of a message it keeps.
+    /// nothing. The content is not read again: a text a cycle replaced, such
+    /// as an edited draft's, shows when the message is opened again.
     pub fn show_rows(&self, account_id: &AccountId, rows: &Rc<[MessageListRow]>) {
         let (same_account, same_read) = match &*self.listed_rows.borrow() {
             Some((listed_account, listed)) => {

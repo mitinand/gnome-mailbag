@@ -42,7 +42,7 @@ enum Reading {
 pub(super) async fn synchronize_graph_folder(
     access: GraphAccess,
     service_url: String,
-    renewal: AccessRenewal<GraphAccess>,
+    renewal: AccessRenewal,
     batches: &mut BatchWriter<'_>,
 ) -> Result<LoadResult, CycleEnd> {
     let recent_limit = super::recent_limit(SystemTime::now());
@@ -158,15 +158,30 @@ fn where_to_start(stored: &FolderSync, folder_id: &str) -> (ChangesFrom, Reading
 
 /// A page's entries merged per message in their order, since the service
 /// may repeat and reorder them: a later entry wins, and a partial one never
-/// drops an earlier read state (research §5).
+/// drops an earlier read state. An entry marking the message removed, met
+/// with another entry for it, is trusted neither way: the message is read
+/// as the service holds it now, like an entry that changed other fields,
+/// whatever else the page says about it (research §5).
 fn merge_per_message(changes: Vec<MessageChange>) -> HashMap<String, MessageChange> {
     let mut merged: HashMap<String, MessageChange> = HashMap::new();
+    let mut read_again: HashSet<String> = HashSet::new();
     for change in changes {
         let id = match &change {
             MessageChange::Removed(id) | MessageChange::Changed { id, .. } => id.clone(),
             MessageChange::Listed(message) => message.immutable_id.clone(),
         };
+        if read_again.contains(&id) {
+            continue;
+        }
         let combined = match (merged.remove(&id), change) {
+            (Some(earlier), later) if is_removed(&earlier) != is_removed(&later) => {
+                read_again.insert(id.clone());
+                MessageChange::Changed {
+                    id: id.clone(),
+                    is_read: None,
+                    other_fields: true,
+                }
+            }
             (
                 Some(MessageChange::Listed(mut message)),
                 MessageChange::Changed {
@@ -201,6 +216,10 @@ fn merge_per_message(changes: Vec<MessageChange>) -> HashMap<String, MessageChan
     merged
 }
 
+fn is_removed(change: &MessageChange) -> bool {
+    matches!(change, MessageChange::Removed(_))
+}
+
 /// A stored Microsoft 365 message's identity.
 fn identity(graph_id: &str) -> String {
     format!("graph:{graph_id}")
@@ -211,10 +230,7 @@ fn identity(graph_id: &str) -> String {
 struct GraphService {
     service_url: String,
     access_token: String,
-    renewal: Option<AccessRenewal<GraphAccess>>,
-    /// Whether a request of this cycle succeeded: a refusal before that is
-    /// the sign-in's, not an expiry.
-    answered: bool,
+    renewal: Option<AccessRenewal>,
 }
 
 /// A message to store in full, and whether its text is to be fetched.
@@ -226,12 +242,11 @@ struct Arrival {
 }
 
 impl GraphService {
-    fn new(access: GraphAccess, service_url: String, renewal: AccessRenewal<GraphAccess>) -> Self {
+    fn new(access: GraphAccess, service_url: String, renewal: AccessRenewal) -> Self {
         Self {
             service_url,
             access_token: access.access_token,
             renewal: Some(renewal),
-            answered: false,
         }
     }
 
@@ -245,7 +260,8 @@ impl GraphService {
     /// One page's changes as a batch. A message another folder of the
     /// account holds, a partial entry that changed other list fields and an
     /// entry for a message the account lacks are read again; a message read
-    /// again is kept only if it is in this folder now (research §5).
+    /// again is kept only if it is in this folder now, and leaves the folder
+    /// otherwise (research §5).
     async fn batch_from_changes(
         &mut self,
         changes: HashMap<String, MessageChange>,
@@ -288,11 +304,14 @@ impl GraphService {
                 MessageChange::Changed { other_fields, .. } => *other_fields || !known,
             };
             if read_again {
-                if let Some(message) = self.read_in_folder(&id, &batches.folder.identity).await? {
-                    arrivals.push(Arrival {
+                match self.read_in_folder(&id, &batches.folder.identity).await? {
+                    Some(message) => arrivals.push(Arrival {
                         wants_text: wants_text(&message),
                         message,
-                    });
+                    }),
+                    // The service places the message elsewhere or no longer
+                    // finds it: it is not in this folder (spec FR-004).
+                    None => batch.removed.push(stored_identity),
                 }
                 continue;
             }
@@ -376,22 +395,17 @@ impl GraphService {
         Ok(texts.into_iter().collect())
     }
 
-    /// Runs one request of the cycle. When the service refuses the token after
-    /// the cycle's first successful request, asks Online Accounts for the
-    /// access once and, only with a different token, repeats the request once;
-    /// otherwise the refusal stands (research §13).
+    /// Runs one request of the cycle. When the service refuses the token, asks
+    /// Online Accounts for the access once and, only with a different token,
+    /// repeats the request once; otherwise the refusal stands, as for a token
+    /// just handed out, which Online Accounts gives again (research §13).
     async fn request<T>(
         &mut self,
         mut request: impl AsyncFnMut(&str, &str) -> Result<T, GraphError>,
     ) -> Result<T, GraphError> {
         let refused = match request(&self.service_url, &self.access_token).await {
-            Err(error) if self.answered && is_refused_token(&error) && self.renewal.is_some() => {
-                error
-            }
-            answer => {
-                self.answered |= answer.is_ok();
-                return answer;
-            }
+            Err(error) if is_refused_token(&error) && self.renewal.is_some() => error,
+            answer => return answer,
         };
         let renewal = self.renewal.take().expect("asked only with a renewal");
         match renewal.renew().await {

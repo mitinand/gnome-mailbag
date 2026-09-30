@@ -2,17 +2,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The cycle of an IMAP folder, Generic IMAP or Gmail (spec FR-005, FR-006;
-//! research §2, §3, §4, §13).
+//! research §2, §3, §4).
 
 use super::{CycleEnd, completed};
 use crate::{
     LoadResult,
     gmail::{gmail_options, log_gmail_rows},
     imap_texts::{imap_account, read_contents},
-    renewal::AccessRenewal,
     store_load::BatchWriter,
 };
-use goa_adapter::{ImapAccess, ImapCredential};
+use goa_adapter::ImapAccess;
 use mailbag_content::decode_display_fields;
 use mailbag_domain::{FolderBatch, FolderState, IncompleteList, Message, ReceivedContent};
 use mailbag_imap::{
@@ -48,12 +47,10 @@ struct ListedMessage {
 pub(super) async fn synchronize_imap_folder(
     access: ImapAccess,
     identity_rule: IdentityRule,
-    renewal: Option<AccessRenewal<ImapAccess>>,
     batches: &mut BatchWriter<'_>,
 ) -> Result<LoadResult, CycleEnd> {
     let recent_limit = super::recent_limit(SystemTime::now());
-    let mut server =
-        ImapFolder::open(access, identity_rule, renewal, &batches.folder.identity).await?;
+    let mut server = ImapFolder::open(access, identity_rule, &batches.folder.identity).await?;
     let stored = batches.read_folder_sync()?;
     let listing = server.list_messages().await?;
     let listed = server.identify(&listing, &batches.folder.identity)?;
@@ -152,50 +149,29 @@ fn short_list(refusal: ServerReply) -> IncompleteList {
     }
 }
 
-/// An open IMAP folder for one cycle, and on Gmail the one renewal of its
-/// access the cycle may use (research §13).
+/// An open IMAP folder for one cycle.
 struct ImapFolder {
     reader: MailboxReader,
     identity_rule: IdentityRule,
-    renewal: Option<SessionRenewal>,
-}
-
-/// What reopening the folder with a renewed access needs.
-struct SessionRenewal {
-    renewal: AccessRenewal<ImapAccess>,
-    folder: String,
-    /// The token the session signed in with, to tell a renewed one apart.
-    token: String,
 }
 
 impl ImapFolder {
     async fn open(
         access: ImapAccess,
         identity_rule: IdentityRule,
-        renewal: Option<AccessRenewal<ImapAccess>>,
         folder: &str,
     ) -> Result<Self, ImapError> {
-        let renewal = match (renewal, &access.credential) {
-            (Some(renewal), ImapCredential::AccessToken(token)) => Some(SessionRenewal {
-                renewal,
-                folder: folder.to_owned(),
-                token: token.clone(),
-            }),
-            _ => None,
-        };
         let reader =
             MailboxReader::open(imap_account(access), options(identity_rule), folder).await?;
         Ok(Self {
             reader,
             identity_rule,
-            renewal,
         })
     }
 
     async fn list_messages(&mut self) -> Result<FolderListing, ImapError> {
         let items = self.row_items();
-        self.request(async |reader| reader.list_messages(items).await)
-            .await
+        self.reader.list_messages(items).await
     }
 
     /// What the listing and the rows ask for beyond RFC 3501.
@@ -273,9 +249,7 @@ impl ImapFolder {
             .partition(|message| known.contains(&message.identity));
         let uids: Vec<u32> = unknown.iter().map(|message| message.uid).collect();
         let items = self.row_items();
-        let rows = self
-            .request(async |reader| reader.fetch_rows_by_uid(&uids, items).await)
-            .await?;
+        let rows = self.reader.fetch_rows_by_uid(&uids, items).await?;
         log_gmail_rows(&rows.rows);
         let recent: Vec<u32> = rows
             .rows
@@ -283,9 +257,7 @@ impl ImapFolder {
             .filter(|row| row.internal_date.is_some_and(|date| date >= recent_limit))
             .map(|row| row.uid)
             .collect();
-        let mut contents = self
-            .request(async |reader| read_contents(reader, &recent).await)
-            .await?;
+        let mut contents = read_contents(&mut self.reader, &recent).await?;
         let arrived = rows
             .rows
             .into_iter()
@@ -315,49 +287,6 @@ impl ImapFolder {
             ..FolderBatch::default()
         };
         Ok((batch, rows.refusal))
-    }
-
-    /// Runs one request of the cycle. When the server ended a Gmail session,
-    /// asks Online Accounts for the access once and, only with a different
-    /// token, opens the folder again and repeats the request once; otherwise
-    /// the server's end stands with its own words (research §13).
-    async fn request<T>(
-        &mut self,
-        mut request: impl AsyncFnMut(&mut MailboxReader) -> Result<T, ImapError>,
-    ) -> Result<T, ImapError> {
-        let ended = match request(&mut self.reader).await {
-            Err(error) if error.ended_by_server && self.renewal.is_some() => error,
-            answered => return answered,
-        };
-        self.reopen_with_renewed_access(ended).await?;
-        request(&mut self.reader).await
-    }
-
-    async fn reopen_with_renewed_access(&mut self, ended: ImapError) -> Result<(), ImapError> {
-        let renewal = self.renewal.take().expect("asked only with a renewal");
-        let Some(access) = renewal.renewal.renew().await else {
-            return Err(ended);
-        };
-        let renewed = matches!(&access.credential,
-            ImapCredential::AccessToken(token) if *token != renewal.token);
-        if !renewed {
-            tracing::info!("Online Accounts gave the same access, so the session's end stands");
-            return Err(ended);
-        }
-        tracing::info!("the server ended the session; opening the folder again");
-        let reader = MailboxReader::open(
-            imap_account(access),
-            options(self.identity_rule),
-            &renewal.folder,
-        )
-        .await?;
-        // Another UIDVALIDITY means the UIDs the cycle holds name other
-        // messages.
-        if reader.uid_validity() != self.reader.uid_validity() {
-            return Err(ImapFailure::MailboxChanged.into());
-        }
-        self.reader = reader;
-        Ok(())
     }
 }
 

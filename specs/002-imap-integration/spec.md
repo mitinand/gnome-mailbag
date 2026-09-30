@@ -7,7 +7,9 @@
 amended on 2026-09-27 by [Folders](../008-folders/spec.md), built and accepted
 with it the same day. FR-002 and FR-003 amended on 2026-09-29 by
 [Synchronization](../009-synchronization/spec.md): Refresh Mailbox runs a
-cycle over the whole folder
+cycle over the whole folder; FR-004 amended on 2026-09-30 by the same: a
+refusal the server marks temporary fails the cycle instead of storing an
+explanation
 **Input**: On an explicit refresh, load recent Inbox message metadata and plain-text body parts into
 memory without attachment contents, fill the message list, and open the received
 text without another mail request.
@@ -248,6 +250,12 @@ has no network failure or server-identity reconciliation of its own.
   `format=flowed` is unflowed before display, and a related set is read from the
   root its `start` parameter names. Unsupported or undecodable content MUST have a message-specific
   explanation. The reader MAY show only the beginning of a long text.
+  *Amended 2026-09-30 by [Synchronization](../009-synchronization/spec.md):
+  a refusal the server marks temporary (RFC 5530 `UNAVAILABLE`) of a
+  batch's structures or texts stores nothing of the batch and fails the
+  cycle as a temporarily unavailable server, so the next cycle fetches the
+  batch again; any other refusal of a message's structure or text is
+  stored as its explanation, as before (009 FR-009).*
 - **FR-005 — No remote changes**: Downloading, listing, refreshing and opening
   MUST NOT change message flags, contents or folder membership, including
   implicit read marking. Unimplemented mail actions MUST remain unavailable.

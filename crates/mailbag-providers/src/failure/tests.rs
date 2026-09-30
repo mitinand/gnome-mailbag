@@ -17,7 +17,6 @@ fn imap_failure(failure: ImapFailure, code: Option<&str>) -> LoadFailure {
             text: "<login> may not sign in now".to_owned(),
         }),
         alerts: Vec::new(),
-        ended_by_server: false,
     })
 }
 
@@ -121,7 +120,6 @@ fn the_remote_texts_come_in_the_order_they_are_shown() {
             text: "<login> may not sign in now".to_owned(),
         }),
         alerts: vec!["Password for <login> expired".to_owned()],
-        ended_by_server: false,
     });
     let texts = |failure: LoadFailure| -> Vec<(RemoteSource, String)> {
         let failure = failure.into_failure();
@@ -188,7 +186,6 @@ fn a_load_given_up_is_one_error_line_naming_its_kind() {
             text: "private server text".to_owned(),
         }),
         alerts: vec!["private alert".to_owned()],
-        ended_by_server: false,
     };
     let failures = [
         (

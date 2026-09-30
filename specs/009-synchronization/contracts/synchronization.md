@@ -34,8 +34,8 @@ user's word, *mailbox*, where it names the refreshed folder
 - `ReceivedContent::NotDownloaded`: the reader says the text was not
   downloaded (spec FR-009).
 - `FailureKind::MailboxChanged` stays only for a UIDVALIDITY that changed
-  during a reconnect: after an unreadable structure, or after Gmail's
-  session was renewed (research §10, §13; its other three producers go); `IncompleteList::MoreAvailable` and its
+  during a reconnect after an unreadable structure (research §10; its other
+  three producers go); `IncompleteList::MoreAvailable` and its
   wording go with their last producer.
 
 ## Loads (`mailbag-providers`)
@@ -54,9 +54,9 @@ user's word, *mailbox*, where it names the refreshed folder
   `Cancelled` as today; the batches stored before stay (spec FR-010).
 - A cycle writes only through `Store::store_batch`; nothing reaches the
   window with data (007 FR-001).
-- Renewing access (research §13) stays inside `mailbag-providers`: the
-  cycle asks through a channel that `MailLoader` answers on GTK's context
-  with the adapter's `request_imap_access` or `request_graph_access`, and
+- Renewing a Microsoft 365 token (research §13) stays inside
+  `mailbag-providers`: the cycle asks through a channel that `MailLoader`
+  answers on GTK's context with the adapter's `request_graph_access`, and
   continues only with a different token. `LoadsMail` changes only for
   `on_event`.
 
@@ -90,8 +90,6 @@ user's word, *mailbox*, where it names the refreshed folder
 ## Protocol crates
 
 - `mailbag-imap`: `MailboxReader::open` and `uid_validity()` as today;
-  `ImapError` tells that the server ended the session with BYE (research
-  §13);
   `MailboxReader::list_messages(row_items) -> Result<FolderListing,
   ImapError>` with `FolderListing { messages: Vec<ListedUid>, refusal:
   Option<ServerReply> }` and `ListedUid { uid, seen, gmail_message_id:
@@ -106,8 +104,9 @@ user's word, *mailbox*, where it names the refreshed folder
   Done(delta_link)`, `MessageChange::Removed(id) | Listed(GraphMessage) |
   Changed { id, is_read: Option<bool>, other_fields: bool }` (an entry
   that carries only what changed, research §5); `read_message` answers a
-  404 as `None`; `GraphFailure::PositionRejected` for a 410 or
-  `syncStateNotFound` (research §5); `read_message_text(service_url, token,
+  404 as `None`; `GraphFailure::PositionRejected` for a 410 or any other
+  4xx but 401 and 429 answering a saved link (research §5);
+  `read_message_text(service_url, token,
   id)` for a round of changes; `read_texts_received_between(service_url,
   token, folder_id, from, to) -> Result<Vec<(String, Option<String>)>,
   GraphError>` for a first fill's page; `read_message(service_url, token,
@@ -127,8 +126,10 @@ user's word, *mailbox*, where it names the refreshed folder
 - `MailUi::show_rows(account, rows: Rc<[MessageListRow]>)` updates the list
   by the difference with the rows shown (research §9): read states in
   place, arrivals and removals in one splice; it keeps the open message,
-  whose row is the selected one, while it is listed, and reads its content
-  again.
+  whose row is the selected one, while it is listed, with its envelope
+  from the new row; its content is not read again, so a text a cycle
+  replaced shows when the message is opened again (maintainer's decision
+  at the final review, 2026-09-30).
   A batch of any folder of the shown folder's account makes the window
   read the shown folder again.
 - Opening a message reads its content with `read_message_content` on GIO's

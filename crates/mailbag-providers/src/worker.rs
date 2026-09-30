@@ -34,17 +34,13 @@ pub(crate) struct MailWorker {
 /// sequence travel together, so they cannot disagree.
 pub(crate) enum LoadKind {
     GenericImap(ImapAccess),
-    /// With the renewal a cycle uses once after Gmail ended its session.
-    Gmail {
-        access: ImapAccess,
-        renewal: AccessRenewal<ImapAccess>,
-    },
+    Gmail(ImapAccess),
     /// `service_url` is Microsoft Graph's address, or a test service's; the
     /// renewal is used once after the service refused the token.
     Microsoft365 {
         access: GraphAccess,
         service_url: String,
-        renewal: AccessRenewal<GraphAccess>,
+        renewal: AccessRenewal,
     },
     /// Panics inside the load, as a hostile message could make a parser do.
     #[cfg(test)]
@@ -55,7 +51,7 @@ impl LoadKind {
     /// The account the load reads.
     fn account_id(&self) -> &AccountId {
         match self {
-            Self::GenericImap(access) | Self::Gmail { access, .. } => &access.account_id,
+            Self::GenericImap(access) | Self::Gmail(access) => &access.account_id,
             Self::Microsoft365 { access, .. } => &access.account_id,
             #[cfg(test)]
             Self::PanicsForTest(account_id) => account_id,
@@ -257,9 +253,7 @@ async fn load_catching_panics(
 async fn list_folders(kind: LoadKind) -> Result<Vec<Folder>, LoadFailure> {
     match kind {
         LoadKind::GenericImap(access) => list_imap_folders(access).await.map_err(LoadFailure::Imap),
-        LoadKind::Gmail { access, .. } => {
-            list_gmail_folders(access).await.map_err(LoadFailure::Imap)
-        }
+        LoadKind::Gmail(access) => list_gmail_folders(access).await.map_err(LoadFailure::Imap),
         LoadKind::Microsoft365 {
             access,
             service_url,

@@ -112,15 +112,7 @@ impl LoadsMail for MailLoader {
                 start_transfer,
             ),
             MailProvider::Gmail => {
-                let accounts = self.accounts.clone();
-                let renewed_account = account_id.clone();
-                let gmail = move |access| LoadKind::Gmail {
-                    access,
-                    renewal: answer_renewals(renewed_account, move |account_id, answer| {
-                        accounts.request_imap_access(account_id, answer)
-                    }),
-                };
-                request_imap_load(&self.accounts, account_id, gmail, start_transfer)
+                request_imap_load(&self.accounts, account_id, LoadKind::Gmail, start_transfer)
             }
             MailProvider::Microsoft365 => {
                 let accounts = self.accounts.clone();

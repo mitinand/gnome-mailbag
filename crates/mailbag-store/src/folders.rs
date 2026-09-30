@@ -177,7 +177,9 @@ pub(crate) fn set_read_states(
 
 /// Stores each full record once by its identity and relates it to the
 /// folder. Its content replaces the stored one, except that a text not
-/// downloaded never replaces a content another folder's cycle stored.
+/// downloaded never replaces a content another folder's cycle stored, and
+/// a text the server did not return never replaces a stored text
+/// (specs/009-synchronization/data-model.md).
 pub(crate) fn store_arrived(
     transaction: &Transaction,
     folder_id: i64,
@@ -190,10 +192,12 @@ pub(crate) fn store_arrived(
          ON CONFLICT (account, identity) DO UPDATE SET subject = excluded.subject, \
          sender = excluded.sender, recipients = excluded.recipients, \
          received = excluded.received, seen = excluded.seen, \
-         content_kind = iif(excluded.content_kind = 'not_downloaded', content_kind, \
-         excluded.content_kind), \
-         content_detail = iif(excluded.content_kind = 'not_downloaded', content_detail, \
-         excluded.content_detail) \
+         content_kind = iif(excluded.content_kind = 'not_downloaded' \
+         OR (excluded.content_kind = 'text_not_returned' AND content_kind = 'text'), \
+         content_kind, excluded.content_kind), \
+         content_detail = iif(excluded.content_kind = 'not_downloaded' \
+         OR (excluded.content_kind = 'text_not_returned' AND content_kind = 'text'), \
+         content_detail, excluded.content_detail) \
          RETURNING id",
     )?;
     let mut relate = transaction

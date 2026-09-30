@@ -270,8 +270,8 @@ the service delivers display fields and text as ready values in one answer.
   explanation MUST name Online Accounts as the place to check the account's
   sign-in.
   *Amended 2026-09-29 by [Synchronization](../009-synchronization/spec.md):
-  when the service refuses the token after a cycle's first successful
-  request, the cycle asks Online Accounts for the access once more and, only
+  when the service refuses the token, the cycle asks Online Accounts for
+  the access once more and, only
   when it hands out a different token, repeats the refused request once
   with it; the same token, or a second refusal, is the rejected sign-in
   above (009 FR-011, research §13).*

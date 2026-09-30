@@ -51,7 +51,9 @@ memberships (the primary key's prefix) and sorts them.
      service reported again), insert the `message` row or update its list
      fields and read state by `(account, identity)`; its content replaces
      the stored one unless the record's content is `not_downloaded` and a
-     content is stored (another folder's cycle downloaded it);
+     content is stored (another folder's cycle downloaded it), or the
+     record's content is `text_not_returned` and a text is stored (the
+     service reported the message's fields again but returned no text);
   5. insert the arrival's membership in the folder if missing, and the
      memberships of the batch's messages the account already held,
      setting their `seen` as listed;

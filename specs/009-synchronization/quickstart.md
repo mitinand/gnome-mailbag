@@ -39,5 +39,8 @@ refused or ended by a lost connection; a removal reported during the
 listing; a numbering reset on Generic IMAP and on Gmail; a message gone
 between the listing and its details; an empty folder; Microsoft 365
 repeated and reordered entries, a removed entry, a read-state change for an
-unknown message, a rejected position and a rejected place of a first fill;
-cancellation reported within a second while the server stops answering.
+unknown message, a rejected position and a rejected place of a first fill,
+a removal met with another entry for a message in one page; a refusal the
+server marks temporary of a batch's structures or texts; a text the service
+no longer returns keeping the stored one (a store test); cancellation
+reported within a second while the server stops answering.

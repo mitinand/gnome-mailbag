@@ -117,22 +117,49 @@ fn listed_messages_arrive_with_their_fields_and_the_next_link_is_followed() {
     assert!(matches!(last.next, NextPage::Done(link) if link.ends_with("$deltatoken=round-1")));
 }
 
-/// A link the service no longer accepts is told apart from other refusals,
-/// whether it answers 410 or names the lost sync state (research §5).
+/// A link the service no longer accepts is told apart from other refusals:
+/// the service documents a 410 and "a 40X-series error with error codes
+/// such as syncStateNotFound", so any 4xx answering a link stands for the
+/// link, except the token's 401 and the throttling 429; a first reading's
+/// refusal is its own (research §5).
 #[test]
 fn a_rejected_position_is_its_own_failure() {
+    let saved_link = |service: &ScriptedService| {
+        format!(
+            "{}/me/mailFolders/inbox/messages/delta?$deltatoken=old",
+            service.url()
+        )
+    };
+    let refused_link = |answer: ScriptedAnswer| {
+        let service = changes_service(vec![("old", ScriptedPage::Refused(answer))]);
+        changes_from(service.url(), &ChangesFrom::Link(saved_link(&service)))
+            .expect_err("a refusal")
+    };
     let service = changes_service(Vec::new());
-    let link = format!(
-        "{}/me/mailFolders/inbox/messages/delta?$deltatoken=old",
-        service.url()
-    );
-    let error = changes_from(service.url(), &ChangesFrom::Link(link)).expect_err("a 410");
-    assert_eq!(error.failure, GraphFailure::PositionRejected);
-    let lost = failure_from(ScriptedAnswer {
+    let gone =
+        changes_from(service.url(), &ChangesFrom::Link(saved_link(&service))).expect_err("a 410");
+    assert_eq!(gone.failure, GraphFailure::PositionRejected);
+    let invalid = ScriptedAnswer {
         status: 400,
-        body: br#"{"error":{"code":"SyncStateNotFound","message":"Gone."}}"#.to_vec(),
-    });
-    assert_eq!(lost.failure, GraphFailure::PositionRejected);
+        body: br#"{"error":{"code":"ErrorInvalidSyncStateData","message":"Invalid."}}"#.to_vec(),
+    };
+    assert_eq!(
+        refused_link(invalid.clone()).failure,
+        GraphFailure::PositionRejected
+    );
+    assert!(matches!(
+        refused_link(ScriptedAnswer::sign_in_refused()).failure,
+        GraphFailure::Refused { status: 401, .. }
+    ));
+    assert!(matches!(
+        refused_link(ScriptedAnswer::throttled()).failure,
+        GraphFailure::Refused { status: 429, .. }
+    ));
+    // A first reading has no link to reject.
+    assert!(matches!(
+        failure_from(invalid).failure,
+        GraphFailure::Refused { status: 400, .. }
+    ));
 }
 
 #[test]

@@ -2,13 +2,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The listing a cycle proves removals with: complete only when the server
-//! finished it, and a session the server ended told apart from other
-//! failures (specs/009-synchronization/research.md §2, §13).
+//! finished it (specs/009-synchronization/research.md §2).
 
 use super::{expect_failure, expect_success, open_reader, plain_messages, run};
 use crate::{
-    Credential, ImapFailure, ImapStep, ListedUid, MailboxReader, OpenOptions, RowItems,
-    test_server::{FaultKind, FaultyCommand, FixtureSetup, ImapFixture, TEST_ACCESS_TOKEN},
+    ImapFailure, ImapStep, ListedUid, RowItems,
+    test_server::{FaultKind, FaultyCommand, FixtureSetup, ImapFixture},
 };
 
 fn listed_uids(listed: &[ListedUid]) -> Vec<u32> {
@@ -72,41 +71,4 @@ fn a_connection_lost_during_the_listing_fails_it() {
     let mut reader = open_reader(&fixture);
     let error = expect_failure(run(reader.list_messages(RowItems::Standard)));
     assert_eq!(error.failure, ImapFailure::Failed(ImapStep::FetchMessages));
-    assert!(!error.ended_by_server);
-}
-
-/// Gmail ends an OAuth session with BYE, for example when its token
-/// expires; the error says so, and a new token signs in again.
-#[test]
-fn a_session_the_server_ended_is_told_apart_and_a_renewed_token_signs_in() {
-    let fixture = ImapFixture::start(FixtureSetup {
-        access_token: Some(TEST_ACCESS_TOKEN.to_owned()),
-        renewed_access_token: Some("renewed-token".to_owned()),
-        messages: plain_messages(2),
-        fault: Some((FaultyCommand::Listing, FaultKind::Bye)),
-        fault_times: 2,
-        ..FixtureSetup::default()
-    });
-    let open = |token: &str| {
-        let account = fixture.account_with_credential(Credential::AccessToken(token.to_owned()));
-        expect_success(run(MailboxReader::open(
-            account,
-            OpenOptions::default(),
-            "INBOX",
-        )))
-    };
-    let mut reader = open(TEST_ACCESS_TOKEN);
-    let error = expect_failure(run(reader.list_messages(RowItems::Standard)));
-    assert!(error.ended_by_server);
-    assert_eq!(
-        error.server_reply.expect("the server's words").text,
-        "Server is restarting"
-    );
-    // The server ends the second session the same way.
-    let mut renewed = open("renewed-token");
-    let error = expect_failure(run(renewed.list_messages(RowItems::Standard)));
-    assert!(error.ended_by_server);
-    let mut third = open("renewed-token");
-    let listing = expect_success(run(third.list_messages(RowItems::Standard)));
-    assert_eq!(listed_uids(&listing.messages), [10, 20]);
 }

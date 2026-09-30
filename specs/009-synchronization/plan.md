@@ -103,8 +103,7 @@ sequenceDiagram
 - `cycle::synchronize_folder(kind, batches) -> LoadResult`: chooses the
   provider once (004 plan D1) and runs one of the two cycles; `batches` is
   the folder's `BatchWriter`.
-- `cycle::imap::synchronize_imap_folder(access, identify, renewal,
-  batches)`:
+- `cycle::imap::synchronize_imap_folder(access, identity_rule, batches)`:
   1. `ImapFolder::open` — EXAMINE; the folder's numbering version, which
      Generic IMAP identities carry.
   2. `batches.read_folder_sync()` — the stored state and identities.
@@ -119,8 +118,6 @@ sequenceDiagram
      folder stored are only related), rows by UID for the others, and
      `read_contents` for those within 30 days; one batch each.
   6. the completed state, if the listing completed; `batches.finish`.
-  `ImapFolder::request` repeats a request once after Gmail ended the
-  session, only with a renewed token (research §13).
 - `cycle::graph::synchronize_graph_folder(access, service_url, renewal,
   batches)`:
   1. `batches.read_folder_sync()`.
@@ -130,7 +127,9 @@ sequenceDiagram
      `GraphService::batch_from_changes` (removed entries; read states of
      messages only this folder holds; listed messages; unknown ones, and
      any message another folder holds (`batches.identities_in_other_folders`),
-     read with `read_message` and kept only if it is in this folder now;
+     read with `read_message` and kept only if it is in this folder now,
+     leaving it otherwise; a removal met with another entry for the
+     message in one page is read again likewise;
      texts by `read_texts_received_between` on a first reading's page, by
      `read_message_text` in a round of changes); the page's place saved
      when this is a first fill; one batch.
@@ -234,6 +233,8 @@ it and its cost are named.
    wait per Microsoft Graph request rises to 60 seconds (research §11);
    access is renewed once when refused during a cycle (research §13,
    spec FR-011), and the production budget rises to 1 600 lines for it.
+   At the final review (2026-09-30) a probe showed that Gmail checks the
+   token only at sign-in, and the Gmail half was removed.
 6. **After the consistency analysis**, decided 2026-09-28: access is
    renewed only when Online Accounts hands out a different token, so a
    Gmail BYE for its limits or a revoked sign-in still ends the cycle as
@@ -250,7 +251,18 @@ it and its cost are named.
    from the message read again with its current folder (research §5);
    texts of change rounds are read by identifier (research §5); renewing a
    Gmail session is one attempt with a different token, and a second
-   refusal keeps its real reason (research §13).
+   refusal keeps its real reason (research §13; superseded on 2026-09-30,
+   decision 5: Gmail sessions are not renewed).
+8. **After the independent review**, decided 2026-09-30: any 4xx
+   answering a saved link, but the token's 401 and the throttling 429,
+   rejects the position, since the service documents its codes only by
+   example (research §5); a removal met with another entry for a message
+   in one page is read again, and a message read again that the service
+   places elsewhere leaves the folder (research §5; spec FR-004, FR-007);
+   a refusal the server marks temporary (RFC 5530 `UNAVAILABLE`) of a
+   batch's structures or texts fails the cycle instead of storing the
+   batch as unreadable (research §3; spec FR-009); a text the service does
+   not return never replaces a stored text (data-model.md; spec FR-009).
 
 ## Portions and review pauses
 
@@ -297,7 +309,7 @@ rusqlite 0.40 without default features. No new crate.
 existing store is discarded at start (007 FR-012).
 **Testing**: `cargo test` with the scripted IMAP server (the listing, UID
 rows, EXPUNGE during a command), the scripted Graph service (delta pages,
-410 and `syncStateNotFound`, date-range texts), the store in memory, and
+a 410 or another 4xx answering a saved link, date-range texts), the store in memory, and
 the GTK tests one per process.
 **Target Platform**: GNOME desktop, native and Flatpak.
 **Project Type**: desktop application.

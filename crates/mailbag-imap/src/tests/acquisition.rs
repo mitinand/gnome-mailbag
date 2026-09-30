@@ -225,6 +225,48 @@ fn a_structure_missing_after_a_no_completion_keeps_its_row() {
     assert!(structures[&10].is_some() && structures[&30].is_some());
 }
 
+/// A refusal the server marks temporary (RFC 5530 `UNAVAILABLE`) fails the
+/// structures or the text with the server's code, instead of keeping the
+/// messages as unreadable (specs/009-synchronization/research.md §3).
+#[test]
+fn a_temporary_refusal_of_structures_or_text_fails_the_read_with_its_code() {
+    for (command, step) in [
+        (FaultyCommand::Structures, ImapStep::FetchMessages),
+        (FaultyCommand::Text, ImapStep::FetchText),
+    ] {
+        let fixture = ImapFixture::start(FixtureSetup {
+            messages: plain_messages(2),
+            unavailable_command: Some(command),
+            ..FixtureSetup::default()
+        });
+        let mut reader = open_reader(&fixture);
+        let structures = run(reader.fetch_structures(&[10, 20]));
+        let error = match command {
+            FaultyCommand::Structures => expect_failure(structures),
+            _ => {
+                expect_success(structures);
+                expect_failure(run(reader.fetch_text(
+                    vec![TextRequest {
+                        uid: 10,
+                        parts: TextParts::SinglePartBody,
+                    }],
+                    |_, _| {},
+                )))
+            }
+        };
+        assert_eq!(error.failure, ImapFailure::Failed(step), "{command:?}");
+        assert_eq!(
+            error
+                .server_reply
+                .expect("the server's reply")
+                .code
+                .as_deref(),
+            Some("UNAVAILABLE"),
+            "{command:?}"
+        );
+    }
+}
+
 #[test]
 fn structures_are_read_for_the_listed_uids() {
     let fixture = ImapFixture::start(FixtureSetup {

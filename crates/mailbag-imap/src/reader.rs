@@ -196,7 +196,9 @@ impl MailboxReader {
 
     /// Reads part structures for the given UIDs. A structure that could not be
     /// read is `None`; a UID missing from the result has disappeared, and all
-    /// of them may have.
+    /// of them may have. A refusal the server marks temporary (RFC 5530
+    /// `UNAVAILABLE`) fails the read instead, so that nothing is kept as
+    /// unreadable for a passing condition.
     pub async fn fetch_structures(
         &mut self,
         uids: &[u32],
@@ -209,6 +211,9 @@ impl MailboxReader {
         keep_structures(&responses.fetches, uids, &mut structures);
         match responses.end {
             FetchEnd::Completed => {}
+            FetchEnd::Rejected(reply) if is_temporary(&reply) => {
+                return Err(self.error(refused(ImapStep::FetchMessages, reply)));
+            }
             FetchEnd::Rejected(_) => keep_rows_without_structure(uids, &mut structures),
             FetchEnd::Failed(error) if is_parse_failure(&error) => {
                 self.isolate_unreadable_structures(uids, &mut structures)
@@ -246,6 +251,9 @@ impl MailboxReader {
             keep_structures(&responses.fetches, &[uid], structures);
             match responses.end {
                 FetchEnd::Completed => {}
+                FetchEnd::Rejected(reply) if is_temporary(&reply) => {
+                    return Err(self.error(refused(ImapStep::FetchMessages, reply)));
+                }
                 FetchEnd::Rejected(_) => keep_rows_without_structure(&[uid], structures),
                 FetchEnd::Failed(error) if is_parse_failure(&error) => {
                     tracing::debug!(
@@ -289,6 +297,8 @@ impl MailboxReader {
 
     /// Reads text parts, one command per distinct request shape, and passes the
     /// result for each requested message to `on_message` before the next command.
+    /// A refusal the server marks temporary (RFC 5530 `UNAVAILABLE`) fails the
+    /// read, as for the structures.
     pub async fn fetch_text(
         &mut self,
         requests: Vec<TextRequest>,
@@ -320,6 +330,9 @@ impl MailboxReader {
             };
             let rejected = match responses.end {
                 FetchEnd::Completed => false,
+                FetchEnd::Rejected(reply) if is_temporary(&reply) => {
+                    return Err(self.error(refused(ImapStep::FetchText, reply)));
+                }
                 FetchEnd::Rejected(_) => true,
                 FetchEnd::Failed(error) => {
                     tracing::debug!(
@@ -376,6 +389,24 @@ impl MailboxReader {
 
     fn error(&mut self, failure: StepFailure) -> ImapError {
         self.notices.error(&self.account.login, failure)
+    }
+}
+
+/// Whether the server marked its refusal temporary (RFC 5530 `UNAVAILABLE`):
+/// what it withheld is asked for again by a later cycle rather than kept as
+/// unreadable.
+fn is_temporary(reply: &ServerReply) -> bool {
+    reply
+        .code
+        .as_deref()
+        .is_some_and(|code| code.eq_ignore_ascii_case("UNAVAILABLE"))
+}
+
+/// The failure of a command the server refused with `reply`.
+fn refused(step: ImapStep, reply: ServerReply) -> StepFailure {
+    StepFailure {
+        failure: ImapFailure::Failed(step),
+        server_reply: Some(reply),
     }
 }
 

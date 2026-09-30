@@ -4,7 +4,8 @@
 **Created**: 2026-09-28 · **Branch**: `claude/sync` · **Status**: Documents
 approved on 2026-09-29 (T001); portions 1–4 committed on 2026-09-29;
 T033–T036 done, the manual checks passed on the installed build on
-2026-09-30; T037 reported the same day.
+2026-09-30; T037 reported the same day; T038, the documents after the
+independent review, done on 2026-09-30.
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -33,6 +34,7 @@ invariants.
 | 3. IMAP cycles | T015–T024 | feat(sync): synchronize IMAP folders | Synchronization |
 | 4. Microsoft 365 cycles | T025–T032 | feat(sync): synchronize Microsoft 365 folders | Synchronization |
 | 5. Polish | T033–T037 | (per review) | Synchronization |
+| Convergence | T038 | docs(sync): align documents after the independent review | Synchronization |
 
 ## Phase 1: documents and review
 
@@ -149,7 +151,9 @@ working through `replace_mailbox`, adjusted to the new schema.
   `stored_identities(account, identities) -> HashSet<String>`,
   `store_batch(folder, batch, load_cancelled) -> StoreWrite` in the
   order of data-model.md (a full record never replaces a stored content
-  with `NotDownloaded`; the state written when the batch carries it,
+  with `NotDownloaded`, nor a stored text with `TextNotReturned`, the
+  latter since the independent review of 2026-09-30; the state written
+  when the batch carries it,
   including the first batch's "not completed"), `read_folder_rows`
   ordered by received date then id;
   `replace_mailbox` adjusted (no position, sets `synchronized`) and kept
@@ -157,7 +161,8 @@ working through `replace_mailbox`, adjusted to the new schema.
 - [x] T013 [P] [US1] [US2] [US3] [US4] Tests in
   crates/mailbag-store/src/tests.rs: a batch with removals, read states,
   known arrivals and arrivals round-trips; orphans go; a stored text
-  survives a `NotDownloaded` arrival from another folder; the state is
+  survives a `NotDownloaded` arrival from another folder, and a
+  `TextNotReturned` record (independent review, 2026-09-30); the state is
   written only when the batch carries it; a cancelled batch writes
   nothing; a failing batch leaves the previous state whole; rows newest
   first by received date; `None` for a folder never synchronized and
@@ -193,18 +198,23 @@ window follows its batches; Microsoft 365 still loads its newest 100.
   the mailbox count is 0); `fetch_rows_by_uid(uids, row_items) ->
   MessageList` (the refusal kept; a missing UID left out, no
   `MailboxChanged`); a group of structures that all disappeared is
-  skipped (reader.rs, `fetch_structures`); the sequence-number
+  skipped (reader.rs, `fetch_structures`); a refusal the server marks
+  temporary (RFC 5530 `UNAVAILABLE`) of structures or texts fails the read
+  instead of keeping the messages as unreadable (independent review,
+  2026-09-30); the sequence-number
   `fetch_rows` and its row collection go; the reconnect's `MailboxChanged`
   stays; `ImapError` tells that the server ended the session with BYE
   (today `command_failure` in src/session.rs folds NO, BAD and BYE into one
-  failure; research §13).
+  failure; research §13); the BYE mark was removed at the final review,
+  2026-09-30, with the renewal of Gmail sessions.
 - [x] T017 [P] [US1] [US2] [US3] In crates/mailbag-imap/src/test_server.rs
   and tests: the scripted server answers `UID FETCH 1:*` with flags and
   Gmail identifiers, EXPUNGE during the listing, a NO after some
   responses, a dropped connection, rows by UID with one UID missing, a NO
   after partial rows, an empty mailbox, and a BYE that ends an OAuth
   session after a given command with the next sign-in accepting a new
-  token; tests for each.
+  token (removed at the final review, 2026-09-30); a `NO [UNAVAILABLE]`
+  on structures or texts (independent review, 2026-09-30); tests for each.
 - [x] T018 [US1] [US4] In crates/mailbag-providers/src/worker.rs,
   src/lib.rs and src/batch.rs (renamed load.rs in T034): `LoadEvent { BatchStored,
   Finished(LoadResult) }`; the outcome channel unbounded, received in a
@@ -233,18 +243,23 @@ window follows its batches; Microsoft 365 still loads its newest 100.
   written to the record); a refused listing ends as `Stored { incomplete:
   ServerRefused }` and removes nothing; a refused row fetch after a
   complete listing ends the same way and keeps the removals the listing
-  proved; neither saves the completed state;
-  `store_batch` sends `BatchStored`.
+  proved; neither saves the completed state; a temporary refusal of a
+  batch's structures or texts fails the cycle as a temporarily
+  unavailable server and stores none of the batch (independent review,
+  2026-09-30); `store_batch` sends `BatchStored`.
 - [x] T020 [US1] [US6] In a new crates/mailbag-providers/src/renewal.rs and
   src/lib.rs: the renewal channel of research §13: `MailLoader::start_load`
   gives the load a sender and answers requests on GTK's context with the
   load's own Online Accounts request; the Gmail cycle, on a BYE after its
   first successful command, asks once: with a different token it makes one
-  attempt, opening the folder again with `MailboxReader::open`, comparing
-  `uid_validity()` (a change is `MailboxChanged`) and repeating the
+  attempt, opening the folder again with `MailboxReader::open` (since the
+  final review `MailboxReader::reopen`), comparing `uid_validity()` (a
+  change is `MailboxChanged`) and repeating the
   interrupted request (the listing or the batch); with the same token,
   or after a second end, the cycle ends with Gmail's reason; a cancelled
-  load drops the request.
+  load drops the request. At the final review (2026-09-30) a probe showed
+  that Gmail checks the token only at sign-in; the Gmail half was removed
+  and the channel serves Microsoft 365 only (research §13).
 - [x] T021 [P] [US1] [US2] [US3] [US4] [US5] [US6] Tests in
   crates/mailbag-providers/src/tests.rs against the scripted server and an
   in-memory store: a first fill newest first in batches with texts only
@@ -267,8 +282,11 @@ window follows its batches; Microsoft 365 still loads its newest 100.
   stored messages again; cancellation reported within a second while the
   server stops answering; a Gmail session ended mid-fill is renewed and
   the fill completes (SC-010), and a BYE with the token unchanged, or a
-  second BYE, ends the cycle with Gmail's reason; an account excluded
-  mid-fill stores no later batch.
+  second BYE, ends the cycle with Gmail's reason (both removed with the
+  Gmail renewal, 2026-09-30); an account excluded
+  mid-fill stores no later batch; a temporary refusal of structures or
+  texts storing no row and naming the server as temporarily unavailable
+  (independent review, 2026-09-30).
 - [x] T022 [US1] [US4] In crates/mailbag/src/window_ui.rs: on
   `BatchStored` for any folder of the shown folder's account, read the
   shown folder's rows again while the rows and the banner on screen stay
@@ -315,7 +333,9 @@ path, `replace_mailbox` and `MoreAvailable` are gone.
   and `Prefer` headers, a link followed as given), entries parsed as
   `Removed`, `Listed` (every selected field present) or `Changed { id,
   is_read, other_fields }`; `GraphFailure::PositionRejected` for a 410 or a
-  4xx whose `error.code` is `syncStateNotFound` without case;
+  4xx whose `error.code` is `syncStateNotFound` without case (since the
+  independent review of 2026-09-30: for a 410 or any other 4xx but 401 and
+  429 answering a saved link);
   `read_texts_received_between` with `$top=500` and paging for a first
   fill's page; `read_message_text(id)` for a round of changes;
   `read_message` returning the message with its `parentFolderId`, a 404 as
@@ -324,7 +344,9 @@ path, `replace_mailbox` and `MoreAvailable` are gone.
 - [x] T028 [P] [US1] [US2] [US3] [US4] In crates/mailbag-graph/src/
   test_server.rs and src/tests.rs: delta pages with a next link and a
   delta link, removed, listed and partial entries, a repeated entry, a
-  410 and a `syncStateNotFound`, a date-range text page and its paging, a
+  410 and a `syncStateNotFound` (since 2026-09-30: a 410, a 400 with any
+  code, a 401 and a 429 answering a saved link, and a 400 answering a
+  first reading), a date-range text page and its paging, a
   message read by id and a 404, a 401 followed by success with a new
   token; tests for each.
 - [x] T029 [US1] [US2] [US3] [US4] [US6] In
@@ -333,14 +355,18 @@ path, `replace_mailbox` and `MoreAvailable` are gone.
   pages as batches with entries merged per message; partial and unknown
   entries, and any entry for a message the account also holds in another
   folder, read with `read_message` and related to this folder only if its
-  `parentFolderId` names it; texts of a first fill's page by date range,
+  `parentFolderId` names it, and since the independent review of
+  2026-09-30 leaving the folder otherwise, as does a message whose
+  removal meets another entry for it in one page; texts of a first fill's
+  page by date range,
   of a change round by identifier; the first fill's place saved with each
   page; a continued first fill reads one more round before completing; a
   rejected position or place starts a full reading that keeps the listed
   identities and removes the others at its end; the delta link saved with
-  the completing batch; the outcome of T025 applied); a 401 after the
-  cycle's first successful request asks for the token once and makes one
-  attempt only with a different token; the same token, or a second 401,
+  the completing batch; the outcome of T025 applied); a 401 asks for the
+  token once and makes one attempt only with a different token (at the
+  final review, 2026-09-30, no longer only after a first success: a token
+  just handed out comes back the same); the same token, or a second 401,
   is the refused sign-in.
 - [x] T030 [US1] Remove what the cycles replaced:
   `IncompleteList::MoreAvailable` (crates/mailbag-domain/src/lib.rs, its
@@ -361,7 +387,10 @@ path, `replace_mailbox` and `MoreAvailable` are gone.
   rejected position
   (rows kept, unlisted removed at the end) and a rejected place whose full
   reading stops and is started again in full (added at the final review,
-  2026-09-30); a token
+  2026-09-30); a round without changes costing one page and no message
+  (FR-012, final review); a removal met with another entry in one page,
+  in either order, and a message read again that the service places
+  elsewhere leaving the folder (independent review, 2026-09-30); a token
   refused mid-fill renewed once (SC-010), refused twice or answered with
   the same token is the sign-in failure.
 - [x] T032 STOP: run ./scripts/check.sh, git diff --check and each GTK test
@@ -429,3 +458,26 @@ after the start (FR-015(c)); HTML, previews, download on opening and
 retention (FR-015(d)); CONDSTORE (FR-015(e)); a Refresh that stops the
 running cycle, larger rows-only batches and renewal before expiry (plan,
 Optional mechanisms); upgrading a populated store (FR-015(f)).
+
+## Phase 7: Convergence
+
+- [x] T038 Align the documents with the changes of 2026-09-30 per tasks
+  T034 and plan "Documents amended before implementing" (partial): add the
+  "*Amended 2026-09-30 by Synchronization*" note at
+  specs/002-imap-integration/spec.md FR-004 (a refusal the server marks
+  temporary, RFC 5530 `UNAVAILABLE`, stores nothing and fails the cycle,
+  009 FR-009); note the independent review's changes in T012 (a text not
+  returned never replaces a stored text), T016 and T019 (a temporary
+  refusal of structures or texts fails the cycle as a temporarily
+  unavailable server), T027 and T028 (`PositionRejected` for a 410 or any
+  other 4xx but 401 and 429 answering a saved link), T029 and T031 (a
+  removal met with another entry in one page is read again; a message read
+  again that the service places elsewhere leaves the folder; the
+  round-without-changes test of FR-012); in plan.md, the function map
+  (a message read again leaves the folder when it is elsewhere), the
+  Technical Context (the scripted service's refusals of a saved link) and
+  the Gmail clause of decision 7 marked superseded; in quickstart.md, the
+  list of scripted cases (a removal met with another entry, a temporary
+  refusal of structures or texts, a text not returned keeping the stored
+  one); in spec.md FR-011, a cross-reference to FR-009's failure on a
+  temporary refusal.

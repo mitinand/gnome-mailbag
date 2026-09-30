@@ -137,10 +137,6 @@ pub struct ImapError {
     pub server_reply: Option<ServerReply>,
     /// ALERT texts the server sent during this attempt.
     pub alerts: Vec<String>,
-    /// Whether the server ended the session with BYE, as Gmail does when an
-    /// access token expires or a limit is reached
-    /// (specs/009-synchronization/research.md §13).
-    pub ended_by_server: bool,
 }
 
 impl From<ImapFailure> for ImapError {
@@ -150,7 +146,6 @@ impl From<ImapFailure> for ImapError {
             failure,
             server_reply: None,
             alerts: Vec::new(),
-            ended_by_server: false,
         }
     }
 }
@@ -167,7 +162,6 @@ impl fmt::Debug for ImapError {
                 &self.server_reply.as_ref().map(|reply| &reply.code),
             )
             .field("alert_count", &self.alerts.len())
-            .field("ended_by_server", &self.ended_by_server)
             .finish()
     }
 }

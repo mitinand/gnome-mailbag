@@ -231,14 +231,10 @@ server reason and are shown the way 002 shows any refusal (see Assumptions).
   the user selected, as the IMAP integration's amended FR-002 and FR-003
   say.*
   *Amended 2026-09-29 by [Synchronization](../009-synchronization/spec.md):
-  Refresh Mailbox runs a cycle of the label's folder (009 FR-006). When Gmail
-  ends the session during a cycle, after the cycle's first successful
-  command, the cycle asks Online Accounts for the access once and, only when
-  it hands out a different token, signs in again and repeats the
-  interrupted request once. A different token does not prove that the token
-  expired, so this may, rarely, follow an end for Gmail's limits. The same
-  token, or a second end, stands with Gmail's own reason (009 FR-011,
-  research §13).*
+  Refresh Mailbox runs a cycle of the label's folder (009 FR-006). A session
+  Gmail ends during a cycle is not renewed and stands with Gmail's own
+  reason: Gmail checks the token only at sign-in (009 FR-011, research §13;
+  a renewal built on 2026-09-29 was removed on 2026-09-30 after a probe).*
 - **FR-004 — Gmail identity**: Each received message MUST carry Gmail's message
   identifier. The identity of a Gmail message is that identifier, which is the
   same in every folder the message belongs to and stable across runs; the

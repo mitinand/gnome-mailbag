@@ -27,10 +27,10 @@ pub(crate) async fn synchronize_folder(
 ) -> Result<LoadResult, LoadFailure> {
     let cycle = match kind {
         LoadKind::GenericImap(access) => {
-            synchronize_imap_folder(access, IdentityRule::Generic, None, &mut batches).await
+            synchronize_imap_folder(access, IdentityRule::Generic, &mut batches).await
         }
-        LoadKind::Gmail { access, renewal } => {
-            synchronize_imap_folder(access, IdentityRule::Gmail, Some(renewal), &mut batches).await
+        LoadKind::Gmail(access) => {
+            synchronize_imap_folder(access, IdentityRule::Gmail, &mut batches).await
         }
         LoadKind::Microsoft365 {
             access,

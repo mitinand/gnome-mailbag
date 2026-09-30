@@ -174,8 +174,9 @@ pub struct Mailbox {
 pub enum GraphFailure {
     /// No connection, a refused certificate or a broken transfer.
     ConnectionFailed,
-    /// The service no longer accepts a saved delta link: status 410, or a
-    /// 4xx whose error code is `syncStateNotFound`.
+    /// The service no longer accepts a saved delta link: status 410, or any
+    /// other 4xx answering the link but the token's 401 and the throttling
+    /// 429 (specs/009-synchronization/research.md §5).
     PositionRejected,
     /// The service stopped responding within the wait limit.
     TimedOut,
@@ -325,7 +326,7 @@ async fn read_message_changes_within(
     let request = build_request(&address, access_token)?;
     prefer(&request, DELTA_PREFERENCES);
     let answer = send(&session, &request).await?;
-    check_status(&request, &answer).map_err(rejected_position)?;
+    check_status(&request, &answer).map_err(|error| rejected_position(error, from))?;
     let page = reply::read_change_page(&answer).map_err(|failure| failed(failure, None))?;
     tracing::debug!(
         bytes = answer.len(),
@@ -336,16 +337,18 @@ async fn read_message_changes_within(
     Ok(page)
 }
 
-/// A refusal of a saved delta link, told apart from other refusals.
-fn rejected_position(error: GraphError) -> GraphError {
+/// A refusal of a saved delta link, told apart from other refusals. The
+/// service documents a 410 and "a 40X-series error with error codes such as
+/// `syncStateNotFound`" for a token it no longer holds, so the code is not
+/// relied on: on a link, any 4xx is the link's, except the token's 401 and
+/// the throttling 429. A first reading has no link to reject.
+fn rejected_position(error: GraphError, from: &ChangesFrom) -> GraphError {
     match &error.failure {
-        GraphFailure::Refused { status: 410, .. } => {
-            failed(GraphFailure::PositionRejected, error.reason)
-        }
-        GraphFailure::Refused {
-            status,
-            code: Some(code),
-        } if (400..500).contains(status) && code.eq_ignore_ascii_case("syncStateNotFound") => {
+        GraphFailure::Refused { status, .. }
+            if matches!(from, ChangesFrom::Link(_))
+                && (400..500).contains(status)
+                && !matches!(status, 401 | 429) =>
+        {
             failed(GraphFailure::PositionRejected, error.reason)
         }
         _ => error,

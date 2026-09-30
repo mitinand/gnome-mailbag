@@ -415,12 +415,11 @@ pub struct FixtureSetup {
     /// damaged: every FETCH that names one, except the listing, leaves it out
     /// and completes with NO.
     pub unfetchable_uids: Vec<u32>,
+    /// Answers this command for no message and completes it with
+    /// `NO [UNAVAILABLE]`, as a server whose store is down for a moment
+    /// (RFC 5530).
+    pub unavailable_command: Option<FaultyCommand>,
     pub fault: Option<(FaultyCommand, FaultKind)>,
-    /// How many commands of the faulty kind misbehave, one after another.
-    pub fault_times: u32,
-    /// Another access token the server accepts with the login, as after
-    /// Online Accounts renewed it.
-    pub renewed_access_token: Option<String>,
 }
 
 impl Default for FixtureSetup {
@@ -462,9 +461,8 @@ impl Default for FixtureSetup {
             nil_body_uid: None,
             missing_body_uid: None,
             unfetchable_uids: Vec::new(),
+            unavailable_command: None,
             fault: None,
-            fault_times: 1,
-            renewed_access_token: None,
         }
     }
 }
@@ -537,7 +535,7 @@ impl ImapFixture {
                 .map_err(|error| error.to_string())?;
             let port = bound.downcast::<gio::InetSocketAddress>().unwrap().port();
             let server = Rc::new(Server {
-                faults_left: Cell::new(setup.fault_times),
+                fault_pending: Cell::new(true),
                 setup,
                 log: server_log,
             });
@@ -591,8 +589,8 @@ impl ImapFixture {
 struct Server {
     setup: FixtureSetup,
     log: Arc<Mutex<FixtureLog>>,
-    /// How many more times the configured fault happens.
-    faults_left: Cell<u32>,
+    /// The configured fault happens once per server.
+    fault_pending: Cell<bool>,
 }
 
 impl Server {
@@ -865,17 +863,13 @@ impl Server {
     /// error as JSON, and the refusal follows the client's empty answer.
     async fn reply_to_access_token(&self, io: &mut Io, tag: &str, response: &[u8]) -> ServeResult {
         self.record(|log| log.credentials_received += 1);
-        let Some((login, _)) = &self.setup.credentials else {
-            io.send(format!("{tag} OK Signed in\r\n")).await?;
-            return Ok(());
+        let expected = match (&self.setup.credentials, &self.setup.access_token) {
+            (Some((login, _)), Some(token)) => {
+                Some(format!("user={login}\u{1}auth=Bearer {token}\u{1}\u{1}"))
+            }
+            _ => None,
         };
-        let accepted = [&self.setup.access_token, &self.setup.renewed_access_token]
-            .into_iter()
-            .flatten()
-            .any(|token| {
-                response == format!("user={login}\u{1}auth=Bearer {token}\u{1}\u{1}").as_bytes()
-            });
-        if accepted {
+        if expected.is_none_or(|expected| response == expected.as_bytes()) {
             io.send(format!("{tag} OK Signed in\r\n")).await?;
             return Ok(());
         }
@@ -948,11 +942,18 @@ impl Server {
         if listing_refused {
             messages.truncate(messages.len() / 2);
         }
+        let unavailable =
+            faulty_command.is_some() && faulty_command == self.setup.unavailable_command;
+        if unavailable {
+            messages.clear();
+        }
         let completion = self
             .setup
             .fetch_completion
             .as_deref()
-            .unwrap_or(if listing_refused {
+            .unwrap_or(if unavailable {
+                "NO [UNAVAILABLE] Mail store down for maintenance"
+            } else if listing_refused {
                 "NO Listing not available now"
             } else if messages.len() < requested_count {
                 "NO Some messages could not be FETCHed"
@@ -1028,11 +1029,9 @@ impl Server {
         Ok(true)
     }
 
-    /// Whether the configured fault happens now, counting it.
+    /// Whether the configured fault happens now; it happens once.
     fn take_fault(&self) -> bool {
-        let left = self.faults_left.get();
-        self.faults_left.set(left.saturating_sub(1));
-        left > 0
+        self.fault_pending.replace(false)
     }
 
     /// Messages in the set with their sequence numbers. The listing reports
