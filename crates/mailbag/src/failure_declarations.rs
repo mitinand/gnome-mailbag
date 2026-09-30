@@ -277,45 +277,38 @@ pub fn declare_short_list(incomplete: &IncompleteList) -> DeclaredFailure {
             }],
             details: incomplete.technical_details(),
         },
-        IncompleteList::MoreAvailable => DeclaredFailure {
-            title: "Not all messages loaded",
-            explanation: "The mail service offered more messages than one load brings. \
-                          The newest are shown."
-                .to_owned(),
-            advice: None,
-            action: None,
-            remote_texts: Vec::new(),
-            details: String::new(),
-        },
     }
 }
 
-/// Why the reader shows no text for this message; `None` for a text.
+/// Why the reader shows no text for this message; `None` for a text. None
+/// has an action: a refresh does not fetch a stored message's text again,
+/// so there is nothing to repeat (specs/009-synchronization, Clarifications).
 pub fn declare_content(content: &ReceivedContent) -> Option<DeclaredFailure> {
-    let (title, explanation, action) = match content {
+    let (title, explanation) = match content {
         ReceivedContent::Text(_) => return None,
-        ReceivedContent::Explained(explanation) => {
-            let (title, explanation) = explain_content(explanation);
-            (title, explanation, None)
-        }
+        ReceivedContent::Explained(explanation) => explain_content(explanation),
         ReceivedContent::StructureUnreadable => (
             "Message unreadable",
             "The mail server could not describe this message, so its content could not be \
              read."
                 .to_owned(),
-            None,
         ),
         ReceivedContent::TextNotReturned => (
             "Text not received",
             "This message's text was not received.".to_owned(),
-            Some(FailureAction::Retry),
+        ),
+        ReceivedContent::NotDownloaded => (
+            "Text not downloaded",
+            "The text of this message was not downloaded. Texts are downloaded for messages \
+             received in the last 30 days."
+                .to_owned(),
         ),
     };
     Some(DeclaredFailure {
         title,
         explanation,
         advice: None,
-        action,
+        action: None,
         remote_texts: Vec::new(),
         details: String::new(),
     })

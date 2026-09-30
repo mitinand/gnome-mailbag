@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::{
-    ImapAccount, ImapError, ImapFailure, ImapStep, MessageList, MessagePart, MessageText,
-    OpenOptions, RowItems, ServerReply, TextParts, TextRequest,
+    FolderListing, ImapAccount, ImapError, ImapFailure, ImapStep, MessageList, MessagePart,
+    MessageText, OpenOptions, RowItems, ServerReply, TextParts, TextRequest,
     fetch_responses::{
-        FetchEnd, FetchResponses, collect_fetches, collect_rows, keep_rows_without_structure,
-        keep_structures, message_text, section_paths, uid_set,
+        FetchEnd, FetchResponses, collect_fetches, collect_rows, keep_listed,
+        keep_rows_without_structure, keep_structures, message_text, section_paths, uid_set,
     },
     session::{
         self, MailboxSession, SOCKET_TIMEOUT_SECONDS, ServerNotices, StepFailure, command_failure,
@@ -15,11 +15,15 @@ use crate::{
     transport,
 };
 use async_imap::error::{Error, ResponseTooLarge};
+use futures_util::TryStreamExt;
 use std::{collections::BTreeMap, io};
 
 const ROW_ITEMS: &str = "UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT)]";
-/// Gmail's message identifier and labels, added to the row FETCH on request.
+/// Gmail's message identifier and labels, added to the rows on request.
 const GMAIL_ROW_ITEMS: &str = "X-GM-MSGID X-GM-LABELS";
+const LISTING_ITEMS: &str = "(UID FLAGS)";
+/// Gmail's message identifier, added to the listing on request.
+const GMAIL_LISTING_ITEMS: &str = "(UID FLAGS X-GM-MSGID)";
 const STRUCTURE_ITEMS: &str = "(UID BODYSTRUCTURE)";
 
 /// A signed-in, read-only session with one mailbox of an account. It never
@@ -34,13 +38,6 @@ pub struct MailboxReader {
     pub(crate) mailbox: MailboxSession,
     notices: ServerNotices,
     needs_reconnect: bool,
-}
-
-/// The messages a FETCH command addresses.
-enum MessageSet<'a> {
-    /// Sequence numbers from the first to the last.
-    Sequence(u32, u32),
-    Uids(&'a [u32]),
 }
 
 impl MailboxReader {
@@ -99,64 +96,109 @@ impl MailboxReader {
         self.mailbox.uid_validity
     }
 
-    /// Reads the rows of the newest `batch_size` messages, at least one,
-    /// in descending UID order. A message the server did not answer for is
-    /// left out. A server that answers for some messages and then refuses the
-    /// command leaves the list short; its reason travels with the rows,
-    /// because a missing row explains nothing by itself.
-    pub async fn fetch_rows(
+    /// Lists every message of the mailbox by UID with its read state, in
+    /// one `UID FETCH 1:*` read as it arrives, so a large mailbox costs a
+    /// few bytes per message. A NO or BAD leaves the listing incomplete with
+    /// the server's reason, which then proves nothing about the messages it
+    /// did not report; a lost connection fails. An empty mailbox is listed
+    /// without a command, since servers answer `1:*` there differently.
+    pub async fn list_messages(&mut self, row_items: RowItems) -> Result<FolderListing, ImapError> {
+        let mut listed = BTreeMap::new();
+        if self.mailbox.message_count == 0 {
+            return Ok(FolderListing {
+                messages: Vec::new(),
+                refusal: None,
+            });
+        }
+        if self.needs_reconnect {
+            self.reconnect().await?;
+        }
+        let items = match row_items {
+            RowItems::Standard => LISTING_ITEMS,
+            RowItems::WithGmailAttributes => GMAIL_LISTING_ITEMS,
+        };
+        let end = match self.mailbox.session.uid_fetch("1:*", items).await {
+            Ok(mut responses) => loop {
+                match responses.try_next().await {
+                    Ok(Some(fetch)) => keep_listed(&fetch, &mut listed),
+                    Ok(None) => break FetchEnd::Completed,
+                    Err(Error::No(status) | Error::Bad(status)) => {
+                        break FetchEnd::Rejected(ServerReply::from(&status));
+                    }
+                    Err(error) => break FetchEnd::Failed(error),
+                }
+            },
+            Err(error) => FetchEnd::Failed(error),
+        };
+        self.notices.collect(&self.account.login);
+        let refusal = match end {
+            FetchEnd::Completed => None,
+            FetchEnd::Rejected(reply) => {
+                let reply = self.refusal(reply);
+                tracing::debug!(
+                    code = reply.code.as_deref(),
+                    server_text = reply.text,
+                    "the server refused the command"
+                );
+                Some(reply)
+            }
+            FetchEnd::Failed(error) => {
+                return Err(self.error(command_failure(ImapStep::FetchMessages, &error)));
+            }
+        };
+        tracing::info!(messages = listed.len(), "mailbox listed");
+        Ok(FolderListing {
+            messages: listed.into_values().collect(),
+            refusal,
+        })
+    }
+
+    /// Reads the rows of the given messages, in descending UID order. A
+    /// message the server did not answer for is left out: it disappeared, or
+    /// the server refused it, whose reason travels with the rows, because a
+    /// missing row explains nothing by itself.
+    pub async fn fetch_rows_by_uid(
         &mut self,
+        uids: &[u32],
         row_items: RowItems,
-        batch_size: u32,
     ) -> Result<MessageList, ImapError> {
-        let count = self.mailbox.message_count;
-        if count == 0 {
+        if uids.is_empty() {
             return Ok(MessageList {
                 rows: Vec::new(),
                 refusal: None,
             });
         }
-        let first = count.saturating_sub(batch_size - 1).max(1);
         let items = match row_items {
             RowItems::Standard => format!("({ROW_ITEMS})"),
             RowItems::WithGmailAttributes => format!("({ROW_ITEMS} {GMAIL_ROW_ITEMS})"),
         };
-        let responses = self
-            .fetch(MessageSet::Sequence(first, count), &items)
-            .await?;
-        let rows = collect_rows(&responses.fetches, first, count);
-        if !rows.is_empty() {
-            tracing::info!(rows = rows.len(), "message list loaded");
-        }
-        match responses.end {
+        let responses = self.fetch(uids, &items).await?;
+        let rows = collect_rows(&responses.fetches, uids);
+        tracing::info!(rows = rows.len(), "message rows loaded");
+        let refusal = match responses.end {
+            FetchEnd::Completed => None,
+            FetchEnd::Rejected(reply) => Some(self.refusal(reply)),
             FetchEnd::Failed(error) => {
-                Err(self.error(command_failure(ImapStep::FetchMessages, &error)))
+                return Err(self.error(command_failure(ImapStep::FetchMessages, &error)));
             }
-            FetchEnd::Rejected(server_reply) if rows.is_empty() => Err(self.error(StepFailure {
-                failure: ImapFailure::Failed(ImapStep::FetchMessages),
-                server_reply: Some(server_reply),
-            })),
-            // The failing branches replace the sign-in name in `error`.
-            FetchEnd::Rejected(server_reply) => Ok(MessageList {
-                rows,
-                refusal: Some(ServerReply {
-                    text: replace_sign_in_name(&self.account.login, &server_reply.text),
-                    ..server_reply
-                }),
-            }),
-            // Messages deleted since EXAMINE are missing; that is not an empty mailbox.
-            FetchEnd::Completed if rows.is_empty() => {
-                Err(self.error(ImapFailure::MailboxChanged.into()))
-            }
-            FetchEnd::Completed => Ok(MessageList {
-                rows,
-                refusal: None,
-            }),
+        };
+        Ok(MessageList { rows, refusal })
+    }
+
+    /// The server's refusal as the caller keeps it, with the sign-in name
+    /// replaced; the failing branches replace it in `error`.
+    fn refusal(&self, reply: ServerReply) -> ServerReply {
+        ServerReply {
+            text: replace_sign_in_name(&self.account.login, &reply.text),
+            ..reply
         }
     }
 
     /// Reads part structures for the given UIDs. A structure that could not be
-    /// read is `None`; a UID missing from the result has disappeared.
+    /// read is `None`; a UID missing from the result has disappeared, and all
+    /// of them may have. A refusal the server marks temporary (RFC 5530
+    /// `UNAVAILABLE`) fails the read instead, so that nothing is kept as
+    /// unreadable for a passing condition.
     pub async fn fetch_structures(
         &mut self,
         uids: &[u32],
@@ -165,10 +207,13 @@ impl MailboxReader {
         if uids.is_empty() {
             return Ok(structures);
         }
-        let responses = self.fetch(MessageSet::Uids(uids), STRUCTURE_ITEMS).await?;
+        let responses = self.fetch(uids, STRUCTURE_ITEMS).await?;
         keep_structures(&responses.fetches, uids, &mut structures);
         match responses.end {
             FetchEnd::Completed => {}
+            FetchEnd::Rejected(reply) if is_temporary(&reply) => {
+                return Err(self.error(refused(ImapStep::FetchMessages, reply)));
+            }
             FetchEnd::Rejected(_) => keep_rows_without_structure(uids, &mut structures),
             FetchEnd::Failed(error) if is_parse_failure(&error) => {
                 self.isolate_unreadable_structures(uids, &mut structures)
@@ -177,9 +222,6 @@ impl MailboxReader {
             FetchEnd::Failed(error) => {
                 return Err(self.error(command_failure(ImapStep::FetchMessages, &error)));
             }
-        }
-        if structures.is_empty() {
-            return Err(self.error(ImapFailure::MailboxChanged.into()));
         }
         for uid in uids.iter().filter(|uid| !structures.contains_key(uid)) {
             tracing::debug!(uid, "message disappeared");
@@ -205,12 +247,13 @@ impl MailboxReader {
             .filter(|uid| !structures.contains_key(uid))
             .collect();
         for uid in unread {
-            let responses = self
-                .fetch(MessageSet::Uids(&[uid]), STRUCTURE_ITEMS)
-                .await?;
+            let responses = self.fetch(&[uid], STRUCTURE_ITEMS).await?;
             keep_structures(&responses.fetches, &[uid], structures);
             match responses.end {
                 FetchEnd::Completed => {}
+                FetchEnd::Rejected(reply) if is_temporary(&reply) => {
+                    return Err(self.error(refused(ImapStep::FetchMessages, reply)));
+                }
                 FetchEnd::Rejected(_) => keep_rows_without_structure(&[uid], structures),
                 FetchEnd::Failed(error) if is_parse_failure(&error) => {
                     tracing::debug!(
@@ -254,6 +297,8 @@ impl MailboxReader {
 
     /// Reads text parts, one command per distinct request shape, and passes the
     /// result for each requested message to `on_message` before the next command.
+    /// A refusal the server marks temporary (RFC 5530 `UNAVAILABLE`) fails the
+    /// read, as for the structures.
     pub async fn fetch_text(
         &mut self,
         requests: Vec<TextRequest>,
@@ -275,9 +320,7 @@ impl MailboxReader {
                 .map(|(header, body)| format!("BODY.PEEK[{header}] BODY.PEEK[{body}]"))
                 .collect::<Vec<_>>()
                 .join(" ");
-            let responses = self
-                .fetch(MessageSet::Uids(&uids), &format!("(UID {items})"))
-                .await?;
+            let responses = self.fetch(&uids, &format!("(UID {items})")).await?;
             let sections = || {
                 paths
                     .iter()
@@ -287,6 +330,9 @@ impl MailboxReader {
             };
             let rejected = match responses.end {
                 FetchEnd::Completed => false,
+                FetchEnd::Rejected(reply) if is_temporary(&reply) => {
+                    return Err(self.error(refused(ImapStep::FetchText, reply)));
+                }
                 FetchEnd::Rejected(_) => true,
                 FetchEnd::Failed(error) => {
                     tracing::debug!(
@@ -315,27 +361,16 @@ impl MailboxReader {
         Ok(())
     }
 
-    /// Runs one FETCH command and keeps every response received before it ended.
-    async fn fetch(
-        &mut self,
-        messages: MessageSet<'_>,
-        items: &str,
-    ) -> Result<FetchResponses, ImapError> {
+    /// Runs one UID FETCH command and keeps every response received before
+    /// it ended.
+    async fn fetch(&mut self, uids: &[u32], items: &str) -> Result<FetchResponses, ImapError> {
         if self.needs_reconnect {
             self.reconnect().await?;
         }
         let session = &mut self.mailbox.session;
-        let responses = match messages {
-            MessageSet::Sequence(first, last) => {
-                match session.fetch(format!("{first}:{last}"), items).await {
-                    Ok(responses) => collect_fetches(responses).await,
-                    Err(error) => FetchResponses::failed(error),
-                }
-            }
-            MessageSet::Uids(uids) => match session.uid_fetch(uid_set(uids), items).await {
-                Ok(responses) => collect_fetches(responses).await,
-                Err(error) => FetchResponses::failed(error),
-            },
+        let responses = match session.uid_fetch(uid_set(uids), items).await {
+            Ok(responses) => collect_fetches(responses).await,
+            Err(error) => FetchResponses::failed(error),
         };
         self.notices.collect(&self.account.login);
         if let FetchEnd::Rejected(reply) = &responses.end {
@@ -354,6 +389,24 @@ impl MailboxReader {
 
     fn error(&mut self, failure: StepFailure) -> ImapError {
         self.notices.error(&self.account.login, failure)
+    }
+}
+
+/// Whether the server marked its refusal temporary (RFC 5530 `UNAVAILABLE`):
+/// what it withheld is asked for again by a later cycle rather than kept as
+/// unreadable.
+fn is_temporary(reply: &ServerReply) -> bool {
+    reply
+        .code
+        .as_deref()
+        .is_some_and(|code| code.eq_ignore_ascii_case("UNAVAILABLE"))
+}
+
+/// The failure of a command the server refused with `reply`.
+fn refused(step: ImapStep, reply: ServerReply) -> StepFailure {
+    StepFailure {
+        failure: ImapFailure::Failed(step),
+        server_reply: Some(reply),
     }
 }
 

@@ -242,11 +242,9 @@
                                     <property name="child">
                                       <object class="GtkScrolledWindow" id="list_scroll">
                                         <property name="child">
-                                          <object class="GtkListBox" id="messages">
-                                            <property name="selection-mode">single</property>
-                                            <style>
-                                              <class name="list"/>
-                                            </style>
+                                          <object class="GtkListView" id="messages">
+                                            <property name="single-click-activate">true</property>
+                                            <property name="tab-behavior">item</property>
                                           </object>
                                         </property>
                                         <property name="hscrollbar-policy">never</property>

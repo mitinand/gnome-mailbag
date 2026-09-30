@@ -5,7 +5,8 @@
 **Revised**: 2026-09-23 after the specification challenge
 **Status**: Approved and implemented on `claude/gmail`; live acceptance by the maintainer 2026-09-23;
 FR-003 and FR-005 amended on 2026-09-27 by [Folders](../008-folders/spec.md),
-built and accepted with it the same day
+built and accepted with it the same day. FR-003 and the deferred All Mail
+model amended on 2026-09-29 by [Synchronization](../009-synchronization/spec.md)
 **Input**: On an explicit refresh, load recent Inbox message metadata and
 plain-text body parts of the selected Google account into memory, the way
 [IMAP integration](../002-imap-integration/spec.md) does for a Generic IMAP
@@ -229,6 +230,11 @@ server reason and are shown the way 002 shows any refusal (see Assumptions).
   *Amended 2026-09-27 by [Folders](../008-folders/spec.md): a load reads the label
   the user selected, as the IMAP integration's amended FR-002 and FR-003
   say.*
+  *Amended 2026-09-29 by [Synchronization](../009-synchronization/spec.md):
+  Refresh Mailbox runs a cycle of the label's folder (009 FR-006). A session
+  Gmail ends during a cycle is not renewed and stands with Gmail's own
+  reason: Gmail checks the token only at sign-in (009 FR-011, research §13;
+  a renewal built on 2026-09-29 was removed on 2026-09-30 after a probe).*
 - **FR-004 — Gmail identity**: Each received message MUST carry Gmail's message
   identifier. The identity of a Gmail message is that identifier, which is the
   same in every folder the message belongs to and stable across runs; the
@@ -342,7 +348,7 @@ them gets requirements, plan decisions or code in this feature.
 
 | Gmail mechanism | What it will be for | Waits for |
 |---|---|---|
-| All Mail as the account's store: every message once, with its labels | Storage and synchronization of the whole account; deletion proof across labels | Mail storage and synchronization |
+| All Mail as the account's store: every message once, with its labels | Storage and synchronization of the whole account; deletion proof across labels | Mail storage and synchronization. *Replaced by 009 FR-006*: each label folder is synchronized as a folder, one stored message per Gmail identifier |
 | Labels as folders in the sidebar; label counts; the Inbox as the `\Inbox` label; special folders found by their role attribute, never by their localized name | Folder navigation and combined Inbox | Folders, labels and combined Inbox |
 | Change detection with modification sequences and label changes | "What changed since the last load" without refetching | Mail storage and synchronization; the probe facts in Assumptions are its evidence |
 | Deletion semantics: removing the Inbox label versus deleting, expunge behaviour set in Gmail's settings | Archive, trash and permanent deletion | Moving and deleting |

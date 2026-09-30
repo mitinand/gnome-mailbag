@@ -1,15 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The service's JSON answers: the folder listing, the message list and the
-//! error body of a refusal. Only the list's shape and each message's identifier and read state
+//! The service's JSON answers: the folder listing, the pages of a delta
+//! reading, texts, one message and the error body of a refusal. Only the list's shape and each message's identifier and read state
 //! are required; any other field the service leaves out, or sends in another
 //! form, is left out of the message, so one odd message never fails the list
 //! (specs/005-microsoft-graph-integration/research.md §4). An empty subject,
 //! name or address is left out too: the window then shows its fallback, and
 //! the name rule falls back to the address. A folder needs its id and name.
 
-use crate::{GraphFailure, GraphFolder, GraphMessage, Mailbox, MessagePage};
+use crate::{
+    CHANGE_FIELDS, ChangePage, GraphFailure, GraphFolder, GraphMessage, Mailbox, MessageChange,
+    MessageTexts, NextPage,
+};
 use serde_json::Value;
 
 /// One page of the change-tracking folder listing.
@@ -60,20 +63,77 @@ pub(crate) fn read_folder_id(answer: &[u8]) -> Result<String, GraphFailure> {
     owned_text(&answer["id"]).ok_or(GraphFailure::InvalidReply)
 }
 
-pub(crate) fn read_message_page(answer: &[u8]) -> Result<MessagePage, GraphFailure> {
+/// One page of a delta reading. A page with neither link, or an entry without
+/// an id, is not the documented answer.
+pub(crate) fn read_change_page(answer: &[u8]) -> Result<ChangePage, GraphFailure> {
     let answer: Value = serde_json::from_slice(answer).map_err(|_| GraphFailure::InvalidReply)?;
-    let entries = answer["value"]
+    let changes = answer["value"]
         .as_array()
-        .ok_or(GraphFailure::InvalidReply)?;
-    let messages = entries
+        .ok_or(GraphFailure::InvalidReply)?
         .iter()
-        .map(read_message)
+        .map(read_change)
         .collect::<Option<Vec<_>>>()
         .ok_or(GraphFailure::InvalidReply)?;
-    Ok(MessagePage {
-        messages,
-        more_available: answer["@odata.nextLink"].is_string(),
+    let next = match (
+        owned_text(&answer["@odata.nextLink"]),
+        owned_text(&answer["@odata.deltaLink"]),
+    ) {
+        (Some(next_link), _) => NextPage::More(next_link),
+        (None, Some(delta_link)) => NextPage::Done(delta_link),
+        (None, None) => return Err(GraphFailure::InvalidReply),
+    };
+    Ok(ChangePage { changes, next })
+}
+
+/// An entry that carries every list field is a listed message; one marked
+/// `@removed` left the folder; any other carries only what changed.
+fn read_change(entry: &Value) -> Option<MessageChange> {
+    let id = entry["id"].as_str()?.to_owned();
+    if entry.get("@removed").is_some() {
+        return Some(MessageChange::Removed(id));
+    }
+    if CHANGE_FIELDS.iter().all(|field| entry.get(field).is_some()) {
+        return read_message(entry).map(MessageChange::Listed);
+    }
+    Some(MessageChange::Changed {
+        id,
+        is_read: entry["isRead"].as_bool(),
+        other_fields: CHANGE_FIELDS
+            .iter()
+            .any(|field| *field != "isRead" && entry.get(field).is_some()),
     })
+}
+
+/// A page of texts by message id, and the next page's link.
+pub(crate) fn read_text_page(
+    answer: &[u8],
+) -> Result<(MessageTexts, Option<String>), GraphFailure> {
+    let answer: Value = serde_json::from_slice(answer).map_err(|_| GraphFailure::InvalidReply)?;
+    let texts = answer["value"]
+        .as_array()
+        .ok_or(GraphFailure::InvalidReply)?
+        .iter()
+        .map(|entry| {
+            let id = entry["id"].as_str()?.to_owned();
+            Some((id, owned_text(&entry["body"]["content"])))
+        })
+        .collect::<Option<Vec<_>>>()
+        .ok_or(GraphFailure::InvalidReply)?;
+    Ok((texts, owned_text(&answer["@odata.nextLink"])))
+}
+
+/// One message's text.
+pub(crate) fn read_message_text(answer: &[u8]) -> Result<Option<String>, GraphFailure> {
+    let answer: Value = serde_json::from_slice(answer).map_err(|_| GraphFailure::InvalidReply)?;
+    Ok(owned_text(&answer["body"]["content"]))
+}
+
+/// One message and the id of the folder it is in.
+pub(crate) fn read_one_message(answer: &[u8]) -> Result<(GraphMessage, String), GraphFailure> {
+    let answer: Value = serde_json::from_slice(answer).map_err(|_| GraphFailure::InvalidReply)?;
+    let message = read_message(&answer).ok_or(GraphFailure::InvalidReply)?;
+    let folder_id = owned_text(&answer["parentFolderId"]).ok_or(GraphFailure::InvalidReply)?;
+    Ok((message, folder_id))
 }
 
 /// The error code and the developer message of a refusal, when the body is
@@ -96,7 +156,6 @@ fn read_message(entry: &Value) -> Option<GraphMessage> {
             .unwrap_or_default(),
         received_unix: entry["receivedDateTime"].as_str().and_then(unix_seconds),
         is_read: entry["isRead"].as_bool()?,
-        body_text: owned_text(&entry["body"]["content"]),
     })
 }
 
@@ -128,17 +187,20 @@ fn unix_seconds(iso_8601: &str) -> Option<i64> {
 mod tests {
     use super::*;
 
-    fn read(answer: &str) -> Result<MessagePage, GraphFailure> {
-        read_message_page(answer.as_bytes())
+    fn read(answer: &str) -> Result<ChangePage, GraphFailure> {
+        read_change_page(answer.as_bytes())
     }
 
+    /// One message as `GET /me/messages/{id}` answers it.
     fn read_one(entry: &str) -> GraphMessage {
-        let page = read(&format!(r#"{{"value":[{entry}]}}"#)).expect("a valid page");
-        page.messages.into_iter().next().expect("one message")
+        let entry = format!(r#"{{"parentFolderId":"inbox",{}"#, &entry[1..]);
+        read_one_message(entry.as_bytes())
+            .expect("a valid message")
+            .0
     }
 
     #[test]
-    fn the_documented_answer_gives_every_field() {
+    fn a_listed_entry_gives_every_field() {
         let page = read(
             r#"{
                 "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#Collection(message)",
@@ -152,17 +214,22 @@ mod tests {
                         {"emailAddress": {"address": "cy@example.org"}}
                     ],
                     "receivedDateTime": "2018-09-09T03:15:08Z",
-                    "isRead": true,
-                    "body": {"contentType": "text", "content": "Figures attached."}
+                    "isRead": true
                 }],
-                "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$skip=1"
+                "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$skiptoken=1"
             }"#,
         )
         .expect("a valid page");
-        assert!(page.more_available);
         assert_eq!(
-            page.messages,
-            [GraphMessage {
+            page.next,
+            NextPage::More(
+                "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$skiptoken=1"
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            page.changes,
+            [MessageChange::Listed(GraphMessage {
                 immutable_id: "AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0A".to_owned(),
                 subject: Some("Quarterly figures".to_owned()),
                 from: Some(Mailbox {
@@ -181,43 +248,80 @@ mod tests {
                 ],
                 received_unix: Some(1_536_462_908),
                 is_read: true,
-                body_text: Some("Figures attached.".to_owned()),
-            }]
+            })]
         );
     }
 
     #[test]
-    fn an_empty_folder_is_an_empty_page() {
+    fn removed_and_partial_entries_say_what_changed() {
+        let page = read(
+            r#"{"value":[
+                {"id":"gone","@removed":{"reason":"deleted"}},
+                {"id":"read","isRead":true},
+                {"id":"renamed","subject":"New subject"},
+                {"id":"touched"}
+            ],"@odata.deltaLink":"https://example.invalid/delta?$deltatoken=2"}"#,
+        )
+        .expect("a valid page");
         assert_eq!(
-            read(r#"{"value":[]}"#),
-            Ok(MessagePage {
-                messages: Vec::new(),
-                more_available: false,
-            })
+            page.next,
+            NextPage::Done("https://example.invalid/delta?$deltatoken=2".to_owned())
+        );
+        let changed = |id: &str, is_read, other_fields| MessageChange::Changed {
+            id: id.to_owned(),
+            is_read,
+            other_fields,
+        };
+        assert_eq!(
+            page.changes,
+            [
+                MessageChange::Removed("gone".to_owned()),
+                changed("read", Some(true), false),
+                changed("renamed", None, true),
+                changed("touched", None, false),
+            ]
         );
     }
 
     #[test]
-    fn a_message_without_an_identifier_fails_the_page() {
+    fn an_empty_reading_is_an_empty_page() {
+        let page = read(r#"{"value":[],"@odata.deltaLink":"https://example.invalid/d"}"#)
+            .expect("a valid page");
+        assert!(page.changes.is_empty());
+    }
+
+    #[test]
+    fn a_page_without_either_link_or_an_entry_without_an_id_is_invalid() {
+        assert_eq!(read(r#"{"value":[]}"#), Err(GraphFailure::InvalidReply));
         assert_eq!(
-            read(r#"{"value":[{"isRead":false}]}"#),
+            read(r#"{"value":[{"isRead":false}],"@odata.deltaLink":"https://example.invalid/d"}"#),
             Err(GraphFailure::InvalidReply)
         );
     }
 
     #[test]
-    fn a_message_without_a_read_state_fails_the_page() {
+    fn a_message_without_a_read_state_or_a_folder_is_invalid() {
         assert_eq!(
-            read(r#"{"value":[{"id":"message-1"}]}"#),
-            Err(GraphFailure::InvalidReply)
+            read_one_message(br#"{"id":"message-1","parentFolderId":"inbox"}"#).err(),
+            Some(GraphFailure::InvalidReply)
+        );
+        assert_eq!(
+            read_one_message(br#"{"id":"message-1","isRead":true}"#).err(),
+            Some(GraphFailure::InvalidReply)
         );
     }
 
     #[test]
-    fn a_body_without_content_leaves_the_text_out() {
-        let message =
-            read_one(r#"{"id":"message-1","isRead":false,"body":{"contentType":"text"}}"#);
-        assert_eq!(message.body_text, None);
+    fn a_body_without_content_has_no_text_and_an_empty_one_is_a_text() {
+        assert_eq!(
+            read_message_text(br#"{"body":{"contentType":"text"}}"#),
+            Ok(None)
+        );
+        // An empty rendering is the message's text (FR-005), not a missing field.
+        assert_eq!(
+            read_message_text(br#"{"body":{"contentType":"text","content":""}}"#),
+            Ok(Some(String::new()))
+        );
     }
 
     #[test]
@@ -225,8 +329,7 @@ mod tests {
         let message = read_one(
             r#"{"id":"message-1","isRead":false,"subject":"",
                 "from":{"emailAddress":{"name":"","address":"ada@example.org"}},
-                "toRecipients":[{"emailAddress":{"name":"Bo Example","address":""}}],
-                "body":{"contentType":"text","content":""}}"#,
+                "toRecipients":[{"emailAddress":{"name":"Bo Example","address":""}}]}"#,
         );
         assert_eq!(message.subject, None);
         assert_eq!(
@@ -243,8 +346,6 @@ mod tests {
                 address: None,
             }]
         );
-        // An empty rendering is the message's text (FR-005), not a missing field.
-        assert_eq!(message.body_text, Some(String::new()));
     }
 
     #[test]

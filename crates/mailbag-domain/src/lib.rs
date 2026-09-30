@@ -125,6 +125,50 @@ pub struct Message {
     pub content: ReceivedContent,
 }
 
+/// What a folder remembers between cycles (specs/009-synchronization,
+/// Key Entities).
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct FolderState {
+    /// Microsoft 365 only: where the next round of changes starts, once a
+    /// first reading completed.
+    pub server_position: Option<String>,
+    /// Microsoft 365 only: where an unfinished first fill continues.
+    pub fill_place: Option<String>,
+    /// Whether the folder's latest cycle completed.
+    pub synchronized: bool,
+}
+
+/// One whole part of a cycle's result, which the store writes in one
+/// transaction (specs/009-synchronization FR-008). Its Debug shows identities
+/// and the messages' own privacy-safe Debug.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FolderBatch {
+    /// Identities proven gone from the folder.
+    pub removed: Vec<String>,
+    /// The new read state of messages the folder holds.
+    pub read_states: Vec<(String, bool)>,
+    /// Messages the folder did not hold but its account did, with their
+    /// listed read state: related to the folder without fetching them.
+    pub known_arrived: Vec<(String, bool)>,
+    /// Full records to insert or update, each with its content or
+    /// `ReceivedContent::NotDownloaded`.
+    pub arrived: Vec<Message>,
+    /// The folder's state, when this batch changes it.
+    pub state: Option<FolderState>,
+}
+
+/// A message as the list shows it, without its content, which the reader
+/// reads when the message is opened (specs/009-synchronization FR-013).
+#[derive(Clone, PartialEq, Eq)]
+pub struct MessageListRow {
+    /// The message's `Message::identity`.
+    pub identity: String,
+    pub fields: DisplayFields,
+    /// The received date as seconds since the Unix epoch.
+    pub received_unix: Option<i64>,
+    pub seen: bool,
+}
+
 /// Subject, sender and recipients for the list and the reader.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DisplayFields {
@@ -181,8 +225,8 @@ pub enum FailureKind {
     ServerNotResponding(ServerStep),
     /// The mail server offers no sign-in method the account can use.
     NoSignInMethod,
-    /// The mailbox was replaced, or all its listed messages disappeared,
-    /// during the load.
+    /// The mailbox was replaced during the load: a reconnection found
+    /// another UIDVALIDITY, so the numbers the load held name other messages.
     MailboxChanged,
     /// The mail service could not be reached: no connection, a refused
     /// certificate or a broken transfer.
@@ -241,14 +285,12 @@ pub enum RemoteSource {
     System,
 }
 
-/// Why fewer messages arrived than the Inbox offered.
+/// Why fewer messages arrived than the mailbox offered.
 #[derive(Clone, PartialEq, Eq)]
 pub enum IncompleteList {
     /// The server refused to finish the message list: its reply, with the
     /// sign-in name replaced, and its code.
     ServerRefused { reply: String, code: Option<String> },
-    /// The mail service offered more messages than one request holds.
-    MoreAvailable,
 }
 
 impl IncompleteList {
@@ -258,7 +300,7 @@ impl IncompleteList {
             Self::ServerRefused {
                 code: Some(code), ..
             } => format!("Server code: {code}"),
-            Self::ServerRefused { code: None, .. } | Self::MoreAvailable => String::new(),
+            Self::ServerRefused { code: None, .. } => String::new(),
         }
     }
 }
@@ -273,6 +315,9 @@ pub enum ReceivedContent {
     StructureUnreadable,
     /// The server or the service did not return the message's text.
     TextNotReturned,
+    /// A cycle stored no text for the message: it was received more than 30
+    /// days before the cycle (specs/009-synchronization FR-009).
+    NotDownloaded,
 }
 
 /// Why a message shows no text, in terms the reader explains.
@@ -327,6 +372,27 @@ impl fmt::Debug for Message {
     }
 }
 
+impl fmt::Debug for FolderState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("FolderState")
+            .field("server_position", &self.server_position.is_some())
+            .field("fill_place", &self.fill_place.is_some())
+            .field("synchronized", &self.synchronized)
+            .finish()
+    }
+}
+
+impl fmt::Debug for MessageListRow {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MessageListRow")
+            .field("identity", &self.identity)
+            .field("seen", &self.seen)
+            .finish_non_exhaustive()
+    }
+}
+
 impl fmt::Debug for RemoteText {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -343,7 +409,6 @@ impl fmt::Debug for IncompleteList {
                 .debug_struct("ServerRefused")
                 .field("code", code)
                 .finish_non_exhaustive(),
-            Self::MoreAvailable => write!(formatter, "MoreAvailable"),
         }
     }
 }
@@ -355,6 +420,7 @@ impl fmt::Debug for ReceivedContent {
             Self::Explained(explanation) => write!(formatter, "Explained({explanation:?})"),
             Self::StructureUnreadable => write!(formatter, "StructureUnreadable"),
             Self::TextNotReturned => write!(formatter, "TextNotReturned"),
+            Self::NotDownloaded => write!(formatter, "NotDownloaded"),
         }
     }
 }

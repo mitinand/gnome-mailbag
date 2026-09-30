@@ -201,10 +201,11 @@ fn a_short_list_carries_the_refusal_only_when_the_server_refused() {
     assert_eq!(sources(&refused), [RemoteSource::ServerReply]);
     assert_eq!(refused.details, "Server code: LIMIT");
 
-    let more = declare_short_list(&IncompleteList::MoreAvailable);
-    assert_eq!(more.action, None);
-    assert!(more.remote_texts.is_empty());
-    assert!(more.details.is_empty());
+    let without_code = declare_short_list(&IncompleteList::ServerRefused {
+        reply: "Try later".to_owned(),
+        code: None,
+    });
+    assert!(without_code.details.is_empty());
 }
 
 #[test]
@@ -218,5 +219,9 @@ fn only_a_message_without_text_declares_a_failure() {
     assert_eq!(encrypted.action, None);
     let not_returned =
         declare_content(&ReceivedContent::TextNotReturned).expect("a missing text is a failure");
-    assert_eq!(not_returned.action, Some(FailureAction::Retry));
+    // A refresh does not fetch a stored text again, so neither offers Retry.
+    assert_eq!(not_returned.action, None);
+    let not_downloaded =
+        declare_content(&ReceivedContent::NotDownloaded).expect("a text not downloaded is said so");
+    assert_eq!(not_downloaded.action, None);
 }

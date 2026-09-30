@@ -199,7 +199,8 @@ The entry points and their steps, as the code will read.
 
 - `Refreshes`: `outcomes: BTreeMap<AccountId, RefreshOutcome>` and the
   running load. `begin_load` keeps the outcome, so the banner stays during a
-  refresh (006 FR-008); `finish_load` records `Stored(incomplete)` or
+  refresh (006 FR-008; amended 2026-09-30: the window hides it while a
+  refresh of the same mail runs); `finish_load` records `Stored(incomplete)` or
   `Failed(failure)`, ignores `Cancelled` and a result whose load was
   cancelled by an exclusion; `discard_excluded` forgets outcomes and cancels
   as today.

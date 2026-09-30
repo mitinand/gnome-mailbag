@@ -1,0 +1,112 @@
+// SPDX-FileCopyrightText: 2026 Andrey Mitin
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! The messages list's row object: one stored message as its row shows it.
+//! The row template in message-row.ui binds its labels and its unread dot
+//! to these properties, so a changed read state updates the shown row in
+//! place (specs/009-synchronization/research.md §9). The texts are made when
+//! a shown row reads them, since a folder may list 100 000 messages and only
+//! a screenful is shown.
+
+use super::{received_date_text, sender_text, subject_text};
+use adw::{glib, prelude::*, subclass::prelude::*};
+use mailbag_domain::MessageListRow;
+use std::cell::{Cell, OnceCell};
+
+mod imp {
+    use super::*;
+    use std::marker::PhantomData;
+
+    #[derive(Default, glib::Properties)]
+    #[properties(wrapper_type = super::MessageItem)]
+    pub struct MessageItem {
+        /// The stored row the item was made from; its read state may be
+        /// older than `unread`.
+        pub(super) listed: OnceCell<MessageListRow>,
+        #[property(get = Self::sender)]
+        sender: PhantomData<String>,
+        #[property(get = Self::subject)]
+        subject: PhantomData<String>,
+        #[property(get = Self::date_text)]
+        date_text: PhantomData<String>,
+        #[property(get, set = Self::set_unread)]
+        pub(super) unread: Cell<bool>,
+        /// "Read" or "Unread", which the row speaks in place of the
+        /// decorative dot.
+        #[property(get = Self::read_state_text)]
+        read_state_text: PhantomData<String>,
+    }
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for MessageItem {
+        const NAME: &'static str = "MessageItem";
+        type Type = super::MessageItem;
+    }
+
+    #[glib::derived_properties]
+    impl ObjectImpl for MessageItem {}
+
+    impl MessageItem {
+        fn listed(&self) -> &MessageListRow {
+            self.listed.get().expect("made from a row")
+        }
+
+        fn sender(&self) -> String {
+            sender_text(&self.listed().fields)
+        }
+
+        fn subject(&self) -> String {
+            subject_text(&self.listed().fields)
+        }
+
+        fn date_text(&self) -> String {
+            received_date_text(self.listed().received_unix, "%x")
+        }
+
+        fn set_unread(&self, unread: bool) {
+            if self.unread.replace(unread) != unread {
+                self.obj().notify_read_state_text();
+            }
+        }
+
+        fn read_state_text(&self) -> String {
+            match self.unread.get() {
+                true => "Unread",
+                false => "Read",
+            }
+            .to_owned()
+        }
+    }
+}
+
+glib::wrapper! {
+    pub struct MessageItem(ObjectSubclass<imp::MessageItem>);
+}
+
+impl MessageItem {
+    /// The row object of a stored message, with the list's text rules.
+    pub fn new(row: MessageListRow) -> Self {
+        let item: Self = glib::Object::new();
+        item.imp().unread.set(!row.seen);
+        item.imp()
+            .listed
+            .set(row)
+            .expect("a new item holds no row yet");
+        item
+    }
+
+    /// The stored row the item was made from, for the reader's envelope and
+    /// for comparing with a newer read.
+    pub fn listed(&self) -> &MessageListRow {
+        self.imp().listed.get().expect("made from a row")
+    }
+
+    /// Whether the item shows `row` apart from its read state, which changes
+    /// in place.
+    pub fn lists_same_message(&self, row: &MessageListRow) -> bool {
+        let listed = self.listed();
+        listed.identity == row.identity
+            && listed.fields == row.fields
+            && listed.received_unix == row.received_unix
+    }
+}

@@ -25,14 +25,19 @@ mod tests;
 
 use failure::{StoreError, StoreOperation, storage_failure};
 use folders::{
-    delete_messages_without_folder, delete_unlisted_folders, read_folder_messages, stored_folder,
-    upsert_folders, write_mailbox,
+    delete_memberships, delete_messages_without_folder, delete_unlisted_folders,
+    read_folder_identities, read_folder_state, read_identities_in_other_folders, read_listed_rows,
+    read_stored_identities, relate_known, set_read_states, store_arrived, stored_content,
+    stored_folder, stored_folder_id, upsert_folders, write_folder_state,
 };
-use mailbag_domain::{AccountId, Failure, Folder, FolderRef, Message};
+use mailbag_domain::{
+    AccountId, Failure, Folder, FolderBatch, FolderRef, FolderState, MessageListRow,
+    ReceivedContent,
+};
 use open::{configure_connection, create_schema, open_store};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap, HashSet},
     path::PathBuf,
     sync::{Mutex, PoisonError},
 };
@@ -42,6 +47,14 @@ use std::{
 pub struct Store {
     path: PathBuf,
     connection: Mutex<Option<Connection>>,
+}
+
+/// What a cycle reads of its folder at its start.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FolderSync {
+    pub state: FolderState,
+    /// The identity and read state of every message the folder holds.
+    pub stored: HashMap<String, bool>,
 }
 
 /// How a write of a load's result ended when it did not fail.
@@ -104,23 +117,76 @@ impl Store {
         })
     }
 
-    /// Replaces the folder's messages with a completed load's, in their
-    /// order, in one transaction (specs/008-folders FR-004): a failure leaves
-    /// the previous state whole. A message another folder holds is kept once
-    /// with the fields of this load; a message no folder holds any more is
-    /// deleted. A folder the store does not hold fails the write.
-    pub fn replace_mailbox(
+    /// What a cycle needs of the folder at its start: its state and the
+    /// messages it holds with their read state. A folder the store does not
+    /// hold fails as a write would, since the cycle cannot store into it.
+    pub fn read_folder_sync(&self, folder: &FolderRef) -> Result<FolderSync, Failure> {
+        self.with_connection(StoreOperation::Write, |connection| {
+            let folder_id = stored_folder_id(connection, folder)?;
+            Ok(FolderSync {
+                state: read_folder_state(connection, folder_id)?,
+                stored: read_folder_identities(connection, folder_id)?,
+            })
+        })
+    }
+
+    /// Which of a batch's identities the account already holds, so the
+    /// cycle relates them without fetching them.
+    pub fn stored_identities(
+        &self,
+        account: &AccountId,
+        identities: &[String],
+    ) -> Result<HashSet<String>, Failure> {
+        self.with_connection(StoreOperation::Read, |connection| {
+            Ok(read_stored_identities(connection, account, identities)?)
+        })
+    }
+
+    /// Which of `identities` another folder of the folder's account holds,
+    /// so a cycle reads such a message again before it applies a change
+    /// that may be older than the other folder's state
+    /// (specs/009-synchronization/research.md §5).
+    pub fn identities_in_other_folders(
         &self,
         folder: &FolderRef,
-        messages: &[Message],
+        identities: &[String],
+    ) -> Result<HashSet<String>, Failure> {
+        self.with_connection(StoreOperation::Read, |connection| {
+            Ok(read_identities_in_other_folders(
+                connection, folder, identities,
+            )?)
+        })
+    }
+
+    /// Stores one batch of a cycle in one transaction, whole or not at all
+    /// (specs/009-synchronization FR-008): removals, then the messages left
+    /// in no folder, read states, full records, messages the account already
+    /// held, and the folder's state when the batch carries one.
+    /// `load_cancelled` is asked under the store's lock, as for a folder list.
+    pub fn store_batch(
+        &self,
+        folder: &FolderRef,
+        batch: &FolderBatch,
         load_cancelled: impl FnOnce() -> bool,
     ) -> Result<StoreWrite, Failure> {
         self.with_connection(StoreOperation::Write, |connection| {
             if load_cancelled() {
                 return Ok(StoreWrite::LoadCancelled);
             }
+            let account = &folder.account;
             let transaction = connection.transaction()?;
-            write_mailbox(&transaction, folder, messages)?;
+            let folder_id = stored_folder_id(&transaction, folder)?;
+            // Only a removal can leave a message in no folder.
+            if !batch.removed.is_empty() {
+                delete_memberships(&transaction, folder_id, account, &batch.removed)?;
+                delete_messages_without_folder(&transaction, account)?;
+            }
+            set_read_states(&transaction, account, &batch.read_states)?;
+            store_arrived(&transaction, folder_id, account, &batch.arrived)?;
+            relate_known(&transaction, folder_id, account, &batch.known_arrived)?;
+            if let Some(state) = &batch.state {
+                write_folder_state(&transaction, folder_id, state)?;
+            }
             transaction.commit()?;
             Ok(StoreWrite::Stored)
         })
@@ -141,21 +207,40 @@ impl Store {
         })
     }
 
-    /// The folder's stored messages in the load's order, or `None` when no
-    /// load of it completed or the store does not hold the folder.
-    pub fn read_mailbox(&self, folder: &FolderRef) -> Result<Option<Vec<Message>>, Failure> {
+    /// The folder's stored messages as the list shows them, without their
+    /// content, newest first; `None` when the folder never completed a cycle
+    /// and holds no message ("no mail loaded"), or the store does not hold it.
+    pub fn read_folder_rows(
+        &self,
+        folder: &FolderRef,
+    ) -> Result<Option<Vec<MessageListRow>>, Failure> {
         self.with_connection(StoreOperation::Read, |connection| {
-            let loaded_folder: Option<i64> = connection
+            let Some(folder_id) = stored_folder_id(connection, folder).optional()? else {
+                return Ok(None);
+            };
+            let rows = read_listed_rows(connection, folder_id)?;
+            let synchronized = read_folder_state(connection, folder_id)?.synchronized;
+            Ok((synchronized || !rows.is_empty()).then_some(rows))
+        })
+    }
+
+    /// The content of the account's message, which the reader shows when it
+    /// is opened; `None` when the store no longer holds the message.
+    pub fn read_message_content(
+        &self,
+        account: &AccountId,
+        identity: &str,
+    ) -> Result<Option<ReceivedContent>, Failure> {
+        self.with_connection(StoreOperation::Read, |connection| {
+            let content = connection
                 .query_row(
-                    "SELECT id FROM folder WHERE account = ?1 AND identity = ?2 AND loaded = 1",
-                    params![folder.account.as_str(), folder.identity],
-                    |row| row.get(0),
+                    "SELECT content_kind, content_detail FROM message \
+                     WHERE account = ?1 AND identity = ?2",
+                    params![account.as_str(), identity],
+                    stored_content,
                 )
                 .optional()?;
-            match loaded_folder {
-                Some(folder_id) => Ok(Some(read_folder_messages(connection, folder_id)?)),
-                None => Ok(None),
-            }
+            Ok(content)
         })
     }
 

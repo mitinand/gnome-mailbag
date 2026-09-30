@@ -1,18 +1,20 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Loads one account's folder list, or the newest messages of one of its
-//! folders, from its provider and writes them into the store. This crate
+//! Loads one account's folder list, or runs a synchronization cycle of one of
+//! its folders, from its provider and writes the result into the store. This crate
 //! joins Online Accounts, the protocol crates, the content crate and the
 //! store; it owns no widget and no application state.
 
-mod batch;
+mod cycle;
 mod failure;
 mod folders;
 mod gmail;
 mod imap;
-mod imap_batch;
+mod imap_texts;
+mod load;
 mod microsoft365;
+mod renewal;
 mod store_load;
 mod worker;
 
@@ -23,12 +25,13 @@ mod test_record;
 #[cfg(test)]
 mod tests;
 
-pub use batch::{CancelsLoadOnDrop, LoadResult, LoadTarget};
+pub use load::{CancelsLoadOnDrop, LoadEvent, LoadResult, LoadTarget};
 
-use batch::LoadFailure;
 use goa_adapter::{AccessError, AccessRequest, GoaAdapter, ImapAccess};
+use load::LoadFailure;
 use mailbag_domain::AccountId;
 use mailbag_store::Store;
+use renewal::answer_renewals;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use worker::{LoadHandle, LoadKind, MailWorker};
 
@@ -44,18 +47,18 @@ pub enum MailProvider {
 /// Where Microsoft 365 mail is read.
 const MICROSOFT_GRAPH: &str = "https://graph.microsoft.com/v1.0";
 
-/// Starts one account's load of `target` and reports how it ended. The
-/// window loads with Online Accounts and the mail worker; the graphical test
-/// reports results without a server.
+/// Starts one account's load of `target` and reports its stored batches and
+/// how it ended. The window loads with Online Accounts and the mail worker;
+/// the graphical test reports events without a server.
 pub trait LoadsMail {
-    /// Reports the result once, on the calling GLib context. The returned
-    /// step cancels the load when it is dropped.
+    /// Reports each stored batch, then the end once, on the calling GLib
+    /// context. The returned step cancels the load when it is dropped.
     fn start_load(
         &self,
         account_id: &AccountId,
         provider: MailProvider,
         target: LoadTarget,
-        report: Box<dyn FnOnce(LoadResult)>,
+        on_event: Box<dyn FnMut(LoadEvent)>,
     ) -> Box<dyn CancelsLoadOnDrop>;
 }
 
@@ -82,7 +85,7 @@ impl LoadsMail for MailLoader {
         account_id: &AccountId,
         provider: MailProvider,
         target: LoadTarget,
-        report: Box<dyn FnOnce(LoadResult)>,
+        mut on_event: Box<dyn FnMut(LoadEvent)>,
     ) -> Box<dyn CancelsLoadOnDrop> {
         let transfer = Rc::new(RefCell::new(None));
         let started_transfer = transfer.clone();
@@ -90,15 +93,15 @@ impl LoadsMail for MailLoader {
         let requested_account = account_id.clone();
         let start_transfer = move |access: Result<LoadKind, AccessError>| match access {
             // The request was cancelled by an exclusion or by quitting.
-            Err(AccessError::Cancelled) => report(LoadResult::Cancelled),
+            Err(AccessError::Cancelled) => on_event(LoadEvent::Finished(LoadResult::Cancelled)),
             // The load ends here, on GTK's context, before the worker is
             // involved.
-            Err(error) => report(
+            Err(error) => on_event(LoadEvent::Finished(
                 LoadFailure::OnlineAccounts(error)
                     .give_up(&requested_account, target.record_name()),
-            ),
+            )),
             Ok(kind) => {
-                *started_transfer.borrow_mut() = Some(worker.start_load(kind, target, report));
+                *started_transfer.borrow_mut() = Some(worker.start_load(kind, target, on_event));
             }
         };
         let request = match provider {
@@ -112,6 +115,8 @@ impl LoadsMail for MailLoader {
                 request_imap_load(&self.accounts, account_id, LoadKind::Gmail, start_transfer)
             }
             MailProvider::Microsoft365 => {
+                let accounts = self.accounts.clone();
+                let renewed_account = account_id.clone();
                 self.accounts
                     .request_graph_access(account_id, move |access| {
                         start_transfer(access.map(|access| {
@@ -119,6 +124,12 @@ impl LoadsMail for MailLoader {
                             LoadKind::Microsoft365 {
                                 access,
                                 service_url: MICROSOFT_GRAPH.to_owned(),
+                                renewal: answer_renewals(
+                                    renewed_account,
+                                    move |account_id, answer| {
+                                        accounts.request_graph_access(account_id, answer)
+                                    },
+                                ),
                             }
                         }))
                     })
@@ -136,7 +147,7 @@ impl LoadsMail for MailLoader {
 fn request_imap_load(
     accounts: &GoaAdapter,
     account_id: &AccountId,
-    load_kind: fn(ImapAccess) -> LoadKind,
+    load_kind: impl FnOnce(ImapAccess) -> LoadKind + 'static,
     start_transfer: impl FnOnce(Result<LoadKind, AccessError>) + 'static,
 ) -> AccessRequest {
     accounts.request_imap_access(account_id, move |access| {

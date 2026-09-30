@@ -1,5 +1,10 @@
 # Contract: Folders
 
+**Amended** on 2026-09-29 by
+[Synchronization](../../009-synchronization/contracts/synchronization.md):
+`replace_mailbox` and `read_mailbox` give way to `store_batch`,
+`read_folder_rows` and `read_message_content`.
+
 The definitions the crates share for folders, kept in `mailbag-domain`, and
 the operations the window, the providers and the store agree on. Names are
 the code's; meanings are the spec's. Two words are used on purpose:

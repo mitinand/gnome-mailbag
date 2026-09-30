@@ -25,7 +25,11 @@ keyboard focus and Tab are decided (Assumptions). Amended after a spike on
 2026-09-28: the tree is a list box over the platform's tree model, the
 arrow keys select, and the space between accounts sits above their rows
 (FR-006, FR-010, Assumptions); checked on the installed build the same
-day.
+day. FR-010 amended on 2026-09-29 by
+[Synchronization](../009-synchronization/spec.md): the reader stays open
+while its message is listed. FR-004, FR-007, FR-012, FR-013(b), Key
+Entities, Assumptions and SC-002 amended the same day by Synchronization:
+Refresh Mailbox runs a cycle over the whole folder.
 **Input**: Support for several mailboxes per account: their discovery, role
 recognition, nesting, storage and display in the sidebar. Deleting mailboxes
 is not built. Once mailboxes are shown, the account itself can no longer be
@@ -555,6 +559,15 @@ rows and the failure shown after each.
   message's labels with it (004 FR-005); synchronization stores them and
   turns them into relations (FR-013(b)). No message is ever
   matched to another by guessing from its date, size or headers.
+  *Amended by 009 (FR-005, FR-006, FR-013)*: a Generic IMAP message's
+  identity is `imap:<folder>/<UIDVALIDITY>/<UID>`, so a renumbered folder's
+  messages are new messages; a folder's relations change by its cycles'
+  batches, not by one replacement; a relation carries no position, since
+  rows are ordered by received date; a moved Microsoft 365 message stays
+  listed in its old folder until that folder's next cycle, since a folder's
+  removals are proven by its own reading (009 FR-004); Gmail labels are not
+  stored: each label folder is synchronized as a folder, and a message its
+  account already holds is related without fetching.
 - **FR-005 — Names**: A folder is shown under the name its server gives it,
   except the reserved IMAP name INBOX, in any case, which is shown as
   "Inbox" (Clarifications, acceptance). Under a listed parent a folder is
@@ -593,7 +606,10 @@ rows and the failure shown after each.
   the feature that reads them (FR-013(b)). 007's
   rules on privacy, wholeness, the window's thread, a store that cannot be
   used and an account's departure apply unchanged; an account's departure
-  removes its folders with its mail.
+  removes its folders with its mail. *Amended by 009 FR-001 and FR-008*:
+  a folder's messages and relations are what its cycles stored; the folder
+  state is the saved server position, the place an unfinished first fill
+  continues from, and whether its latest cycle completed; a relation carries no position.
 - **FR-008 — The window reads folders from the store**: The sidebar's folders
   and a selected folder's rows MUST be read from the store, never from a
   load's result directly (007 FR-001): at start, when an account appears,
@@ -637,7 +653,9 @@ rows and the failure shown after each.
   folder list's outcome shows whenever a mailbox of the account or the
   account is shown, and the account's next load replaces it (007 FR-005,
   FR-007). The
-  reader closes when the shown folder's rows are replaced (007). Nothing is
+  reader stays open while its message is listed (amended by 009 FR-013,
+  which replaces "the reader closes when the shown folder's rows are
+  replaced"). Nothing is
   selected, and the list asks the user to select a mailbox, when: the user
   collapses the shown folder's parent or account; a completed folder list no
   longer holds the shown folder; the account's folders appear for the first
@@ -660,7 +678,8 @@ rows and the failure shown after each.
   banner and over the failure page.
 - **FR-012 — Bounded work**: Refresh Account is one command on IMAP and, on
   Microsoft 365, the listing's pages plus one request per well-known name;
-  Refresh Mailbox is unchanged. No load runs without the user, and one load
+  Refresh Mailbox is unchanged. *Amended by 009 FR-012*: Refresh Mailbox
+  runs one cycle of the folder. No load runs without the user, and one load
   runs at a time (constitution V).
 
 **Deferred**
@@ -674,7 +693,9 @@ rows and the failure shown after each.
   the synchronized folders with a message's labels, then stored, becoming
   its relations to
   every label (007 Clarifications); until then a folder holds what its own
-  loads listed.
+  loads listed. *Built by 009*, with each Gmail label folder synchronized
+  as a folder instead of All Mail with labels (009 FR-006), and no IMAP UID
+  on the relation (007 FR-003 as amended).
   (c) *Combined Inbox*: one list over every account's Inbox-role folder,
   set apart from the accounts by space, as the accounts are (Assumptions).
   (d) *Moves and deletes*: a single destination per role; roles by folder
@@ -714,13 +735,13 @@ rows and the failure shown after each.
   or none. Chooses an icon and a place in this feature; Starred, Important
   and All Mail are views.
 - **Label**: On Gmail, a folder. A message's labels are the folders it
-  belongs to; the server lists them with the message; synchronization
-  stores them.
+  belongs to; the server lists them with the message. *Amended by 009*:
+  not stored; each label folder is synchronized as a folder (009 FR-006).
 - **Message**: As in 007, stored once per account under its provider
   identity where the provider gives one.
-- **Membership**: The relation between a message and a folder, carrying the
-  message's position in the folder's list; the IMAP UID with the folder's
-  UIDVALIDITY joins it with synchronization.
+- **Membership**: The relation between a message and a folder. *Amended by
+  009*: it carries no position (rows are ordered by received date), and no
+  IMAP UID until read and star (007 FR-003 as amended).
 - **Account**: As in 001 and 007; in the sidebar an empty selectable row
   until its folders are known, then a heading over them.
 
@@ -737,7 +758,9 @@ rows and the failure shown after each.
 - **SC-002**: Selecting each listed folder shows its stored rows or "no mail
   loaded", never another folder's rows; Refresh Mailbox stores its newest
   messages and leaves every other folder's rows unchanged (US1; FR-007,
-  FR-008, FR-010).
+  FR-008, FR-010). *Amended by 009*: Refresh Mailbox stores the folder's
+  messages; other folders' rows change only where they hold a message the
+  cycle updated.
 - **SC-003**: Folder lists that mark only some system folders, mark two
   folders with one role, mark one folder with two roles, hold names in
   modified UTF-7, hold a name with a quote and a backslash, hold a container
@@ -772,7 +795,7 @@ rows and the failure shown after each.
   service does not list are shown without them.
 - A Gmail label's folder is opened like any mailbox and its newest 100
   messages are those of the label; All Mail is a folder like the others in
-  this feature.
+  this feature. *Amended by 009*: a cycle reads the label's folder whole.
 - The store's structure changes with this feature; under 007 FR-012 an
   existing store is discarded at start and refilled by refreshing.
 - The approved sidebar form already holds the tree row with its expander,

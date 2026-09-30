@@ -10,7 +10,16 @@ application as domain values decided the same day and built in portion 6
 at sizing, at the specification challenge and on the prototype are
 recorded under Clarifications. FR-004 and the contract amended on
 2026-09-27 by [Folders](../008-folders/spec.md), built and accepted with it
-the same day.
+the same day. User Story 5's first scenario amended on 2026-09-29 by
+[Synchronization](../009-synchronization/spec.md): the reader stays open
+while its message is listed. User Story 3, User Story 5's first scenario
+and the `MailboxChanged` kind amended the same day by Synchronization: a
+refused listing of a cycle, "Text not received" without Retry, and
+`MailboxChanged` only after a reconnection; the list short because the mail
+service offered more than one request holds no longer arises and its
+wording is removed. FR-008 amended on 2026-09-30 by Synchronization, at
+the maintainer's review of the installed build: a refresh of the same
+mail hides the banner while it runs.
 **Input**: One lasting model for how Mailbag reports failures, from the
 component that meets them to what the user sees. Today each failure is
 presented the way its feature happened to choose: a status page for a failed
@@ -117,6 +126,13 @@ banner after the load and its absence after the next complete load.
 3. **Given** the banner is shown, **when** the user selects another account
    and comes back, **then** the banner is there again with the same rows.
 
+*Amended 2026-09-29 by [Synchronization](../009-synchronization/spec.md):
+a Microsoft 365 cycle reads every page, so "the mail service offered more
+than one request holds" no longer arises; on IMAP the list a server refuses to finish is a cycle's listing, which then
+removes nothing, or a batch's rows after a complete listing, whose proven
+removals stay; either way the rows stored so far are shown under the banner
+(009 FR-004, FR-011).*
+
 ### User Story 4 — A person reports a problem with its technical details (Priority: P2)
 
 The user who meets a failure is not a developer. From a status page or a
@@ -144,7 +160,9 @@ the marker in its place and none of the fixture's private markers.
 3. **Given** the list is short because the mail service offered more than
    one request holds, **when** the banner is shown, **then** its button opens
    the dialog with the explanation alone: no action, since nothing the user
-   does helps, and no technical lines.
+   does helps, and no technical lines. *Removed 2026-09-29 by
+   Synchronization*: a Microsoft 365 cycle reads every page, so this case no
+   longer arises.
 
 ### User Story 5 — One message's problem stays with that message (Priority: P3)
 
@@ -166,9 +184,10 @@ the envelope.
 **Acceptance Scenarios**:
 
 1. **Given** the server did not return one message's text, **when** the user
-   opens it, **then** the status page under the envelope says so and offers
-   Retry, which refreshes the whole Inbox and closes the reader; until then
-   the list and the other messages are untouched.
+   opens it, **then** the status page under the envelope says so, with no
+   Retry, and the list and the other messages are untouched. *Amended
+   2026-09-29 by Synchronization*: the Retry is gone, since a refresh does
+   not fetch a stored message's text again (009 Clarifications).
 2. **Given** one message's structure cannot be read, **when** the load ends,
    **then** the load succeeds with that message's row present and no notice
    for the list or the account.
@@ -387,6 +406,8 @@ from the approved forms, and decided:
 - **FR-008 — A notice lives with its cause**: A notice appears when the
   failure arrives and goes when the next result of the same operation
   replaces it: a complete load clears the banner and the status page, a
+  refresh of the same mail hides the banner while it runs and it returns
+  only if that refresh fails or ends short, a
   reopened message shows its own state. Selecting another account shows that
   account's state; the notice returns with the account. A notice never
   outlives what it is about and is never dismissed by time alone, except the

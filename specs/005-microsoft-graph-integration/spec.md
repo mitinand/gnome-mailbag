@@ -7,7 +7,9 @@ maintainer 2026-09-24; approved 2026-09-23 with the plan after the
 feature-start sizing, a read-only probe against the service and the
 specification challenge (see Clarifications); FR-003 and FR-006 amended
 on 2026-09-27 by [Folders](../008-folders/spec.md), built and accepted with it
-the same day
+the same day. FR-002, FR-003, FR-006 and FR-008 amended on 2026-09-29 by
+[Synchronization](../009-synchronization/spec.md): Refresh Mailbox runs a
+cycle over the folder's changes, page by page
 **Input**: On an explicit refresh, load recent Inbox message metadata and text
 of the selected Microsoft 365 account into memory, the way
 [IMAP integration](../002-imap-integration/spec.md) does for a Generic IMAP
@@ -267,6 +269,12 @@ the service delivers display fields and text as ready values in one answer.
   reason, distinct from a failure to obtain the token from GOA, and the
   explanation MUST name Online Accounts as the place to check the account's
   sign-in.
+  *Amended 2026-09-29 by [Synchronization](../009-synchronization/spec.md):
+  when the service refuses the token, the cycle asks Online Accounts for
+  the access once more and, only
+  when it hands out a different token, repeats the refused request once
+  with it; the same token, or a second refusal, is the rejected sign-in
+  above (009 FR-011, research §13).*
 - **FR-003 — Acquisition and reading as for IMAP**: The IMAP integration's
   FR-002 (batch), FR-003 (loading and refresh), FR-005 (no remote changes),
   FR-006 (memory), FR-007 (correct view), FR-008 (account changes), FR-009
@@ -290,6 +298,11 @@ the service delivers display fields and text as ready values in one answer.
   the user selected, by its identifier; obtaining the folder list is a load
   of its own, the listing's pages plus one request per well-known name (008
   FR-001, FR-012).*
+  *Amended 2026-09-29 by [Synchronization](../009-synchronization/spec.md): a
+  cycle reads the folder's changes page by page and stores each page;
+  there is no batch and no incomplete list for a further page (009 FR-007,
+  FR-008). The one repeat after a renewed token (FR-002) is the only
+  retry.*
 - **FR-004 — Microsoft 365 identity**: Each received message MUST carry the
   service's immutable identifier, asked for on every request that returns
   messages. The identity of a Microsoft 365 message is that identifier, which
@@ -320,6 +333,11 @@ the service delivers display fields and text as ready values in one answer.
   addressed by their identifiers; well-known names give their roles, never
   display names (008 FR-003); a message has exactly one membership (008
   FR-004).*
+  *Amended 2026-09-29 by [Synchronization](../009-synchronization/spec.md): a
+  message moved on the server stays listed in its old folder until that
+  folder's next cycle; an entry for a message the account holds in another
+  folder is applied from the message read again with its current folder
+  (009 FR-007, research §5).*
 - **FR-007 — Microsoft 365 is a separate provider**: Microsoft 365's rules
   MUST live in a provider of its own, next to the Generic IMAP and Gmail
   providers, over a service-access layer of its own that shares no code with
@@ -335,6 +353,9 @@ the service delivers display fields and text as ready values in one answer.
   and Mailbag MUST NOT retry on its own, in the foreground or in the
   background. The wait the service may ask for is not read at this stage; the
   user may refresh again at any time.
+  *Amended 2026-09-29 by [Synchronization](../009-synchronization/spec.md): the
+  one repeat after a renewed token (FR-002) is the only retry; the wait
+  limit per request is 60 seconds (009 research §11).*
 - **FR-009 — Record**: Under the logging rules, the record at debug MUST show,
   per load, the request made (its path, never the token and never a query
   value that holds personal data), its response status, whether the service

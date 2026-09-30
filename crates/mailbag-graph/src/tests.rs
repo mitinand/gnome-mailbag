@@ -2,14 +2,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::{
-    GraphError, GraphFailure, GraphFolder, GraphMessage, Mailbox, MessagePage, WellKnownFolder,
-    list_folders, list_mailbox_messages, list_mailbox_messages_with_short_wait_limit,
+    ChangePage, ChangesFrom, GraphError, GraphFailure, GraphFolder, GraphMessage, Mailbox,
+    MessageChange, NextPage, WellKnownFolder, list_folders, read_message, read_message_changes,
+    read_message_changes_with_short_wait_limit, read_message_text, read_texts_received_between,
     test_server::{
-        ReceivedRequest, ScriptedAnswer, ScriptedFolders, ScriptedService, TEST_ACCESS_TOKEN,
-        fixture_immutable_id, fixture_received_unix, folder_entry,
+        ReceivedRequest, ScriptedAnswer, ScriptedChanges, ScriptedFolders, ScriptedNext,
+        ScriptedPage, ScriptedService, TEST_ACCESS_TOKEN, delta_entry, fixture_immutable_id,
+        fixture_received_unix, folder_entry, stored_message,
     },
 };
 use std::{
+    collections::BTreeMap,
     future::Future,
     time::{Duration, Instant},
 };
@@ -26,96 +29,218 @@ fn run<T>(future: impl Future<Output = T>) -> T {
         .unwrap()
 }
 
-fn list_from(service_url: &str) -> Result<MessagePage, GraphError> {
-    run(list_mailbox_messages(
-        service_url,
-        TEST_ACCESS_TOKEN,
-        "inbox",
-        100,
-    ))
+/// A service whose delta reading has the given pages, by token.
+fn changes_service(pages: Vec<(&str, ScriptedPage)>) -> ScriptedService {
+    ScriptedService::start_with_changes(ScriptedChanges {
+        pages: pages
+            .into_iter()
+            .map(|(token, page)| (token.to_owned(), page))
+            .collect(),
+        ..ScriptedChanges::default()
+    })
+}
+
+/// A page of the given entries that completes the reading.
+fn last_page(entries: Vec<serde_json::Value>) -> ScriptedPage {
+    ScriptedPage::Entries {
+        entries,
+        next: ScriptedNext::Done("round-1"),
+    }
+}
+
+fn changes_from(service_url: &str, from: &ChangesFrom) -> Result<ChangePage, GraphError> {
+    run(read_message_changes(service_url, TEST_ACCESS_TOKEN, from))
+}
+
+fn first_reading(service_url: &str) -> Result<ChangePage, GraphError> {
+    changes_from(service_url, &ChangesFrom::FirstReading("inbox".to_owned()))
 }
 
 fn failure_from(answer: ScriptedAnswer) -> GraphError {
-    let service = ScriptedService::start(answer);
-    list_from(service.url()).expect_err("the list unexpectedly succeeded")
+    let service = changes_service(vec![("first", ScriptedPage::Refused(answer))]);
+    first_reading(service.url()).expect_err("the reading unexpectedly succeeded")
 }
 
 #[test]
-fn the_request_reaches_the_service_as_documented() {
-    let service = ScriptedService::start(ScriptedAnswer::inbox(1));
-    list_from(service.url()).expect("a page");
+fn a_first_reading_reaches_the_service_as_documented() {
+    let service = changes_service(vec![("first", last_page(Vec::new()))]);
+    first_reading(service.url()).expect("a page");
     assert_eq!(
         service.received_requests(),
         [ReceivedRequest {
-            path: "/me/mailFolders/inbox/messages".to_owned(),
-            query: "$top=100&$orderby=receivedDateTime%20desc\
-                    &$select=id,subject,from,toRecipients,receivedDateTime,isRead,body"
+            path: "/me/mailFolders/inbox/messages/delta".to_owned(),
+            query: "$select=subject,from,toRecipients,receivedDateTime,isRead\
+                    &$orderby=receivedDateTime%20desc"
                 .to_owned(),
             authorization: Some(format!("Bearer {TEST_ACCESS_TOKEN}")),
-            prefer: Some(r#"IdType="ImmutableId", outlook.body-content-type="text""#.to_owned()),
+            prefer: Some(r#"IdType="ImmutableId", odata.maxpagesize=500"#.to_owned()),
             accept: Some("application/json".to_owned()),
         }]
     );
 }
 
 #[test]
-fn messages_arrive_with_their_fields_and_text() {
-    let service = ScriptedService::start(ScriptedAnswer::inbox(3));
-    let page = list_from(service.url()).expect("a page");
+fn listed_messages_arrive_with_their_fields_and_the_next_link_is_followed() {
+    let service = changes_service(vec![
+        (
+            "first",
+            ScriptedPage::Entries {
+                entries: vec![delta_entry(1), delta_entry(2)],
+                next: ScriptedNext::More("page-2"),
+            },
+        ),
+        ("page-2", last_page(vec![delta_entry(3)])),
+    ]);
+    let first = first_reading(service.url()).expect("a page");
     let sender = |number| {
         Some(Mailbox {
             name: Some(format!("Sender {number}")),
             address: Some(format!("sender{number}@example.org")),
         })
     };
-    let recipient = Mailbox {
-        name: Some("Recipient".to_owned()),
-        address: Some("recipient@example.org".to_owned()),
+    assert_eq!(
+        first.changes[1],
+        MessageChange::Listed(GraphMessage {
+            immutable_id: fixture_immutable_id(2),
+            subject: Some("Subject 2".to_owned()),
+            from: sender(2),
+            to: Vec::new(),
+            received_unix: Some(fixture_received_unix(2)),
+            is_read: false,
+        })
+    );
+    let NextPage::More(next_link) = first.next else {
+        panic!("a further page: {:?}", first.next);
+    };
+    let last = changes_from(service.url(), &ChangesFrom::Link(next_link)).expect("a page");
+    assert_eq!(last.changes.len(), 1);
+    assert!(matches!(last.next, NextPage::Done(link) if link.ends_with("$deltatoken=round-1")));
+}
+
+/// A link the service no longer accepts is told apart from other refusals:
+/// the service documents a 410 and "a 40X-series error with error codes
+/// such as syncStateNotFound", so any 4xx answering a link stands for the
+/// link, except the token's 401 and the throttling 429; a first reading's
+/// refusal is its own (research §5).
+#[test]
+fn a_rejected_position_is_its_own_failure() {
+    let saved_link = |service: &ScriptedService| {
+        format!(
+            "{}/me/mailFolders/inbox/messages/delta?$deltatoken=old",
+            service.url()
+        )
+    };
+    let refused_link = |answer: ScriptedAnswer| {
+        let service = changes_service(vec![("old", ScriptedPage::Refused(answer))]);
+        changes_from(service.url(), &ChangesFrom::Link(saved_link(&service)))
+            .expect_err("a refusal")
+    };
+    let service = changes_service(Vec::new());
+    let gone =
+        changes_from(service.url(), &ChangesFrom::Link(saved_link(&service))).expect_err("a 410");
+    assert_eq!(gone.failure, GraphFailure::PositionRejected);
+    let invalid = ScriptedAnswer {
+        status: 400,
+        body: br#"{"error":{"code":"ErrorInvalidSyncStateData","message":"Invalid."}}"#.to_vec(),
     };
     assert_eq!(
-        page,
-        MessagePage {
-            messages: vec![
-                GraphMessage {
-                    immutable_id: fixture_immutable_id(1),
-                    subject: Some("Subject 1".to_owned()),
-                    from: sender(1),
-                    to: vec![recipient.clone()],
-                    received_unix: Some(fixture_received_unix(1)),
-                    is_read: true,
-                    body_text: Some("Text 1".to_owned()),
-                },
-                GraphMessage {
-                    immutable_id: fixture_immutable_id(2),
-                    subject: Some("Subject 2".to_owned()),
-                    from: sender(2),
-                    to: Vec::new(),
-                    received_unix: Some(fixture_received_unix(2)),
-                    is_read: false,
-                    body_text: Some("Text 2".to_owned()),
-                },
-                GraphMessage {
-                    immutable_id: fixture_immutable_id(3),
-                    subject: Some("Subject 3".to_owned()),
-                    from: sender(3),
-                    to: vec![recipient],
-                    received_unix: Some(fixture_received_unix(3)),
-                    is_read: true,
-                    body_text: None,
-                },
-            ],
-            more_available: false,
-        }
+        refused_link(invalid.clone()).failure,
+        GraphFailure::PositionRejected
     );
+    assert!(matches!(
+        refused_link(ScriptedAnswer::sign_in_refused()).failure,
+        GraphFailure::Refused { status: 401, .. }
+    ));
+    assert!(matches!(
+        refused_link(ScriptedAnswer::throttled()).failure,
+        GraphFailure::Refused { status: 429, .. }
+    ));
+    // A first reading has no link to reject.
+    assert!(matches!(
+        failure_from(invalid).failure,
+        GraphFailure::Refused { status: 400, .. }
+    ));
 }
 
 #[test]
-fn a_short_page_with_more_offered_is_marked_and_not_followed() {
-    let service = ScriptedService::start(ScriptedAnswer::page_with_more(1));
-    let page = list_from(service.url()).expect("a page");
-    assert_eq!(page.messages.len(), 1);
-    assert!(page.more_available);
-    assert_eq!(service.received_requests().len(), 1);
+fn texts_come_by_their_date_range_or_one_by_one() {
+    let service = ScriptedService::start_with_changes(ScriptedChanges {
+        messages: vec![
+            stored_message(1, "inbox"),
+            stored_message(2, "inbox"),
+            stored_message(3, "inbox"),
+            stored_message(4, "archive"),
+        ],
+        ..ScriptedChanges::default()
+    });
+    let texts = run(read_texts_received_between(
+        service.url(),
+        TEST_ACCESS_TOKEN,
+        "inbox",
+        fixture_received_unix(3),
+        fixture_received_unix(2),
+    ))
+    .expect("texts");
+    // Message 3 has no body.
+    assert_eq!(
+        texts,
+        [
+            (fixture_immutable_id(2), Some("Text 2".to_owned())),
+            (fixture_immutable_id(3), None),
+        ]
+    );
+    let request = &service.received_requests()[0];
+    assert!(request.query.contains("$top=500"), "{}", request.query);
+    assert_eq!(
+        request.prefer.as_deref(),
+        Some(r#"IdType="ImmutableId", outlook.body-content-type="text""#)
+    );
+    let text = run(read_message_text(
+        service.url(),
+        TEST_ACCESS_TOKEN,
+        &fixture_immutable_id(1),
+    ));
+    assert_eq!(text, Ok(Some("Text 1".to_owned())));
+}
+
+#[test]
+fn one_message_comes_with_its_folder_and_a_missing_one_is_none() {
+    let service = ScriptedService::start_with_changes(ScriptedChanges {
+        messages: vec![stored_message(4, "archive")],
+        ..ScriptedChanges::default()
+    });
+    let (message, folder) = run(read_message(
+        service.url(),
+        TEST_ACCESS_TOKEN,
+        &fixture_immutable_id(4),
+    ))
+    .expect("an answer")
+    .expect("the message");
+    assert_eq!(message.immutable_id, fixture_immutable_id(4));
+    assert_eq!(folder, "archive");
+    let missing = run(read_message(service.url(), TEST_ACCESS_TOKEN, "gone"));
+    assert_eq!(missing, Ok(None));
+}
+
+#[test]
+fn a_token_refused_mid_reading_is_a_401_and_a_new_token_is_accepted() {
+    let service = ScriptedService::start_with_changes(ScriptedChanges {
+        pages: BTreeMap::from([("first".to_owned(), last_page(Vec::new()))]),
+        token_accepted_requests: Some(1),
+        ..ScriptedChanges::default()
+    });
+    first_reading(service.url()).expect("the first request");
+    let error = first_reading(service.url()).expect_err("the token expired");
+    assert!(matches!(
+        error.failure,
+        GraphFailure::Refused { status: 401, .. }
+    ));
+    run(read_message_changes(
+        service.url(),
+        "renewed-token",
+        &ChangesFrom::FirstReading("inbox".to_owned()),
+    ))
+    .expect("a renewed token");
 }
 
 #[test]
@@ -156,7 +281,7 @@ fn an_answer_without_the_documented_shape_is_invalid() {
 fn a_closed_port_fails_the_connection() {
     // Nothing listens on port 1 of the loopback address: binding a port below
     // 1024 needs privileges, so the connection is refused at once.
-    let error = list_from("http://127.0.0.1:1").expect_err("no service listens");
+    let error = first_reading("http://127.0.0.1:1").expect_err("no service listens");
     assert_eq!(error.failure, GraphFailure::ConnectionFailed);
     assert!(error.reason.is_some());
 }
@@ -165,11 +290,10 @@ fn a_closed_port_fails_the_connection() {
 fn a_silent_service_times_out_at_the_wait_limit() {
     let service = ScriptedService::stalled();
     let started = Instant::now();
-    let error = run(list_mailbox_messages_with_short_wait_limit(
+    let error = run(read_message_changes_with_short_wait_limit(
         &service.url(),
         TEST_ACCESS_TOKEN,
-        "inbox",
-        100,
+        &ChangesFrom::FirstReading("inbox".to_owned()),
         1,
     ))
     .expect_err("the service never answers");
@@ -179,15 +303,14 @@ fn a_silent_service_times_out_at_the_wait_limit() {
 
 #[test]
 fn the_access_token_never_reaches_the_record() {
-    let listed = ScriptedService::start(ScriptedAnswer::inbox(1));
-    let refused = ScriptedService::start(ScriptedAnswer::sign_in_refused());
+    let read = changes_service(vec![("first", last_page(vec![delta_entry(1)]))]);
     let record = CapturedRecord::start(tracing::Level::TRACE);
-    list_from(listed.url()).expect("a page");
-    list_from(refused.url()).expect_err("a refusal");
+    first_reading(read.url()).expect("a page");
+    failure_from(ScriptedAnswer::sign_in_refused());
     let debug_lines = record.lines_at("DEBUG");
     for expected in [
         "request sent",
-        "answer received",
+        "changes received",
         "InvalidAuthenticationToken",
     ] {
         assert!(
@@ -203,13 +326,16 @@ fn the_access_token_never_reaches_the_record() {
     );
 }
 
+/// Dropping a reading, as quitting drops a cycle, ends its request; the
+/// folder is asked for by its escaped id.
 #[test]
-fn dropping_the_listing_ends_its_request() {
+fn dropping_the_reading_ends_its_request() {
     let service = ScriptedService::stalled();
     let service_url = service.url();
     run(async {
-        let listing = list_mailbox_messages(&service_url, TEST_ACCESS_TOKEN, "inbox", 100);
-        glib::future_with_timeout(Duration::from_millis(300), listing)
+        let from = ChangesFrom::FirstReading("AAMkAD=/folder".to_owned());
+        let reading = read_message_changes(&service_url, TEST_ACCESS_TOKEN, &from);
+        glib::future_with_timeout(Duration::from_millis(300), reading)
             .await
             .expect_err("the service never answers");
         // The worker's context keeps running after a load is dropped.
@@ -217,7 +343,8 @@ fn dropping_the_listing_ends_its_request() {
     });
     let sent = service.read_first_connection();
     assert_eq!(
-        sent.matches("GET /me/mailFolders/inbox/messages?").count(),
+        sent.matches("GET /me/mailFolders/AAMkAD%3D%2Ffolder/messages/delta?")
+            .count(),
         1,
         "{sent}"
     );
@@ -387,25 +514,5 @@ fn a_refused_well_known_name_fails_the_list_unlike_a_missing_folder() {
             status: 429,
             code: Some("ApplicationThrottled".to_owned()),
         }
-    );
-}
-
-/// The scripted service sees paths decoded, so the request line is read as
-/// sent.
-#[test]
-fn the_messages_of_a_folder_are_asked_for_by_its_escaped_id() {
-    let service = ScriptedService::stalled();
-    let service_url = service.url();
-    run(async {
-        let listing = list_mailbox_messages(&service_url, TEST_ACCESS_TOKEN, "AAMkAD=/folder", 100);
-        glib::future_with_timeout(Duration::from_millis(300), listing)
-            .await
-            .expect_err("the service never answers");
-        glib::timeout_future(Duration::from_millis(100)).await;
-    });
-    let sent = service.read_first_connection();
-    assert!(
-        sent.starts_with("GET /me/mailFolders/AAMkAD%3D%2Ffolder/messages?"),
-        "{sent}"
     );
 }

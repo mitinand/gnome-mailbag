@@ -6,10 +6,9 @@
 //! (specs/003-logging).
 
 use super::test_record::CapturedRecord;
-use super::{expect_failure, expect_success, plain_messages, run};
+use super::{expect_failure, expect_success, fetch_all_rows, plain_messages, run};
 use crate::{
     Credential, Encryption, ImapAccount, ImapFailure, ImapStep, MailboxReader, OpenOptions,
-    RowItems,
     session::replace_sign_in_name,
     test_server::{FixtureSetup, ImapFixture, TEST_LOGIN, TEST_PASSWORD},
 };
@@ -141,7 +140,7 @@ fn the_refusal_of_a_short_list_carries_the_sign_in_name_replaced() {
         OpenOptions::default(),
         "INBOX",
     )));
-    let listed = expect_success(run(reader.fetch_rows(RowItems::Standard, 100)));
+    let listed = expect_success(run(fetch_all_rows(&mut reader)));
     let refusal = listed.refusal.expect("the list is short");
     assert_eq!(refusal.text, "<login> messages could not be FETCHed");
 }

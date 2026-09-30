@@ -60,6 +60,7 @@ pub enum IncompleteList {
     /// The server refused to finish the message list.
     ServerRefused { reply: String, code: Option<String> },
     /// The mail service offered more messages than one request holds.
+    /// Removed by 009: a Microsoft 365 cycle reads every page.
     MoreAvailable,
 }
 
@@ -95,7 +96,7 @@ chooses the kind; reading a protocol's codes happens there.
 | `ServerStepFailed(ServerStep)` | providers | Any other `ImapFailure::Failed(step)` |
 | `ServerNotResponding(ServerStep)` | providers | `ImapFailure::TimedOut(step)` |
 | `NoSignInMethod` | providers | `ImapFailure::NoSignInMethod` |
-| `MailboxChanged` | providers | `ImapFailure::MailboxChanged` |
+| `MailboxChanged` | providers | `ImapFailure::MailboxChanged`; since 009 only a reconnection that met another UIDVALIDITY (009 research §10) |
 | `ServiceUnreachable` | providers | `GraphFailure::ConnectionFailed` |
 | `ServiceNotResponding` | providers | `GraphFailure::TimedOut` |
 | `ServiceRejectedSignIn` | providers | `GraphFailure::Refused` with status 401 |

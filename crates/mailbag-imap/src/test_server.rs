@@ -100,6 +100,18 @@ pub struct FixtureMessage {
     pub gmail_message_id: Option<u64>,
     /// X-GM-LABELS, which Gmail may send empty for a message in the open folder.
     pub gmail_labels: Vec<String>,
+    /// INTERNALDATE as seconds since the Unix epoch. By default a day ago plus
+    /// the UID in seconds, so a higher UID is newer and within 30 days.
+    pub received_unix: i64,
+}
+
+/// A day before now plus the UID in seconds.
+fn received_recently(uid: u32) -> i64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("a clock after 1970")
+        .as_secs() as i64;
+    now - 86_400 + i64::from(uid)
 }
 
 impl FixtureMessage {
@@ -112,6 +124,15 @@ impl FixtureMessage {
             sections: BTreeMap::from([("1".to_owned(), text.as_bytes().to_vec())]),
             gmail_message_id: None,
             gmail_labels: Vec::new(),
+            received_unix: received_recently(uid),
+        }
+    }
+
+    /// The same message received at `received_unix`.
+    pub fn received_at(self, received_unix: i64) -> Self {
+        Self {
+            received_unix,
+            ..self
         }
     }
 
@@ -143,6 +164,7 @@ impl FixtureMessage {
             sections,
             gmail_message_id: None,
             gmail_labels: Vec::new(),
+            received_unix: received_recently(uid),
         }
     }
 
@@ -182,6 +204,7 @@ impl FixtureMessage {
             sections,
             gmail_message_id: None,
             gmail_labels: Vec::new(),
+            received_unix: received_recently(uid),
         }
     }
 
@@ -232,6 +255,7 @@ impl FixtureMessage {
             sections,
             gmail_message_id: None,
             gmail_labels: Vec::new(),
+            received_unix: received_recently(uid),
         }
     }
 
@@ -283,6 +307,10 @@ pub enum StartTlsBehavior {
 /// Which command's first response misbehaves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FaultyCommand {
+    /// The `UID FETCH 1:*` that lists every message.
+    Listing,
+    /// A FETCH of message rows by UID.
+    Rows,
     Structures,
     Text,
 }
@@ -352,8 +380,14 @@ pub struct FixtureSetup {
     pub close_during_examine: bool,
     /// UIDVALIDITY for every connection after the first.
     pub uid_validity_after_reconnect: Option<u32>,
-    /// Listed by the message-list FETCH, gone from later UID FETCH commands.
+    /// Listed by the listing, gone from later FETCH commands.
     pub vanishing_uid: Option<u32>,
+    /// Expunged while the listing runs: the listing reports EXPUNGE for them
+    /// instead of their data, and later FETCH commands leave them out.
+    pub expunged_during_listing: Vec<u32>,
+    /// The listing answers for the first half of the messages, then
+    /// completes with NO.
+    pub listing_refused: bool,
     /// Messages that disappear once their structure has been read: text
     /// commands leave them out, as when another client moves them meanwhile.
     pub vanishing_text_uids: Vec<u32>,
@@ -378,8 +412,13 @@ pub struct FixtureSetup {
     /// Leaves out this message's body sections.
     pub missing_body_uid: Option<u32>,
     /// Messages the server cannot return, for example because they are
-    /// damaged: every FETCH that names one leaves it out and completes with NO.
+    /// damaged: every FETCH that names one, except the listing, leaves it out
+    /// and completes with NO.
     pub unfetchable_uids: Vec<u32>,
+    /// Answers this command for no message and completes it with
+    /// `NO [UNAVAILABLE]`, as a server whose store is down for a moment
+    /// (RFC 5530).
+    pub unavailable_command: Option<FaultyCommand>,
     pub fault: Option<(FaultyCommand, FaultKind)>,
 }
 
@@ -410,6 +449,8 @@ impl Default for FixtureSetup {
             close_during_examine: false,
             uid_validity_after_reconnect: None,
             vanishing_uid: None,
+            expunged_during_listing: Vec::new(),
+            listing_refused: false,
             vanishing_text_uids: Vec::new(),
             interleave_flag_changes: false,
             flag_change_uids: Vec::new(),
@@ -420,6 +461,7 @@ impl Default for FixtureSetup {
             nil_body_uid: None,
             missing_body_uid: None,
             unfetchable_uids: Vec::new(),
+            unavailable_command: None,
             fault: None,
         }
     }
@@ -493,9 +535,9 @@ impl ImapFixture {
                 .map_err(|error| error.to_string())?;
             let port = bound.downcast::<gio::InetSocketAddress>().unwrap().port();
             let server = Rc::new(Server {
+                fault_pending: Cell::new(true),
                 setup,
                 log: server_log,
-                fault_pending: Cell::new(true),
             });
             context.spawn_local(async move {
                 while let Ok((connection, _)) = listener.accept_future().await {
@@ -873,6 +915,7 @@ impl Server {
                 items: items.clone(),
             });
         });
+        let listing = by_uid && message_set == "1:*";
         let faulty_command = if items.iter().any(|item| item == "BODYSTRUCTURE") {
             Some(FaultyCommand::Structures)
         } else if items
@@ -880,24 +923,43 @@ impl Server {
             .any(|item| body_section(item).is_some_and(is_body_part))
         {
             Some(FaultyCommand::Text)
+        } else if listing {
+            Some(FaultyCommand::Listing)
+        } else if items.iter().any(|item| body_section(item).is_some()) {
+            Some(FaultyCommand::Rows)
         } else {
             None
         };
-        let mut messages = self.select_messages(message_set, by_uid);
+        let mut messages = self.select_messages(message_set, by_uid, listing);
         if faulty_command == Some(FaultyCommand::Text) {
             messages.retain(|(_, message)| !self.setup.vanishing_text_uids.contains(&message.uid));
         }
         let requested_count = messages.len();
-        messages.retain(|(_, message)| !self.setup.unfetchable_uids.contains(&message.uid));
-        let completion =
-            self.setup
-                .fetch_completion
-                .as_deref()
-                .unwrap_or(if messages.len() < requested_count {
-                    "NO Some messages could not be FETCHed"
-                } else {
-                    "OK FETCH done"
-                });
+        if !listing {
+            messages.retain(|(_, message)| !self.setup.unfetchable_uids.contains(&message.uid));
+        }
+        let listing_refused = listing && self.setup.listing_refused;
+        if listing_refused {
+            messages.truncate(messages.len() / 2);
+        }
+        let unavailable =
+            faulty_command.is_some() && faulty_command == self.setup.unavailable_command;
+        if unavailable {
+            messages.clear();
+        }
+        let completion = self
+            .setup
+            .fetch_completion
+            .as_deref()
+            .unwrap_or(if unavailable {
+                "NO [UNAVAILABLE] Mail store down for maintenance"
+            } else if listing_refused {
+                "NO Listing not available now"
+            } else if messages.len() < requested_count {
+                "NO Some messages could not be FETCHed"
+            } else {
+                "OK FETCH done"
+            });
         if self.setup.reverse_order {
             messages.reverse();
             items.reverse();
@@ -935,9 +997,7 @@ impl Server {
         for (sequence_number, message) in messages {
             let prefix = format!("* {sequence_number} FETCH (UID {}", message.uid);
             match self.setup.fault {
-                Some((command, kind))
-                    if Some(command) == faulty_command && self.fault_pending.replace(false) =>
-                {
+                Some((command, kind)) if Some(command) == faulty_command && self.take_fault() => {
                     let response = self.response(message, &item_groups.concat(), sequence_number);
                     if !misbehave(io, command, kind, &prefix, response).await? {
                         return Ok(false);
@@ -958,17 +1018,40 @@ impl Server {
                 }
             }
         }
+        if listing {
+            for (sequence_number, message) in (1..).zip(&self.setup.messages) {
+                if self.setup.expunged_during_listing.contains(&message.uid) {
+                    io.send(format!("* {sequence_number} EXPUNGE\r\n")).await?;
+                }
+            }
+        }
         io.send(format!("{tag} {completion}\r\n")).await?;
         Ok(true)
     }
 
-    /// Messages in the set with their sequence numbers.
-    fn select_messages(&self, message_set: &str, by_uid: bool) -> Vec<(usize, &FixtureMessage)> {
+    /// Whether the configured fault happens now; it happens once.
+    fn take_fault(&self) -> bool {
+        self.fault_pending.replace(false)
+    }
+
+    /// Messages in the set with their sequence numbers. The listing reports
+    /// the vanishing message, which later commands leave out; a message
+    /// expunged during the listing is in neither.
+    fn select_messages(
+        &self,
+        message_set: &str,
+        by_uid: bool,
+        listing: bool,
+    ) -> Vec<(usize, &FixtureMessage)> {
+        let number = |text: &str| match text {
+            "*" => u32::MAX,
+            _ => text.parse().unwrap(),
+        };
         let ranges: Vec<(u32, u32)> = message_set
             .split(',')
             .map(|range| match range.split_once(':') {
-                Some((low, high)) => (low.parse().unwrap(), high.parse().unwrap()),
-                None => (range.parse().unwrap(), range.parse().unwrap()),
+                Some((low, high)) => (number(low), number(high)),
+                None => (number(range), number(range)),
             })
             .collect();
         (1..)
@@ -982,7 +1065,8 @@ impl Server {
                 ranges
                     .iter()
                     .any(|(low, high)| (*low..=*high).contains(&key))
-                    && !(by_uid && self.setup.vanishing_uid == Some(message.uid))
+                    && (listing || self.setup.vanishing_uid != Some(message.uid))
+                    && !self.setup.expunged_during_listing.contains(&message.uid)
             })
             .collect()
     }
@@ -1005,9 +1089,10 @@ impl Server {
                     };
                     fields.push(format!("FLAGS ({flags})").into_bytes());
                 }
-                "INTERNALDATE" => {
-                    fields.push(b"INTERNALDATE \"17-Sep-2026 10:00:00 +0300\"".to_vec())
-                }
+                "INTERNALDATE" => fields.push(
+                    format!("INTERNALDATE \"{}\"", internal_date(message.received_unix))
+                        .into_bytes(),
+                ),
                 "BODYSTRUCTURE" => {
                     fields.push(format!("BODYSTRUCTURE {}", message.structure).into_bytes());
                 }
@@ -1063,6 +1148,8 @@ async fn misbehave(
     response: Vec<u8>,
 ) -> Result<bool, Box<dyn Error>> {
     let attribute = match command {
+        FaultyCommand::Listing => "FLAGS (",
+        FaultyCommand::Rows => "BODY[HEADER.FIELDS (FROM TO SUBJECT)]",
         FaultyCommand::Structures => "BODYSTRUCTURE (\"TEXT\" \"PLAIN\" NIL NIL",
         FaultyCommand::Text => "BODY[1]",
     };
@@ -1103,6 +1190,24 @@ async fn misbehave(
     // Stay silent until the client gives up.
     while io.read_line().await?.is_some() {}
     Ok(false)
+}
+
+/// A date as INTERNALDATE writes it, in UTC, with English month names
+/// whatever the locale.
+fn internal_date(unix: i64) -> String {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let date = glib::DateTime::from_unix_utc(unix).expect("a date glib can hold");
+    format!(
+        "{:02}-{}-{} {:02}:{:02}:{:02} +0000",
+        date.day_of_month(),
+        MONTHS[date.month() as usize - 1],
+        date.year(),
+        date.hour(),
+        date.minute(),
+        date.second()
+    )
 }
 
 /// Labels as X-GM-LABELS carries them: a system label is a flag, written

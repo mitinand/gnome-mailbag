@@ -60,9 +60,9 @@ impl Refreshes {
     }
 
     /// Refresh Mailbox or Refresh Account: keeps what cancels the load just
-    /// started. The latest outcome stays until the load ends, so a banner
-    /// stays over the stored rows meanwhile. The caller checks `is_loading`
-    /// first, because refreshes are not queued.
+    /// started. The latest outcome stays until the load ends; the window
+    /// hides its banner while a load of the same mail runs. The caller
+    /// checks `is_loading` first, because refreshes are not queued.
     pub fn begin_load(
         &mut self,
         account_id: &AccountId,

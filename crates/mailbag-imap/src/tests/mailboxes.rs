@@ -3,10 +3,9 @@
 
 //! Listing an account's mailboxes and opening one of them by its listed name.
 
-use super::{expect_failure, expect_success, plain_messages, run};
+use super::{expect_failure, expect_success, fetch_all_rows, plain_messages, run};
 use crate::{
-    ImapFailure, ImapStep, MailboxList, MailboxName, MailboxReader, OpenOptions, RowItems,
-    list_mailboxes,
+    ImapFailure, ImapStep, MailboxList, MailboxName, MailboxReader, OpenOptions, list_mailboxes,
     test_server::{FixtureSetup, ImapFixture},
 };
 
@@ -164,7 +163,7 @@ fn a_listed_mailbox_opens_and_gives_its_rows() {
         OpenOptions::default(),
         "Work",
     )));
-    let listed = expect_success(run(reader.fetch_rows(RowItems::Standard, 100)));
+    let listed = expect_success(run(fetch_all_rows(&mut reader)));
     assert_eq!(listed.rows.len(), 2);
     assert_eq!(fixture.log().examined_mailboxes, ["Work"]);
 }

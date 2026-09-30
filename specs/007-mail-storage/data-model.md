@@ -55,6 +55,7 @@ An index on `(account, id)` serves reading an Inbox in order.
 | `undecodable` | — | `Explained(Undecodable)` |
 | `structure_unreadable` | — | `StructureUnreadable` |
 | `text_not_returned` | — | `TextNotReturned` |
+| `not_downloaded` | — | `NotDownloaded` (added by [009](../009-synchronization/data-model.md)) |
 
 The codes are a `CHECK` constraint in the schema text, so a new code changes
 the version (research §4).

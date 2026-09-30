@@ -6,7 +6,12 @@
   <!-- interface-name message-row.ui -->
   <requires lib="gtk" version="4.12"/>
   <requires lib="libadwaita" version="1.8"/>
-  <object class="GtkListBoxRow" id="row">
+  <template class="GtkListItem">
+    <binding name="accessible-description">
+      <lookup name="read-state-text" type="MessageItem">
+        <lookup name="item">GtkListItem</lookup>
+      </lookup>
+    </binding>
     <property name="child">
       <object class="GtkRevealer" id="row_reveal">
         <property name="child">
@@ -27,6 +32,11 @@
                     <property name="pixel-size">8</property>
                     <property name="tooltip-text" translatable="yes">Unread</property>
                     <property name="valign">center</property>
+                    <binding name="visible">
+                      <lookup name="unread" type="MessageItem">
+                        <lookup name="item">GtkListItem</lookup>
+                      </lookup>
+                    </binding>
                     <style>
                       <class name="accent"/>
                     </style>
@@ -43,7 +53,11 @@
                       <object class="GtkLabel" id="sender">
                         <property name="ellipsize">end</property>
                         <property name="hexpand">true</property>
-                        <property name="label"/>
+                        <binding name="label">
+                          <lookup name="sender" type="MessageItem">
+                            <lookup name="item">GtkListItem</lookup>
+                          </lookup>
+                        </binding>
                         <property name="xalign">0</property>
                         <style>
                           <class name="heading"/>
@@ -52,7 +66,11 @@
                     </child>
                     <child>
                       <object class="GtkLabel" id="time">
-                        <property name="label"/>
+                        <binding name="label">
+                          <lookup name="date-text" type="MessageItem">
+                            <lookup name="item">GtkListItem</lookup>
+                          </lookup>
+                        </binding>
                         <property name="xalign">0</property>
                         <style>
                           <class name="caption"/>
@@ -77,7 +95,11 @@
                           <object class="GtkLabel" id="subject">
                             <property name="ellipsize">end</property>
                             <property name="hexpand">true</property>
-                            <property name="label"/>
+                            <binding name="label">
+                              <lookup name="subject" type="MessageItem">
+                                <lookup name="item">GtkListItem</lookup>
+                              </lookup>
+                            </binding>
                             <property name="xalign">0</property>
                           </object>
                         </child>
@@ -98,6 +120,7 @@
                       <object class="GtkLabel" id="preview">
                         <property name="ellipsize">end</property>
                         <property name="label"/>
+                        <property name="visible">false</property>
                         <property name="xalign">0</property>
                         <style>
                           <class name="dim-label"/>
@@ -142,5 +165,6 @@
         <property name="transition-type">slide-down</property>
       </object>
     </property>
-  </object>
+    <property name="selectable">false</property>
+  </template>
 </interface>

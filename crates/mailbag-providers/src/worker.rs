@@ -5,19 +5,20 @@
 //! a time and writes what it received into the store. It touches no widget.
 
 use crate::{
-    LoadFailure, LoadResult, LoadTarget,
-    batch::ReceivedBatch,
-    gmail::{list_gmail_folders, load_gmail_mailbox},
-    imap::{list_imap_folders, load_imap_mailbox},
-    microsoft365::{list_microsoft365_folders, load_microsoft365_mailbox},
-    store_load::{store_folder_list, store_mailbox},
+    LoadEvent, LoadFailure, LoadResult, LoadTarget,
+    cycle::synchronize_folder,
+    gmail::list_gmail_folders,
+    imap::list_imap_folders,
+    microsoft365::list_microsoft365_folders,
+    renewal::AccessRenewal,
+    store_load::{BatchWriter, store_folder_list},
 };
 use futures_util::{
     FutureExt,
     future::{self, Either},
 };
 use goa_adapter::{GraphAccess, ImapAccess};
-use mailbag_domain::{AccountId, Folder, FolderRef, install_panic_hook, take_panic};
+use mailbag_domain::{AccountId, Folder, install_panic_hook, take_panic};
 use mailbag_store::Store;
 use std::{cell::RefCell, panic::AssertUnwindSafe, pin::pin, sync::Arc, thread};
 
@@ -34,10 +35,12 @@ pub(crate) struct MailWorker {
 pub(crate) enum LoadKind {
     GenericImap(ImapAccess),
     Gmail(ImapAccess),
-    /// `service_url` is Microsoft Graph's address, or a test service's.
+    /// `service_url` is Microsoft Graph's address, or a test service's; the
+    /// renewal is used once after the service refused the token.
     Microsoft365 {
         access: GraphAccess,
         service_url: String,
+        renewal: AccessRenewal,
     },
     /// Panics inside the load, as a hostile message could make a parser do.
     #[cfg(test)]
@@ -61,7 +64,9 @@ pub(crate) struct LoadRequest {
     target: LoadTarget,
     /// Closed when the caller cancels or drops the load.
     cancelled: async_channel::Receiver<()>,
-    outcome: async_channel::Sender<LoadResult>,
+    /// Unbounded, so the final result is never dropped behind a batch
+    /// event the caller has not read yet.
+    events: async_channel::Sender<LoadEvent>,
 }
 
 /// Cancels its load when dropped, which closes the connection.
@@ -77,32 +82,33 @@ impl MailWorker {
         }
     }
 
-    /// Loads `target` of the account the access data names. `on_finished` runs
-    /// once on the calling GLib context, even when the worker stops, so a
-    /// load always ends and the refresh actions become available again.
+    /// Loads `target` of the account the access data names. `on_event`
+    /// runs on the calling GLib context for each stored batch, then once
+    /// with the end, even when the worker stops, so a load always ends and
+    /// the refresh actions become available again.
     pub(crate) fn start_load(
         &self,
         kind: LoadKind,
         target: LoadTarget,
-        on_finished: impl FnOnce(LoadResult) + 'static,
+        on_event: impl FnMut(LoadEvent) + 'static,
     ) -> LoadHandle {
         let account_id = kind.account_id().clone();
         let record_name = target.record_name();
         let (cancel, cancelled) = async_channel::bounded(1);
-        let (sender, outcome) = async_channel::bounded(1);
+        let (sender, events) = async_channel::unbounded();
         let request = LoadRequest {
             kind,
             target,
             cancelled,
-            outcome: sender,
+            events: sender,
         };
         // The worker's queue is unbounded, so sending cannot block GTK.
         let accepted = self.queue().try_send(request).is_ok();
-        glib::MainContext::ref_thread_default().spawn_local(report_outcome(
+        glib::MainContext::ref_thread_default().spawn_local(report_events(
             account_id,
             record_name,
-            accepted.then_some(outcome),
-            on_finished,
+            accepted.then_some(events),
+            on_event,
         ));
         LoadHandle { _cancel: cancel }
     }
@@ -130,24 +136,28 @@ impl MailWorker {
     }
 }
 
-/// Reports how the load ended. A panic inside a load ends only that load; a
-/// worker thread that stopped anyway, for example on a panic while dropping a
-/// cancelled load, leaves no outcome behind, and the window still hears that
-/// the load is over.
-pub(crate) async fn report_outcome(
+/// Passes the load's events on until it ends. A panic inside a load ends
+/// only that load; a worker thread that stopped anyway, for example on a
+/// panic while dropping a cancelled load, leaves no end behind, and the
+/// window still hears that the load is over.
+pub(crate) async fn report_events(
     account_id: AccountId,
     record_name: &'static str,
-    outcome: Option<async_channel::Receiver<LoadResult>>,
-    on_finished: impl FnOnce(LoadResult),
+    events: Option<async_channel::Receiver<LoadEvent>>,
+    mut on_event: impl FnMut(LoadEvent),
 ) {
-    let reported = match outcome {
-        Some(outcome) => outcome.recv().await.ok(),
-        None => None,
-    };
-    on_finished(
-        reported
-            .unwrap_or_else(|| LoadFailure::WorkerStopped(None).give_up(&account_id, record_name)),
-    );
+    if let Some(events) = events {
+        while let Ok(event) = events.recv().await {
+            let finished = matches!(event, LoadEvent::Finished(_));
+            on_event(event);
+            if finished {
+                return;
+            }
+        }
+    }
+    on_event(LoadEvent::Finished(
+        LoadFailure::WorkerStopped(None).give_up(&account_id, record_name),
+    ));
 }
 
 /// Runs loads until the last worker handle is dropped.
@@ -158,24 +168,31 @@ fn run_worker(requests: &async_channel::Receiver<LoadRequest>, store: &Store) {
         .with_thread_default(|| {
             context.block_on(async {
                 while let Ok(request) = requests.recv().await {
-                    let outcome =
-                        run_load(request.kind, request.target, store, &request.cancelled).await;
-                    request.outcome.try_send(outcome).ok();
+                    let outcome = run_load(
+                        request.kind,
+                        request.target,
+                        store,
+                        &request.cancelled,
+                        &request.events,
+                    )
+                    .await;
+                    request.events.try_send(LoadEvent::Finished(outcome)).ok();
                 }
             });
         })
         .expect("the mail worker owns its GLib context");
 }
 
-/// Runs one provider's load and its write until they finish or the caller
-/// cancels the load.
+/// Runs one load and its writes until they finish or the caller cancels the
+/// load.
 async fn run_load(
     kind: LoadKind,
     target: LoadTarget,
     store: &Store,
     cancelled: &async_channel::Receiver<()>,
+    events: &async_channel::Sender<LoadEvent>,
 ) -> LoadResult {
-    let mut load = Box::pin(load_catching_panics(kind, target, store, cancelled));
+    let mut load = Box::pin(load_catching_panics(kind, target, store, cancelled, events));
     match future::select(&mut load, pin!(cancelled.recv())).await {
         Either::Left((outcome, _)) => outcome,
         Either::Right(_) => {
@@ -187,31 +204,36 @@ async fn run_load(
     }
 }
 
-/// Runs the provider's load sequence, then stores what it received. A panic
-/// inside either ends this load as a failure that carries the panic's message
-/// and place, and the worker goes on with the next load
+/// Runs the folder list's load and its write, or a folder's cycle. A panic
+/// inside ends this load as a failure that carries the panic's message and
+/// place, and the worker goes on with the next load
 /// (specs/006-error-handling FR-014).
 async fn load_catching_panics(
     kind: LoadKind,
     target: LoadTarget,
     store: &Store,
     cancelled: &async_channel::Receiver<()>,
+    events: &async_channel::Sender<LoadEvent>,
 ) -> LoadResult {
     let account_id = kind.account_id().clone();
     let record_name = target.record_name();
-    // A load cancelled while it waited for the store writes nothing
-    // (specs/007-mail-storage/research.md §6).
-    let load_cancelled = || cancelled.is_closed();
     let load = async move {
-        Ok::<_, LoadFailure>(match target {
+        match target {
             LoadTarget::FolderList => {
                 let account = kind.account_id().clone();
-                store_folder_list(store, &account, list_folders(kind).await?, load_cancelled)
+                // A load cancelled while it waited for the store writes
+                // nothing (specs/007-mail-storage/research.md §6).
+                Ok(store_folder_list(
+                    store,
+                    &account,
+                    list_folders(kind).await?,
+                    || cancelled.is_closed(),
+                ))
             }
             LoadTarget::Mailbox(folder) => {
-                store_mailbox(store, load_mailbox(kind, folder).await?, load_cancelled)
+                synchronize_folder(kind, BatchWriter::new(store, folder, cancelled, events)).await
             }
-        })
+        }
     };
     // A panic in the store rolled its transaction back, and no other state
     // outlives a load, so nothing the panic interrupted is used again. The
@@ -223,8 +245,9 @@ async fn load_catching_panics(
     }
 }
 
-// The kind is read once, in each of the two functions below, to choose the
-// sequence; no sequence asks about the provider again (004 plan, decision D1).
+// The kind is read once, in the function below and in the cycle, to choose
+// the sequence; no sequence asks about the provider again (004 plan,
+// decision D1).
 
 /// The provider's folder-list sequence.
 async fn list_folders(kind: LoadKind) -> Result<Vec<Folder>, LoadFailure> {
@@ -234,27 +257,8 @@ async fn list_folders(kind: LoadKind) -> Result<Vec<Folder>, LoadFailure> {
         LoadKind::Microsoft365 {
             access,
             service_url,
+            ..
         } => list_microsoft365_folders(access, &service_url)
-            .await
-            .map_err(LoadFailure::MicrosoftGraph),
-        #[cfg(test)]
-        LoadKind::PanicsForTest(_) => panic!("a load panicked on purpose"),
-    }
-}
-
-/// The provider's sequence for the newest messages of `folder`.
-async fn load_mailbox(kind: LoadKind, folder: FolderRef) -> Result<ReceivedBatch, LoadFailure> {
-    match kind {
-        LoadKind::GenericImap(access) => load_imap_mailbox(access, folder)
-            .await
-            .map_err(LoadFailure::Imap),
-        LoadKind::Gmail(access) => load_gmail_mailbox(access, folder)
-            .await
-            .map_err(LoadFailure::Imap),
-        LoadKind::Microsoft365 {
-            access,
-            service_url,
-        } => load_microsoft365_mailbox(access, &service_url, folder)
             .await
             .map_err(LoadFailure::MicrosoftGraph),
         #[cfg(test)]

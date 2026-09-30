@@ -7,7 +7,12 @@
 aligned on 2026-09-26 with 006 as corrected that day. FR-002, FR-003 and
 FR-014(b) amended on 2026-09-27 by [008](../008-folders/spec.md), which
 builds the target model of FR-003 except the IMAP UID and the folder state
-that synchronization needs; built and accepted with it the same day. The decisions taken at sizing and at the
+that synchronization needs; built and accepted with it the same day. FR-005
+amended on 2026-09-29 by [Synchronization](../009-synchronization/spec.md):
+the reader stays open while its message is listed. FR-002, FR-003, FR-004,
+FR-010 and FR-014(a), (b), (e), (f) amended the same day by
+Synchronization: a folder's mail is what its cycles stored, batch by
+batch. The decisions taken at sizing and at the
 specification challenge are recorded under Clarifications.
 **Input**: Every piece of mail the window shows comes from a local store and
 from nowhere else. A load writes what it received into the store; the window
@@ -24,7 +29,10 @@ and local changes. It owns what is stored, where, how it stays whole and
 private, how it follows Online Accounts, and how the window reads it. It does
 not own how a folder is synchronized with its server: what a load fetches
 stays as each provider feature defines it (the newest 100 Inbox messages), and
-a completed load replaces what the store holds for that folder. Whatever waits
+a completed load replaces what the store holds for that folder. *Amended by
+[009](../009-synchronization/spec.md)*: synchronization owns how a folder
+agrees with its server, and its cycles store their results batch by batch
+(009 FR-001, FR-008). Whatever waits
 for a layer that does not exist yet is marked deferred in FR-014 and gets no
 plan decisions, tasks or code until that layer exists.
 
@@ -259,12 +267,14 @@ window shows and what the record says.
   never stored (006 FR-007).
 - **FR-002 — What is stored**: For each account, identified by its Online
   Accounts ID, the store holds its folders as the latest completed folder
-  list left them and, for each folder, its messages as its latest completed
-  load left them ([008](../008-folders/spec.md) FR-007).
+  list left them and, for each folder, its messages as its cycles stored
+  them ([009](../009-synchronization/spec.md) FR-001, FR-008; amended by
+  009, which replaces "as its latest completed load left them").
   For each message: its provider identity (FR-003), the list fields (subject,
   sender, recipients, received date), its read state as the server last
-  reported it, and its reader content, which is either the received text in
-  full or the reason the reader shows none (002 FR-004, 006 FR-006). The store
+  reported it, and its reader content, which is the received text in full,
+  the reason the reader shows none (002 FR-004, 006 FR-006), or that the
+  text was not downloaded (009 FR-009). The store
   holds no password, token or other credential, no server reply, no failure,
   no load state and no account name or address.
 
@@ -286,7 +296,13 @@ window shows and what the record says.
   between a message and a folder, not a field of the message: it carries the
   IMAP UID, which is valid only with the folder's UIDVALIDITY, and a message
   may belong to several folders. No stored message is ever addressed by a UID
-  of another UIDVALIDITY.
+  of another UIDVALIDITY. *Amended by 009 (FR-005, Key Entities)*: the
+  folder state is built as the saved server position, the place an
+  unfinished first fill continues from, and whether the folder's latest
+  cycle completed; UIDVALIDITY is part of a Generic IMAP
+  message's identity, `imap:<folder>/<UIDVALIDITY>/<UID>`, instead of a
+  folder field; the UID on each membership stays deferred to read and star
+  (FR-014(c)), since no cycle needs it.
 
 **Loads and the window**
 
@@ -296,11 +312,14 @@ window shows and what the record says.
   Inbox. A failed or cancelled load MUST leave the store unchanged. A load
   whose list the server did not finish, or whose service offered more than one
   request holds, completes with the messages it received (006 US3).
+  *Replaced by 009 FR-001 and FR-008*: Refresh Mailbox runs a cycle that
+  stores whole batches; a folder is no longer replaced by one load.
 - **FR-005 — The window during and after a refresh**: While a refresh runs,
   the stored rows stay and the sidebar's spinner runs; with nothing stored the
   list says that the Inbox is loading, as today. When a load completes the
-  window reads the store again: the list shows the stored rows and the reader
-  closes. A failed load leaves the store unchanged (FR-004): stored rows stay
+  window reads the store again: the list shows the stored rows, and the
+  reader stays open while its message is listed (amended by 009 FR-013,
+  which replaces "the reader closes"). A failed load leaves the store unchanged (FR-004): stored rows stay
   with the banner that names the failure (006 FR-013(a)); with nothing stored
   the failure page takes the list's place (006 FR-006). The banner describes
   the latest refresh of the account and nothing older: its failure, or its
@@ -336,7 +355,9 @@ window shows and what the record says.
   loss, the store holds the state after some completed load, possibly not the
   latest one, and never part of a load. A load acknowledged as stored survives
   a quit and a crash; after a power loss it may be missing (constitution III:
-  the next refresh obtains it again).
+  the next refresh obtains it again). *Replaced by 009 FR-008 and FR-010*:
+  the store holds the batches a cycle stored, each whole, never part of a
+  batch; the next cycle continues from them.
 - **FR-011 — Never in the window's way**: Reading and writing the store MUST
   NOT block the window (constitution V). Selecting an account shows its
   stored rows without a visible wait, and the window stays responsive while a
@@ -369,10 +390,14 @@ window shows and what the record says.
   delta queries), with the folder state they need (the last UID, the highest
   modification sequence, the delta link); a list that shows a whole folder.
   Until then a load delivers the newest 100 and replaces the stored folder.
+  *Built by [009](../009-synchronization/spec.md)*, except CONDSTORE and
+  QRESYNC (009 FR-015(e)).
   (b) *Folders and labels*: built by [008](../008-folders/spec.md) except
   what its FR-013 defers, among them counts, the combined Inbox, and for
   Gmail All Mail plus Trash and Spam as the synchronized folders with labels
-  becoming memberships (Clarifications).
+  becoming memberships (Clarifications). *Amended by 009 FR-006*: each
+  Gmail label folder is synchronized as a folder, one stored message per
+  Gmail identifier; the All Mail model is replaced.
   (c) *Read and star*: a message addressed on its server by its identity and,
   for IMAP, by its UID with the folder's UIDVALIDITY (FR-003); local changes,
   their durability before the server confirms them, and a store changed by
@@ -382,8 +407,11 @@ window shows and what the record says.
   (d) *Conversations*: Message-ID, References, In-Reply-To, Gmail's thread
   identifier and Microsoft 365's conversation identifier.
   (e) *Content cache*: HTML, inline resources, attachments, previews, and
-  keeping content beyond what the latest load delivered.
-  (f) *Background synchronization*: loads the user did not start.
+  keeping content beyond what the latest load delivered. *Amended by 009
+  FR-009*: the cycles store the text of messages received in the last 30
+  days; the rest stays deferred (009 FR-015(d)).
+  (f) *Background synchronization*: loads the user did not start. *Moved to
+  009 FR-015(c)*.
   (g) *Release readiness*: upgrading a populated store instead of discarding
   it (FR-012), with the user's consent when it holds unsent changes.
 
