@@ -136,6 +136,12 @@ related to this folder with their listed read state, and nothing of them is
 fetched again (spec FR-005: "messages the store lacks"). A row without `X-GM-MSGID` is
 left out of the cycle and written to the record: Google documents the
 attribute on every message, and a message is never guessed from its place.
+Such a row, if its message is stored, removes it with the listing's proof,
+and the next listing that carries the identifier brings it back as an
+arrival (spec, Considered and out of scope; a review asked on 2026-09-30).
+Google's documentation and the public bug trackers of other clients name
+no case of a missing identifier, and a listing our parser cannot read
+fails the cycle instead of dropping the row.
 
 **Rationale**: spec FR-006 and Clarifications; the listing's cost grows by
 one number per line.

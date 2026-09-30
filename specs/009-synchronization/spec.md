@@ -220,7 +220,10 @@ user sees without the rule named.
 Considered and out of scope: a server that reuses a UID without changing
 UIDVALIDITY, or that completes a listing while leaving out a message it
 still holds, violates RFC 3501 and is not handled (such a message would
-return as an arrival at the next refresh); a Microsoft 365 message moved
+return as an arrival at the next refresh); a Gmail message listed without
+its identifier, which Google documents on every message, is left out
+likewise (FR-006): a stored one leaves with that listing and returns with
+the next listing that carries its identifier; a Microsoft 365 message moved
 into the refreshed folder is reported by the delta query, whose
 documentation does not say how, and FR-007's rule covers either form.
 
