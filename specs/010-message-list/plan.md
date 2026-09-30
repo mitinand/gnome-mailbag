@@ -113,9 +113,9 @@ flowchart TD
   `text/html` section it meets; the page section wins, else the first
   plain section; none for encrypted and S/MIME-secured messages.
 - `preview_of_piece(mime_header, piece, is_html) -> String`:
-  1. `clean_cut` — a trailing incomplete base64 group or partial
-     quoted-printable escape dropped by the header's encoding; then the
-     reader's `decode_text_part`; a trailing replacement mark dropped.
+  1. `clean_cut` — a trailing incomplete base64 group dropped when the
+     header names base64; then the reader's `decode_text_part`; a
+     trailing replacement mark dropped.
   2. `page_words` when `is_html` — a space before each block tag, then
      `html_to_text`.
   3. `normalise_words` — white space, invisible characters, bracketed

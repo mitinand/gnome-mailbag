@@ -5,6 +5,10 @@
 **Status**: Implemented on `claude/sync` on 2026-09-29, portion by portion
 with the maintainer's review; the manual checks of the quickstart
 passed on the installed build on 2026-09-30 (plan, Post-implementation).
+FR-003, FR-009, FR-013 and FR-015(d) amended on 2026-09-30 by
+[Message list](../010-message-list/spec.md): a batch carries each
+message's preview, and the list's order and presentation are that
+feature's.
 Approved on 2026-09-29 (tasks T001). Sized at the feature-start on
 2026-09-28 (budget: at most 1 500 production lines, raised to 1 600 at
 planning and to 2 000 during the implementation, and 1 500 test lines,
@@ -451,6 +455,10 @@ documentation does not say how, and FR-007's rule covers either form.
   the rest arrives. While a folder fills, the sidebar's spinner runs as for
   any load and the growing list is the progress; no count or progress bar
   is shown.
+  *Amended 2026-09-30 by [Message list](../010-message-list/spec.md): a batch also carries, for
+  every message it stores, the preview 010 FR-003 requires, made from the
+  beginning of the message's text part, its web-page form first, read
+  with the batch.*
 - **FR-004 — Removal only with proof**: A stored message MUST leave a
   folder only when its server proves it is no longer in that folder. On
   IMAP the proof is a listing of every message of the folder that the
@@ -535,6 +543,11 @@ documentation does not say how, and FR-007's rule covers either form.
   until the message leaves the store; nothing is evicted before the content
   cache. This rule is owned by the content cache once it is specified; HTML
   parts wait for the HTML reader.
+  *Amended 2026-09-30 by [Message list](../010-message-list/spec.md): every message a batch stores,
+  recent or not, also gets its preview (010 FR-003), made from a piece of
+  its text part read with the batch; a refusal of that piece stores an
+  empty preview with the row, and a temporary refusal fails the cycle as
+  above. The 30-day text rule is unchanged.*
 
 **Interruptions and failures**
 
@@ -583,6 +596,8 @@ documentation does not say how, and FR-007's rule covers either form.
   ordered newest first by received date until the message list decides the
   order. This replaces "the reader closes when the rows are replaced" of
   007 FR-005 and 008 FR-010.
+  *Amended 2026-09-30 by [Message list](../010-message-list/spec.md): the order is 010 FR-001; the
+  kept position and the open message are 010 FR-005.*
 - **FR-014 — Accounts**: 007 FR-007 and FR-008 hold for every batch: no
   batch of an account's cycle is stored after a complete Online Accounts
   answer without the account or with its Mail off. When Mail is on again,
@@ -612,7 +627,8 @@ documentation does not say how, and FR-007's rule covers either form.
   continues, after the start, a first fill that did not complete.
   (d) *Content cache*: takes over FR-009; adds HTML parts (with the HTML
   reader), inline resources, download on opening and how long content is
-  kept. *Message list*: order, previews and presentation.
+  kept. *Message list*: order, previews and presentation (*amended
+  2026-09-30 by [Message list](../010-message-list/spec.md): built*).
   (e) *CONDSTORE (RFC 7162)*: on servers that announce it, except Gmail, a
   quicker "nothing changed" check by the folder's highest modification
   sequence and reading only changed read state; removals still need the

@@ -76,10 +76,12 @@ is often 50 to 200 kilobytes, the piece is enough for 400 characters.
 ## §4 Decoding a cut piece
 
 **Decision**: The piece is given a clean cut, then decoded by the
-reader's own `decode_text_part`: a trailing incomplete base64 group and
-a trailing partial quoted-printable escape are dropped first, and a
-replacement mark at the very end, left by a cut multi-byte sequence, is
-dropped afterwards (spec FR-003(b)). One decoder owns character sets,
+reader's own `decode_text_part`: a trailing incomplete base64 group is
+dropped first, and a replacement mark at the very end, left by a cut
+multi-byte sequence, is dropped afterwards (spec FR-003(b)). A partial
+quoted-printable escape needs no cut: the parser leaves it out (checked
+at the implementation on 2026-09-30 by a test that cuts a
+quoted-printable piece at every position). One decoder owns character sets,
 encodings and their failures. (Changed at the challenge from an own
 decoding path for pieces.)
 

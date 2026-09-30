@@ -37,6 +37,7 @@ list; an empty completed list is never stored (spec FR-001).
 | `account` | TEXT, not null | The Online Accounts ID |
 | `identity` | TEXT, not null | `gmail:<X-GM-MSGID>`, `graph:<immutable id>`, or `imap:<folder identity>/<uid>` |
 | `subject`, `sender`, `recipients`, `received`, `seen`, `content_kind`, `content_detail` | as in 007 | The list fields, read state and content |
+| `preview` | TEXT, not null | The first readable words of the message; empty when there are none (added on 2026-09-30 by [Message list](../010-message-list/spec.md), [its data model](../010-message-list/data-model.md)) |
 
 Unique on `(account, identity)`.
 

@@ -12,7 +12,9 @@ amended on 2026-09-29 by [Synchronization](../009-synchronization/spec.md):
 the reader stays open while its message is listed. FR-002, FR-003, FR-004,
 FR-010 and FR-014(a), (b), (e), (f) amended the same day by
 Synchronization: a folder's mail is what its cycles stored, batch by
-batch. The decisions taken at sizing and at the
+batch. FR-014(e) amended on 2026-09-30 by
+[Message list](../010-message-list/spec.md): the stored message gains its
+preview. The decisions taken at sizing and at the
 specification challenge are recorded under Clarifications.
 **Input**: Every piece of mail the window shows comes from a local store and
 from nowhere else. A load writes what it received into the store; the window
@@ -409,7 +411,9 @@ window shows and what the record says.
   (e) *Content cache*: HTML, inline resources, attachments, previews, and
   keeping content beyond what the latest load delivered. *Amended by 009
   FR-009*: the cycles store the text of messages received in the last 30
-  days; the rest stays deferred (009 FR-015(d)).
+  days; the rest stays deferred (009 FR-015(d)). *Amended 2026-09-30 by
+  [Message list](../010-message-list/spec.md)*: previews leave this list; the stored message
+  gains its preview (010 FR-003).
   (f) *Background synchronization*: loads the user did not start. *Moved to
   009 FR-015(c)*.
   (g) *Release readiness*: upgrading a populated store instead of discarding

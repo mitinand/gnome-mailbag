@@ -1,13 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Chooses the readable text parts of a received message and decodes them.
+//! Chooses the readable text parts of a received message and decodes them,
+//! and makes a message's preview for the list.
 //!
 //! This crate works on MIME part descriptions and raw MIME entities through
 //! mail-parser. It knows nothing about IMAP, GIO or the user interface.
 
+mod preview;
 #[cfg(test)]
 mod tests;
+
+pub use preview::{
+    PREVIEW_PIECE_BYTES, PreviewPart, preview_of_piece, preview_of_text, select_preview_part,
+};
 
 use mail_parser::{MessageParser, MimeHeaders, PartType, decoders::charsets::map::charset_decoder};
 use mailbag_domain::{ContentExplanation, DisplayFields};
@@ -52,6 +58,11 @@ impl MimePart {
     fn disposition_is(&self, disposition: &str) -> bool {
         self.disposition.as_deref() == Some(disposition)
     }
+
+    /// A file name without an explicit inline disposition marks an attached file.
+    fn is_attached_file(&self) -> bool {
+        self.has_file_name() && !self.disposition_is("inline")
+    }
 }
 
 /// The text parts to read from a message, or why there are none.
@@ -64,8 +75,7 @@ pub enum TextSelection {
 
 /// Chooses the plain-text parts to read, without reading any payload.
 pub fn select_text_parts(root: &MimePart) -> TextSelection {
-    let mut walk = Walk::default();
-    visit(root, &mut walk);
+    let walk = walk_message(root);
     let selection = match (walk.parts.is_empty(), walk.explanation) {
         (false, _) => TextSelection::Parts(walk.parts),
         (true, Some(explanation)) => TextSelection::Explained(explanation),
@@ -102,7 +112,15 @@ fn section_name(section: &[u32]) -> String {
 struct Walk {
     parts: Vec<Vec<u32>>,
     has_html: bool,
+    /// The first web-page part that is not an attached file, for the preview.
+    html_part: Option<Vec<u32>>,
     explanation: Option<ContentExplanation>,
+}
+
+fn walk_message(root: &MimePart) -> Walk {
+    let mut walk = Walk::default();
+    visit(root, &mut walk);
+    walk
 }
 
 fn visit(part: &MimePart, walk: &mut Walk) {
@@ -117,6 +135,7 @@ fn visit(part: &MimePart, walk: &mut Walk) {
                 let mut branch = Walk::default();
                 visit(child, &mut branch);
                 walk.has_html |= branch.has_html;
+                walk.html_part = walk.html_part.take().or(branch.html_part);
                 if branch.parts.is_empty() {
                     walk.explanation = walk.explanation.take().or(branch.explanation);
                 } else {
@@ -146,15 +165,19 @@ fn visit(part: &MimePart, walk: &mut Walk) {
                 visit(child, walk);
             }
         }
-        // A file name without an explicit inline disposition marks an attached file.
-        ("text", "plain") if !part.has_file_name() || part.disposition_is("inline") => {
+        ("text", "plain") if !part.is_attached_file() => {
             walk.parts.push(part.section.clone());
         }
         ("text", "plain") => tracing::debug!(
             section = section_name(&part.section),
             "text part left out as a file"
         ),
-        ("text", "html") => walk.has_html = true,
+        ("text", "html") => {
+            walk.has_html = true;
+            if walk.html_part.is_none() && !part.is_attached_file() {
+                walk.html_part = Some(part.section.clone());
+            }
+        }
         ("application", "pkcs7-mime" | "x-pkcs7-mime") => {
             walk.explanation
                 .get_or_insert(ContentExplanation::SecuredWithSMime);
@@ -257,8 +280,9 @@ fn decode_entity(mime_header: &[u8], body: &[u8]) -> Result<String, ContentExpla
         return Err(ContentExplanation::UnknownCharset(charset.to_owned()));
     }
     match &part.body {
-        // NUL cannot reach GTK text APIs.
-        PartType::Text(text) => {
+        // NUL cannot reach GTK text APIs. A web page decodes the same way,
+        // for its preview; the reader never selects one.
+        PartType::Text(text) | PartType::Html(text) => {
             let text = text.replace('\0', "\u{FFFD}");
             let flowed = flowed_join(part);
             let text = match flowed {
