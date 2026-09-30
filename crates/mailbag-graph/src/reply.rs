@@ -156,6 +156,7 @@ fn read_message(entry: &Value) -> Option<GraphMessage> {
             .unwrap_or_default(),
         received_unix: entry["receivedDateTime"].as_str().and_then(unix_seconds),
         is_read: entry["isRead"].as_bool()?,
+        body_preview: present_text(&entry["bodyPreview"]),
     })
 }
 
@@ -214,7 +215,8 @@ mod tests {
                         {"emailAddress": {"address": "cy@example.org"}}
                     ],
                     "receivedDateTime": "2018-09-09T03:15:08Z",
-                    "isRead": true
+                    "isRead": true,
+                    "bodyPreview": "The figures are attached."
                 }],
                 "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$skiptoken=1"
             }"#,
@@ -248,6 +250,7 @@ mod tests {
                 ],
                 received_unix: Some(1_536_462_908),
                 is_read: true,
+                body_preview: Some("The figures are attached.".to_owned()),
             })]
         );
     }

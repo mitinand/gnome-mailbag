@@ -36,7 +36,9 @@ CREATE TABLE folder (
     UNIQUE (account, identity)
 ) STRICT;
 
--- A message, once per account however many folders list it.
+-- A message, once per account however many folders list it. `preview` is
+-- the first readable words of its text for the list, empty when there are
+-- none (specs/010-message-list/data-model.md).
 CREATE TABLE message (
     id INTEGER PRIMARY KEY,
     account TEXT NOT NULL,
@@ -60,6 +62,7 @@ CREATE TABLE message (
         'not_downloaded'
     )),
     content_detail TEXT,
+    preview TEXT NOT NULL,
     UNIQUE (account, identity)
 ) STRICT;
 

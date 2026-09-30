@@ -145,10 +145,11 @@ today.
 
 **Checked**: the message resource documents `bodyPreview` as "the first
 255 characters of the message body. It is in text format" (Microsoft
-Graph v1.0 reference). That the delta query returns it under `$select`
-is inferred from the delta reference's `$select` support and is proved
-at the quickstart on the installed build; the scripted service returns
-it in tests.
+Graph v1.0 reference). The delta query returns it under `$select`:
+checked on 2026-10-01 with one live request of the cycle's `$select` and
+order to a personal account's Inbox, whose first page of 10 entries all
+carried a non-empty `bodyPreview` of at most 255 characters. The
+scripted service returns it in tests.
 
 ## §8 The store
 

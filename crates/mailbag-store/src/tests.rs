@@ -42,6 +42,7 @@ fn text_message(identity: &str) -> Message {
         received_unix: None,
         seen: false,
         content: ReceivedContent::Text(format!("Text of {identity}")),
+        preview: format!("Preview of {identity}"),
     }
 }
 
@@ -89,6 +90,7 @@ fn read_stored_messages(
                 received_unix: row.received_unix,
                 seen: row.seen,
                 content,
+                preview: row.preview,
             })
         })
         .collect::<Result<_, Failure>>()?;
@@ -199,6 +201,11 @@ fn a_mailbox_reads_back_newest_first_with_every_field() {
             received_unix: (number % 5 != 0).then_some(1_700_000_000 - i64::from(number)),
             seen: number % 2 == 1,
             content,
+            preview: if number % 3 == 0 {
+                String::new()
+            } else {
+                format!("Preview {number}")
+            },
         })
         .collect();
     let store = Store::in_memory();
@@ -251,7 +258,7 @@ fn a_new_load_of_a_mailbox_replaces_its_messages_and_deletes_those_left_nowhere(
 }
 
 #[test]
-fn a_message_in_two_folders_is_stored_once_with_its_latest_fields() {
+fn a_message_in_two_folders_is_stored_once_with_its_latest_fields_and_preview() {
     let loaded = account("loaded");
     let labelled = text_message("gmail:1");
     let store = store_with(
@@ -260,6 +267,7 @@ fn a_message_in_two_folders_is_stored_once_with_its_latest_fields() {
     );
     let read_later = Message {
         seen: true,
+        preview: "Edited elsewhere".to_owned(),
         ..labelled
     };
     store_completed_cycle(
@@ -634,6 +642,28 @@ fn a_batch_removes_changes_relates_and_adds_in_one_write() {
     assert_eq!(store.read_message_content(&synced, "gone"), Ok(None));
     assert_eq!(identities_of(&store, &work), ["shared"]);
     assert_eq!(stored_message_count(&store), 4);
+}
+
+#[test]
+fn a_related_or_read_message_keeps_its_preview() {
+    let synced = account("synced");
+    let store = store_listing(&synced, &["INBOX", "Work"]);
+    let (inbox, work) = (folder_of(&synced, "INBOX"), folder_of(&synced, "Work"));
+    let elsewhere = FolderBatch {
+        arrived: vec![dated_message("shared", 1)],
+        ..FolderBatch::default()
+    };
+    store.store_batch(&work, &elsewhere, || false).unwrap();
+    let related = FolderBatch {
+        known_arrived: vec![("shared".to_owned(), true)],
+        read_states: vec![("shared".to_owned(), true)],
+        ..FolderBatch::default()
+    };
+    store.store_batch(&inbox, &related, || false).unwrap();
+    for folder in [&inbox, &work] {
+        let rows = store.read_folder_rows(folder).unwrap().unwrap();
+        assert_eq!(rows[0].preview, "Preview of shared", "{folder:?}");
+    }
 }
 
 #[test]

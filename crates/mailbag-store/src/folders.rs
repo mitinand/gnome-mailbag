@@ -179,7 +179,8 @@ pub(crate) fn set_read_states(
 /// folder. Its content replaces the stored one, except that a text not
 /// downloaded never replaces a content another folder's cycle stored, and
 /// a text the server did not return never replaces a stored text
-/// (specs/009-synchronization/data-model.md).
+/// (specs/009-synchronization/data-model.md). Its preview always replaces
+/// the stored one (specs/010-message-list/data-model.md).
 pub(crate) fn store_arrived(
     transaction: &Transaction,
     folder_id: i64,
@@ -188,10 +189,10 @@ pub(crate) fn store_arrived(
 ) -> rusqlite::Result<()> {
     let mut upsert_message = transaction.prepare(
         "INSERT INTO message (account, identity, subject, sender, recipients, received, seen, \
-         content_kind, content_detail) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
+         content_kind, content_detail, preview) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
          ON CONFLICT (account, identity) DO UPDATE SET subject = excluded.subject, \
          sender = excluded.sender, recipients = excluded.recipients, \
-         received = excluded.received, seen = excluded.seen, \
+         received = excluded.received, seen = excluded.seen, preview = excluded.preview, \
          content_kind = iif(excluded.content_kind = 'not_downloaded' \
          OR (excluded.content_kind = 'text_not_returned' AND content_kind = 'text'), \
          content_kind, excluded.content_kind), \
@@ -215,6 +216,7 @@ pub(crate) fn store_arrived(
                 message.seen,
                 content_kind,
                 content_detail,
+                message.preview,
             ],
             |row| row.get(0),
         )?;
@@ -274,7 +276,8 @@ pub(crate) fn delete_messages_without_folder(
     Ok(())
 }
 
-/// The rows of the messages a folder holds, without their content, newest
+/// The rows of the messages a folder holds, with their previews but without
+/// their content, newest
 /// first by received date, then by the order they were stored in, newest
 /// first; a message without a date comes last.
 pub(crate) fn read_listed_rows(
@@ -283,7 +286,7 @@ pub(crate) fn read_listed_rows(
 ) -> rusqlite::Result<Vec<MessageListRow>> {
     connection
         .prepare(
-            "SELECT identity, subject, sender, recipients, received, seen \
+            "SELECT identity, subject, sender, recipients, received, seen, preview \
              FROM membership JOIN message ON message.id = membership.message \
              WHERE membership.folder = ?1 ORDER BY message.received DESC, message.id DESC",
         )?
@@ -297,6 +300,7 @@ pub(crate) fn read_listed_rows(
                 },
                 received_unix: row.get("received")?,
                 seen: row.get("seen")?,
+                preview: row.get("preview")?,
             })
         })?
         .collect()

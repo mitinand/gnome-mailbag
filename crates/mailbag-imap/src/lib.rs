@@ -261,6 +261,8 @@ pub struct MessageList {
 pub struct TextRequest {
     pub uid: u32,
     pub parts: TextParts,
+    /// Read only the first octets of each body section, headers whole.
+    pub limit: Option<u32>,
 }
 
 /// Which sections to read. Messages with equal values share one command.

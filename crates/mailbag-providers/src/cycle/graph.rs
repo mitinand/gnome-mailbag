@@ -10,6 +10,7 @@ use crate::{
     LoadResult, microsoft365::received_fields, renewal::AccessRenewal, store_load::BatchWriter,
 };
 use goa_adapter::GraphAccess;
+use mailbag_content::preview_of_text;
 use mailbag_domain::{FolderBatch, FolderState, Message, ReceivedContent};
 use mailbag_graph::{
     ChangePage, ChangesFrom, GraphError, GraphFailure, GraphMessage, MessageChange, NextPage,
@@ -446,5 +447,6 @@ fn stored_message(arrival: Arrival, texts: &HashMap<String, Option<String>>) -> 
         received_unix: message.received_unix,
         seen: message.is_read,
         content,
+        preview: preview_of_text(message.body_preview.as_deref().unwrap_or_default()),
     }
 }

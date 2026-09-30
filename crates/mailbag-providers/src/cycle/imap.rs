@@ -13,7 +13,7 @@ use crate::{
 };
 use goa_adapter::ImapAccess;
 use mailbag_content::decode_display_fields;
-use mailbag_domain::{FolderBatch, FolderState, IncompleteList, Message, ReceivedContent};
+use mailbag_domain::{FolderBatch, FolderState, IncompleteList, Message};
 use mailbag_imap::{
     FolderListing, ImapError, ImapFailure, ImapStep, MailboxReader, OpenOptions, RowItems,
     ServerReply,
@@ -229,7 +229,8 @@ impl ImapFolder {
 
     /// One batch of missing messages: those the account already holds,
     /// related without fetching them (research §4), and the others with
-    /// their rows and, for those received after `recent_limit`, their text.
+    /// their rows and previews and, for those received after `recent_limit`,
+    /// their text.
     /// A message that disappeared meanwhile is left out. A row fetch the
     /// server refused returns its reason with what it answered.
     async fn fetch_arrivals(
@@ -257,16 +258,14 @@ impl ImapFolder {
             .filter(|row| row.internal_date.is_some_and(|date| date >= recent_limit))
             .map(|row| row.uid)
             .collect();
-        let mut contents = read_contents(&mut self.reader, &recent).await?;
+        let fetched: Vec<u32> = rows.rows.iter().map(|row| row.uid).collect();
+        let mut contents = read_contents(&mut self.reader, &fetched, &recent).await?;
         let arrived = rows
             .rows
             .into_iter()
             .filter_map(|row| {
-                let content = match recent.contains(&row.uid) {
-                    // A message missing here disappeared meanwhile.
-                    true => contents.remove(&row.uid)?,
-                    false => ReceivedContent::NotDownloaded,
-                };
+                // A message missing here disappeared meanwhile.
+                let (content, preview) = contents.remove(&row.uid)?;
                 let listed = unknown.iter().find(|message| message.uid == row.uid)?;
                 Some(Message {
                     identity: listed.identity.clone(),
@@ -275,6 +274,7 @@ impl ImapFolder {
                     received_unix: row.internal_date,
                     seen: row.seen,
                     content,
+                    preview,
                 })
             })
             .collect();

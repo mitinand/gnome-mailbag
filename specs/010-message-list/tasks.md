@@ -4,7 +4,7 @@
 **Created**: 2026-09-30 · **Branch**: `claude/message-list` · **Status**:
 Documents written, challenged (the spec and the plan, in fresh
 sessions) and approved on 2026-09-30 (T001); portion 2 implemented on
-2026-09-30, awaiting review.
+2026-09-30 and committed; portion 3 implemented on 2026-10-01, awaiting review.
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -110,17 +110,17 @@ piece of its part read with the batch, on Microsoft 365 from the
 service's preview; the store keeps and reads it. The list still shows no
 preview.
 
-- [ ] T008 [US1] In crates/mailbag-domain/src/lib.rs: `Message.preview:
+- [x] T008 [US1] In crates/mailbag-domain/src/lib.rs: `Message.preview:
   String` and `MessageListRow.preview: String`, left out of the
   privacy-safe `Debug` outputs; every constructor in the workspace's tests
   updated.
-- [ ] T009 [US1] In crates/mailbag-store/src/schema.sql the column
+- [x] T009 [US1] In crates/mailbag-store/src/schema.sql the column
   `message.preview TEXT NOT NULL`; in src/folders.rs `store_arrived`
   writes it (the upsert takes the new value) and `read_listed_rows` reads
   it; tests in crates/mailbag-store/src/tests.rs: the column written and
   read, a message stored again takes the new preview, a related message
   keeps its own.
-- [ ] T010 [US1] In crates/mailbag-imap/src/lib.rs `TextRequest.limit:
+- [x] T010 [US1] In crates/mailbag-imap/src/lib.rs `TextRequest.limit:
   Option<u32>`; in src/reader.rs `fetch_text` groups requests by `(parts,
   limit)` and writes `BODY.PEEK[<section>]<0.<limit>>` for the body
   sections of a limited request (the header sections unchanged); in
@@ -130,7 +130,7 @@ preview.
   tests in crates/mailbag-imap/src/tests/: a limited request's command
   text, its answer matched, a mixed batch of full and limited requests in
   two commands.
-- [ ] T011 [US1] In crates/mailbag-providers/src/imap_texts.rs
+- [x] T011 [US1] In crates/mailbag-providers/src/imap_texts.rs
   `read_contents(reader, uids, recent: &[u32]) -> BTreeMap<u32,
   (ReceivedContent, String)>`: structures for every UID; for a recent
   message the reader's parts as today; for every message the preview part
@@ -148,7 +148,7 @@ preview.
   message whose page yields no words takes its plain piece; a refused
   piece stores an empty preview and the row; a temporary refusal fails the
   cycle as before.
-- [ ] T012 [US1] First, with the maintainer and his account, one request
+- [x] T012 [US1] First, with the maintainer and his account, one request
   to the service: a delta page of a folder with `$select=subject,
   bodyPreview`, to confirm the field comes back (research §7); the answer
   recorded in research §7. Then in crates/mailbag-graph/src/lib.rs `bodyPreview` in
@@ -159,11 +159,11 @@ preview.
   crates/mailbag-graph/src/tests.rs (the field parsed and selected) and
   crates/mailbag-providers/src/tests.rs (a Microsoft 365 batch stores the
   normalised preview; a partial entry changes no preview).
-- [ ] T013 [US1] The scripted-server fixtures used by SC-002: a folder of
+- [x] T013 [US1] The scripted-server fixtures used by SC-002: a folder of
   10 000 messages with parts on the scripted IMAP server for the existing
   first-fill test extended to assert every stored row has a preview, and
   the time to its first batch written to the test's output.
-- [ ] T014 STOP: run ./scripts/check.sh and git diff --check; compare the
+- [x] T014 STOP: run ./scripts/check.sh and git diff --check; compare the
   size with plan.md (domain ≈ 6, store ≈ 20, imap ≈ 25, graph ≈ 10,
   providers ≈ 110; tests ≈ 230); report, suggest the commit and wait
   before portion 4.

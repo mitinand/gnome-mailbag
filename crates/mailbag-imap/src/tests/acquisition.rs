@@ -107,8 +107,9 @@ fn an_alert_from_a_successful_fetch_explains_a_later_failure() {
         vec![TextRequest {
             uid: 10,
             parts: TextParts::SinglePartBody,
+            limit: None,
         }],
-        |_, _| panic!("the text transfer must fail"),
+        |_, _, _| panic!("the text transfer must fail"),
     )));
     assert_eq!(error.failure, ImapFailure::Failed(ImapStep::FetchText));
     assert_eq!(error.alerts, ["Maintenance tonight"]);
@@ -133,8 +134,9 @@ fn examine_alerts_explain_a_later_text_failure() {
         vec![TextRequest {
             uid: 10,
             parts: TextParts::SinglePartBody,
+            limit: None,
         }],
-        |_, _| panic!("the text transfer must fail"),
+        |_, _, _| panic!("the text transfer must fail"),
     )));
     assert_eq!(error.failure, ImapFailure::Failed(ImapStep::FetchText));
     assert_eq!(error.alerts, ["Maintenance tonight", "Backup in progress"]);
@@ -249,8 +251,9 @@ fn a_temporary_refusal_of_structures_or_text_fails_the_read_with_its_code() {
                     vec![TextRequest {
                         uid: 10,
                         parts: TextParts::SinglePartBody,
+                        limit: None,
                     }],
-                    |_, _| {},
+                    |_, _, _| {},
                 )))
             }
         };
@@ -378,9 +381,10 @@ fn loading_sends_only_read_only_commands() {
             .map(|&uid| TextRequest {
                 uid,
                 parts: TextParts::SinglePartBody,
+                limit: None,
             })
             .collect();
-        expect_success(reader.fetch_text(requests, |_, _| {}).await);
+        expect_success(reader.fetch_text(requests, |_, _, _| {}).await);
     });
     let log = fixture.log();
     assert_eq!(

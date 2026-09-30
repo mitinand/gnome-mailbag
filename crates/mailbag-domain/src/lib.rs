@@ -123,6 +123,9 @@ pub struct Message {
     /// The read state as the server last reported it.
     pub seen: bool,
     pub content: ReceivedContent,
+    /// The first readable words of the message for its list row; empty when
+    /// it has none (specs/010-message-list FR-003). Mail content: never logged.
+    pub preview: String,
 }
 
 /// What a folder remembers between cycles (specs/009-synchronization,
@@ -167,6 +170,8 @@ pub struct MessageListRow {
     /// The received date as seconds since the Unix epoch.
     pub received_unix: Option<i64>,
     pub seen: bool,
+    /// The stored preview. Mail content: never logged.
+    pub preview: String,
 }
 
 /// Subject, sender and recipients for the list and the reader.

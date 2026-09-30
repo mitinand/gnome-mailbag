@@ -286,6 +286,7 @@ fn two_messages() -> Vec<Message> {
             received_unix: Some(1_700_000_000),
             seen: false,
             content: ReceivedContent::Text("Second body".to_owned()),
+            preview: "Second body".to_owned(),
         },
         Message {
             identity: "uid:10".to_owned(),
@@ -297,6 +298,7 @@ fn two_messages() -> Vec<Message> {
             received_unix: Some(1_699_000_000),
             seen: true,
             content: ReceivedContent::StructureUnreadable,
+            preview: String::new(),
         },
     ]
 }
@@ -328,6 +330,7 @@ fn unwrapped_and_ordinary_messages() -> Vec<Message> {
             received_unix: Some(1_700_000_000 - number),
             seen: true,
             content: body,
+            preview: String::new(),
         })
         .collect()
 }
@@ -1287,6 +1290,7 @@ fn mailbox_navigation() {
             received_unix: Some(1_700_000_000 - number),
             seen: number % 2 == 0,
             content: ReceivedContent::TextNotReturned,
+            preview: String::new(),
         })
         .collect();
     store_completed_cycle(&store, &folder_of(&google, "Projects"), &many, || false)
@@ -1637,6 +1641,7 @@ fn listed_row(identity: &str, seen: bool) -> MessageListRow {
         },
         received_unix: None,
         seen,
+        preview: String::new(),
     }
 }
 
