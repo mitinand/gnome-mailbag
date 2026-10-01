@@ -1,14 +1,17 @@
 <!-- Sync Impact Report
-Version: 2.1.0 -> 2.2.0 (expanded guidance).
-Modified principles:
-- I. Necessary complexity only: apply the failure-scenario test to requirements,
-  require the scenario to be possible with the supported dependencies, and limit
-  specification edge cases to cases that pass this test.
-Rationale: the F01 review found requirements and code for situations that GNOME
-Online Accounts cannot produce, while Spec Kit prompts ask for more edge cases.
+Version: 2.2.0 -> 2.3.0 (new principle).
+Modified principles: none.
+Added principles:
+- VII. Gmail first, each provider on its own terms: Gmail is the first-priority
+  provider, and each provider is designed for by its own documentation and
+  measured behaviour; provider-specific logic is expected when either shows a
+  better path, with Principle I still requiring that reason.
+Rationale: the 010 live check tuned preview reading on one IMAP server's
+measurements and applied it to every IMAP server, while Gmail measured
+differently; treating Gmail as a case of generic IMAP made the most common
+provider's path a compromise.
 Added sections: none. Removed sections: none.
-Templates: unchanged. The pinned Spec Kit spec template still prompts for edge
-cases; Spec Kit reads the constitution at runtime and this principle governs them.
+Templates: unchanged; Spec Kit reads the constitution at runtime.
 Deferred items: none.
 -->
 # Mailbag Constitution
@@ -84,6 +87,17 @@ verification where appropriate. Security, durability and compatibility claims ne
 matching evidence. Record what was checked and what remains unverified; component
 tests do not prove installed-Flatpak integration.
 
+### VII. Gmail first, each provider on its own terms
+
+Gmail is the first-priority provider: most users are expected to have a Gmail
+account. Design, measure and tune each capability for Gmail first. Treat each
+provider by its own documentation and measured behaviour rather than as a case of
+a generic protocol: Gmail by Google's documentation, including its IMAP
+extensions and the Gmail API; Microsoft 365 by Microsoft Graph's.
+Provider-specific logic is the expected design when the provider's documentation
+or a measurement shows a better path for that provider; Principle I still
+requires that reason.
+
 ## Public Repository Language
 
 All repository content and maintainer-authored issues, PRs and release notes must
@@ -103,4 +117,4 @@ an implementation. Review design and code changes against these principles. Use
 semantic versioning for amendments; constitution versions are independent of
 application releases.
 
-**Version**: 2.2.0 | **Ratified**: 2026-09-08 | **Last Amended**: 2026-09-15
+**Version**: 2.3.0 | **Ratified**: 2026-09-08 | **Last Amended**: 2026-10-01
