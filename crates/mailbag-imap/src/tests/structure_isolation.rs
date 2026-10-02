@@ -186,6 +186,29 @@ fn a_bye_during_the_load_ends_it_with_the_server_text() {
 }
 
 #[test]
+fn a_nil_encoding_is_read_on_the_same_connection() {
+    let fixture = ImapFixture::start(FixtureSetup {
+        messages: vec![FixtureMessage::nil_encoding(10, "text")],
+        ..FixtureSetup::default()
+    });
+    let mut reader = open_reader(&fixture);
+    let structures = expect_success(run(reader.fetch_structures(&[10])));
+    assert!(structures[&10].is_some());
+    let request = TextRequest {
+        uid: 10,
+        parts: TextParts::SinglePartBody,
+        limit: None,
+    };
+    expect_success(run(reader.fetch_text(vec![request], |_, _, text| {
+        let MessageText::Received(parts) = text else {
+            panic!("the text must be received");
+        };
+        assert_eq!(parts[0].body, b"text");
+    })));
+    assert_eq!(fixture.log().connections, 1);
+}
+
+#[test]
 fn an_extremely_deep_structure_leaves_the_process_running() {
     let fixture = ImapFixture::start(FixtureSetup {
         messages: vec![FixtureMessage::deeply_nested(10, 10_000)],

@@ -259,6 +259,21 @@ impl FixtureMessage {
         }
     }
 
+    /// A plain-text message whose BODYSTRUCTURE gives `NIL` as the part's
+    /// encoding, as a server answers for a part without a
+    /// Content-Transfer-Encoding header; RFC 3501 wants a string there.
+    pub fn nil_encoding(uid: u32, text: &str) -> Self {
+        let structure = format!(
+            "(\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL NIL {} {} NIL NIL NIL NIL)",
+            text.len(),
+            text.lines().count()
+        );
+        Self {
+            structure,
+            ..Self::plain_text(uid, text)
+        }
+    }
+
     /// A message whose BODYSTRUCTURE nests message/rfc822 parts `depth` levels
     /// deep, beyond what the IMAP parser accepts when `depth` exceeds 32.
     pub fn deeply_nested(uid: u32, depth: usize) -> Self {

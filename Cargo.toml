@@ -28,4 +28,4 @@ unsafe_code = "forbid"
 # Maintained forks at full revisions; see specs/002-imap-integration/research.md §3.
 [patch.crates-io]
 async-imap = { git = "https://github.com/mitinand/async-imap", rev = "06497e037a11a1c8aa56dcea02cfaddb526fa7a4" }
-imap-proto = { git = "https://github.com/mitinand/imap-proto", rev = "9d175e67192cfee1506c94a67f4b7138f8634725" }
+imap-proto = { git = "https://github.com/mitinand/imap-proto", rev = "6adb66087055c8ac64e442ca6cf465227277e912" }
