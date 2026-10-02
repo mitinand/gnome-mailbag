@@ -263,3 +263,49 @@ fails the cycle, so without the event the reverted row stayed on screen
 until the folder was reselected. The challenge proposed sending
 `BatchStored` from the drop; the maintainer objected to the name, since
 no batch was stored, and the event is renamed for its meaning.
+
+## §14 The external review: a command in flight
+
+An outside review of the documents on 2026-10-03 found six points; the
+maintainer decided them the same day.
+
+1. **A wish made while a command is in flight was lost.** The first rules
+   ended a wish equal to the server value at the moment it was written,
+   and an accepted command cleared the pending value outright. Sequence:
+   star (pending 1, server 0); the cycle sends; the user unstars while the
+   answer is out (server still 0, so the wish was dropped as "equal"); the
+   OK settles server 1 and clears nothing: the unstar is gone, also after
+   a restart. Now a wish is stored as made; an accepted command ends only
+   a pending value equal to the sent value, a refused one only a pending
+   value equal to the refused value; a pending value equal to the stored
+   server value is ended by the next sending step without a command. The
+   same sequence then ends with pending 0 after the OK and a second
+   command that unstars (spec FR-001, FR-007, FR-010).
+2. **A Microsoft 365 partial entry re-applied a stale flag.** T007 took
+   the flag a partial entry did not name from the cycle's starting
+   snapshot; a message reported in two pages of one round (its read state
+   on the first, its star alone on the second; the service documents that
+   an item may appear more than once) had its read state reverted by the
+   second page. A report now writes only the flags it names
+   (`FlagChanges` with options, `COALESCE` in the store).
+3. **Mark as Unread in the first second.** The plan checked "already in
+   the wanted state" before dropping the read timer; an open unread
+   message is still unread, so the handler returned and the timer later
+   marked it read. The timer is dropped first. When the timer's write has
+   already started, a second write on GIO's pool could land before it, so
+   the window's writes run one at a time through a small queue.
+4. **A lost Microsoft 365 answer.** The service documents that a change
+   may reach a delta answer with a delay, so the next round may not settle
+   a pending change whose request was applied; the request is then sent
+   again, which is harmless since it sets a value. The spec says so and
+   keeps "never again without the listing's evidence" for IMAP.
+5. **A 5xx answer** (504 gateway timeout, 503) does not say the change was
+   refused: the service could not complete the request. It is FR-009's
+   unknown outcome: the cycle fails, the pending change stays. The
+   maintainer chose this on 2026-10-03, apart from the temporary 4xx
+   refusals he chose to drop.
+6. **One command for every pending message** could exceed a server's
+   command line (Dovecot's default is 64 KiB); a hundred UIDs per command.
+
+The test budget rose to 850 for the race tests (a held completion on the
+scripted IMAP server; two rapid writes in the window).

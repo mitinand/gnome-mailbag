@@ -7,22 +7,30 @@ client open beside the window.
 
 ## Automated
 
-- `mailbag-store`: rows read the effective state; a pending write equal
-  to the server value leaves nothing pending; a batch's flag write ends an
-  equal pending value and leaves a differing one; the pending query lists
-  only the folder's non-null values; settle and drop; a restart over the
-  same store reads the pending state again (SC-002's store half).
+- `mailbag-store`: rows read the effective state; a pending write stores
+  the wish even when it equals the server value; a batch's flag write
+  ends an equal pending value, leaves a differing one and leaves a flag
+  the report did not name; the pending query lists only the folder's
+  non-null values with their server values; a settle or a drop ends only
+  a pending value equal to the command's; a restart over the same store
+  reads the pending state again (SC-002's store half).
 - `mailbag-imap`: the folder is opened with `SELECT`; `\Flagged` is read
   in the listing and the rows; `store_flags` sends one `UID STORE` for a
   UID set with the silent form, drains a `FETCH` line, returns the reply
   of a `NO` and of a `BAD`, and fails on a lost connection; the scripted
-  server keeps the flags a store changed.
+  server keeps the flags a store changed and can hold a completion until
+  the test releases it.
 - `mailbag-graph`: `update_message_flags` sends `PATCH` with the JSON
-  body, the content type and the ImmutableId preference; a 200, a 400
-  and a 404; a partial entry with `flag` only and a full entry; the
+  body, the content type and the ImmutableId preference; a 200, a 400, a
+  404 and a 504; a partial entry with `flag` only and a full entry; the
   scripted service records the method and the body.
 - `mailbag-providers` (scripted servers): each change reaches the server
-  as one command for exactly its messages, at the next cycle (SC-001);
+  as one command for exactly its messages, at the next cycle (SC-001); a
+  change made while a command is in flight survives its acceptance and is
+  sent next; 250 pending changes go in three commands; a 504 keeps the
+  pending change for the next cycle; a message reported in two pages of
+  one round keeps both flags; a wish equal to the server value ends
+  without a command;
   a star during a first fill of 300 messages is received before the
   second batch's rows are read, and one after the last batch before the
   connection closes (SC-003); a connection closed after the command and
@@ -36,8 +44,9 @@ client open beside the window.
   row's star appears after the re-read, and no load starts; Mark as
   Unread keeps the message open, the dot returns and the timer does not
   mark it read again; read on opening after the second writes the
-  pending change, not within half a second (SC-007); a refused change
-  shows the row as the server has it and the failed refresh's banner.
+  pending change, not within half a second (SC-007); two rapid changes
+  are written in the user's order; a refused change shows the row as the
+  server has it and the failed refresh's banner.
 
 ## Installed build
 
@@ -68,3 +77,6 @@ client open beside the window.
 9. Change a message in the window and, before refreshing, change it the
    other way in the web client; refresh: the window's change wins, and
    the web client follows it.
+10. Star a message, refresh, and unstar it while the refresh runs: after
+    the refresh the message is unstarred in the window and, after one
+    more refresh, in the web client; the record shows the second command.

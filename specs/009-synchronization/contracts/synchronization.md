@@ -19,12 +19,14 @@ user's word, *mailbox*, where it names the refreshed folder
   what a folder remembers between cycles (data-model.md `folder`). A
   Generic IMAP message's identity is `imap:<folder>/<UIDVALIDITY>/<UID>`.
 - `FolderBatch { removed: Vec<String>, flag_states: Vec<(String,
-  MessageFlags)>, known_arrived: Vec<(String, MessageFlags)>, arrived:
+  FlagChanges)>, known_arrived: Vec<(String, MessageFlags)>, arrived:
   Vec<Message>, state: Option<FolderState> }` (since 011; before,
   `read_states: Vec<(String, bool)>` and `known_arrived: Vec<(String,
   bool)>`): one whole part of a cycle's result. `removed`
   holds identities proven gone from the folder (spec FR-004);
-  `flag_states` the new `seen` and `flagged` of messages the folder holds;
+  `flag_states` the new `seen` and `flagged` the server reported for
+  messages the folder holds, each an `Option` so that a report naming one
+  flag writes that flag alone (011 FR-001);
   `known_arrived` messages the folder did not hold but the account did, with
   their listed flags, related without fetching (research §4); `arrived`
   full records to insert or update (messages the account did not hold, and

@@ -97,10 +97,12 @@ and the window changes nothing yet.
 
 - [ ] T003 [US1] In crates/mailbag-domain/src/lib.rs: `MessageFlag {
   Seen, Flagged }`, `MessageFlags { seen: bool, flagged: bool }`,
-  `PendingChange { identity: String, flag: MessageFlag, wanted: bool }`;
-  `Message.flagged: bool` and `MessageListRow.flagged: bool`;
-  `FolderBatch.read_states` becomes `flag_states: Vec<(String,
-  MessageFlags)>` and `known_arrived: Vec<(String, MessageFlags)>`;
+  `FlagChanges { seen: Option<bool>, flagged: Option<bool> }` (what a
+  server report named), `PendingChange { identity: String, flag:
+  MessageFlag, wanted: bool, server: bool }`; `Message.flagged: bool` and
+  `MessageListRow.flagged: bool`; `FolderBatch.read_states` becomes
+  `flag_states: Vec<(String, FlagChanges)>` and `known_arrived:
+  Vec<(String, MessageFlags)>`;
   `ServerStep::ChangeFlags`; the privacy-safe `Debug` outputs updated; in
   crates/mailbag/src/failure_declarations.rs the three wording arms for
   `ServerStep::ChangeFlags` ("Message not changed on the server"; "The
@@ -116,17 +118,20 @@ and the window changes nothing yet.
   returns `HashMap<String, MessageFlags>` of the server values and
   `FolderSync.stored` takes that type (src/lib.rs); `set_read_states`
   becomes `set_flag_states(transaction, account, &[(String,
-  MessageFlags)])` writing both columns with `seen_pending = CASE WHEN
+  FlagChanges)])` writing only the named flags (`seen = COALESCE(?seen,
+  seen)`) with `seen_pending = CASE WHEN ?seen IS NOT NULL AND
   seen_pending = ?seen THEN NULL ELSE seen_pending END` and the same for
-  `flagged`; `store_arrived`'s upsert writes `flagged` and the same two
-  `CASE`s in its `DO UPDATE`; `relate_known` calls `set_flag_states`;
-  new `read_pending_changes(connection, folder_id) ->
+  `flagged`; `store_arrived`'s upsert writes `flagged` and the two
+  `CASE`s in its `DO UPDATE`; `relate_known` writes both flags the same
+  way; new `read_pending_changes(connection, folder_id) ->
   Vec<PendingChange>` over the folder's memberships where either pending
-  column is not null; `write_pending_flag(transaction, account, identity,
-  flag, wanted)` as one `UPDATE` with the short-circuit (`NULL` when the
-  server column equals `wanted`); `settle_flags(transaction, account,
-  identities, flag, value)` (server := value, pending := NULL);
-  `drop_pending_flags(transaction, account, identities, flag)`; the
+  column is not null, each with its server value;
+  `write_pending_flag(transaction, account, identity, flag, wanted)` as
+  one `UPDATE` setting the pending column to `wanted` whatever the server
+  column holds (research §14); `settle_flags(transaction, account,
+  identities, flag, value)` (server := value; pending := NULL where it
+  equals value); `drop_pending_flags(transaction, account, identities,
+  flag, refused)` (pending := NULL where it equals refused); the
   `Store` methods `read_pending_changes(folder)`, `write_pending_flag`,
   `settle_flags`, `drop_pending_flags` in src/lib.rs, the writes failing
   as `FailureKind::MailNotSaved` and the read as `StoredMailUnreadable`.
@@ -148,22 +153,24 @@ and the window changes nothing yet.
   `flag_states` where either flag differs from the stored server value,
   `fetch_arrivals` sets `Message.flagged` from the row and `known_arrived`
   with both flags; in src/cycle/graph.rs `merge_per_message` merges
-  `flagged` as it merges `is_read`, `batch_from_changes` emits flag
-  states from a partial entry's `is_read` and `flagged` (a partial entry
-  with only one of them takes the other from the cycle's `FolderSync`; a
-  message the folder sync lacks is read again as today),
-  `stored_message` sets `flagged`; in
+  `flagged` as it merges `is_read`, `batch_from_changes` emits a
+  `FlagChanges` from a partial entry with only the flags it names (the
+  other `None`, never taken from the cycle's snapshot: a message may come
+  in two pages of one round, research §14), `stored_message` sets
+  `flagged`; in
   src/store_load.rs `BatchCounts.read_states` becomes `flag_states`.
 - [ ] T008 [P] [US1] Tests in crates/mailbag-store/src/tests.rs: rows
   read the effective state for each combination of server and pending
-  values; `write_pending_flag` stores a wish and leaves nothing when the
-  wish equals the server value, and a newer wish replaces the older; a
-  batch's flag write ends an equal pending value and leaves a differing
-  one, through `flag_states`, an upsert and a related known message;
-  `read_pending_changes` lists only the folder's non-null values, as
-  `(identity, flag, wanted)`; `settle_flags` and `drop_pending_flags`; a
-  second `Store::at` over the same file reads the pending state again
-  (spec SC-002's store half).
+  values; `write_pending_flag` stores a wish, also one equal to the
+  server value, and a newer wish replaces the older; a batch's flag write
+  ends an equal pending value, leaves a differing one and leaves a flag
+  the report did not name, through `flag_states`, an upsert and a
+  related known message; `read_pending_changes` lists only the folder's
+  non-null values, as `(identity, flag, wanted, server)`; `settle_flags`
+  ends a pending value equal to the sent value and keeps a differing one;
+  `drop_pending_flags` the same with the refused value; a second
+  `Store::at` over the same file reads the pending state again (spec
+  SC-002's store half).
 - [ ] T009 [P] [US4] Tests: crates/mailbag-imap/src/tests/ (a listing and
   a row with `\Flagged` read into `flagged`; without it false);
   crates/mailbag-graph/src/tests.rs and src/reply.rs tests (`flag` in the
@@ -174,7 +181,7 @@ and the window changes nothing yet.
   changes the stored star and keeps the read state).
 - [ ] T010 STOP: run ./scripts/check.sh and git diff --check; compare the
   size with plan.md (domain ≈ 35, store ≈ 90, the read side of imap ≈ 10
-  and graph ≈ 15, providers ≈ 20; tests ≈ 175); report, suggest the
+  and graph ≈ 15, providers ≈ 20; tests ≈ 185); report, suggest the
   commit and wait before portion 3.
 
 ## Phase 3: the wire (portion 3)
@@ -214,7 +221,9 @@ refuse and record those commands. No cycle uses them yet.
   `store_completion: Option<String>` (a scripted `NO` or `BAD` with
   `{tag}`) and `store_fault: Option<StoreFault>` (`CloseAfterApplying`: apply
   and close the connection without the completion; `CloseBeforeApplying`: close
-  before applying).
+  before applying; `HoldCompletion(receiver)`: apply, then send the
+  completion only when the test signals, so a test can write a pending
+  change while the command is in flight).
 - [ ] T014 [US1] [US4] [US5] In crates/mailbag-graph/src/lib.rs
   `FlagUpdate { Read(bool), Starred(bool) }` and
   `update_message_flags(service_url, access_token, id, update) ->
@@ -223,12 +232,13 @@ refuse and record those commands. No cycle uses them yet.
   `application/json`), the ImmutableId preference, `PATCH
   /me/messages/{id}` with `{"isRead": …}` or `{"flag": {"flagStatus":
   "flagged" | "notFlagged"}}`; 200 is success, any other status the
-  refusal `GraphFailure::Refused { status, code }` as today; the record
-  line names the path and the field, never the message. In
-  src/test_server.rs `ReceivedRequest.method` and `.body`; `PATCH
-  /me/messages/{id}` applies `isRead` and `flag` to the scripted message
-  and answers 200 with it, or the setup's scripted refusal (`patch_answer:
-  Option<ScriptedAnswer>` for 400, 404 or 429).
+  refusal `GraphFailure::Refused { status, code }` as today (the sender
+  tells a 5xx apart, T020); the record line names the path and the
+  field, never the message. In src/test_server.rs `ReceivedRequest.method`
+  and `.body`; `PATCH /me/messages/{id}` applies `isRead` and `flag` to
+  the scripted message and answers 200 with it, or the setup's scripted
+  answer (`patch_answer: Option<ScriptedAnswer>` for 400, 404, 429 or
+  504).
 - [ ] T015 [P] [US1] [US5] Tests in crates/mailbag-imap/src/tests/
   (a new `flags.rs` beside `mailboxes.rs`): `store_flags` sends the
   expected command text for each flag and direction and a UID set; an
@@ -242,8 +252,8 @@ refuse and record those commands. No cycle uses them yet.
   a 404 and a 429 are `Refused` with their status and code; the scripted
   message carries the new value afterwards.
 - [ ] T017 STOP: run ./scripts/check.sh and git diff --check; compare the
-  size with plan.md (imap ≈ 60, graph ≈ 40; tests ≈ 180 with the
-  scripted servers' ≈ 90); report, suggest the commit and wait before
+  size with plan.md (imap ≈ 60, graph ≈ 40; tests ≈ 200 with the
+  scripted servers' ≈ 100); report, suggest the commit and wait before
   portion 4.
 
 ## Phase 4: the cycle sends (portion 4)
@@ -268,18 +278,22 @@ leaves the rest for the next listing (spec FR-006 to FR-010, FR-012).
 - [ ] T020 [US1] [US4] [US5] New crates/mailbag-providers/src/cycle/
   pending.rs, declared from src/cycle.rs: `send_imap_changes(reader:
   &mut MailboxReader, listed_uids: &HashMap<String, u32>, batches: &mut
-  BatchWriter) -> Result<(), CycleEnd>`: the pending changes the listing
-  shows, grouped by `(flag, wanted)`, one `store_flags` per group;
-  `Ok(None)` → `settle`; `Ok(Some(reply))` → `drop_pending` then
+  BatchWriter) -> Result<(), CycleEnd>`: a pending change whose wanted
+  value equals its server value → `settle` with that value, no command;
+  the others the listing shows, grouped by `(flag, wanted)`, one
+  `store_flags` per hundred UIDs; `Ok(None)` → `settle(uids, flag,
+  wanted)`; `Ok(Some(reply))` → `drop_pending(uids, flag, wanted)` then
   `Err(CycleEnd::Failed(LoadFailure::Imap(...)))` with the reply at
   `ImapStep::StoreFlags`; `Err(error)` → `Err` with the pending untouched.
   `send_graph_changes(service: &mut GraphService, batches) ->
-  Result<(), CycleEnd>`: one `GraphService::update_flags(id, update)` per
-  pending change, which runs `update_message_flags` through `request`
-  (the renewal applies once as for any request); 200 → `settle`; a
-  refusal other than the refused token → `drop_pending` then `Err` with
-  the refusal. Record lines count sent and
-  refused changes at info with identities at debug, never a subject.
+  Result<(), CycleEnd>`: the same equal-value settle; one
+  `GraphService::update_flags(id, update)` per pending change, which runs
+  `update_message_flags` through `request` (the renewal applies once as
+  for any request); 200 → `settle`; a 4xx other than the refused token →
+  `drop_pending` then `Err` with the refusal; a 5xx → `Err` with the
+  pending untouched, an unknown outcome (spec FR-009, research §14).
+  Record lines count sent and refused changes at info with identities at
+  debug, never a subject.
 - [ ] T021 [US1] [US3] [US4] In crates/mailbag-providers/src/cycle/imap.rs
   `synchronize_imap_folder`: the listing's `identity → uid` map kept from
   `identify`; after `batches.store(&listing_changes(...))` the loop
@@ -296,8 +310,12 @@ leaves the rest for the next listing (spec FR-006 to FR-010, FR-012).
   IMAP server as exactly one `UID STORE` with that UID and flag, and the
   Microsoft 365 service as one `PATCH` with that body, within one cycle;
   afterwards the server columns hold the value and nothing is pending);
-  two pending stars go in one IMAP command, two Microsoft 365 changes in
-  two requests; SC-003 (a fixture of 300 messages in batches of 100: a
+  two pending stars go in one IMAP command, 250 pending stars in three
+  commands, two Microsoft 365 changes in two requests; a wish equal to
+  the server value ends without a command; a pending change written
+  while the scripted server holds the completion (the opposite value)
+  survives the acceptance and is sent by the next sending step (research
+  §14); SC-003 (a fixture of 300 messages in batches of 100: a
   pending change written after the first batch is stored appears in the
   command log before the second batch's `UID FETCH`; one written after
   the last batch before `LOGOUT`); SC-004 (`CloseAfterApplying`: the cycle
@@ -310,14 +328,17 @@ leaves the rest for the next listing (spec FR-006 to FR-010, FR-012).
   message under two label mailboxes: a pending read under label A is
   sent by A's cycle once, B's cycle finds the server agreeing and sends
   nothing); Microsoft 365: a change is sent after the round, a 400
-  refusal drops and fails, a refused token is renewed once as for any
-  request; a pending change whose message the listing lacks is left
+  refusal drops and fails, a 504 fails the cycle and leaves the pending
+  change for the next cycle, which sends it again, a refused token is
+  renewed once as for any request, a message reported in two pages of one
+  round (read state, then star alone) keeps both; a pending change whose
+  message the listing lacks is left
   pending and not sent; a cycle whose connection the scripted server
   refuses leaves the pending change untouched and the next cycle sends
   it (SC-002's server half); after a Microsoft 365 change the next round's
   partial entry and full entry leave the effective state as it is.
 - [ ] T023 STOP: run ./scripts/check.sh and git diff --check; compare the
-  size with plan.md (providers ≈ 135; tests ≈ 200); report, suggest the
+  size with plan.md (providers ≈ 150; tests ≈ 240); report, suggest the
   commit and wait before portion 5.
 
 ## Phase 5: the window (portion 5)
@@ -346,11 +367,11 @@ store (spec FR-001 to FR-004).
   (the envelope's toggle and menu are its descendants) with `star` (stateful,
   boolean state, `change-state` → `change_flag(MessageFlag::Flagged,
   state)`), `mark-unread` (→ `change_flag(Seen, false)`) and `mark-read`
-  (→ `change_flag(Seen, true)`); `change_flag(flag, wanted)`: the open
+  (→ `change_flag(Seen, true)`); `change_flag(flag, wanted)`: for `Seen =
+  false` `drop_pending_read` first of all (research §14); then the open
   message's row from `items`; nothing when its effective state already
-  equals `wanted`; for `Seen = false` `drop_pending_read` first; then the
-  `flag_change` callback (`connect_flag_change(impl Fn(&AccountId, &str,
-  MessageFlag, bool))`); `count_read_after_opening`'s timer calls
+  equals `wanted`; then the `flag_change` callback
+  (`connect_flag_change(impl Fn(&AccountId, &str, MessageFlag, bool))`); `count_read_after_opening`'s timer calls
   `change_flag(Seen, true)`; `InWindow.read`, `unread_in_window` and the
   read-in-window arguments removed (`unread` is `!row.seen`);
   `update_list_by_difference` sets `starred` beside `unread` and
@@ -359,8 +380,10 @@ store (spec FR-001 to FR-004).
   starred, `non-starred-symbolic` otherwise) from `listed.flagged`; the
   old `in_window.removed` stays as it is.
 - [ ] T027 [US1] [US2] [US5] In crates/mailbag/src/window_ui.rs:
-  `connect_flag_change` → `run_on_pool(store.write_pending_flag(...))`,
-  then `read_shown_mailbox_again()` on success, or on failure the toast
+  `connect_flag_change` → the change joins a `VecDeque` of pending writes
+  and one `run_on_pool(store.write_pending_flag(...))` runs at a time, the
+  next starting when it ends (research §14); after each,
+  `read_shown_mailbox_again()` on success, or on failure the toast
   "Message not changed" with the advice to try again (spec FR-011;
   `FailureKind::MailNotSaved` with a third explanation "The change to
   this message could not be saved.", shown as a toast) without any row
@@ -378,14 +401,16 @@ store (spec FR-001 to FR-004).
   timer marks it read again within two seconds; an opened unread message
   gets `seen_pending = 1` between 0.8 and 1.5 s after opening and not
   within half a second, and a message opened and left within the second
-  stores nothing (SC-007); the header menu's actions act on the open
-  message; a `StoreChanged` event followed by a `Finished(Failed)` with
+  stores nothing (SC-007); two changes made within one frame (star, then
+  unstar) are written in that order and the store ends unstarred; the
+  header menu's actions act on the open message; a `StoreChanged` event
+  followed by a `Finished(Failed)` with
   `ServerStep::ChangeFlags` shows the row as the store has it and the
   failed-refresh banner with the server's words; a store that refuses the
   write (a read-only file) shows the toast and changes no row.
 - [ ] T029 STOP: run ./scripts/check.sh, git diff --check and each GTK
-  test one per process; compare the size with plan.md (mailbag ≈ 115;
-  tests ≈ 225) and the budget (≤ 600 / ≤ 800); show the row's rendering;
+  test one per process; compare the size with plan.md (mailbag ≈ 130;
+  tests ≈ 235) and the budget (≤ 600 / ≤ 850); show the row's rendering;
   report, suggest the commit and wait.
 
 ## Phase 6: final passes (portion 6)
@@ -401,8 +426,9 @@ store (spec FR-001 to FR-004).
   (SC-008 with an account of each provider; the record checked for
   privacy: identities and flags, no subject); findings fixed within this
   portion; the amendments of T002 checked against the built behaviour.
-- [ ] T033 STOP: final report with the size against the budget, what was
-  verified and how, and the open items.
+- [ ] T033 STOP: final report with the size against the budget (≤ 600
+  production, ≤ 850 test lines), what was verified and how, and the open
+  items.
 
 ## Dependencies
 

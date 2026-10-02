@@ -51,8 +51,9 @@ memberships (the primary key's prefix) and sorts them.
   1. delete the folder's memberships of the removed identities;
   2. delete the account's messages left without a membership;
   3. set `seen` and `flagged` of the listed flag changes by `(account,
-     identity)`; a pending value equal to the value written becomes
-     `NULL` (011 FR-001), a differing one is untouched;
+     identity)`, only the flags the report named; a pending value equal
+     to the value written becomes `NULL` (011 FR-001), a differing one
+     and a flag not named are untouched;
   4. for each full record (an arrival, or a message whose fields the
      service reported again), insert the `message` row or update its list
      fields, read state and star by `(account, identity)`, with the same

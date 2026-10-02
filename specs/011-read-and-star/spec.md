@@ -6,12 +6,14 @@
 the consistency analysis with their decisions applied. Sized on
 2026-10-02, before writing (budget: at
 most 600 production lines and 700 test lines, the test budget raised to
-800 on 2026-10-03; no thread, timer or queue of its own, no new
+800 and then 850 on 2026-10-03; no thread, timer or queue of its own, no new
 dependency, no change to the IMAP library forks; three new columns on the
 stored message); the decisions taken there, and the facts checked against
 live servers the same day, are recorded under Clarifications and
 Assumptions. Challenged on 2026-10-02 (the requirements, then the plan's
-mechanisms, in fresh sessions); the decisions are under Clarifications.
+mechanisms, in fresh sessions), analysed for consistency and reviewed
+once more from outside on 2026-10-03; the decisions are under
+Clarifications.
 **Input**: Marking a message read or unread and starring or unstarring it
 are the first changes the user makes that last: they survive a refresh and
 a restart, reach the server, and show up in every other client of the
@@ -220,8 +222,12 @@ the stored state, the banner and the server's record are compared.
 ### Edge Cases
 
 - The user stars and unstars before any cycle runs: the pending change is
-  the newest wish; a wish equal to the server's state ends the pending
-  change at once, and nothing is sent (FR-001).
+  the newest wish; the next cycle finds it equal to the server state and
+  ends it without a command (FR-007).
+- The user changes the flag again while a command for it is in flight:
+  the newer wish stays, since an accepted or refused command ends only a
+  pending change equal to its own value; the next sending step sends the
+  newer wish (FR-007, FR-010).
 - Another client changes the flag the other way before the user's change
   is sent: the user's change is sent and wins; afterwards the server's
   state is the truth (FR-007, FR-009).
@@ -231,7 +237,11 @@ the stored state, the banner and the server's record are compared.
   sends the change; a message left in no folder is deleted with it (009
   FR-004 and its data model).
 - Mark as Unread within the second after opening: the second's timer is
-  dropped, nothing is marked read (FR-003).
+  dropped first, nothing is marked read (FR-003); when the timer's write
+  has already started, the unread wish is written after it.
+- A Microsoft 365 round reports one message in two pages, the first with
+  its read state, the second with its star alone: each writes only what
+  it reports; the read state stays (FR-001).
 - The unread filter is on: the open message stays listed as 010 FR-008
   says, whether its read state is the server's or pending.
 - The server does not keep the flag permanently: the next listing shows
@@ -355,6 +365,35 @@ the stored state, the banner and the server's record are compared.
   read and star adds UIDs; 002's contract names EXAMINE in three more
   places. All added to the Amendments and to T002.
 
+### Session 2026-10-03 (external review)
+
+- Q: A wish equal to the server state was dropped at once; what if a
+  command for the opposite value is in flight? → A: The newer wish was
+  lost once the command's acceptance wrote the server value. Now a wish is
+  stored as made, an accepted or refused command ends only a pending
+  change equal to its own value, and a wish equal to the stored server
+  state ends when a cycle next compares them (FR-001, FR-007, FR-010).
+- Q: A Microsoft 365 partial entry names one flag; where does the other
+  come from? → A: From nowhere: a report writes only what it names. Taking
+  it from the cycle's starting snapshot re-applied a stale value when a
+  message came in two pages of one round (FR-001).
+- Q: Mark as Unread within the second checked the state before dropping
+  the timer. → A: The timer is dropped first; and the window's writes run
+  one at a time, so a wish made while the timer's write runs lands after
+  it (FR-003).
+- Q: The next Microsoft 365 round may not report a change yet. → A: A
+  pending change the round does not report is sent again; setting a value
+  twice is harmless. The promise "never sent again blindly" holds for
+  IMAP, where the listing is the evidence (FR-009).
+- Q: Is a 5xx answer a refusal? → A: No: the service could not complete
+  the request, the outcome is unknown, the pending change stays (FR-009;
+  the maintainer's decision, distinct from the temporary refusals he
+  chose to drop, which are 4xx answers that did not apply the change).
+- Q: One command for every pending message? → A: A hundred messages per
+  command (FR-007); a few thousand six-digit UIDs would exceed a server's
+  command line.
+- Q: Test budget. → A: Raised to 850 for the two race tests.
+
 ## Requirements
 
 ### Functional Requirements
@@ -366,13 +405,14 @@ the stored state, the banner and the server's record are compared.
   flag on that message, apart from the server state, before the window
   shows it; the window then shows the effective state: the server state
   with the pending change applied over it. A newer wish for the same flag
-  replaces the older; a wish equal to the server state ends the pending
-  change at once. A pending change survives a refresh, a reselection and
-  a restart, and ends only when the server has it (FR-007, FR-009), when
-  the server refuses it (FR-010), or when the message leaves the store. A
-  cycle writes the server state: a pending change equal to the state
-  written ends with that write, and one the server does not have yet is
-  never changed or dropped by a cycle (009 FR-002, amended).
+  replaces the older, whatever the server state at that moment. A pending
+  change survives a refresh, a reselection and a restart, and ends only
+  when the server has it (FR-007, FR-009), when the server refuses it
+  (FR-010), or when the message leaves the store. A cycle writes the
+  server state it was told, a report that names one flag writing that
+  flag alone: a pending change equal to the value written ends with that
+  write, and one the server does not have yet is never changed or dropped
+  by a cycle (009 FR-002, amended).
 - **FR-002 — Actions in the window**: The open message MUST be starred
   and unstarred by the star toggle in the reader's envelope, which shows
   the effective state with the filled star icon while the message is
@@ -390,6 +430,9 @@ the stored state, the banner and the server's record are compared.
   within it, drops the timer and stores nothing. Opening a read message
   stores nothing. The window's own record of messages counted read (010
   FR-009) is retired: the row's read state is the stored effective state.
+  The window writes its changes one at a time, in the order of the user's
+  actions, so a wish made while an earlier write is still running lands
+  after it.
 - **FR-004 — The star in the row**: A row MUST show a star mark at the
   end of its first line, before the date, while the message's effective
   state is starred, and none otherwise, changing in place; the row's
@@ -417,14 +460,18 @@ the stored state, the banner and the server's record are compared.
 - **FR-007 — How a cycle sends**: After storing its listing (on Microsoft
   365, after its round of changes), before each batch of missing
   messages, and once before closing, a cycle MUST send the folder's
-  pending changes, each message addressed as the listing identifies it:
-  on IMAP by the UID the listing shows for the message's identity in this
-  mailbox, under this opening's numbering version; on Microsoft 365 by
-  the message's identity. On IMAP equal changes to several messages go
-  in one command; on Microsoft 365 each message is one request. When the
-  server accepts a command, the server state becomes
-  the sent value and the pending change ends, in one transaction, so the
-  window shows no difference. On IMAP, a pending message the listing
+  pending changes that differ from the stored server state; one equal to
+  it ends without a command. Each message is addressed as the listing
+  identifies it: on IMAP by the UID the listing shows for the message's
+  identity in this mailbox, under this opening's numbering version; on
+  Microsoft 365 by the message's identity. On IMAP equal changes to
+  several messages go in one command, a hundred messages per command at
+  most (servers bound a command line); on Microsoft 365 each message is
+  one request. When the server accepts a command, the server state
+  becomes the sent value and a pending change equal to it ends, in one
+  transaction, so the window shows no difference; a wish made meanwhile
+  for another value stays and goes with the next sending step. On IMAP,
+  a pending message the listing
   does not show is left for the cycle of a folder that lists it. A cycle
   otherwise changes nothing on the server (009 FR-001, amended).
 - **FR-008 — Mailboxes opened for writing**: An IMAP folder MUST be opened
@@ -435,16 +482,21 @@ the stored state, the banner and the server's record are compared.
 **Failures**
 
 - **FR-009 — An unknown outcome is settled by reading**: When the
-  connection breaks after a command was sent, the cycle fails as any
-  broken cycle (009 FR-011) and the pending change stays. The next
-  cycle's listing writes the server state: a pending change the server
-  has ends with that write (FR-001); one it lacks is sent (FR-007). A
-  change is never sent again blindly.
+  connection breaks after a command was sent, or the service answers that
+  it could not complete the request (a 5xx status), the cycle fails as
+  any broken cycle (009 FR-011) and the pending change stays. On IMAP the
+  next cycle's listing writes the server state: a pending change the
+  server has ends with that write (FR-001); one it lacks is sent
+  (FR-007); a change is never sent again without the listing's evidence.
+  On Microsoft 365 the service may report a change with a delay, so a
+  pending change the next round does not report is sent again; the
+  request sets a value, so a repeated request is harmless.
 - **FR-010 — A refused change**: When the server refuses a command (an
-  IMAP `NO` or `BAD`; a Microsoft 365 refusal other than the rejected
-  token 009 FR-011 handles; a refusal the server marks temporary
-  included), the pending changes that command carried
-  MUST end, the rows show the server state, and the cycle fails under
+  IMAP `NO` or `BAD`; a Microsoft 365 4xx other than the rejected token
+  009 FR-011 handles, a temporary refusal included; a 5xx is FR-009's
+  unknown outcome), the pending changes equal to the value that command
+  carried MUST end, a newer wish for another value stays, the rows show
+  the effective state, and the cycle fails under
   006 with a failure that names the change and carries the server's
   reply; the other pending changes of the folder wait for the next cycle.
   The failure is the refresh's: its channel, Retry and details are 006's;
@@ -515,7 +567,10 @@ the stored state, the banner and the server's record are compared.
 - **SC-004**: With a scripted server that closes the connection after
   accepting a command, the next cycle ends the pending change without a
   second command; with one that closes before the command, the next cycle
-  sends it once.
+  sends it once; with a scripted service answering 504, the pending
+  change stays and the next cycle sends it again. A change made while a
+  command for the same flag is in flight survives the command's
+  acceptance and is sent by the next sending step.
 - **SC-005**: With a scripted server that refuses the command, the row
   shows the server's state within the cycle, a notice carries the
   server's reply, and the next cycle sends nothing for that message.
@@ -561,6 +616,8 @@ the stored state, the banner and the server's record are compared.
 - The reader header's Mark as Read and Mark as Unread were designed for a
   wider scope (a conversation); until conversations exist they act on
   the open message.
+- IMAP servers bound a command line (Dovecot's default is 64 KiB); a
+  hundred UIDs per command stays far below any such bound.
 
 ## Amendments to earlier specifications
 
