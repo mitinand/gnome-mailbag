@@ -29,7 +29,7 @@ pub(crate) struct BatchWriter<'a> {
 #[derive(Default)]
 struct BatchCounts {
     removed: usize,
-    read_states: usize,
+    flag_states: usize,
     related: usize,
     arrived: usize,
     texts: usize,
@@ -125,7 +125,7 @@ impl<'a> BatchWriter<'a> {
             account,
             listed,
             removed = counts.removed,
-            read_states = counts.read_states,
+            flag_states = counts.flag_states,
             related = counts.related,
             arrived = counts.arrived,
             texts = counts.texts,
@@ -140,7 +140,7 @@ impl<'a> BatchWriter<'a> {
 impl BatchCounts {
     fn add(&mut self, batch: &FolderBatch) {
         self.removed += batch.removed.len();
-        self.read_states += batch.read_states.len();
+        self.flag_states += batch.flag_states.len();
         self.related += batch.known_arrived.len();
         self.arrived += batch.arrived.len();
         for message in &batch.arrived {

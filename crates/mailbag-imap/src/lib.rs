@@ -226,6 +226,8 @@ pub struct FolderListing {
 pub struct ListedUid {
     pub uid: u32,
     pub seen: bool,
+    /// `\Flagged`: the message is starred.
+    pub flagged: bool,
     /// X-GM-MSGID, asked for with `RowItems::WithGmailAttributes` and absent
     /// when the server did not answer with it.
     pub gmail_message_id: Option<u64>,
@@ -236,6 +238,8 @@ pub struct ListedUid {
 pub struct MessageRow {
     pub uid: u32,
     pub seen: bool,
+    /// `\Flagged`: the message is starred.
+    pub flagged: bool,
     /// INTERNALDATE as seconds since the Unix epoch.
     pub internal_date: Option<i64>,
     /// The raw From, To and Subject header lines.

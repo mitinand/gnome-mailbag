@@ -38,7 +38,10 @@ CREATE TABLE folder (
 
 -- A message, once per account however many folders list it. `preview` is
 -- the first readable words of its text for the list, empty when there are
--- none (specs/010-message-list/data-model.md).
+-- none (specs/010-message-list/data-model.md). `seen` and `flagged` are the
+-- read state and the star as the server last reported them; `seen_pending`
+-- and `flagged_pending` the values the user wants and the server may not
+-- have yet, null when nothing is pending (specs/011-read-and-star/data-model.md).
 CREATE TABLE message (
     id INTEGER PRIMARY KEY,
     account TEXT NOT NULL,
@@ -48,6 +51,9 @@ CREATE TABLE message (
     recipients TEXT,
     received INTEGER,
     seen INTEGER NOT NULL CHECK (seen IN (0, 1)),
+    flagged INTEGER NOT NULL CHECK (flagged IN (0, 1)),
+    seen_pending INTEGER CHECK (seen_pending IN (0, 1)),
+    flagged_pending INTEGER CHECK (flagged_pending IN (0, 1)),
     content_kind TEXT NOT NULL CHECK (content_kind IN (
         'text',
         'plain_text_missing',

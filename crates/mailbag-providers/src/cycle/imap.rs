@@ -13,7 +13,9 @@ use crate::{
 };
 use goa_adapter::ImapAccess;
 use mailbag_content::decode_display_fields;
-use mailbag_domain::{FolderBatch, FolderState, IncompleteList, Message};
+use mailbag_domain::{
+    FlagChanges, FolderBatch, FolderState, IncompleteList, Message, MessageFlags,
+};
 use mailbag_imap::{
     FolderListing, ImapError, ImapFailure, ImapStep, MailboxReader, OpenOptions, RowItems,
     ServerReply,
@@ -38,7 +40,7 @@ pub(super) enum IdentityRule {
 struct ListedMessage {
     identity: String,
     uid: u32,
-    seen: bool,
+    flags: MessageFlags,
 }
 
 /// The cycle of an IMAP folder, Generic IMAP or Gmail (spec FR-005, FR-006;
@@ -94,7 +96,7 @@ fn missing_messages<'a>(
 }
 
 /// What the listing proves before anything is fetched: removals when it
-/// completed (spec FR-004), changed read states, and the folder's state: not
+/// completed (spec FR-004), changed flags, and the folder's state: not
 /// completed while messages are missing, refused listing or not; completed
 /// when none are and the listing completed; otherwise as it was.
 fn listing_changes(
@@ -117,15 +119,21 @@ fn listing_changes(
             .collect(),
         false => Vec::new(),
     };
-    let read_states = listed
+    let flag_states = listed
         .iter()
         .filter(|message| {
             stored
                 .stored
                 .get(&message.identity)
-                .is_some_and(|seen| *seen != message.seen)
+                .is_some_and(|flags| *flags != message.flags)
         })
-        .map(|message| (message.identity.clone(), message.seen))
+        .map(|message| {
+            let changes = FlagChanges {
+                seen: Some(message.flags.seen),
+                flagged: Some(message.flags.flagged),
+            };
+            (message.identity.clone(), changes)
+        })
         .collect();
     let state = if !missing.is_empty() {
         Some(FolderState::default())
@@ -136,7 +144,7 @@ fn listing_changes(
     };
     FolderBatch {
         removed,
-        read_states,
+        flag_states,
         state,
         ..FolderBatch::default()
     }
@@ -220,7 +228,10 @@ impl ImapFolder {
                 Some(ListedMessage {
                     identity,
                     uid: message.uid,
-                    seen: message.seen,
+                    flags: MessageFlags {
+                        seen: message.seen,
+                        flagged: message.flagged,
+                    },
                 })
             })
             .collect();
@@ -272,6 +283,7 @@ impl ImapFolder {
                         .in_scope(|| decode_display_fields(&row.list_headers)),
                     received_unix: row.internal_date,
                     seen: row.seen,
+                    flagged: row.flagged,
                     content,
                     preview,
                 })
@@ -280,7 +292,7 @@ impl ImapFolder {
         let batch = FolderBatch {
             known_arrived: known
                 .iter()
-                .map(|message| (message.identity.clone(), message.seen))
+                .map(|message| (message.identity.clone(), message.flags))
                 .collect(),
             arrived,
             ..FolderBatch::default()

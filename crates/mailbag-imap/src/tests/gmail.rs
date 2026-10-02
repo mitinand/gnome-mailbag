@@ -205,6 +205,7 @@ fn gmails_identifier_is_listed_only_when_asked_for() {
         [ListedUid {
             uid: 10,
             seen: false,
+            flagged: false,
             gmail_message_id: Some(1_278_455_344_230_334_865),
         }]
     );

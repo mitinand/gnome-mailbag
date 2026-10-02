@@ -196,7 +196,7 @@ fn inbox_messages(message_count: u32) -> Vec<serde_json::Value> {
     (1..=message_count).map(inbox_message).collect()
 }
 
-/// Odd-numbered messages are read.
+/// Odd-numbered messages are read; none is starred.
 pub fn inbox_message(number: u32) -> serde_json::Value {
     let received = glib::DateTime::from_unix_utc(fixture_received_unix(number))
         .and_then(|time| time.format_iso8601())
@@ -213,6 +213,7 @@ pub fn inbox_message(number: u32) -> serde_json::Value {
         "toRecipients": recipients,
         "receivedDateTime": received.as_str(),
         "isRead": number % 2 == 1,
+        "flag": { "flagStatus": "notFlagged" },
         "bodyPreview": format!("Preview of\r\n\r\nmessage {number}"),
         "body": { "contentType": "text", "content": format!("Text {number}") },
     });

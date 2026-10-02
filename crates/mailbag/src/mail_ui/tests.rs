@@ -14,7 +14,8 @@ use goa_adapter::{
 };
 use mailbag_domain::{
     AccountId, ContentExplanation, Failure, FailureKind, Folder, FolderBatch, FolderRef,
-    FolderRole, FolderState, IncompleteList, Message, RemoteSource, RemoteText, ServerStep,
+    FolderRole, FolderState, IncompleteList, Message, MessageFlags, RemoteSource, RemoteText,
+    ServerStep,
 };
 use mailbag_providers::{
     CancelsLoadOnDrop, LoadEvent, LoadResult, LoadTarget, LoadsMail, MailProvider,
@@ -285,6 +286,7 @@ fn two_messages() -> Vec<Message> {
             },
             received_unix: Some(1_700_000_000),
             seen: false,
+            flagged: false,
             content: ReceivedContent::Text("Second body".to_owned()),
             preview: "Second body".to_owned(),
         },
@@ -297,6 +299,7 @@ fn two_messages() -> Vec<Message> {
             },
             received_unix: Some(1_699_000_000),
             seen: true,
+            flagged: false,
             content: ReceivedContent::StructureUnreadable,
             preview: String::new(),
         },
@@ -329,6 +332,7 @@ fn unwrapped_and_ordinary_messages() -> Vec<Message> {
             // Newest first, as the list orders them.
             received_unix: Some(1_700_000_000 - number),
             seen: true,
+            flagged: false,
             content: body,
             preview: String::new(),
         })
@@ -1307,6 +1311,7 @@ fn mailbox_navigation() {
             },
             received_unix: Some(1_700_000_000 - number),
             seen: number % 2 == 0,
+            flagged: false,
             content: ReceivedContent::TextNotReturned,
             preview: format!("The first words of message {number}, long enough to wrap"),
         })
@@ -1398,7 +1403,13 @@ fn batches_update_the_shown_folder() {
     settle(&ui);
     assert!(widgets.banner().is_revealed());
     let related = FolderBatch {
-        known_arrived: vec![(newer.identity.clone(), true)],
+        known_arrived: vec![(
+            newer.identity.clone(),
+            MessageFlags {
+                seen: true,
+                flagged: false,
+            },
+        )],
         ..FolderBatch::default()
     };
     loader.report_batch(&projects, &related);
@@ -1590,6 +1601,7 @@ fn message_received(identity: &str, hours_ago: i64, seen: bool) -> Message {
         },
         received_unix: Some(now - hours_ago * 3600),
         seen,
+        flagged: false,
         content: ReceivedContent::NotDownloaded,
         preview: format!("Preview of {identity}"),
     }
@@ -2043,6 +2055,7 @@ fn listed_row(identity: &str, seen: bool) -> MessageListRow {
         },
         received_unix: None,
         seen,
+        flagged: false,
         preview: String::new(),
     }
 }

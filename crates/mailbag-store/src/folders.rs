@@ -7,8 +7,8 @@
 
 use crate::content::{content_columns, content_from_columns};
 use mailbag_domain::{
-    AccountId, DisplayFields, Folder, FolderRef, FolderRole, FolderState, Message, MessageListRow,
-    ReceivedContent,
+    AccountId, DisplayFields, FlagChanges, Folder, FolderRef, FolderRole, FolderState, Message,
+    MessageFlag, MessageFlags, MessageListRow, PendingChange, ReceivedContent,
 };
 use rusqlite::{Connection, Row, Transaction, params, types::Type};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -93,17 +93,24 @@ pub(crate) fn read_folder_state(
     )
 }
 
-/// The identity and read state of every message the folder holds.
+/// The identity and the server's flags of every message the folder holds.
 pub(crate) fn read_folder_identities(
     connection: &Connection,
     folder_id: i64,
-) -> rusqlite::Result<HashMap<String, bool>> {
+) -> rusqlite::Result<HashMap<String, MessageFlags>> {
     connection
         .prepare(
-            "SELECT identity, seen FROM membership JOIN message ON message.id = membership.message \
+            "SELECT identity, seen, flagged \
+             FROM membership JOIN message ON message.id = membership.message \
              WHERE membership.folder = ?1",
         )?
-        .query_map([folder_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .query_map([folder_id], |row| {
+            let flags = MessageFlags {
+                seen: row.get(1)?,
+                flagged: row.get(2)?,
+            };
+            Ok((row.get(0)?, flags))
+        })?
         .collect()
 }
 
@@ -161,16 +168,28 @@ pub(crate) fn delete_memberships(
     Ok(())
 }
 
-/// Sets the read state of the account's messages.
-pub(crate) fn set_read_states(
+/// Writes the flags a server reported for the account's messages, leaving a
+/// flag it did not name as stored. A pending value equal to the value written
+/// ends; a differing one stays (specs/011-read-and-star/data-model.md).
+pub(crate) fn set_flag_states(
     transaction: &Transaction,
     account: &AccountId,
-    read_states: &[(String, bool)],
+    flag_states: &[(String, FlagChanges)],
 ) -> rusqlite::Result<()> {
-    let mut update =
-        transaction.prepare("UPDATE message SET seen = ?3 WHERE account = ?1 AND identity = ?2")?;
-    for (identity, seen) in read_states {
-        update.execute(params![account.as_str(), identity, seen])?;
+    // `NULLIF` ends a pending value equal to the value written; a flag not
+    // reported is NULL, which neither writes nor ends anything.
+    let mut update = transaction.prepare(
+        "UPDATE message SET seen = COALESCE(?3, seen), flagged = COALESCE(?4, flagged), \
+         seen_pending = NULLIF(seen_pending, ?3), flagged_pending = NULLIF(flagged_pending, ?4) \
+         WHERE account = ?1 AND identity = ?2",
+    )?;
+    for (identity, changes) in flag_states {
+        update.execute(params![
+            account.as_str(),
+            identity,
+            changes.seen,
+            changes.flagged
+        ])?;
     }
     Ok(())
 }
@@ -180,7 +199,8 @@ pub(crate) fn set_read_states(
 /// downloaded never replaces a content another folder's cycle stored, and
 /// a text the server did not return never replaces a stored text
 /// (specs/009-synchronization/data-model.md). Its preview always replaces
-/// the stored one (specs/010-message-list/data-model.md).
+/// the stored one (specs/010-message-list/data-model.md). Its flags end an
+/// equal pending value, as `set_flag_states` does.
 pub(crate) fn store_arrived(
     transaction: &Transaction,
     folder_id: i64,
@@ -189,10 +209,14 @@ pub(crate) fn store_arrived(
 ) -> rusqlite::Result<()> {
     let mut upsert_message = transaction.prepare(
         "INSERT INTO message (account, identity, subject, sender, recipients, received, seen, \
-         content_kind, content_detail, preview) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+         flagged, content_kind, content_detail, preview) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
          ON CONFLICT (account, identity) DO UPDATE SET subject = excluded.subject, \
          sender = excluded.sender, recipients = excluded.recipients, \
-         received = excluded.received, seen = excluded.seen, preview = excluded.preview, \
+         received = excluded.received, seen = excluded.seen, flagged = excluded.flagged, \
+         seen_pending = NULLIF(seen_pending, excluded.seen), \
+         flagged_pending = NULLIF(flagged_pending, excluded.flagged), \
+         preview = excluded.preview, \
          content_kind = iif(excluded.content_kind = 'not_downloaded' \
          OR (excluded.content_kind = 'text_not_returned' AND content_kind = 'text'), \
          content_kind, excluded.content_kind), \
@@ -214,6 +238,7 @@ pub(crate) fn store_arrived(
                 message.fields.to,
                 message.received_unix,
                 message.seen,
+                message.flagged,
                 content_kind,
                 content_detail,
                 message.preview,
@@ -226,13 +251,13 @@ pub(crate) fn store_arrived(
 }
 
 /// Relates messages the account already holds to the folder, with their
-/// listed read state. A message the store no longer holds is left out; the
+/// listed flags. A message the store no longer holds is left out; the
 /// folder's next cycle fetches it.
 pub(crate) fn relate_known(
     transaction: &Transaction,
     folder_id: i64,
     account: &AccountId,
-    known_arrived: &[(String, bool)],
+    known_arrived: &[(String, MessageFlags)],
 ) -> rusqlite::Result<()> {
     let mut relate = transaction.prepare(
         "INSERT OR IGNORE INTO membership (folder, message) \
@@ -241,7 +266,59 @@ pub(crate) fn relate_known(
     for (identity, _) in known_arrived {
         relate.execute(params![folder_id, account.as_str(), identity])?;
     }
-    set_read_states(transaction, account, known_arrived)
+    let flag_states: Vec<(String, FlagChanges)> = known_arrived
+        .iter()
+        .map(|(identity, flags)| {
+            let changes = FlagChanges {
+                seen: Some(flags.seen),
+                flagged: Some(flags.flagged),
+            };
+            (identity.clone(), changes)
+        })
+        .collect();
+    set_flag_states(transaction, account, &flag_states)
+}
+
+/// The changes of the folder's messages the user wants and the server may
+/// not have yet, each with the server's value as stored.
+pub(crate) fn read_pending_changes(
+    connection: &Connection,
+    folder_id: i64,
+) -> rusqlite::Result<Vec<PendingChange>> {
+    let mut select = connection.prepare(
+        "SELECT identity, seen, seen_pending, flagged, flagged_pending \
+         FROM membership JOIN message ON message.id = membership.message \
+         WHERE membership.folder = ?1 \
+         AND (seen_pending IS NOT NULL OR flagged_pending IS NOT NULL)",
+    )?;
+    let mut rows = select.query([folder_id])?;
+    let mut changes = Vec::new();
+    while let Some(row) = rows.next()? {
+        let identity: String = row.get("identity")?;
+        let flags = [
+            (
+                MessageFlag::Seen,
+                row.get("seen")?,
+                row.get("seen_pending")?,
+            ),
+            (
+                MessageFlag::Flagged,
+                row.get("flagged")?,
+                row.get("flagged_pending")?,
+            ),
+        ];
+        for (flag, server, wanted) in flags {
+            if let Some(wanted) = wanted {
+                changes.push(PendingChange {
+                    identity: identity.clone(),
+                    flag,
+                    wanted,
+                    server,
+                });
+            }
+        }
+    }
+    Ok(changes)
 }
 
 /// Saves the folder's state.
@@ -279,14 +356,17 @@ pub(crate) fn delete_messages_without_folder(
 /// The rows of the messages a folder holds, with their previews but without
 /// their content, newest
 /// first by received date, then by the order they were stored in, newest
-/// first; a message without a date comes last.
+/// first; a message without a date comes last. Each flag is the user's
+/// pending value where there is one, otherwise the server's.
 pub(crate) fn read_listed_rows(
     connection: &Connection,
     folder_id: i64,
 ) -> rusqlite::Result<Vec<MessageListRow>> {
     connection
         .prepare(
-            "SELECT identity, subject, sender, recipients, received, seen, preview \
+            "SELECT identity, subject, sender, recipients, received, \
+             COALESCE(seen_pending, seen) AS seen, \
+             COALESCE(flagged_pending, flagged) AS flagged, preview \
              FROM membership JOIN message ON message.id = membership.message \
              WHERE membership.folder = ?1 ORDER BY message.received DESC, message.id DESC",
         )?
@@ -300,6 +380,7 @@ pub(crate) fn read_listed_rows(
                 },
                 received_unix: row.get("received")?,
                 seen: row.get("seen")?,
+                flagged: row.get("flagged")?,
                 preview: row.get("preview")?,
             })
         })?

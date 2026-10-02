@@ -41,10 +41,12 @@ pub(crate) fn keep_listed(fetch: &Fetch, listed: &mut BTreeMap<u32, ListedUid>) 
     let message = listed.entry(uid).or_insert(ListedUid {
         uid,
         seen: false,
+        flagged: false,
         gmail_message_id: None,
     });
     if fetch.has_flags() {
         message.seen = fetch.flags().any(|flag| matches!(flag, Flag::Seen));
+        message.flagged = fetch.flags().any(|flag| matches!(flag, Flag::Flagged));
     }
     if let Some(message_id) = fetch.gmail_msg_id() {
         message.gmail_message_id = Some(*message_id);
@@ -69,15 +71,17 @@ pub(crate) fn collect_rows(fetches: &[Fetch], uids: &[u32]) -> Vec<MessageRow> {
             let list_headers = responses
                 .iter()
                 .find_map(|fetch| fetch.section(&header_path))?;
-            let seen = responses
+            let latest_flags: Vec<Flag> = responses
                 .iter()
                 .rev()
                 .find(|fetch| fetch.has_flags())
-                .is_some_and(|fetch| fetch.flags().any(|flag| matches!(flag, Flag::Seen)));
+                .map(|fetch| fetch.flags().collect())
+                .unwrap_or_default();
             let internal_date = responses.iter().find_map(|fetch| fetch.internal_date());
             Some(MessageRow {
                 uid,
-                seen,
+                seen: latest_flags.contains(&Flag::Seen),
+                flagged: latest_flags.contains(&Flag::Flagged),
                 internal_date: internal_date.map(|date| date.timestamp()),
                 list_headers: list_headers.to_vec(),
                 gmail: gmail_attributes(&responses),

@@ -32,15 +32,19 @@ const FOLDER_LISTING_PATH: &str = "/me/mailFolders/delta";
 const FOLDER_FIELDS: &str = "id,displayName,parentFolderId,isHidden";
 /// A message's list fields, which a delta entry carries in full for a listed
 /// message and in part for a change. `bodyPreview` is the service's text
-/// preview (specs/010-message-list/research.md §7).
-pub(crate) const CHANGE_FIELDS: [&str; 6] = [
+/// preview (specs/010-message-list/research.md §7); `flag` the follow-up
+/// flag, the star (specs/011-read-and-star/research.md §6).
+pub(crate) const CHANGE_FIELDS: [&str; 7] = [
     "subject",
     "from",
     "toRecipients",
     "receivedDateTime",
     "isRead",
+    "flag",
     "bodyPreview",
 ];
+/// The fields a change of the user's flags reports alone.
+pub(crate) const FLAG_FIELDS: [&str; 2] = ["isRead", "flag"];
 /// Identifiers that survive folder moves, and bodies rendered as text.
 const PREFERENCES: &str = r#"IdType="ImmutableId", outlook.body-content-type="text""#;
 /// A delta reading's pages hold at most 500 entries; the service caps them at
@@ -106,6 +110,9 @@ pub struct GraphMessage {
     /// When the message arrived, as seconds since the Unix epoch.
     pub received_unix: Option<i64>,
     pub is_read: bool,
+    /// The follow-up flag is `flagged`; `complete` and `notFlagged` are not
+    /// starred.
+    pub flagged: bool,
     /// The beginning of the message's text as the service gives it.
     pub body_preview: Option<String>,
 }
@@ -117,6 +124,7 @@ impl fmt::Debug for GraphMessage {
             .debug_struct("GraphMessage")
             .field("immutable_id", &self.immutable_id)
             .field("is_read", &self.is_read)
+            .field("flagged", &self.flagged)
             .finish_non_exhaustive()
     }
 }
@@ -158,11 +166,13 @@ pub enum MessageChange {
     Removed(String),
     /// The message with every list field: an arrival or a full update.
     Listed(GraphMessage),
-    /// Only what changed: the read state when it did, and whether other list
-    /// fields changed too (specs/009-synchronization/research.md §5).
+    /// Only what changed: the read state and the star when they did, and
+    /// whether other list fields changed too
+    /// (specs/009-synchronization/research.md §5).
     Changed {
         id: String,
         is_read: Option<bool>,
+        flagged: Option<bool>,
         other_fields: bool,
     },
 }

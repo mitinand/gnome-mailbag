@@ -357,6 +357,7 @@ fn failed_step_title(step: ServerStep) -> &'static str {
         ServerStep::OpenMailbox => "Mailbox not opened",
         ServerStep::FetchMessages => "Message list not received",
         ServerStep::FetchText => "Message text not received",
+        ServerStep::ChangeFlags => "Message not changed on the server",
     }
 }
 
@@ -372,6 +373,7 @@ fn failed_step_explanation(step: ServerStep) -> &'static str {
         ServerStep::OpenMailbox => "The mail server did not open this mailbox.",
         ServerStep::FetchMessages => "The mail server did not send this mailbox's messages.",
         ServerStep::FetchText => "The mail server did not send the text of these messages.",
+        ServerStep::ChangeFlags => "The mail server refused to change this message.",
     }
 }
 
@@ -391,6 +393,9 @@ fn waiting_step_explanation(step: ServerStep) -> &'static str {
         }
         ServerStep::FetchText => {
             "The mail server stopped responding while sending the message text."
+        }
+        ServerStep::ChangeFlags => {
+            "The mail server stopped responding while changing this message."
         }
     }
 }

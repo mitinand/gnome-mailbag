@@ -11,7 +11,7 @@ use crate::{
 };
 use goa_adapter::GraphAccess;
 use mailbag_content::preview_of_text;
-use mailbag_domain::{FolderBatch, FolderState, Message, ReceivedContent};
+use mailbag_domain::{FlagChanges, FolderBatch, FolderState, Message, ReceivedContent};
 use mailbag_graph::{
     ChangePage, ChangesFrom, GraphError, GraphFailure, GraphMessage, MessageChange, NextPage,
     read_message, read_message_changes, read_message_text, read_texts_received_between,
@@ -159,10 +159,10 @@ fn where_to_start(stored: &FolderSync, folder_id: &str) -> (ChangesFrom, Reading
 
 /// A page's entries merged per message in their order, since the service
 /// may repeat and reorder them: a later entry wins, and a partial one never
-/// drops an earlier read state. An entry marking the message removed, met
-/// with another entry for it, is trusted neither way: the message is read
-/// as the service holds it now, like an entry that changed other fields,
-/// whatever else the page says about it (research §5).
+/// drops an earlier read state or star. An entry marking the message
+/// removed, met with another entry for it, is trusted neither way: the
+/// message is read as the service holds it now, like an entry that changed
+/// other fields, whatever else the page says about it (research §5).
 fn merge_per_message(changes: Vec<MessageChange>) -> HashMap<String, MessageChange> {
     let mut merged: HashMap<String, MessageChange> = HashMap::new();
     let mut read_again: HashSet<String> = HashSet::new();
@@ -180,6 +180,7 @@ fn merge_per_message(changes: Vec<MessageChange>) -> HashMap<String, MessageChan
                 MessageChange::Changed {
                     id: id.clone(),
                     is_read: None,
+                    flagged: None,
                     other_fields: true,
                 }
             }
@@ -187,27 +188,32 @@ fn merge_per_message(changes: Vec<MessageChange>) -> HashMap<String, MessageChan
                 Some(MessageChange::Listed(mut message)),
                 MessageChange::Changed {
                     is_read,
+                    flagged,
                     other_fields: false,
                     ..
                 },
             ) => {
                 message.is_read = is_read.unwrap_or(message.is_read);
+                message.flagged = flagged.unwrap_or(message.flagged);
                 MessageChange::Listed(message)
             }
             (
                 Some(MessageChange::Changed {
                     is_read: earlier_read,
+                    flagged: earlier_flagged,
                     other_fields: earlier_fields,
                     ..
                 }),
                 MessageChange::Changed {
                     id,
                     is_read,
+                    flagged,
                     other_fields,
                 },
             ) => MessageChange::Changed {
                 id,
                 is_read: is_read.or(earlier_read),
+                flagged: flagged.or(earlier_flagged),
                 other_fields: other_fields || earlier_fields,
             },
             (_, change) => change,
@@ -321,10 +327,18 @@ impl GraphService {
                     wants_text: wants_text(&message),
                     message,
                 }),
+                // Only the flags the entry names: one the entry leaves out
+                // keeps what the store holds, which an earlier page of this
+                // round may have written (specs/011-read-and-star/research.md §14).
                 MessageChange::Changed {
-                    is_read: Some(seen),
-                    ..
-                } => batch.read_states.push((stored_identity, seen)),
+                    is_read, flagged, ..
+                } if is_read.is_some() || flagged.is_some() => {
+                    let changes = FlagChanges {
+                        seen: is_read,
+                        flagged,
+                    };
+                    batch.flag_states.push((stored_identity, changes));
+                }
                 _ => {}
             }
         }
@@ -446,6 +460,7 @@ fn stored_message(arrival: Arrival, texts: &HashMap<String, Option<String>>) -> 
         fields: received_fields(&message),
         received_unix: message.received_unix,
         seen: message.is_read,
+        flagged: message.flagged,
         content,
         preview: preview_of_text(message.body_preview.as_deref().unwrap_or_default()),
     }

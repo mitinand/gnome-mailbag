@@ -89,6 +89,8 @@ static TEST_CERTIFICATES_TRUSTED: atomic::AtomicBool = atomic::AtomicBool::new(f
 pub struct FixtureMessage {
     pub uid: u32,
     pub seen: bool,
+    /// `\Flagged`: the message is starred.
+    pub flagged: bool,
     /// The message header, ending with an empty line.
     pub header: Vec<u8>,
     /// The BODYSTRUCTURE reply.
@@ -119,6 +121,7 @@ impl FixtureMessage {
         Self {
             uid,
             seen: false,
+            flagged: false,
             header: message_header(uid, "text/plain; charset=utf-8"),
             structure: text_structure("PLAIN", text),
             sections: BTreeMap::from([("1".to_owned(), text.as_bytes().to_vec())]),
@@ -159,6 +162,7 @@ impl FixtureMessage {
         Self {
             uid,
             seen: false,
+            flagged: false,
             header: message_header(uid, "multipart/mixed; boundary=fixture"),
             structure,
             sections,
@@ -194,6 +198,7 @@ impl FixtureMessage {
         Self {
             uid,
             seen: false,
+            flagged: false,
             header: message_header(
                 uid,
                 &format!("multipart/related; boundary=fixture; start=\"{text_id}\""),
@@ -243,6 +248,7 @@ impl FixtureMessage {
         Self {
             uid,
             seen: false,
+            flagged: false,
             header: b"From: Marker Sender <marker-sender@fixture.invalid>\r\n\
                       To: marker-recipient@fixture.invalid\r\n\
                       Subject: marker-subject\r\n\
@@ -1114,12 +1120,16 @@ impl Server {
             match item.as_str() {
                 "UID" => fields.push(format!("UID {}", message.uid).into_bytes()),
                 "FLAGS" => {
-                    let flags = match (message.seen, self.setup.lowercase_protocol_names) {
-                        (true, true) => "\\seen",
-                        (true, false) => "\\Seen",
-                        (false, _) => "",
-                    };
-                    fields.push(format!("FLAGS ({flags})").into_bytes());
+                    let names = [(message.seen, "\\Seen"), (message.flagged, "\\Flagged")];
+                    let flags: Vec<String> = names
+                        .into_iter()
+                        .filter(|(set, _)| *set)
+                        .map(|(_, name)| match self.setup.lowercase_protocol_names {
+                            true => name.to_lowercase(),
+                            false => name.to_owned(),
+                        })
+                        .collect();
+                    fields.push(format!("FLAGS ({})", flags.join(" ")).into_bytes());
                 }
                 "INTERNALDATE" => fields.push(
                     format!("INTERNALDATE \"{}\"", internal_date(message.received_unix))

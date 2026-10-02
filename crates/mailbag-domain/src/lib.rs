@@ -122,6 +122,9 @@ pub struct Message {
     pub received_unix: Option<i64>,
     /// The read state as the server last reported it.
     pub seen: bool,
+    /// The star as the server last reported it: IMAP `\Flagged`, a
+    /// Microsoft 365 follow-up flag `flagged`.
+    pub flagged: bool,
     pub content: ReceivedContent,
     /// The first readable words of the message for its list row; empty when
     /// it has none (specs/010-message-list FR-003). Mail content: never logged.
@@ -148,11 +151,12 @@ pub struct FolderState {
 pub struct FolderBatch {
     /// Identities proven gone from the folder.
     pub removed: Vec<String>,
-    /// The new read state of messages the folder holds.
-    pub read_states: Vec<(String, bool)>,
+    /// The new flags of messages the folder holds, each with only the flags
+    /// the server reported.
+    pub flag_states: Vec<(String, FlagChanges)>,
     /// Messages the folder did not hold but its account did, with their
-    /// listed read state: related to the folder without fetching them.
-    pub known_arrived: Vec<(String, bool)>,
+    /// listed flags: related to the folder without fetching them.
+    pub known_arrived: Vec<(String, MessageFlags)>,
     /// Full records to insert or update, each with its content or
     /// `ReceivedContent::NotDownloaded`.
     pub arrived: Vec<Message>,
@@ -169,9 +173,47 @@ pub struct MessageListRow {
     pub fields: DisplayFields,
     /// The received date as seconds since the Unix epoch.
     pub received_unix: Option<i64>,
+    /// The read state and the star as the user sees them: the user's pending
+    /// change where there is one, otherwise the server's.
     pub seen: bool,
+    pub flagged: bool,
     /// The stored preview. Mail content: never logged.
     pub preview: String,
+}
+
+/// A flag of a message the user can change (specs/011-read-and-star).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MessageFlag {
+    /// Read: IMAP `\Seen`, Microsoft 365 `isRead`.
+    Seen,
+    /// The star: IMAP `\Flagged`, Microsoft 365 `flag.flagStatus`.
+    Flagged,
+}
+
+/// Both flags of a message as a server reported them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MessageFlags {
+    pub seen: bool,
+    pub flagged: bool,
+}
+
+/// The flags a server report named; a flag it did not name is `None` and
+/// keeps its stored value.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FlagChanges {
+    pub seen: Option<bool>,
+    pub flagged: Option<bool>,
+}
+
+/// A change of one flag the user wants and the server may not have yet,
+/// with the server's value as last stored.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingChange {
+    /// The message's `Message::identity`.
+    pub identity: String,
+    pub flag: MessageFlag,
+    pub wanted: bool,
+    pub server: bool,
 }
 
 /// Subject, sender and recipients for the list and the reader.
@@ -268,6 +310,8 @@ pub enum ServerStep {
     /// The message list or the messages' structures.
     FetchMessages,
     FetchText,
+    /// Setting or clearing a message's read state or star.
+    ChangeFlags,
 }
 
 /// Words of the remote side, and who said them.
@@ -372,6 +416,7 @@ impl fmt::Debug for Message {
             .debug_struct("Message")
             .field("identity", &self.identity)
             .field("seen", &self.seen)
+            .field("flagged", &self.flagged)
             .field("content", &self.content)
             .finish_non_exhaustive()
     }
@@ -394,6 +439,7 @@ impl fmt::Debug for MessageListRow {
             .debug_struct("MessageListRow")
             .field("identity", &self.identity)
             .field("seen", &self.seen)
+            .field("flagged", &self.flagged)
             .finish_non_exhaustive()
     }
 }

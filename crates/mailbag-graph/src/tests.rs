@@ -69,7 +69,7 @@ fn a_first_reading_reaches_the_service_as_documented() {
         service.received_requests(),
         [ReceivedRequest {
             path: "/me/mailFolders/inbox/messages/delta".to_owned(),
-            query: "$select=subject,from,toRecipients,receivedDateTime,isRead,bodyPreview\
+            query: "$select=subject,from,toRecipients,receivedDateTime,isRead,flag,bodyPreview\
                     &$orderby=receivedDateTime%20desc"
                 .to_owned(),
             authorization: Some(format!("Bearer {TEST_ACCESS_TOKEN}")),
@@ -107,6 +107,7 @@ fn listed_messages_arrive_with_their_fields_and_the_next_link_is_followed() {
             to: Vec::new(),
             received_unix: Some(fixture_received_unix(2)),
             is_read: false,
+            flagged: false,
             body_preview: Some("Preview of\r\n\r\nmessage 2".to_owned()),
         })
     );

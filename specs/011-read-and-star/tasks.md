@@ -95,7 +95,7 @@ equal pending value at every server write, and lists a folder's pending
 changes; the cycles store the star the servers report. Nothing is sent
 and the window changes nothing yet.
 
-- [ ] T003 [US1] In crates/mailbag-domain/src/lib.rs: `MessageFlag {
+- [x] T003 [US1] In crates/mailbag-domain/src/lib.rs: `MessageFlag {
   Seen, Flagged }`, `MessageFlags { seen: bool, flagged: bool }`,
   `FlagChanges { seen: Option<bool>, flagged: Option<bool> }` (what a
   server report named), `PendingChange { identity: String, flag:
@@ -109,7 +109,7 @@ and the window changes nothing yet.
   mail server refused to change this message."; "The mail server stopped
   responding while changing this message."); every constructor in the
   workspace's tests updated.
-- [ ] T004 [US1] In crates/mailbag-store/src/schema.sql the columns
+- [x] T004 [US1] In crates/mailbag-store/src/schema.sql the columns
   `message.flagged INTEGER NOT NULL CHECK (flagged IN (0, 1))`,
   `message.seen_pending INTEGER CHECK (seen_pending IN (0, 1))` and
   `message.flagged_pending INTEGER CHECK (flagged_pending IN (0, 1))`;
@@ -135,12 +135,12 @@ and the window changes nothing yet.
   `Store` methods `read_pending_changes(folder)`, `write_pending_flag`,
   `settle_flags`, `drop_pending_flags` in src/lib.rs, the writes failing
   as `FailureKind::MailNotSaved` and the read as `StoredMailUnreadable`.
-- [ ] T005 [US4] In crates/mailbag-imap/src/lib.rs `ListedUid.flagged:
+- [x] T005 [US4] In crates/mailbag-imap/src/lib.rs `ListedUid.flagged:
   bool` and `MessageRow.flagged: bool`; in src/fetch_responses.rs
   `\Flagged` read next to `\Seen` for the listing and the rows
   (`Flag::Flagged`); in src/test_server.rs `FixtureMessage.flagged: bool`
   (default false) written into `FLAGS (...)` with `\Seen`.
-- [ ] T006 [US4] In crates/mailbag-graph/src/lib.rs `flag` joins
+- [x] T006 [US4] In crates/mailbag-graph/src/lib.rs `flag` joins
   `CHANGE_FIELDS`; `GraphMessage.flagged: bool` from `flag.flagStatus ==
   "flagged"` (`complete` and `notFlagged` read false); `MessageChange::
   Changed { flagged: Option<bool>, .. }`, and `read_change` in
@@ -148,7 +148,7 @@ and the window changes nothing yet.
   only `isRead` or `flag` is not "other fields"; in src/test_server.rs
   `delta_entry`, `inbox_message` and `stored_message` carry `flag` with
   `flagStatus`.
-- [ ] T007 [US4] In crates/mailbag-providers/src/cycle/imap.rs
+- [x] T007 [US4] In crates/mailbag-providers/src/cycle/imap.rs
   `ListedMessage.flags: MessageFlags`, `listing_changes` emits
   `flag_states` where either flag differs from the stored server value,
   `fetch_arrivals` sets `Message.flagged` from the row and `known_arrived`
@@ -159,7 +159,7 @@ and the window changes nothing yet.
   in two pages of one round, research §14), `stored_message` sets
   `flagged`; in
   src/store_load.rs `BatchCounts.read_states` becomes `flag_states`.
-- [ ] T008 [P] [US1] Tests in crates/mailbag-store/src/tests.rs: rows
+- [x] T008 [P] [US1] Tests in crates/mailbag-store/src/tests.rs: rows
   read the effective state for each combination of server and pending
   values; `write_pending_flag` stores a wish, also one equal to the
   server value, and a newer wish replaces the older; a batch's flag write
@@ -171,7 +171,7 @@ and the window changes nothing yet.
   `drop_pending_flags` the same with the refused value; a second
   `Store::at` over the same file reads the pending state again (spec
   SC-002's store half).
-- [ ] T009 [P] [US4] Tests: crates/mailbag-imap/src/tests/ (a listing and
+- [x] T009 [P] [US4] Tests: crates/mailbag-imap/src/tests/ (a listing and
   a row with `\Flagged` read into `flagged`; without it false);
   crates/mailbag-graph/src/tests.rs and src/reply.rs tests (`flag` in the
   selected fields; `flagged` from `flagged`, `notFlagged` and
@@ -179,7 +179,7 @@ and the window changes nothing yet.
   crates/mailbag-providers/src/tests.rs (an IMAP listing whose flag
   changed stores the new star; a Microsoft 365 partial entry with `flag`
   changes the stored star and keeps the read state).
-- [ ] T010 STOP: run ./scripts/check.sh and git diff --check; compare the
+- [x] T010 STOP: run ./scripts/check.sh and git diff --check; compare the
   size with plan.md (domain ≈ 35, store ≈ 90, the read side of imap ≈ 10
   and graph ≈ 15, providers ≈ 20; tests ≈ 185); report, suggest the
   commit and wait before portion 3.

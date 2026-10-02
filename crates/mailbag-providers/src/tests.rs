@@ -9,7 +9,7 @@ use crate::worker::{LoadKind, MailWorker, report_events};
 use goa_adapter::{GraphAccess, ImapAccess, ImapCredential, ImapEncryption};
 use mailbag_domain::{
     AccountId, ContentExplanation, DisplayFields, Failure, FailureKind, Folder, FolderBatch,
-    FolderRef, FolderRole, FolderState, IncompleteList, Message, ReceivedContent,
+    FolderRef, FolderRole, FolderState, IncompleteList, Message, MessageFlags, ReceivedContent,
 };
 use mailbag_graph::test_server as graph_service;
 use mailbag_imap::test_server::{
@@ -144,6 +144,7 @@ fn read_stored_messages(
                 fields: row.fields,
                 received_unix: row.received_unix,
                 seen: row.seen,
+                flagged: row.flagged,
                 content,
                 preview: row.preview,
             })
@@ -658,6 +659,7 @@ fn stored_earlier_message() -> Message {
         fields: DisplayFields::default(),
         received_unix: None,
         seen: true,
+        flagged: false,
         content: ReceivedContent::Text("Stored earlier".to_owned()),
         preview: "Stored earlier".to_owned(),
     }
@@ -1112,6 +1114,29 @@ fn a_microsoft_365_round_applies_removals_partial_entries_and_arrivals() {
     assert_eq!(text_of(&stored[2].content), "Text 4");
 }
 
+/// A star set elsewhere comes as a partial entry with the follow-up flag
+/// alone: it changes the stored star, keeps the read state and reads
+/// nothing again (specs/011-read-and-star/research.md §6).
+#[test]
+fn a_microsoft_365_star_alone_changes_the_star_and_keeps_the_read_state() {
+    let id = graph_service::fixture_immutable_id;
+    let store = Arc::new(Store::in_memory());
+    let (service, outcome, stored) = graph_round(
+        vec![serde_json::json!({"id": id(1), "flag": {"flagStatus": "flagged"}})],
+        inbox_messages(&[1, 2, 3]),
+        &store,
+    );
+    assert!(matches!(outcome, LoadResult::Stored { .. }), "{outcome:?}");
+    assert_eq!(identities(&stored)[0], graph_identity(1));
+    assert!(stored[0].flagged && stored[0].seen, "{:?}", stored[0]);
+    assert!(!stored[1].flagged);
+    assert!(
+        !graph_paths(&service).contains(&format!("/me/messages/{}", id(1))),
+        "{:?}",
+        graph_paths(&service)
+    );
+}
+
 /// Research §5: a message moved from the Inbox to Archive and marked unread
 /// there; an older read-state entry in the Inbox's round must not mark it
 /// read. The message is read again and, being in Archive now, leaves the
@@ -1152,7 +1177,7 @@ fn an_entry_for_a_message_another_folder_holds_is_read_again_first() {
     // Archive's own cycle related the message there, unread.
     let archive = folder_of("synthetic-microsoft365", "archive");
     let archived = FolderBatch {
-        known_arrived: vec![(graph_identity(2), false)],
+        known_arrived: vec![(graph_identity(2), MessageFlags::default())],
         ..FolderBatch::default()
     };
     store.store_batch(&archive, &archived, || false).unwrap();
@@ -1509,6 +1534,7 @@ fn message_with(number: u32, content: ReceivedContent) -> Message {
         fields: DisplayFields::default(),
         received_unix: None,
         seen: false,
+        flagged: false,
         content,
         preview: String::new(),
     }
@@ -1997,15 +2023,17 @@ fn a_microsoft_365_round_without_changes_costs_one_request() {
     assert!(later[0].query.contains("$deltatoken=round-1"), "{later:?}");
 }
 
-/// SC-003: arrivals are fetched, read states change in place and messages
-/// the complete listing no longer reports leave.
+/// SC-003: arrivals are fetched, read states and stars change in place and
+/// messages the complete listing no longer reports leave.
 #[test]
-fn a_later_cycle_brings_arrivals_read_states_and_removals() {
+fn a_later_cycle_brings_arrivals_flags_and_removals() {
     let store = Arc::new(store_with_inbox(&folder_of("synthetic-account", "INBOX")));
     synchronize_again(&imap_server(plain_messages(3)), &store);
     let mut changed = plain_messages(4);
     changed.remove(0); // 10 is gone
     changed[0].seen = true; // 20 was read elsewhere
+    changed[1].flagged = true; // 30 was starred elsewhere
+    changed[2].flagged = true; // 40 arrives starred
     let fixture = imap_server(changed);
     let (outcome, stored, _) = synchronize_again(&fixture, &store);
     assert!(
@@ -2016,7 +2044,11 @@ fn a_later_cycle_brings_arrivals_read_states_and_removals() {
         identities(&stored),
         [imap_identity(40), imap_identity(30), imap_identity(20)]
     );
-    assert!(stored[2].seen);
+    let flags: Vec<(bool, bool)> = stored
+        .iter()
+        .map(|message| (message.seen, message.flagged))
+        .collect();
+    assert_eq!(flags, [(false, true), (false, true), (true, false)]);
     // Only the arrival was fetched.
     assert_eq!(row_fetches(&fixture), ["40"]);
 }

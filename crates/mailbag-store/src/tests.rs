@@ -9,8 +9,8 @@
 use super::*;
 use crate::{test_directory::TestDirectory, test_record::CapturedRecord};
 use mailbag_domain::{
-    ContentExplanation, DisplayFields, FailureKind, FolderBatch, FolderRole, FolderState, Message,
-    ReceivedContent,
+    ContentExplanation, DisplayFields, FailureKind, FlagChanges, FolderBatch, FolderRole,
+    FolderState, Message, MessageFlag, MessageFlags, PendingChange, ReceivedContent,
 };
 use std::{fs, os::unix::fs::PermissionsExt, path::Path};
 
@@ -41,6 +41,7 @@ fn text_message(identity: &str) -> Message {
         fields: DisplayFields::default(),
         received_unix: None,
         seen: false,
+        flagged: false,
         content: ReceivedContent::Text(format!("Text of {identity}")),
         preview: format!("Preview of {identity}"),
     }
@@ -89,12 +90,29 @@ fn read_stored_messages(
                 fields: row.fields,
                 received_unix: row.received_unix,
                 seen: row.seen,
+                flagged: row.flagged,
                 content,
                 preview: row.preview,
             })
         })
         .collect::<Result<_, Failure>>()?;
     Ok(Some(messages))
+}
+
+/// The flags of a message that is not starred.
+fn read_flags(seen: bool) -> MessageFlags {
+    MessageFlags {
+        seen,
+        flagged: false,
+    }
+}
+
+/// A server report that names the read state only.
+fn read_report(seen: bool) -> FlagChanges {
+    FlagChanges {
+        seen: Some(seen),
+        flagged: None,
+    }
 }
 
 fn stored_message_count(store: &Store) -> i64 {
@@ -200,6 +218,7 @@ fn a_mailbox_reads_back_newest_first_with_every_field() {
             },
             received_unix: (number % 5 != 0).then_some(1_700_000_000 - i64::from(number)),
             seen: number % 2 == 1,
+            flagged: number % 3 == 1,
             content,
             preview: if number % 3 == 0 {
                 String::new()
@@ -611,8 +630,8 @@ fn a_batch_removes_changes_relates_and_adds_in_one_write() {
 
     let second = FolderBatch {
         removed: vec!["gone".to_owned()],
-        read_states: vec![("read".to_owned(), true)],
-        known_arrived: vec![("shared".to_owned(), true)],
+        flag_states: vec![("read".to_owned(), read_report(true))],
+        known_arrived: vec![("shared".to_owned(), read_flags(true))],
         arrived: vec![dated_message("new", 5)],
         state: None,
     };
@@ -634,7 +653,7 @@ fn a_batch_removes_changes_relates_and_adds_in_one_write() {
                 ("kept", false),
                 ("read", true)
             ]
-            .map(|(identity, seen)| (identity.to_owned(), seen))
+            .map(|(identity, seen)| (identity.to_owned(), read_flags(seen)))
         )
     );
     // The removed message was in no other folder, so it is gone; the shared
@@ -655,8 +674,8 @@ fn a_related_or_read_message_keeps_its_preview() {
     };
     store.store_batch(&work, &elsewhere, || false).unwrap();
     let related = FolderBatch {
-        known_arrived: vec![("shared".to_owned(), true)],
-        read_states: vec![("shared".to_owned(), true)],
+        known_arrived: vec![("shared".to_owned(), read_flags(true))],
+        flag_states: vec![("shared".to_owned(), read_report(true))],
         ..FolderBatch::default()
     };
     store.store_batch(&inbox, &related, || false).unwrap();
@@ -697,7 +716,7 @@ fn a_text_not_downloaded_never_replaces_a_stored_content() {
     let inbox = store
         .read_folder_sync(&folder_of(&synced, "INBOX"))
         .unwrap();
-    assert!(inbox.stored["message"]);
+    assert!(inbox.stored["message"].seen);
     // A text replaces a text.
     let newer = FolderBatch {
         arrived: vec![Message {
@@ -951,4 +970,224 @@ fn store_completed_cycle(
         ..FolderBatch::default()
     };
     store.store_batch(folder, &batch, load_cancelled)
+}
+
+/// A message with the server's flags, received on day 1.
+fn message_with_flags(identity: &str, seen: bool, flagged: bool) -> Message {
+    Message {
+        seen,
+        flagged,
+        ..dated_message(identity, 1)
+    }
+}
+
+fn pending(identity: &str, flag: MessageFlag, wanted: bool, server: bool) -> PendingChange {
+    PendingChange {
+        identity: identity.to_owned(),
+        flag,
+        wanted,
+        server,
+    }
+}
+
+/// The folder's pending changes by identity, the read state first.
+fn pending_of(store: &Store, folder: &FolderRef) -> Vec<PendingChange> {
+    let mut changes = store.read_pending_changes(folder).unwrap();
+    changes.sort_by_key(|change| (change.identity.clone(), change.flag == MessageFlag::Flagged));
+    changes
+}
+
+/// Each row's identity, read state and star, by identity.
+fn flags_of(store: &Store, folder: &FolderRef) -> Vec<(String, bool, bool)> {
+    let mut rows: Vec<_> = store
+        .read_folder_rows(folder)
+        .unwrap()
+        .expect("the folder has rows")
+        .into_iter()
+        .map(|row| (row.identity, row.seen, row.flagged))
+        .collect();
+    rows.sort();
+    rows
+}
+
+#[test]
+fn rows_show_the_wanted_flags_and_a_cycle_reads_the_servers() {
+    use MessageFlag::{Flagged, Seen};
+    let synced = account("synced");
+    let inbox = folder_of(&synced, "INBOX");
+    let messages = [
+        message_with_flags("none-pending", false, true),
+        message_with_flags("both-set", false, false),
+        message_with_flags("both-cleared", true, true),
+        message_with_flags("replaced", false, false),
+    ];
+    let store = store_with(&synced, &[("INBOX", &messages)]);
+    let wishes = [
+        ("both-set", Seen, true),
+        ("both-set", Flagged, true),
+        ("both-cleared", Seen, false),
+        ("both-cleared", Flagged, false),
+        // A newer wish replaces the older, also one equal to the server's.
+        ("replaced", Flagged, true),
+        ("replaced", Flagged, false),
+    ];
+    for (identity, flag, wanted) in wishes {
+        store
+            .write_pending_flag(&synced, identity, flag, wanted)
+            .unwrap();
+    }
+    assert_eq!(
+        flags_of(&store, &inbox),
+        [
+            ("both-cleared".to_owned(), false, false),
+            ("both-set".to_owned(), true, true),
+            ("none-pending".to_owned(), false, true),
+            ("replaced".to_owned(), false, false),
+        ]
+    );
+    let sync = store.read_folder_sync(&inbox).unwrap();
+    assert_eq!(sync.stored["both-set"], read_flags(false));
+    assert_eq!(
+        pending_of(&store, &inbox),
+        [
+            pending("both-cleared", Seen, false, true),
+            pending("both-cleared", Flagged, false, true),
+            pending("both-set", Seen, true, false),
+            pending("both-set", Flagged, true, false),
+            pending("replaced", Flagged, false, false),
+        ]
+    );
+}
+
+#[test]
+fn a_server_value_written_ends_an_equal_pending_value_only() {
+    use MessageFlag::{Flagged, Seen};
+    let synced = account("synced");
+    let (inbox, work) = (folder_of(&synced, "INBOX"), folder_of(&synced, "Work"));
+    let in_inbox = ["named", "differing", "arrived"]
+        .map(|identity| message_with_flags(identity, false, false));
+    let store = store_with(
+        &synced,
+        &[
+            ("INBOX", &in_inbox),
+            ("Work", &[message_with_flags("related", false, false)]),
+        ],
+    );
+    let wishes = [
+        ("named", Seen, true),
+        ("named", Flagged, true),
+        ("differing", Flagged, true),
+        ("arrived", Seen, true),
+        ("related", Flagged, true),
+    ];
+    for (identity, flag, wanted) in wishes {
+        store
+            .write_pending_flag(&synced, identity, flag, wanted)
+            .unwrap();
+    }
+    let report = FolderBatch {
+        flag_states: vec![
+            // The report names the read state only, so the star stays pending.
+            ("named".to_owned(), read_report(true)),
+            (
+                "differing".to_owned(),
+                FlagChanges {
+                    seen: None,
+                    flagged: Some(false),
+                },
+            ),
+        ],
+        arrived: vec![message_with_flags("arrived", true, false)],
+        known_arrived: vec![(
+            "related".to_owned(),
+            MessageFlags {
+                seen: false,
+                flagged: true,
+            },
+        )],
+        ..FolderBatch::default()
+    };
+    store.store_batch(&inbox, &report, || false).unwrap();
+    assert_eq!(
+        pending_of(&store, &inbox),
+        [
+            pending("differing", Flagged, true, false),
+            pending("named", Flagged, true, false),
+        ]
+    );
+    assert_eq!(pending_of(&store, &work), []);
+    assert_eq!(
+        store.read_folder_sync(&inbox).unwrap().stored["named"],
+        read_flags(true)
+    );
+}
+
+#[test]
+fn a_command_ends_only_a_pending_value_equal_to_its_own() {
+    use MessageFlag::{Flagged, Seen};
+    let synced = account("synced");
+    let inbox = folder_of(&synced, "INBOX");
+    let messages = [
+        "starred",
+        "unstarred-meanwhile",
+        "refused",
+        "changed-meanwhile",
+    ]
+    .map(|identity| message_with_flags(identity, false, false));
+    let store = store_with(&synced, &[("INBOX", &messages)]);
+    let wishes = [
+        ("starred", Flagged, true),
+        // Starred, sent, and unstarred while the command was out.
+        ("unstarred-meanwhile", Flagged, false),
+        ("refused", Seen, true),
+        ("changed-meanwhile", Seen, false),
+    ];
+    for (identity, flag, wanted) in wishes {
+        store
+            .write_pending_flag(&synced, identity, flag, wanted)
+            .unwrap();
+    }
+    let sent = ["starred", "unstarred-meanwhile"].map(str::to_owned);
+    store.settle_flags(&synced, &sent, Flagged, true).unwrap();
+    let refused = ["refused", "changed-meanwhile"].map(str::to_owned);
+    store
+        .drop_pending_flags(&synced, &refused, Seen, true)
+        .unwrap();
+    assert_eq!(
+        pending_of(&store, &inbox),
+        [
+            pending("changed-meanwhile", Seen, false, false),
+            pending("unstarred-meanwhile", Flagged, false, true),
+        ]
+    );
+    assert_eq!(
+        flags_of(&store, &inbox),
+        [
+            ("changed-meanwhile".to_owned(), false, false),
+            ("refused".to_owned(), false, false),
+            ("starred".to_owned(), false, true),
+            ("unstarred-meanwhile".to_owned(), false, false),
+        ]
+    );
+}
+
+#[test]
+fn a_store_opened_again_from_its_file_reads_the_pending_changes() {
+    let directory = TestDirectory::new();
+    let loaded = account("loaded");
+    let inbox = folder_of(&loaded, "INBOX");
+    let store = Store::at(directory.store_path());
+    store
+        .replace_folders(&loaded, &[folder("INBOX")], || false)
+        .unwrap();
+    store_completed_cycle(&store, &inbox, &[dated_message("message", 1)], || false).unwrap();
+    store
+        .write_pending_flag(&loaded, "message", MessageFlag::Flagged, true)
+        .unwrap();
+    drop(store);
+    let reopened = Store::at(directory.store_path());
+    assert_eq!(
+        pending_of(&reopened, &inbox),
+        [pending("message", MessageFlag::Flagged, true, false)]
+    );
 }
