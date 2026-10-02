@@ -32,17 +32,20 @@ a message related without fetching (009 FR-005) leaves it as it is.
 
 - **Row object** (`MessageItem`, window): the stored row and its texts
   made on demand (sender, subject, date wording, the preview), the read
-  state as shown (the stored one until a read on
-  opening changes it, spec FR-009), and the animation state (`shown`,
-  `transition-ms`, spec FR-006). A new read of the stored rows resets the
-  read state.
+  state and the star as the store's effective values (since 2026-10-03 by
+  [Read and star](../011-read-and-star/spec.md); before, the stored read
+  state until a read on opening changed it, spec FR-009), and the
+  animation state (`shown`, `transition-ms`, spec FR-006). Every read of
+  the stored rows sets the read state and the star.
 - **Shown mailbox** (window): the folder's stored rows as the latest read
   found them and which folder they belong to (a change of folder shows
   the rows at once, research §10); whether the unread filter is on (one
   state for the window, spec FR-008).
 - **Read in window** (window): the identities counted read by spec FR-009
   since the latest read of the stored rows; emptied by every new read
-  (research §11).
+  (research §11). *Retired on 2026-10-03 by
+  [Read and star](../011-read-and-star/spec.md)*: the second's read is a
+  stored pending change, read back with the rows.
 - **Pending read** (window): the one-second timeout of the open message,
   dropped when another message opens or the message leaves.
 - **Pending change** (window): the one timeout that applies the list's

@@ -4,7 +4,10 @@
 which builds the target model of the spec's FR-003 with the tables `folder`,
 `message` and `membership`; this page records the structure 007 built.
 The `message` table's `preview` column, added on 2026-09-30 by
-[Message list](../010-message-list/spec.md), is recorded in 008's table.
+[Message list](../010-message-list/spec.md), and its `flagged`,
+`seen_pending` and `flagged_pending` columns, added on 2026-10-03 by
+[Read and star](../011-read-and-star/spec.md), are recorded in 008's
+table.
 
 The persisted form of the store as built now (spec FR-002, FR-003). A row of
 `message` is the domain's `Message` (`mailbag-domain`), keyed by the

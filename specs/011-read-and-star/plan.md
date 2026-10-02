@@ -1,0 +1,418 @@
+# Implementation Plan: Read and star
+
+**Branch**: `claude/read-star` | **Feature**: `011-read-and-star`
+**Date**: 2026-10-02 | **Spec**: [spec.md](spec.md)
+**Status**: Approved on 2026-10-03 (tasks T001). Challenged on 2026-10-02
+(the spec's requirements, then this plan's mechanisms and their cost, in
+fresh sessions) and analysed for consistency on 2026-10-03; the decisions
+are applied here and recorded in the spec's Clarifications. Supporting documents: [research.md](research.md),
+[data-model.md](data-model.md), [quickstart.md](quickstart.md). No new
+contract: the shared shapes this feature changes belong to 009's contract
+and are amended there.
+
+## Size
+
+Budget agreed on 2026-10-02 at the sizing: at most 600 production lines
+and 700 test lines, the test budget raised to 800 on 2026-10-03 after the
+challenge measured the repository's GUI tests; no thread, timer or queue
+of the feature's own; no new dependency; no change to the IMAP library
+forks; three new columns on the stored message. Estimates include doc
+comments and formatting. Reassess with the maintainer before exceeding
+the budget or about 1.5 times an item's estimate; the size so far is
+compared with this table at every review pause.
+
+| Item | Budget | This plan (estimate) |
+|---|---|---|
+| New modules and production lines | ≤ 600 net | ≈ 515: `mailbag-domain` ≈ 35 (`MessageFlag`, `MessageFlags`, `PendingChange`, `flagged` on the message and the row, flag states in the batch, one server step); `mailbag-store` ≈ 90 (three columns; effective values in the row read; the batch write with both flags, ending an equal pending value; `read_pending_changes`; `write_pending_flag`, `settle_flags`, `drop_pending_flags`); `mailbag-imap` ≈ 70 (`SELECT`; `\Flagged` in the listing and the rows; `store_flags` ≈ 40; one step); `mailbag-graph` ≈ 55 (`flag` among the fields and in a change, merged like `isRead`; `update_message_flags` ≈ 30); `mailbag-providers` ≈ 155 (the cycles' read side of the star ≈ 20; new `cycle/pending.rs`: the IMAP sender ≈ 50, the Microsoft 365 sender ≈ 35; the batch writer's three calls, the `StoreChanged` event and counts ≈ 25; the loops of both cycles ≈ 15; the failure mapping ≈ 10); `mailbag` ≈ 115 (the `message` action group and its handlers ≈ 45; the window's write on the pool, the re-read and the failed write's toast ≈ 25; the star in the difference update and the envelope's icon ≈ 8; read on opening writes the pending change and the read-in-window set goes ≈ −5; the `starred` row property and its accessible text ≈ 12; the header menu's two actions ≈ 15; the failure wording ≈ 6; the row form ≈ 12 lines of `.ui`) |
+| Call sites or existing files touched | — | domain `lib.rs`; store `schema.sql`, `lib.rs`, `folders.rs`; imap `lib.rs`, `session.rs`, `reader.rs`, `fetch_responses.rs`, `test_server.rs`; graph `lib.rs`, `reply.rs`, `test_server.rs`; providers `load.rs`, `cycle.rs`, `cycle/imap.rs`, `cycle/graph.rs`, new `cycle/pending.rs`, `store_load.rs`, `failure.rs`; mailbag `main.rs`, `window_ui.rs`, `mail_ui.rs`, `mail_ui/message_item.rs`, `failure_declarations.rs`. Forms: `message-row.ui` (the star), nothing else (the controls exist) |
+| New crates | 0 | 0 |
+| New threads, timers, queues | 0 | 0; 010's read-on-opening timer is reused, the worker and the GIO pool carry the work |
+| New state, types, error types | — | `MessageFlag` (seen, flagged), `MessageFlags`, `PendingChange`; `ImapStep::StoreFlags` and `ServerStep::ChangeFlags` for the wording; the star action's state in the window, set from the rows. Nothing new in `Refreshes` |
+| New fields in existing data | 3 columns | `message.flagged`, `message.seen_pending`, `message.flagged_pending`; `Message.flagged`, `MessageListRow.flagged`; `FolderBatch.flag_states` and `known_arrived` carry both flags; `FolderSync.stored` carries both flags; `ListedUid.flagged`, `MessageRow.flagged`, `GraphMessage.flagged`, `MessageChange::Changed.flagged`; `LoadEvent::BatchStored` renamed `StoreChanged` ([data-model.md](data-model.md)) |
+| Changes to other features' contracts or documents | 009, 007, 010, 002, 008 | As the spec's Amendments; 009's contract gains the flag shapes, the sending step and the event's new name |
+| New dependencies | 0 | 0 (soup3 0.9 already offers `set_method` and `set_request_body_from_bytes`, checked in the crate source) |
+| Tests | ≤ 800 | ≈ 765: store ≈ 120 (effective values; the pending write and its short-circuit; a batch write ending an equal pending value and leaving a differing one; settle; drop; the pending query); imap ≈ 110 (`SELECT` sent, `\Flagged` listed, `store_flags` with OK, NO, BAD and a lost connection; the scripted server's mutable flags and `UID STORE` ≈ 55 of these); graph ≈ 95 (the request's method, body and headers; a 200, a 400 and a 404; the partial and full entries; the scripted service recording method and body ≈ 35 of these); providers ≈ 200 (SC-001's one command per change, SC-003's send between batches and before closing, SC-004's two outcomes, SC-005's refusal with the re-read event, SC-006's two labels, Microsoft 365's send after the round); window ≈ 225 (GUI tests, one per behaviour, 40–80 lines each: the star toggle and the row after the re-read; Mark as Unread keeps the message open and the timer silent; read on opening writes the pending change after the second and not before, SC-007; the refused change shown as a failed refresh with the row reverted; the cycle-start gating and the restart need no GTK and are the store's and `refresh_mailbox`'s existing tests) |
+
+## Summary
+
+A change the user makes becomes a wanted value of one flag on the stored
+message, kept in two nullable columns next to the server's own values
+(research §3); the store reads rows as the effective state, so the window
+never sees the server's stale value (data-model). The window writes the
+change on the GIO pool and then reads the folder's rows again, as it does
+after every stored batch; it never sets a row's state by itself (§12). No
+change starts a cycle: Refresh does, as 009 says (§8). A cycle lists the
+folder as today, stores what the listing proves, and from then on sends
+before each batch of missing messages and once before closing: it reads
+the folder's pending changes, addresses each message by the UID the
+listing gave for its identity, and sends one `UID STORE … ±FLAGS.SILENT`
+per group of equal changes in a mailbox opened with `SELECT` (§2, §4); on
+Microsoft 365 it sends one `PATCH` per message after its round of changes
+(§6). An accepted command settles: server value := sent, pending := none,
+in one transaction. Every write of a server value, the listing's and the
+command's alike, ends a pending value equal to it (§11), so a pending
+value is always a change the server lacks. A refusal drops that command's
+pending changes, tells the window the store changed, and fails the cycle
+with the server's reply (§7). A lost connection leaves the pending change
+for the next cycle's listing (§2).
+
+## Minimal version
+
+| Step | What it does | Cost |
+|---|---|---|
+| Stored flags and pending values | three columns; effective values in the row read; the batch write with both flags, ending an equal pending value; `read_pending_changes`; `write_pending_flag` (short-circuits a wish equal to the server value), `settle_flags`, `drop_pending_flags` | ≈ 125 (domain + store) |
+| Mailboxes opened for writing | `session::select_mailbox` replaces `examine_mailbox`; the reconnect path uses it too | ≈ 8 |
+| The flags on the wire | `\Flagged` parsed with `\Seen`; `MailboxReader::store_flags(uids, flag, set)`; `flag` among the Microsoft 365 fields, `flagStatus` read and merged; `update_message_flags` | ≈ 110 (imap + graph) |
+| The cycle sends | the cycles' read side of the star; `cycle/pending.rs`: `send_imap_changes`, `send_graph_changes`; the batch writer's `pending_changes`, `settle`, `drop_pending` and the `StoreChanged` event; both loops restructured | ≈ 155 |
+| The window | the `message` action group; the write on the pool, the re-read and the failed write's toast; the star in the difference update and the envelope's icon; read on opening writes the change; the star in the row; the header menu's two actions; the failure wording | ≈ 115 |
+
+## How a change travels
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant W as Window (GTK thread)
+    participant P as GIO pool
+    participant D as Store
+    participant K as Mail worker (cycle)
+    participant S as Server
+
+    U->>W: star / Mark as Unread / the second after opening
+    W->>P: write_pending_flag(account, identity, flag, wanted)
+    P->>D: UPDATE message SET flagged_pending = … (NULL when equal to the server value)
+    P-->>W: written
+    W->>P: read_folder_rows (as after every stored batch)
+    P-->>W: rows with the effective state → the row and the toggle
+    U->>W: Refresh Mailbox (later: background synchronization)
+    W->>K: a cycle of the folder
+    K->>S: SELECT, UID FETCH 1:* (UID FLAGS [X-GM-MSGID])
+    K->>D: store the listing (server values; an equal pending value ends)
+    K->>D: read_pending_changes(folder)
+    K->>S: UID STORE 4711,4720 +FLAGS.SILENT (\Flagged)
+    S-->>K: OK
+    K->>D: settle_flags: flagged := 1, flagged_pending := NULL
+    K->>S: fetch the missing messages, a batch at a time (sending again before each)
+```
+
+## The cycle's loop
+
+```mermaid
+flowchart TD
+    open([SELECT the folder]) --> list[List every message:<br/>identity → UID, flags]
+    list --> storelist[Store what the listing proves<br/>removals, flag states, folder state;<br/>an equal pending value ends]
+    storelist --> send[Send the folder's pending changes<br/>by the listing's UIDs]
+    send --> ok{Accepted?}
+    ok -->|OK| settle[Settle: server := sent,<br/>pending := none]
+    ok -->|NO or BAD| drop[Drop that command's pending changes,<br/>tell the window the store changed,<br/>fail the cycle with the reply]
+    ok -->|connection lost| lost[Fail the cycle;<br/>pending stays for the next listing]
+    settle --> more{Missing messages left?}
+    more -->|yes| batch[Fetch one batch, store it]
+    batch --> send
+    more -->|no| done([Close])
+```
+
+## Function map
+
+**`mailbag-store`** — the columns and their rules (data-model).
+
+- `read_listed_rows`: `COALESCE(seen_pending, seen)` and
+  `COALESCE(flagged_pending, flagged)` as the row's `seen` and `flagged`.
+- `read_folder_sync`: per identity the server's `seen` and `flagged`, as
+  today's read with one more column.
+- `store_batch`: `set_flag_states` writes `seen` and `flagged` and ends an
+  equal pending value (`seen_pending = CASE WHEN seen_pending = ?new THEN
+  NULL ELSE seen_pending END`); `store_arrived`'s upsert and
+  `relate_known` do the same; a differing pending value is untouched.
+- `read_pending_changes(folder)`: the folder's messages with a non-null
+  pending column, as `(identity, flag, wanted)`; a small query over the
+  folder's memberships.
+- `write_pending_flag(account, identity, flag, wanted)`: one `UPDATE`
+  that sets the pending column to `wanted`, or to `NULL` when the server
+  column already equals it (spec FR-001).
+- `settle_flags(account, identities, flag, value)`: server column :=
+  `value`, pending column := `NULL`, one transaction.
+- `drop_pending_flags(account, identities, flag)`: pending column :=
+  `NULL`.
+
+**`mailbag-imap`**
+
+- `session::select_mailbox`: `SELECT` where `EXAMINE` was; the same
+  `MailboxSession` out; the reconnect path calls it.
+- `fetch_responses`: `\Flagged` read next to `\Seen` into `ListedUid` and
+  `MessageRow`.
+- `MailboxReader::store_flags(uids, flag: StoreFlag, set) -> Result<Option<ServerReply>, ImapError>`,
+  with `StoreFlag { Seen, Flagged }` the crate's own enum (`mailbag-imap`
+  does not depend on `mailbag-domain`; the sender maps `MessageFlag` to
+  it):
+  1. one `UID STORE <set> ±FLAGS.SILENT (\Seen|\Flagged)`;
+  2. drain the answer with `collect_fetches` (Gmail still sends `FETCH`
+     lines);
+  3. `NO`/`BAD` completion → `Some(reply)`, with the sign-in name
+     replaced as other replies; a lost connection → error at
+     `ImapStep::StoreFlags`.
+
+**`mailbag-graph`**
+
+- `CHANGE_FIELDS` gains `flag`; `reply.rs`'s `read_message` reads
+  `flag.flagStatus == "flagged"`; `read_change` carries `flagged: Option<bool>` and treats
+  `flag` like `isRead` (a partial entry with either is not "other
+  fields"); `merge_per_message` merges it like `is_read`.
+- `update_message_flags(service_url, token, id, update) -> Result<(), GraphError>`:
+  `PATCH /me/messages/{id}` with `{"isRead": …}` or `{"flag":
+  {"flagStatus": …}}`, `Content-Type: application/json`, the ImmutableId
+  preference; 200 is success, anything else the refusal
+  `GraphFailure::Refused { status, code }` as today.
+
+**`mailbag-providers::cycle::pending`** — the sending step, shared.
+
+- `send_imap_changes(reader, listed_uids: &HashMap<identity, uid>, batches)`:
+  1. `batches.pending_changes()`;
+  2. keep those the listing shows; group by `(flag, wanted)`;
+  3. per group `store_flags`; `Ok(None)` → `batches.settle(group)`;
+     `Ok(Some(reply))` → `batches.drop_pending(group)` and
+     `Err(CycleEnd::Failed(refused(reply)))`; `Err` → `Err` (pending
+     stays).
+- `send_graph_changes(service, batches)`: the same per message with
+  `GraphService::update_flags(id, update)`, which runs
+  `update_message_flags` through `request` (the renewal applies once as
+  for any request); a refusal other than the refused token drops and
+  fails.
+- `BatchWriter::pending_changes`, `settle`, `drop_pending`: the store
+  calls with the cycle's failure mapping; `drop_pending` sends
+  `LoadEvent::StoreChanged`, since the window must read the reverted row;
+  `settle` changes no effective state and sends nothing; `finish` counts
+  `sent`.
+- `LoadEvent::BatchStored` is renamed `StoreChanged`: "the cycle changed
+  the folder's stored state, a batch or a dropped pending change; the
+  window reads again" (the challenge found the old name false for the
+  drop).
+- `cycle::imap::synchronize_imap_folder`: open → read → list → identify →
+  missing → store the listing → `loop { send; next chunk or break;
+  fetch; store }` → finish; the listing's `identity → uid` map lives in
+  `listed`.
+- `cycle::graph::synchronize_graph_folder`: after the round's last page
+  is stored, and after each stored page of a first fill or a full
+  reading, `send_graph_changes`.
+
+**`mailbag::mail_ui`** — the actions.
+
+- `MailUi::new`: a `message` action group on the reader page: `star`
+  (stateful boolean; `change-state` → `change_flag(Flagged, state)`),
+  `mark-unread` and `mark-read` (→ `change_flag(Seen, false | true)`);
+  the window's `app.mark-scope-read` / `app.mark-scope-unread` call the
+  same two.
+- `change_flag(flag, wanted)`: the open message's identity and account;
+  nothing when the row's effective state already equals `wanted`; for
+  `Seen = false` the pending read timer is dropped first, so it cannot
+  fire during the write; then the `flag_change` callback to the window.
+- `count_read_after_opening`: the timer's closure calls
+  `change_flag(Seen, true)` instead of the read-in-window set, which is
+  removed (010's `InWindow.read`).
+- `update_list_by_difference`: sets `starred` as it sets `unread`;
+  `lists_same_message` compares `flagged` too.
+- `show_envelope`: the star action's state and the toggle's icon
+  (`starred-symbolic` while starred, `non-starred-symbolic` otherwise)
+  from the row's `flagged`; it runs on opening and after every re-read of
+  the open message's row.
+
+**`mailbag::mail_ui::message_item`**: `starred` property bound by the row
+form; `read_state_text` says "Starred" too.
+
+**`mailbag::window_ui`**
+
+- `connect_flag_change`: `run_on_pool(store.write_pending_flag)`; on
+  success `read_shown_mailbox_again()`, the same read as after a stored
+  batch, whose answer sets the row and the toggle; on failure a toast
+  "Message not changed" with the advice to try again (spec FR-011),
+  nothing shown as changed,
+  the store's reason in the record. No cycle starts here.
+- `LoadEvent::StoreChanged`: handled as `BatchStored` is today.
+- `failure_declarations`: `ServerStep::ChangeFlags` → "Message not
+  changed on the server", "The mail server refused to change this
+  message." and the stopped-responding variant.
+- What the user sees around a change: the row and the toggle change when
+  the re-read answers, tens of milliseconds after the write; nothing else
+  moves. The next Refresh Mailbox shows the spinner and disables the
+  refresh actions as today while the cycle lists, sends and fetches.
+
+## Optional mechanisms
+
+Not in the minimal version; each with the situation that would call for it.
+
+| Mechanism | Situation | Cost |
+|---|---|---|
+| A change starts a cycle of its folder when no load runs | The phone learns a star only at the next refresh; the maintainer chose Refresh only, since a cycle per change shows the spinner and disables Refresh for seconds, and offline fails with a banner per change (spec Clarifications); background synchronization lifts the lag | ≈ 15 |
+| A set of folders due for a cycle after the running load | Changes made in other folders during a long load wait for the user's refresh of those folders | ≈ 15 |
+| Re-read one row instead of the folder after a write | A folder of 100 000 rows costs about 100 ms per re-read on the pool, so the dot goes out that long after the second; a second path to update a row | ≈ 30 |
+| Re-read the text only when list fields differ | On Microsoft 365 a star on a recent message comes back as a full entry and 009 re-reads its text once (research §6); many stars on recent mail cost one GET each | ≈ 20 |
+| Smaller PATCH answers | The service returns the whole message (≈ 85 KB) to every change; on a slow link ten changes cost nearly a megabyte | unknown: a `Prefer: return=minimal` the service may not honour |
+| Keep a pending change through a refusal the server marks temporary | Throttling or `UNAVAILABLE` drops the user's star with a truthful banner; the maintainer chose to treat every server error alike | ≈ 10 |
+| Star from the row | Users expect to star without opening | with the selection the list will gain (spec FR-013) |
+
+## Decisions for the maintainer
+
+Taken on 2026-10-02 and 2026-10-03; recorded in the spec's Clarifications:
+
+1. Pending changes kept in the store and sent by the cycle, not sent on
+   their own with an optimistic window (research §1). Accepted.
+2. The cycle lists first and sends after, before each batch and before
+   closing (research §2). Accepted.
+3. Two nullable columns on the message, not a table of changes (§3).
+   Accepted on 2026-10-03 with the challenge decisions.
+4. A refused command, a temporary refusal included, drops its pending
+   changes and fails the cycle (§7). Accepted.
+5. No change starts a cycle; Refresh does (§8). Accepted after the
+   challenge.
+6. The star in the row's first line before the date; the reader header's
+   Mark as Read / Mark as Unread act on the open message. Accepted.
+7. Every write of a server value ends an equal pending value (§11); the
+   window re-reads the folder's rows after a write (§12; decided
+   2026-10-03, one row stays optional); the cycle's event is named for
+   what it means (§13).
+8. A change the store cannot write is shown as a toast (spec FR-011):
+   proposed at the consistency analysis of 2026-10-03, accepted the same
+   day.
+
+## Portions and review pauses
+
+Each portion ends with its tests and `scripts/check.sh`, a report and a
+suggested commit message; the size so far is compared with the table
+above. The maintainer commits.
+
+1. **Documents** — this plan and its documents approved; the amendments
+   applied (below). *Pause.*
+2. **Stored flags** — domain types, the three columns, effective rows,
+   the batch write ending equal pending values, the pending query, the
+   three writes; store tests. *Pause.*
+3. **The wire** — `SELECT`, `\Flagged` in listing and rows,
+   `store_flags`, the scripted server's mutable flags and `UID STORE`;
+   `flag` in the Microsoft 365 fields and changes, `update_message_flags`,
+   the scripted service's `PATCH` with method and body recorded; crate
+   tests. *Pause.*
+4. **The cycle sends** — `cycle/pending.rs`, the batch writer's calls and
+   the `StoreChanged` event, both loops, the failure mapping and wording;
+   SC-001 (server side), SC-003, SC-004, SC-005, SC-006 on the scripted
+   servers. *Pause.*
+5. **The window** — the action group, the write on the pool and the
+   re-read, the star in the difference update and the envelope, read on
+   opening durable, the star in the row (form diff for approval), the
+   header menu's actions; SC-007, SC-001 (window side), the refused change
+   shown. *Pause.*
+6. **Final passes** — consistency analysis, the GUI tests one by one, the
+   simplification review, the quickstart's installed-build checks with
+   the maintainer (SC-008); the amendments checked.
+
+## Technical Context
+
+**Language/Version**: Rust 2024 edition (workspace toolchain), GTK 4.22,
+libadwaita 1.9, GLib 2.88.
+**Primary Dependencies**: gtk4-rs 0.11, rusqlite, the async-imap and
+imap-proto forks unchanged (`select`, `uid_store`, `\Flagged` exist),
+soup3 0.9 (`set_method`, `set_request_body_from_bytes`).
+**Storage**: SQLite through `mailbag-store`; three new columns; the
+schema's text is the store's version (007 FR-012).
+**Testing**: `cargo test --locked --workspace` through `scripts/check.sh`;
+GUI tests one per process; scripted IMAP and Graph servers, which gain
+`UID STORE` with mutable flags and `PATCH` with the body recorded.
+**Target Platform**: GNOME on Linux, Flatpak.
+**Project Type**: desktop application.
+**Performance Goals**: a change shows within the store's write and the
+rows' re-read (tens of milliseconds; about 100 ms for a folder of 100 000
+rows) and reaches the server with the next refresh: on Gmail about 4 s
+for a synchronized folder (sign-in ≈ 1.5 s, `SELECT` ≈ 0.3 s, the
+listing ≈ 1 s, `STORE` ≈ 0.3 s, measured on 2026-10-02); on Microsoft
+365 a `PATCH` ≈ 0.6–0.8 s after a round ≈ 0.4 s when nothing changed.
+**Constraints**: store writes on the GIO pool, sending on the worker; no
+timer or thread of the feature's own; one command per group of equal
+changes on IMAP.
+**Scale/Scope**: three providers; folders of 100 000 messages; a Gmail
+message under many labels.
+
+## Constitution Check
+
+- **I. Necessary complexity only**: the pending columns answer "a refresh
+  must not undo my change" (spec US1), sending between batches answers
+  the minutes-long first fill (US3), the short-circuit on an equal wish
+  and the equal-value rule at every server write answer "star, then
+  unstar" and "another client did it first" (Edge Cases, FR-009), the
+  settle write answers the flicker between sending and the next listing.
+  Optional mechanisms are listed apart with their situations. No
+  dependency added; no fork change.
+- **II. Clear language and concrete names**: `write_pending_flag`,
+  `settle_flags`, `read_pending_changes`, `send_imap_changes`,
+  `store_flags`, `update_message_flags`, `StoreChanged`; the spec names
+  situations before mechanisms.
+- **III. Explicit failures and truthful state**: the window shows a
+  change only after its commit and only from the store; the server's
+  refusal reverts the row and names the reply; an unknown outcome is
+  settled by reading, never guessed; the stored server value is written
+  only by cycles and by an accepted command.
+- **IV. One owner per business rule**: the effective state is computed in
+  one place, the store's row read; the equal-value rule lives in the
+  store's flag writes; what each flag means on a provider lives in that
+  provider's module; the sending rule in `cycle/pending.rs`.
+- **V. Responsive, bounded work**: writes and re-reads on the pool,
+  commands on the worker; one command per group; the listing already in
+  memory is reused for the addresses; no load starts without the user.
+- **VI. Evidence before completion**: SC-001 to SC-007 on the scripted
+  servers and in GUI tests; SC-008 on the installed build with the
+  maintainer; the live facts of 2026-10-02 in research.
+- **VII. Gmail first**: the message-level flags and the Starred label are
+  checked live; the listing-based addressing is designed for Gmail's
+  many-labels model first and serves Generic IMAP unchanged; Microsoft
+  365's full-entry cost is recorded and accepted.
+
+No violation to justify.
+
+## Project Structure
+
+### Documentation (this feature)
+
+```text
+specs/011-read-and-star/
+├── plan.md
+├── research.md
+├── data-model.md
+├── quickstart.md
+├── checklists/requirements.md
+└── tasks.md              # $speckit-tasks
+```
+
+### Source Code
+
+```text
+crates/mailbag-domain/src/lib.rs                 # flags, pending change, server step
+crates/mailbag-store/src/{schema.sql,lib,folders}.rs
+crates/mailbag-imap/src/{lib,session,reader,fetch_responses,test_server}.rs
+crates/mailbag-graph/src/{lib,reply,test_server}.rs
+crates/mailbag-providers/src/cycle/pending.rs    # new: the sending step
+crates/mailbag-providers/src/cycle/{imap,graph}.rs
+crates/mailbag-providers/src/{load,cycle,store_load,failure}.rs
+crates/mailbag/src/{main,window_ui,mail_ui,failure_declarations}.rs
+crates/mailbag/src/mail_ui/message_item.rs
+crates/mailbag/resources/ui/message-row.ui       # the star mark
+```
+
+**Structure Decision**: the existing crates; one new module in
+`mailbag-providers`.
+
+## Documents amended before implementing
+
+As the spec's Amendments, applied in portion 1:
+
+- 009 spec FR-001, FR-002(a), FR-015(a); 009 data-model ("not stored:
+  pending changes" → the pending columns; the equal-value rule in the
+  batch write; the cycle's pending query); 009 contracts/synchronization.md
+  (`FolderBatch`'s flag states, `FolderSync`'s flags,
+  `MessageListRow.flagged`, `ListedUid.flagged`, the sending step in the
+  cycle's order, `LoadEvent::StoreChanged`).
+- 007 spec FR-003 (no UID on a membership), FR-014(c) (built); 007
+  data-model (the columns).
+- 010 spec FR-002 (the star), FR-009 (durable; the in-window record
+  retired), FR-011(b) (built), Key Entities (effective state); 010
+  data-model (the row object's read state comes from the store's
+  effective value; the read-in-window set goes).
+- 002 contracts/imap-reading.md: the Inbox row (`SELECT`), the Finish row
+  and SC-002's note (flag commands under 011 FR-007 are the only
+  mail-changing commands).
+- 008 spec FR-013(d): built note.

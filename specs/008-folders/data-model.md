@@ -38,6 +38,8 @@ list; an empty completed list is never stored (spec FR-001).
 | `identity` | TEXT, not null | `gmail:<X-GM-MSGID>`, `graph:<immutable id>`, or `imap:<folder identity>/<uid>` |
 | `subject`, `sender`, `recipients`, `received`, `seen`, `content_kind`, `content_detail` | as in 007 | The list fields, read state and content |
 | `preview` | TEXT, not null | The first readable words of the message; empty when there are none (added on 2026-09-30 by [Message list](../010-message-list/spec.md), [its data model](../010-message-list/data-model.md)) |
+| `flagged` | INTEGER, 0 or 1 | The star as the server last reported it (added on 2026-10-03 by [Read and star](../011-read-and-star/spec.md), [its data model](../011-read-and-star/data-model.md)) |
+| `seen_pending`, `flagged_pending` | INTEGER, 0 or 1, null | The read state and star the user wants and the server does not have yet; null when nothing is pending (011) |
 
 Unique on `(account, identity)`.
 
