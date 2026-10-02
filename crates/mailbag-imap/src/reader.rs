@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::{
-    FolderListing, ImapAccount, ImapError, ImapFailure, ImapStep, MessageList, MessagePart,
+    FolderListing, ImapAccount, ImapError, ImapFailure, ImapStep, MessageList, MessageRow,
     MessageText, OpenOptions, RowItems, ServerReply, TextParts, TextRequest,
     fetch_responses::{
-        FetchEnd, FetchResponses, collect_fetches, collect_rows, keep_listed,
-        keep_rows_without_structure, keep_structures, message_text, section_paths, uid_set,
+        FetchEnd, FetchResponses, collect_fetches, collect_rows, keep_listed, message_text,
+        section_paths, structure_of, uid_set,
     },
     session::{
         self, MailboxSession, SOCKET_TIMEOUT_SECONDS, ServerNotices, StepFailure, command_failure,
@@ -16,7 +16,7 @@ use crate::{
 };
 use async_imap::error::{Error, ResponseTooLarge};
 use futures_util::TryStreamExt;
-use std::{collections::BTreeMap, io};
+use std::{cmp::Reverse, collections::BTreeMap, io};
 
 const ROW_ITEMS: &str = "UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT)]";
 /// Gmail's message identifier and labels, added to the rows on request.
@@ -24,6 +24,7 @@ const GMAIL_ROW_ITEMS: &str = "X-GM-MSGID X-GM-LABELS";
 const LISTING_ITEMS: &str = "(UID FLAGS)";
 /// Gmail's message identifier, added to the listing on request.
 const GMAIL_LISTING_ITEMS: &str = "(UID FLAGS X-GM-MSGID)";
+/// The command that reads one structure on its own (`fetch_structures_apart`).
 const STRUCTURE_ITEMS: &str = "(UID BODYSTRUCTURE)";
 
 /// A signed-in, read-only session with one mailbox of an account. It never
@@ -153,10 +154,17 @@ impl MailboxReader {
         })
     }
 
-    /// Reads the rows of the given messages, in descending UID order. A
-    /// message the server did not answer for is left out: it disappeared, or
-    /// the server refused it, whose reason travels with the rows, because a
-    /// missing row explains nothing by itself.
+    /// Reads the rows of the given messages with their part structures, in
+    /// descending UID order. A message the server did not answer for is left
+    /// out: it disappeared, or the server refused it, whose reason travels
+    /// with the rows, because a missing row explains nothing by itself.
+    ///
+    /// One command carries rows and structures: a server spends about as
+    /// much on a second command for the same messages as on the first
+    /// (specs/009-synchronization/research.md §3). When it does not answer
+    /// for every message, because the server refused some or the parser
+    /// rejected one structure, which fails the whole answer and leaves the
+    /// session unusable, the unanswered messages are read again apart.
     pub async fn fetch_rows_by_uid(
         &mut self,
         uids: &[u32],
@@ -168,13 +176,59 @@ impl MailboxReader {
                 refusal: None,
             });
         }
-        let items = match row_items {
-            RowItems::Standard => format!("({ROW_ITEMS})"),
-            RowItems::WithGmailAttributes => format!("({ROW_ITEMS} {GMAIL_ROW_ITEMS})"),
+        let responses = self
+            .fetch(uids, &row_command_items(row_items, true))
+            .await?;
+        let mut rows = collect_rows(&responses.fetches, uids);
+        let refusal = match responses.end {
+            FetchEnd::Completed => None,
+            FetchEnd::Rejected(reply) if rows.len() == uids.len() => Some(self.refusal(reply)),
+            FetchEnd::Rejected(_) => {
+                self.read_unanswered_apart(uids, row_items, &mut rows)
+                    .await?
+            }
+            FetchEnd::Failed(error) if is_parse_failure(&error) => {
+                self.read_unanswered_apart(uids, row_items, &mut rows)
+                    .await?
+            }
+            FetchEnd::Failed(error) => {
+                return Err(self.error(command_failure(ImapStep::FetchMessages, &error)));
+            }
         };
-        let responses = self.fetch(uids, &items).await?;
-        let rows = collect_rows(&responses.fetches, uids);
-        tracing::info!(rows = rows.len(), "message rows loaded");
+        tracing::info!(
+            rows = rows.len(),
+            without_structure = rows.iter().filter(|row| row.structure.is_none()).count(),
+            "message rows loaded"
+        );
+        Ok(MessageList { rows, refusal })
+    }
+
+    /// Reads the messages the row command did not answer for: their rows in
+    /// one command, then each structure on its own, so that one message the
+    /// server refuses to describe for good, or whose description the parser
+    /// cannot read, keeps its row without a structure. A message gone
+    /// between the two commands disappeared. Returns the refusal of its own
+    /// row command, which then names messages the server withheld again; the
+    /// first command's refusal is dropped, since what it withheld has been
+    /// asked for again.
+    async fn read_unanswered_apart(
+        &mut self,
+        uids: &[u32],
+        row_items: RowItems,
+        rows: &mut Vec<MessageRow>,
+    ) -> Result<Option<ServerReply>, ImapError> {
+        let unanswered: Vec<u32> = uids
+            .iter()
+            .copied()
+            .filter(|uid| !rows.iter().any(|row| row.uid == *uid))
+            .collect();
+        if unanswered.is_empty() {
+            return Ok(None);
+        }
+        let responses = self
+            .fetch(&unanswered, &row_command_items(row_items, false))
+            .await?;
+        let mut answered = collect_rows(&responses.fetches, &unanswered);
         let refusal = match responses.end {
             FetchEnd::Completed => None,
             FetchEnd::Rejected(reply) => Some(self.refusal(reply)),
@@ -182,7 +236,53 @@ impl MailboxReader {
                 return Err(self.error(command_failure(ImapStep::FetchMessages, &error)));
             }
         };
-        Ok(MessageList { rows, refusal })
+        self.fetch_structures_apart(&mut answered).await?;
+        rows.append(&mut answered);
+        rows.sort_by_key(|row| Reverse(row.uid));
+        Ok(refusal)
+    }
+
+    /// Reads each row's structure on its own, reconnecting after every
+    /// structure the parser rejects, for example one nested deeper than its
+    /// limit, since that fails the whole response and leaves the session
+    /// unusable. A row whose structure could not be read keeps none; a row
+    /// the server no longer answers for is dropped, its message disappeared.
+    /// A refusal the server marks temporary (RFC 5530 `UNAVAILABLE`) fails
+    /// the read instead, so that nothing is kept as unreadable for a passing
+    /// condition.
+    async fn fetch_structures_apart(
+        &mut self,
+        rows: &mut Vec<MessageRow>,
+    ) -> Result<(), ImapError> {
+        for mut row in std::mem::take(rows) {
+            let uid = row.uid;
+            let responses = self.fetch(&[uid], STRUCTURE_ITEMS).await?;
+            row.structure = structure_of(uid, &responses.fetches);
+            match responses.end {
+                FetchEnd::Completed if row.structure.is_none() => {
+                    tracing::debug!(uid, "message disappeared");
+                    continue;
+                }
+                FetchEnd::Completed => {}
+                FetchEnd::Rejected(reply) if is_temporary(&reply) => {
+                    return Err(self.error(refused(ImapStep::FetchMessages, reply)));
+                }
+                FetchEnd::Rejected(_) => {
+                    tracing::debug!(uid, "structure could not be read: the server refused it");
+                }
+                FetchEnd::Failed(error) if is_parse_failure(&error) => {
+                    tracing::debug!(
+                        uid,
+                        "structure could not be read: the description could not be parsed"
+                    );
+                }
+                FetchEnd::Failed(error) => {
+                    return Err(self.error(command_failure(ImapStep::FetchMessages, &error)));
+                }
+            }
+            rows.push(row);
+        }
+        Ok(())
     }
 
     /// The server's refusal as the caller keeps it, with the sign-in name
@@ -192,82 +292,6 @@ impl MailboxReader {
             text: replace_sign_in_name(&self.account.login, &reply.text),
             ..reply
         }
-    }
-
-    /// Reads part structures for the given UIDs. A structure that could not be
-    /// read is `None`; a UID missing from the result has disappeared, and all
-    /// of them may have. A refusal the server marks temporary (RFC 5530
-    /// `UNAVAILABLE`) fails the read instead, so that nothing is kept as
-    /// unreadable for a passing condition.
-    pub async fn fetch_structures(
-        &mut self,
-        uids: &[u32],
-    ) -> Result<BTreeMap<u32, Option<MessagePart>>, ImapError> {
-        let mut structures = BTreeMap::new();
-        if uids.is_empty() {
-            return Ok(structures);
-        }
-        let responses = self.fetch(uids, STRUCTURE_ITEMS).await?;
-        keep_structures(&responses.fetches, uids, &mut structures);
-        match responses.end {
-            FetchEnd::Completed => {}
-            FetchEnd::Rejected(reply) if is_temporary(&reply) => {
-                return Err(self.error(refused(ImapStep::FetchMessages, reply)));
-            }
-            FetchEnd::Rejected(_) => keep_rows_without_structure(uids, &mut structures),
-            FetchEnd::Failed(error) if is_parse_failure(&error) => {
-                self.isolate_unreadable_structures(uids, &mut structures)
-                    .await?
-            }
-            FetchEnd::Failed(error) => {
-                return Err(self.error(command_failure(ImapStep::FetchMessages, &error)));
-            }
-        }
-        for uid in uids.iter().filter(|uid| !structures.contains_key(uid)) {
-            tracing::debug!(uid, "message disappeared");
-        }
-        tracing::info!(messages = structures.len(), "part structures loaded");
-        Ok(structures)
-    }
-
-    /// One structure the parser rejects, for example nested deeper than its
-    /// limit, fails the whole response and leaves the session unusable. Reads
-    /// each remaining structure on its own, reconnecting after every failure.
-    async fn isolate_unreadable_structures(
-        &mut self,
-        uids: &[u32],
-        structures: &mut BTreeMap<u32, Option<MessagePart>>,
-    ) -> Result<(), ImapError> {
-        // Only answered structures are known at this point, so every other
-        // requested message gets its own request, which also tells a message
-        // that disappeared from one the parser cannot read.
-        let unread: Vec<u32> = uids
-            .iter()
-            .copied()
-            .filter(|uid| !structures.contains_key(uid))
-            .collect();
-        for uid in unread {
-            let responses = self.fetch(&[uid], STRUCTURE_ITEMS).await?;
-            keep_structures(&responses.fetches, &[uid], structures);
-            match responses.end {
-                FetchEnd::Completed => {}
-                FetchEnd::Rejected(reply) if is_temporary(&reply) => {
-                    return Err(self.error(refused(ImapStep::FetchMessages, reply)));
-                }
-                FetchEnd::Rejected(_) => keep_rows_without_structure(&[uid], structures),
-                FetchEnd::Failed(error) if is_parse_failure(&error) => {
-                    tracing::debug!(
-                        uid,
-                        "structure could not be read: the description could not be parsed"
-                    );
-                    structures.insert(uid, None);
-                }
-                FetchEnd::Failed(error) => {
-                    return Err(self.error(command_failure(ImapStep::FetchMessages, &error)));
-                }
-            }
-        }
-        Ok(())
     }
 
     /// Replaces the session with a fresh one on the same mailbox.
@@ -392,6 +416,19 @@ impl MailboxReader {
     fn error(&mut self, failure: StepFailure) -> ImapError {
         self.notices.error(&self.account.login, failure)
     }
+}
+
+/// The items of a row command: the list fields, Gmail's fields on request
+/// and the part structures, unless they are read apart.
+fn row_command_items(row_items: RowItems, with_structures: bool) -> String {
+    let mut items = vec![ROW_ITEMS];
+    if row_items == RowItems::WithGmailAttributes {
+        items.push(GMAIL_ROW_ITEMS);
+    }
+    if with_structures {
+        items.push("BODYSTRUCTURE");
+    }
+    format!("({})", items.join(" "))
 }
 
 /// Whether the server marked its refusal temporary (RFC 5530 `UNAVAILABLE`):

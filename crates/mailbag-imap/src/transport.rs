@@ -6,11 +6,9 @@ use futures_util::io::{AsyncRead, AsyncWrite};
 use gio::prelude::*;
 use glib::thread_guard::ThreadGuard;
 use std::{
-    cell::RefCell,
     error::Error,
     fmt, io,
     pin::Pin,
-    rc::Rc,
     task::{Context, Poll},
 };
 
@@ -103,31 +101,22 @@ fn step_failure(step: ImapStep, error: &glib::Error) -> ImapFailure {
 }
 
 /// A GIO stream as the futures-io stream that async-imap reads and writes.
-/// Two handles share it: the session's, and the one that puts compression
-/// in between once the server has agreed to it (`compress`), while the
-/// session keeps reading and writing through its own handle.
 ///
 /// `ThreadGuard` meets async-imap's `Send` bound without making the stream
 /// usable elsewhere: it is created, polled and dropped on the mail worker.
 pub(crate) struct GioStream {
-    stream: ThreadGuard<Rc<RefCell<gio::IOStreamAsyncReadWrite<gio::IOStream>>>>,
-    /// The secured stream underneath, which compression wraps.
+    stream: ThreadGuard<gio::IOStreamAsyncReadWrite<gio::IOStream>>,
+    /// The secured stream underneath, held here because its input and
+    /// output streams do not keep the TLS connection alive: once
+    /// compression wraps them, nothing else would.
     secured: ThreadGuard<gio::IOStream>,
 }
 
 impl GioStream {
     pub(crate) fn new(secured: gio::IOStream) -> Self {
         Self {
-            stream: ThreadGuard::new(Rc::new(RefCell::new(pollable(secured.clone())))),
+            stream: ThreadGuard::new(pollable(secured.clone())),
             secured: ThreadGuard::new(secured),
-        }
-    }
-
-    /// Another handle on the same stream.
-    pub(crate) fn share(&self) -> Self {
-        Self {
-            stream: ThreadGuard::new(Rc::clone(self.stream.get_ref())),
-            secured: ThreadGuard::new(self.secured.get_ref().clone()),
         }
     }
 
@@ -136,14 +125,14 @@ impl GioStream {
     /// deflate without the zlib header, as the extension defines. From here
     /// on every command the session flushes reaches the server compressed,
     /// and every byte read is decompressed first.
-    pub(crate) fn compress(&self) {
+    pub(crate) fn compress(&mut self) {
         let secured = self.secured.get_ref();
         let decompressor = gio::ZlibDecompressor::new(gio::ZlibCompressorFormat::Raw);
         let compressor = gio::ZlibCompressor::new(gio::ZlibCompressorFormat::Raw, -1);
         let input = gio::ConverterInputStream::new(&secured.input_stream(), &decompressor);
         let output = gio::ConverterOutputStream::new(&secured.output_stream(), &compressor);
         let compressed = gio::SimpleIOStream::new(&input, &output);
-        *self.stream.get_ref().borrow_mut() = pollable(compressed.upcast());
+        self.stream = ThreadGuard::new(pollable(compressed.upcast()));
     }
 }
 
@@ -166,8 +155,7 @@ impl AsyncRead for GioStream {
         context: &mut Context<'_>,
         buffer: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        let mut stream = self.stream.get_ref().borrow_mut();
-        Pin::new(&mut *stream)
+        Pin::new(self.get_mut().stream.get_mut())
             .poll_read(context, buffer)
             .map_err(mark_transport_error)
     }
@@ -179,22 +167,19 @@ impl AsyncWrite for GioStream {
         context: &mut Context<'_>,
         buffer: &[u8],
     ) -> Poll<io::Result<usize>> {
-        let mut stream = self.stream.get_ref().borrow_mut();
-        Pin::new(&mut *stream)
+        Pin::new(self.get_mut().stream.get_mut())
             .poll_write(context, buffer)
             .map_err(mark_transport_error)
     }
 
     fn poll_flush(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let mut stream = self.stream.get_ref().borrow_mut();
-        Pin::new(&mut *stream)
+        Pin::new(self.get_mut().stream.get_mut())
             .poll_flush(context)
             .map_err(mark_transport_error)
     }
 
     fn poll_close(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let mut stream = self.stream.get_ref().borrow_mut();
-        Pin::new(&mut *stream)
+        Pin::new(self.get_mut().stream.get_mut())
             .poll_close(context)
             .map_err(mark_transport_error)
     }

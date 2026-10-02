@@ -210,9 +210,7 @@ pub(crate) async fn sign_in_session(
         upgrade_plaintext(&connection).await?;
     }
     let tls = transport::start_tls(&connection, &identity, account.encryption).await?;
-    let stream = GioStream::new(tls);
-    let compressible = stream.share();
-    let mut client = Client::new(stream);
+    let mut client = Client::new(GioStream::new(tls));
     notices.follow(client.unsolicited_responses().clone());
     // The server greets once; after STARTTLS it sends no second greeting.
     if account.encryption == Encryption::ImplicitTls {
@@ -230,7 +228,7 @@ pub(crate) async fn sign_in_session(
         "server capabilities after sign-in"
     );
     if capabilities.has_str("COMPRESS=DEFLATE") {
-        compress_session(&mut session, &compressible, &account.login, opened_for).await?;
+        compress_session(&mut session, &account.login, opened_for).await?;
     }
     // UTF8=ONLY includes UTF8=ACCEPT and still needs the ENABLE (RFC 6855
     // §6); RFC 5161 allows ENABLE only before a mailbox is selected.
@@ -434,13 +432,12 @@ fn capability_names<'a>(capabilities: impl IntoIterator<Item = &'a Capability>) 
 /// agrees. A refusal leaves the connection as it is.
 async fn compress_session(
     session: &mut Session<GioStream>,
-    stream: &GioStream,
     sign_in_name: &str,
     opened_for: ImapStep,
 ) -> Result<(), StepFailure> {
     match session.run_command_and_check_ok("COMPRESS DEFLATE").await {
         Ok(()) => {
-            stream.compress();
+            session.get_mut().compress();
             tracing::info!("compression enabled");
             Ok(())
         }

@@ -8,7 +8,9 @@ passed on the installed build on 2026-09-30 (plan, Post-implementation).
 FR-003, FR-009, FR-013 and FR-015(d) amended on 2026-09-30 by
 [Message list](../010-message-list/spec.md): a batch carries each
 message's preview, and the list's order and presentation are that
-feature's.
+feature's. FR-009 amended on 2026-10-02 (one connection, faster; research
+§14): the structures come with the rows, and a structure is refused on
+its own only when asked for on its own.
 Approved on 2026-09-29 (tasks T001). Sized at the feature-start on
 2026-09-28 (budget: at most 1 500 production lines, raised to 1 600 at
 planning and to 2 000 during the implementation, and 1 500 test lines,
@@ -533,11 +535,14 @@ documentation does not say how, and FR-007's rule covers either form.
   identity, also once sent (*amended 2026-09-29 after an external
   review*); a text the service then does not return leaves the stored one
   in place. A refusal the server marks temporary (RFC 5530 `UNAVAILABLE`)
-  of a batch's structures or texts stores nothing of the batch and fails
-  the cycle as 006's temporarily unavailable server, so the next cycle
-  fetches the batch again; any other refusal of a message's structure or
-  text is stored as its reason for no text (002 FR-004) (*both amended
-  2026-09-30 after an independent review*). Other messages
+  of a batch's texts, or of a structure asked for on its own, stores
+  nothing of the batch and fails the cycle as 006's temporarily
+  unavailable server, so the next cycle fetches the batch again; any other
+  refusal of a message's structure or text is stored as its reason for no
+  text (002 FR-004) (*both amended 2026-09-30 after an independent
+  review*). The structures come with the rows; a message the row command
+  did not answer for is asked for again on its own before a refusal counts
+  (*amended 2026-10-02, research §14*). Other messages
   keep no text; opening one says that its text was not downloaded and makes
   no request (constitution III: never shown as empty). A stored text stays
   until the message leaves the store; nothing is evicted before the content

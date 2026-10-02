@@ -248,3 +248,13 @@ sign-in was attempted." No other UI change.
 | X-GM-THRID | Fork accessor needed; no reader until conversations |
 | All Mail, labels as folders, X-GM-RAW, CONDSTORE sync, reconnect after expiry | Deferred in the spec with their features |
 | Provider trait or shared contract document | Two implementations exist now; the contract is written when Graph tests it (roadmap rule) |
+
+## 11. Compression (added 2026-10-02 by 009)
+
+Gmail announces `COMPRESS=DEFLATE` after sign-in (§2); Google's IMAP
+documentation does not mention the extension (checked 2026-10-02), so the
+capability decides. Synchronization asks for it on any server that
+announces it (009 research §14). Measured on the installed build: a fill
+of an Inbox of 763 messages took 31.5 s instead of 54.5 s, the text step
+27.8 s instead of 48.3 s, since Gmail's time grows with the bytes carried
+(010 research §3). iCloud and Yandex do not announce it.

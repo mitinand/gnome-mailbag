@@ -324,8 +324,10 @@ pub enum StartTlsBehavior {
 pub enum FaultyCommand {
     /// The `UID FETCH 1:*` that lists every message.
     Listing,
-    /// A FETCH of message rows by UID.
+    /// A FETCH of message rows by UID, with their structures.
     Rows,
+    /// A FETCH of one structure on its own, after a row command the parser
+    /// could not read or the server did not complete.
     Structures,
     Text,
 }
@@ -946,17 +948,17 @@ impl Server {
             });
         });
         let listing = by_uid && message_set == "1:*";
-        let faulty_command = if items.iter().any(|item| item == "BODYSTRUCTURE") {
-            Some(FaultyCommand::Structures)
-        } else if items
+        let faulty_command = if items
             .iter()
             .any(|item| body_section(item).is_some_and(is_body_part))
         {
             Some(FaultyCommand::Text)
-        } else if listing {
-            Some(FaultyCommand::Listing)
         } else if items.iter().any(|item| body_section(item).is_some()) {
             Some(FaultyCommand::Rows)
+        } else if items.iter().any(|item| item == "BODYSTRUCTURE") {
+            Some(FaultyCommand::Structures)
+        } else if listing {
+            Some(FaultyCommand::Listing)
         } else {
             None
         };

@@ -213,23 +213,39 @@ fn a_refused_row_fetch_without_rows_keeps_the_server_text() {
     );
 }
 
+/// A message the server left out of a refused row command is asked for
+/// again on its own; when the server withholds it still, the refusal stays
+/// with the rows it did answer, each with its structure.
 #[test]
-fn a_structure_missing_after_a_no_completion_keeps_its_row() {
+fn a_message_the_server_withheld_is_asked_for_again_and_the_refusal_stays() {
     let fixture = ImapFixture::start(FixtureSetup {
         messages: plain_messages(3),
         unfetchable_uids: vec![20],
         ..FixtureSetup::default()
     });
     let mut reader = open_reader(&fixture);
-    let structures = expect_success(run(reader.fetch_structures(&[30, 20, 10])));
-    assert_eq!(structures.keys().copied().collect::<Vec<_>>(), [10, 20, 30]);
-    assert_eq!(structures[&20], None);
-    assert!(structures[&10].is_some() && structures[&30].is_some());
+    let listed = expect_success(run(
+        reader.fetch_rows_by_uid(&[30, 20, 10], RowItems::Standard)
+    ));
+    assert_eq!(
+        listed.rows.iter().map(|row| row.uid).collect::<Vec<_>>(),
+        [30, 10]
+    );
+    assert!(listed.rows.iter().all(|row| row.structure.is_some()));
+    assert_eq!(
+        listed.refusal.map(|reply| reply.text),
+        Some("Some messages could not be FETCHed".to_owned())
+    );
+    let fetches = fixture.log().fetches;
+    assert_eq!(fetches.len(), 2);
+    assert_eq!(fetches[1].message_set, "20");
+    assert!(!fetches[1].items.contains(&"BODYSTRUCTURE".to_owned()));
 }
 
-/// A refusal the server marks temporary (RFC 5530 `UNAVAILABLE`) fails the
-/// structures or the text with the server's code, instead of keeping the
-/// messages as unreadable (specs/009-synchronization/research.md §3).
+/// A refusal the server marks temporary (RFC 5530 `UNAVAILABLE`) fails a
+/// structure read apart or the text with the server's code, instead of
+/// keeping the messages as unreadable (specs/009-synchronization/research.md
+/// §3). A structure is read apart after one the parser cannot read.
 #[test]
 fn a_temporary_refusal_of_structures_or_text_fails_the_read_with_its_code() {
     for (command, step) in [
@@ -237,16 +253,19 @@ fn a_temporary_refusal_of_structures_or_text_fails_the_read_with_its_code() {
         (FaultyCommand::Text, ImapStep::FetchText),
     ] {
         let fixture = ImapFixture::start(FixtureSetup {
-            messages: plain_messages(2),
+            messages: vec![
+                FixtureMessage::plain_text(10, "text"),
+                FixtureMessage::deeply_nested(20, 40),
+            ],
             unavailable_command: Some(command),
             ..FixtureSetup::default()
         });
         let mut reader = open_reader(&fixture);
-        let structures = run(reader.fetch_structures(&[10, 20]));
+        let rows = run(reader.fetch_rows_by_uid(&[20, 10], RowItems::Standard));
         let error = match command {
-            FaultyCommand::Structures => expect_failure(structures),
+            FaultyCommand::Structures => expect_failure(rows),
             _ => {
-                expect_success(structures);
+                expect_success(rows);
                 expect_failure(run(reader.fetch_text(
                     vec![TextRequest {
                         uid: 10,
@@ -271,26 +290,41 @@ fn a_temporary_refusal_of_structures_or_text_fails_the_read_with_its_code() {
 }
 
 #[test]
-fn structures_are_read_for_the_listed_uids() {
+fn rows_come_with_their_structures_in_one_command() {
     let fixture = ImapFixture::start(FixtureSetup {
         messages: plain_messages(3),
         interleave_flag_changes: true,
         ..FixtureSetup::default()
     });
     let mut reader = open_reader(&fixture);
-    let structures = expect_success(run(reader.fetch_structures(&[30, 20, 10])));
-    assert_eq!(structures.keys().copied().collect::<Vec<_>>(), [10, 20, 30]);
-    for structure in structures.values() {
-        let part = structure.as_ref().expect("readable structure");
+    let rows = expect_success(run(
+        reader.fetch_rows_by_uid(&[30, 20, 10], RowItems::Standard)
+    ));
+    assert_eq!(
+        rows.rows.iter().map(|row| row.uid).collect::<Vec<_>>(),
+        [30, 20, 10]
+    );
+    for row in &rows.rows {
+        let part = row.structure.as_ref().expect("readable structure");
         assert_eq!(
             (part.section.as_slice(), part.media_type.as_str()),
             ([1].as_slice(), "text")
         );
     }
-    let structure_fetch = &fixture.log().fetches[0];
-    assert!(structure_fetch.by_uid);
-    assert_eq!(structure_fetch.message_set, "30,20,10");
-    assert_eq!(structure_fetch.items, ["UID", "BODYSTRUCTURE"]);
+    let fetches = fixture.log().fetches;
+    assert_eq!(fetches.len(), 1);
+    assert!(fetches[0].by_uid);
+    assert_eq!(fetches[0].message_set, "30,20,10");
+    assert_eq!(
+        fetches[0].items,
+        [
+            "UID",
+            "FLAGS",
+            "INTERNALDATE",
+            "BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT)]",
+            "BODYSTRUCTURE"
+        ]
+    );
 }
 
 #[test]
@@ -301,11 +335,17 @@ fn a_message_that_disappears_during_the_load_is_left_out() {
         ..FixtureSetup::default()
     });
     let mut reader = open_reader(&fixture);
-    let structures = expect_success(run(reader.fetch_structures(&[30, 20, 10])));
-    assert_eq!(structures.keys().copied().collect::<Vec<_>>(), [10, 30]);
-    // A group whose every message disappeared is empty, not a failure.
-    let structures = expect_success(run(reader.fetch_structures(&[20])));
-    assert!(structures.is_empty());
+    let rows = expect_success(run(
+        reader.fetch_rows_by_uid(&[30, 20, 10], RowItems::Standard)
+    ));
+    assert_eq!(
+        rows.rows.iter().map(|row| row.uid).collect::<Vec<_>>(),
+        [30, 10]
+    );
+    assert_eq!(rows.refusal, None);
+    // A batch whose every message disappeared is empty, not a failure.
+    let rows = expect_success(run(reader.fetch_rows_by_uid(&[20], RowItems::Standard)));
+    assert!(rows.rows.is_empty() && rows.refusal.is_none());
     // The listing still reports it; the rows leave it out.
     let rows = expect_success(run(fetch_all_rows(&mut reader))).rows;
     assert_eq!(rows.iter().map(|row| row.uid).collect::<Vec<_>>(), [30, 10]);
@@ -327,9 +367,10 @@ fn the_structure_keeps_sections_types_parameters_and_dispositions() {
         ..FixtureSetup::default()
     });
     let mut reader = open_reader(&fixture);
-    let root = expect_success(run(reader.fetch_structures(&[10])))
-        .remove(&10)
-        .flatten()
+    let root = expect_success(run(reader.fetch_rows_by_uid(&[10], RowItems::Standard)))
+        .rows
+        .remove(0)
+        .structure
         .expect("readable structure");
     let part = |section: Vec<u32>, media: &str, subtype: &str| MessagePart {
         section,
@@ -375,7 +416,6 @@ fn loading_sends_only_read_only_commands() {
     run(async {
         let rows = expect_success(fetch_all_rows(&mut reader).await).rows;
         let uids: Vec<u32> = rows.iter().map(|row| row.uid).collect();
-        expect_success(reader.fetch_structures(&uids).await);
         let requests = uids
             .iter()
             .map(|&uid| TextRequest {
@@ -394,7 +434,6 @@ fn loading_sends_only_read_only_commands() {
             "AUTHENTICATE",
             "CAPABILITY",
             "EXAMINE",
-            "UID FETCH",
             "UID FETCH",
             "UID FETCH",
             "UID FETCH"
@@ -473,9 +512,10 @@ fn a_structure_carries_the_content_id_of_its_parts() {
         ..FixtureSetup::default()
     });
     let mut reader = open_reader(&fixture);
-    let root = expect_success(run(reader.fetch_structures(&[10])))
-        .remove(&10)
-        .flatten()
+    let root = expect_success(run(reader.fetch_rows_by_uid(&[10], RowItems::Standard)))
+        .rows
+        .remove(0)
+        .structure
         .expect("readable structure");
     assert_eq!(root.media_subtype, "related");
     // The multipart itself has no Content-ID in BODYSTRUCTURE.
@@ -516,8 +556,8 @@ fn a_flag_change_for_a_vanished_message_leaves_it_unanswered() {
         .map(|message| message.uid)
         .collect();
     assert_eq!(uids, [10, 20]);
-    let structures = expect_success(run(reader.fetch_structures(&uids)));
-    assert_eq!(structures.keys().copied().collect::<Vec<_>>(), [20]);
+    let rows = expect_success(run(reader.fetch_rows_by_uid(&uids, RowItems::Standard))).rows;
+    assert_eq!(rows.iter().map(|row| row.uid).collect::<Vec<_>>(), [20]);
 }
 
 /// The same flag change must not hide the structure of a message that is
@@ -530,6 +570,6 @@ fn a_flag_change_does_not_hide_a_structure() {
         ..FixtureSetup::default()
     });
     let mut reader = open_reader(&fixture);
-    let structures = expect_success(run(reader.fetch_structures(&[10])));
-    assert!(structures[&10].is_some());
+    let rows = expect_success(run(reader.fetch_rows_by_uid(&[10], RowItems::Standard))).rows;
+    assert!(rows[0].structure.is_some());
 }
