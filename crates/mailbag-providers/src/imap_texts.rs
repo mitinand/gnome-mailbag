@@ -96,6 +96,9 @@ struct MessageReading {
     piece_parts: Option<TextParts>,
     /// Whether the first piece is a web page; any other piece is plain text.
     page_first: bool,
+    /// Whether the page is read whole as the last of the text parts: one
+    /// read of a message costs a server about as much as a piece of it.
+    page_with_text: bool,
     pieces: Option<MessageText>,
     disappeared: bool,
 }
@@ -103,13 +106,17 @@ struct MessageReading {
 /// Chooses what to read of a message: a recent one's text, and the part
 /// its preview is made from, with the plain part as well for an old
 /// message whose page may yield no words. A recent message's plain text is
-/// read whole anyway, so its preview needs no piece of it.
+/// read whole anyway, so its preview needs no piece of it, and its page is
+/// read whole with it in the same request: a server such as iCloud spends
+/// most of a read on opening the message, not on its size
+/// (specs/010-message-list/research.md §3).
 fn plan_reading(structure: Option<&MessagePart>, is_recent: bool) -> MessageReading {
     let mut reading = MessageReading {
         content: ReceivedContent::NotDownloaded,
         text_parts: None,
         piece_parts: None,
         page_first: false,
+        page_with_text: false,
         pieces: None,
         disappeared: false,
     };
@@ -148,8 +155,14 @@ fn plan_reading(structure: Option<&MessagePart>, is_recent: bool) -> MessageRead
         Some(plain) => vec![plain.section],
         None => Vec::new(),
     };
-    if !piece_sections.is_empty() {
-        reading.piece_parts = Some(text_parts(root, &piece_sections));
+    match (&reading.text_parts, piece_sections.as_slice()) {
+        (Some(_), [page]) if reading.page_first => {
+            let sections = [plain_sections.as_slice(), std::slice::from_ref(page)].concat();
+            reading.text_parts = Some(text_parts(root, &sections));
+            reading.page_with_text = true;
+        }
+        (_, []) => {}
+        _ => reading.piece_parts = Some(text_parts(root, &piece_sections)),
     }
     reading
 }
@@ -172,6 +185,14 @@ impl MessageReading {
     fn receive(&mut self, limit: Option<u32>, text: MessageText) {
         match (limit, &text) {
             (_, MessageText::Disappeared) => self.disappeared = true,
+            (None, MessageText::Received(parts)) if self.page_with_text => {
+                let mut parts = parts.clone();
+                let page = parts.pop().expect("the page is the last part read");
+                self.pieces = Some(MessageText::Received(vec![page]));
+                if let Some(content) = received_text(&MessageText::Received(parts)) {
+                    self.content = content;
+                }
+            }
             (None, _) => {
                 if let Some(content) = received_text(&text) {
                     self.content = content;

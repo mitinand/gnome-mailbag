@@ -50,14 +50,35 @@ piece must be parsed as a cut multipart body.
 **Decision**: For every message a batch fetches rows for, the cycle
 fetches its structure (already done for recent messages; now for all,
 one command per batch of 100) and reads the chosen preview part
-partially: `BODY.PEEK[<section>]<0.16384>` with the part's MIME header
+partially: `BODY.PEEK[<section>]<0.65536>` with the part's MIME header
 (`<section>.MIME`, or the message header for a single-part message), one
 command per distinct request shape, as texts are read today. Recent
 messages still get their full plain text for the reader in the same
 step. A message older than 30 days that has both forms gets the plain
 part's piece in the same command as the page's, so FR-003(e)'s fallback
 costs no second round trip (added at the challenge); a recent message's
-plain text is fetched whole anyway.
+plain text is fetched whole anyway, and its page is read whole in the same
+request as its text (added at the live check).
+
+**Measured at the live check** (2026-10-01, the maintainer's iCloud,
+Gmail accounts, throwaway scripts): the 16 KiB piece of the plan left 21%
+of a 5 958-message Inbox's pages without words and cut about half short,
+since newsletters open with tens of kilobytes of styles; on 200 of them
+64 KiB gave 194 previews long enough for the row's two lines, the whole
+part 195, 16 KiB 137. iCloud spends about 75 ms per message whatever is
+read of it (200 pieces: 16 KiB 15–16 s, 64 KiB 15.5–16 s, whole parts
+15 s), and one request for two parts of a message costs half of two
+requests (80 messages: 3.0–3.3 s against 6.0–7.3 s); Gmail's time grows
+with the bytes (40 pages: 16 KiB 1.3 s, 64 KiB 1.8 s, whole 2.3 s). Hence
+64 KiB, and a recent message's page read with its text.
+
+On a Gmail Inbox of 761 messages, measured separately as Gmail is the first
+provider (constitution VII): 16 KiB left 158 previews short of the row's
+two lines, 25 of them empty, 32 KiB 14 and none empty, 64 KiB and the
+whole part 6; reading took about 30 ms per message for 16 and 32 KiB,
+51 ms for 64 KiB and 63 ms for the whole part. The maintainer kept 64 KiB
+for every provider (2026-10-01): Gmail's previews equal the whole part's,
+and the larger saving for Gmail lies in its transport, not the piece.
 
 **Checked**: the imap-proto fork parses the origin octet of a partial
 response (`BodySection { index: Option<u32> }`, `parser/rfc3501/body.rs`),
@@ -125,7 +146,11 @@ LF and every character `char::is_whitespace` accepts, plus the braille
 blank U+2800 and the Mongolian vowel separator U+180E, become one space
 per run; control characters (`char::is_control`) and the common
 invisible formatting characters (soft hyphen U+00AD, U+200B–U+200F,
-U+202A–U+202E, U+2060–U+2064, U+2066–U+206F, U+FEFF) are removed;
+U+202A–U+202E, U+2060–U+2064, U+2066–U+206F, U+FEFF) are removed, and
+so is the combining grapheme joiner U+034F, a mark that shows nothing,
+which newsletters repeat between spaces after their opening line (found
+in 14% of a real Inbox's previews at the live check, where it filled the
+400 characters);
 combining marks are kept, since decomposed text (Vietnamese, some
 Cyrillic) would lose its accents; the result is trimmed and cut at 400
 characters on a character boundary; the row's two-line label cuts it
@@ -166,9 +191,22 @@ rows. The schema hash changes, so the store is discarded once at start
 (§10) around a `GtkOverlay`: the row's box (indicator column with the
 dot; a content column with the sender and date line, the subject, the
 two-line preview) and, as the overlay's overlay child at the end and the
-bottom, a crossfade `GtkRevealer` with the flat round trash button. A
-`GtkEventControllerMotion` declared as a child of the row's box reveals
-the button when the pointer enters and hides it when it leaves, through
+bottom, a crossfade `GtkRevealer` with the trash: a 16 px icon in a
+24 px pressable area, a `GtkGestureClick` declared in the form, the
+accessible role of a button and the label "Move to Trash" (a GTK button is
+at least 34 px high in Adwaita and would make the first line taller;
+changed on 2026-10-02 after the live check), in a slide-left revealer after
+the date on the first line, so it covers no text and the row keeps its
+height (checked: every row 102 px, the date moves 26 px aside); it is dimmed
+with Adwaita's `dim-label` and takes Adwaita's `error` colour, red, while
+the pointer is over it. A
+`GtkEventControllerMotion` declared as a child of the `GtkOverlay`, which
+holds both the row's box and the button, reveals the button when the
+pointer enters and hides it when it leaves (on the row's box alone the
+pointer moving onto the button left the box and hid it: a motion
+controller contains the pointer only over its widget or a descendant,
+checked in the GTK 4.22 introspection data at an external review on
+2026-10-01), through
 signal handlers named in the form and provided by a
 `gtk::BuilderRustScope` given to the factory; the button's `clicked`
 handler receives the list item (`object="GtkListItem"`) and hands its
@@ -203,9 +241,13 @@ the rows that leave (`shown` false with the duration) and leaves the
 list's model as it is; a timeout of 280 ms then applies the latest wanted
 rows by the ordinary difference update, which takes the closed rows out
 and inserts arriving rows with `shown` false, revealed on the second
-frame after the insert. Closings started meanwhile, such as a second row
-sent to the trash, are counted, and the list changes after the last. A
-list off screen changes at once, since it draws no frames. When the list
+frame after the insert. A closing started meanwhile, such as a second
+row sent to the trash, starts the wait again, so it closes whole too; a
+change at once cancels the wait. A list off screen, or any list with the
+system's animations off (`gtk-enable-animations`), changes at once
+without waiting. Each action changes the list once: opening a message
+under the filter changes it at once (FR-008), the trash button with
+animations (external review, 2026-10-01). When the list
 was at its top before an insert, the list
 is scrolled to its first row right after it. A change animates unless
 the folder shown differs from the previous read's (the rows replace
@@ -296,7 +338,12 @@ stored state returns (spec FR-009). Nothing is sent or stored.
 is read: the received date and the current time are taken in the local
 zone; the same day gives the time without seconds in the locale's form,
 the day before "Yesterday", two to six days before `%A`, the same year
-`%-d %B`, earlier `%x`; no usable date gives an empty string (spec
+the day and the month's name in the locale's order (`%-d %B` or
+`%B %-d`, told by whether the month comes first in the locale's `%x` of
+31 December; in Chinese, Japanese and Korean this gives "12月 31" without
+the day's sign, accepted by the maintainer on 2026-10-01 after an
+external review found the fixed `%-d %B`), earlier `%x`; no usable date
+gives an empty string (spec
 FR-004). The reader keeps `%c`. The locale's form is told by its own
 full time format: when `%X` contains the locale's AM/PM marker (`%p`),
 the time is `%-I:%M %p`, otherwise `%H:%M`; no locale offers a time

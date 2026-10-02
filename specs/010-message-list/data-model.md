@@ -45,6 +45,6 @@ a message related without fetching (009 FR-005) leaves it as it is.
   (research §11).
 - **Pending read** (window): the one-second timeout of the open message,
   dropped when another message opens or the message leaves.
-- **Closings** (window): how many animated changes are closing rows
-  before the list changes (research §10); a closed row is never opened
-  and never a neighbour for spec FR-007.
+- **Pending change** (window): the one timeout that applies the list's
+  latest state once the rows that leave are closed (research §10); a
+  closed row is never opened and never a neighbour for spec FR-007.

@@ -292,7 +292,7 @@ row, all as the spec's FR-006 to FR-010 say.
   the timeout, a folder shown anew changes at once, and the top is kept
   in view after an arrival at the top (SC-005's states); a refresh that
   removes the open message closes the reader.
-- [ ] T027 [US1] [US2] [US3] [US4] [US5] The quickstart's installed-build
+- [x] T027 [US1] [US2] [US3] [US4] [US5] The quickstart's installed-build
   checks with the maintainer (SC-001, SC-002, SC-005's timing with
   animations on and off, SC-008), the first fill of the largest folder
   timed and the number written into the spec's Assumptions, the record

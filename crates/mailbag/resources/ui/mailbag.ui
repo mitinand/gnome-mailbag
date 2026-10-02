@@ -208,7 +208,7 @@
                     <property name="title" translatable="yes">Message</property>
                   </object>
                 </property>
-                <property name="min-sidebar-width">300</property>
+                <property name="min-sidebar-width">304</property>
                 <property name="show-content">true</property>
                 <property name="sidebar">
                   <object class="AdwNavigationPage" id="list_page">
@@ -357,7 +357,7 @@
                             </child>
                             <child type="end">
                               <object class="GtkToggleButton" id="unread_filter">
-                                <property name="icon-name">mail-unread-symbolic</property>
+                                <property name="icon-name">mailbag-filter-symbolic</property>
                                 <property name="tooltip-text" translatable="yes">Show unread only</property>
                                 <property name="valign">center</property>
                               </object>
@@ -371,7 +371,7 @@
                 </property>
                 <property name="sidebar-width-fraction">0.38</property>
                 <property name="sidebar-width-unit">sp</property>
-                <property name="max-sidebar-width">420</property>
+                <property name="max-sidebar-width">424</property>
               </object>
             </property>
             <property name="max-sidebar-width">350</property>

@@ -1651,23 +1651,19 @@ fn rows_with_previews_and_the_unread_filter() {
     }
     assert!(shown_labels(&widgets).contains(&rows[0].date_text().to_string()));
 
-    // The pointer over a row reveals its trash button.
+    // The pointer over a row slides its trash icon in beside the date.
     let first_row = descendants::<gtk::Overlay>(&widgets.messages().upcast())
         .into_iter()
         .find(|overlay| overlay.is_mapped())
         .expect("a shown row");
     let trash = descendants::<gtk::Revealer>(&first_row.clone().upcast())
         .into_iter()
-        .find(|revealer| revealer.transition_type() == gtk::RevealerTransitionType::Crossfade)
-        .expect("the trash button's revealer");
-    let pointer = descendants::<gtk::Box>(&first_row.upcast())
+        .find(|revealer| revealer.transition_type() == gtk::RevealerTransitionType::SlideLeft)
+        .expect("the trash icon's revealer");
+    // The controller sits on the whole row, trash icon included.
+    let pointer = first_row
+        .observe_controllers()
         .into_iter()
-        .flat_map(|row_box| {
-            row_box
-                .observe_controllers()
-                .into_iter()
-                .collect::<Vec<_>>()
-        })
         .find_map(|controller| {
             controller
                 .ok()?
@@ -1678,6 +1674,23 @@ fn rows_with_previews_and_the_unread_filter() {
     assert!(!trash.reveals_child());
     pointer.emit_by_name::<()>("enter", &[&1.0_f64, &1.0_f64]);
     assert!(trash.reveals_child());
+    // The icon itself is dimmed until the pointer is over it, then red.
+    let icon = trash.child().expect("the trash icon");
+    let over_icon = icon
+        .observe_controllers()
+        .into_iter()
+        .find_map(|controller| {
+            controller
+                .ok()?
+                .downcast::<gtk::EventControllerMotion>()
+                .ok()
+        })
+        .expect("the icon's pointer controller");
+    assert!(icon.has_css_class("dim-label"));
+    over_icon.emit_by_name::<()>("enter", &[&1.0_f64, &1.0_f64]);
+    assert!(!icon.has_css_class("dim-label") && icon.has_css_class("error"));
+    over_icon.emit_by_name::<()>("leave", &[]);
+    assert!(icon.has_css_class("dim-label") && !icon.has_css_class("error"));
     pointer.emit_by_name::<()>("leave", &[]);
     assert!(!trash.reveals_child());
 
@@ -1702,6 +1715,8 @@ fn rows_with_previews_and_the_unread_filter() {
     assert!(!shows_unread_dot(&widgets.rows()[0]));
     assert_eq!(widgets.selected_row(), Some(0));
     widgets.open_row(1);
+    // It leaves at once, not closing first.
+    assert_eq!(widgets.all_rows().len(), 1);
     settle(&ui);
     assert_eq!(listed_identities(&widgets), ["uid:20"]);
     assert_eq!(widgets.selected_row(), Some(0));
@@ -1738,9 +1753,10 @@ fn run_for(duration: Duration) {
     }
 }
 
-/// The trash button of the shown row whose sender reads `sender`.
-fn trash_button_of(widgets: &WindowWidgets, sender: &str) -> gtk::Button {
-    descendants::<gtk::Overlay>(&widgets.messages().upcast())
+/// Presses the trash icon of the shown row whose sender reads `sender`, as
+/// a click does.
+fn press_trash_of(widgets: &WindowWidgets, sender: &str) {
+    let trash = descendants::<gtk::Overlay>(&widgets.messages().upcast())
         .into_iter()
         .filter(|row| row.is_mapped())
         .find(|row| {
@@ -1748,8 +1764,18 @@ fn trash_button_of(widgets: &WindowWidgets, sender: &str) -> gtk::Button {
                 .iter()
                 .any(|label| label.text() == sender)
         })
-        .and_then(|row| descendants::<gtk::Button>(&row.upcast()).into_iter().next())
-        .expect("the row's trash button")
+        .and_then(|row| {
+            descendants::<gtk::Image>(&row.upcast())
+                .into_iter()
+                .find(|image| image.icon_name().as_deref() == Some("user-trash-symbolic"))
+        })
+        .expect("the row's trash icon");
+    let press = trash
+        .observe_controllers()
+        .into_iter()
+        .find_map(|controller| controller.ok()?.downcast::<gtk::GestureClick>().ok())
+        .expect("the trash icon's click");
+    press.emit_by_name::<()>("released", &[&1_i32, &0.0_f64, &0.0_f64]);
 }
 
 /// A generic account's Inbox holding `messages`, shown in a new window.
@@ -1782,7 +1808,7 @@ fn the_trash_button_removes_the_row_in_the_window() {
     let (window, ui, loader, widgets) = window_with_inbox(&messages);
     widgets.open_row(0);
     settle(&ui);
-    trash_button_of(&widgets, "Sender of uid:30").emit_clicked();
+    press_trash_of(&widgets, "Sender of uid:30");
     settle(&ui);
     // The top row leaves; the unread one below opens and is highlighted.
     assert_eq!(listed_identities(&widgets), ["uid:20", "uid:10"]);
@@ -1802,7 +1828,7 @@ fn the_trash_button_removes_the_row_in_the_window() {
     settle(&ui);
     widgets.open_row(0);
     settle(&ui);
-    trash_button_of(&widgets, "Sender of uid:20").emit_clicked();
+    press_trash_of(&widgets, "Sender of uid:20");
     dispatch_pending();
     let closing = widgets.all_rows();
     assert_eq!(closing.len(), 2);
@@ -1810,7 +1836,7 @@ fn the_trash_button_removes_the_row_in_the_window() {
     assert_eq!(listed_identities(&widgets), ["uid:10"]);
     assert_eq!(widgets.reader_subject(), "Subject of uid:10");
     // Taking out the last row shown leaves the list saying why it is empty.
-    trash_button_of(&widgets, "Sender of uid:10").emit_clicked();
+    press_trash_of(&widgets, "Sender of uid:10");
     settle(&ui);
     assert_eq!(widgets.reader_page(), "unselected");
     assert_eq!(widgets.list_page(), "empty");
@@ -1909,6 +1935,17 @@ fn a_shown_folder_changes_with_animations() {
     assert!(!inserted.borrow().contains(&("uid:20".to_owned(), false)));
     let scrolling = widgets.messages().vadjustment().expect("a scrolled list");
     assert_eq!(scrolling.value(), 0.0);
+    // With the system's animations off the rows change at once.
+    gtk::Settings::default()
+        .expect("GTK settings")
+        .set_gtk_enable_animations(false);
+    ui.refresh_mailbox_action().activate(None);
+    settle(&ui);
+    loader.report_stored(&older, None);
+    settle(&ui);
+    let rows = widgets.all_rows();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|item| item.shown()));
     window.destroy();
 }
 
@@ -2105,6 +2142,26 @@ fn a_message_whose_fields_changed_gets_a_new_item() {
 }
 
 #[test]
+fn a_message_whose_preview_changed_gets_a_new_item() {
+    let (items, _) = listed_items(&["a"]);
+    let before = item_list(&items);
+    let mut edited = listed_row("a", false);
+    edited.preview = "Edited first words".to_owned();
+    update_list(&items, &[edited]);
+    assert_ne!(item_list(&items), before);
+    assert_eq!(item_list(&items)[0].preview(), "Edited first words");
+}
+
+#[test]
+fn the_day_and_month_follow_the_locales_order() {
+    // English (United States), Japanese, Russian and British short dates.
+    assert_eq!(day_month_form("12/31/00"), "%B %-d");
+    assert_eq!(day_month_form("2000年12月31日"), "%B %-d");
+    assert_eq!(day_month_form("31.12.2000"), "%-d %B");
+    assert_eq!(day_month_form("31/12/00"), "%-d %B");
+}
+
+#[test]
 fn the_same_rows_change_nothing() {
     let (items, changes) = listed_items(&["a", "b", "c"]);
     let before = item_list(&items);
@@ -2188,6 +2245,7 @@ fn local_time(year: i32, month: i32, day: i32, hour: i32, minute: i32) -> glib::
 fn a_date_reads_like_a_calendar_seen_from_now() {
     let now = fixed_now();
     let time_form = locale_time_form(&formatted(&now, "%X"), &formatted(&now, "%p"));
+    let day_month = day_month_form(&formatted(&local_time(2000, 12, 31, 0, 0), "%x"));
     let cases = [
         // Today, earlier or later, shows the time without seconds.
         (local_time(2026, 9, 30, 0, 1), time_form),
@@ -2199,8 +2257,8 @@ fn a_date_reads_like_a_calendar_seen_from_now() {
         (local_time(2026, 9, 28, 12, 0), "%A"),
         (local_time(2026, 9, 24, 12, 0), "%A"),
         // Seven days before and earlier this year: day and month.
-        (local_time(2026, 9, 23, 12, 0), "%-d %B"),
-        (local_time(2026, 1, 1, 0, 0), "%-d %B"),
+        (local_time(2026, 9, 23, 12, 0), day_month),
+        (local_time(2026, 1, 1, 0, 0), day_month),
         // Last year: the locale's short date.
         (local_time(2025, 12, 31, 23, 59), "%x"),
     ];

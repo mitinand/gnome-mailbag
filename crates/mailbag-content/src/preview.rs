@@ -11,8 +11,11 @@ use crate::{MimePart, decode_text_part, section_name, walk_message};
 #[cfg(test)]
 mod tests;
 
-/// How much of the chosen part is read for a preview.
-pub const PREVIEW_PIECE_BYTES: u32 = 16_384;
+/// How much of the chosen part is read for a preview. A newsletter's page
+/// often starts with tens of kilobytes of styles; 64 KiB gives the words of
+/// nearly every page whole parts give (specs/010-message-list/research.md
+/// §3).
+pub const PREVIEW_PIECE_BYTES: u32 = 65_536;
 
 /// The longest preview kept, in characters; the row's two lines cut it further.
 const PREVIEW_CHARACTERS: usize = 400;
@@ -175,11 +178,16 @@ fn is_blank(character: char) -> bool {
     character.is_whitespace() || matches!(character, '\u{2800}' | '\u{180E}')
 }
 
+/// Control and formatting characters that show nothing, and the combining
+/// grapheme joiner, a mark that shows nothing either: newsletters repeat it
+/// between spaces after their opening line to push the rest of the page out
+/// of other clients' previews.
 fn is_invisible(character: char) -> bool {
     character.is_control()
         || matches!(
             character,
             '\u{00AD}'
+                | '\u{034F}'
                 | '\u{200B}'..='\u{200F}'
                 | '\u{202A}'..='\u{202E}'
                 | '\u{2060}'..='\u{2064}'

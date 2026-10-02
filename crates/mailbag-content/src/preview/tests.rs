@@ -237,6 +237,16 @@ fn white_space_and_invisible_characters_are_normalised() {
 }
 
 #[test]
+fn a_newsletters_invisible_padding_leaves_the_following_words() {
+    let padding = " \u{034F}".repeat(160);
+    let text = format!("You are getting noticed{padding} 23 profile viewers");
+    assert_eq!(
+        preview_of_text(&text),
+        "You are getting noticed 23 profile viewers"
+    );
+}
+
+#[test]
 fn accents_and_brackets_stay() {
     // Vietnamese written with combining marks, as some senders decompose it.
     let text = "Tie\u{0302}\u{0301}ng Vie\u{0323}\u{0302}t [Ticket 4711]";

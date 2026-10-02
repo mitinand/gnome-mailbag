@@ -27,14 +27,14 @@
         <property name="transition-type">slide-down</property>
         <property name="child">
           <object class="GtkOverlay">
+            <child>
+              <object class="GtkEventControllerMotion">
+                <signal name="enter" handler="row_entered" object="trash_reveal"/>
+                <signal name="leave" handler="row_left" object="trash_reveal"/>
+              </object>
+            </child>
             <property name="child">
               <object class="GtkBox">
-                <child>
-                  <object class="GtkEventControllerMotion">
-                    <signal name="enter" handler="row_entered" object="trash_reveal"/>
-                    <signal name="leave" handler="row_left" object="trash_reveal"/>
-                  </object>
-                </child>
                 <child>
                   <object class="GtkBox">
                     <property name="halign">start</property>
@@ -65,14 +65,13 @@
                   <object class="GtkBox">
                     <property name="hexpand">true</property>
                     <property name="margin-bottom">10</property>
-                    <property name="margin-end">8</property>
+                    <property name="margin-end">12</property>
                     <property name="margin-start">4</property>
                     <property name="margin-top">10</property>
                     <property name="orientation">vertical</property>
                     <property name="spacing">4</property>
                     <child>
                       <object class="GtkBox">
-                        <property name="spacing">6</property>
                         <child>
                           <object class="GtkLabel" id="sender">
                             <property name="ellipsize">end</property>
@@ -96,11 +95,46 @@
                                 <lookup name="item">GtkListItem</lookup>
                               </lookup>
                             </binding>
+                            <property name="margin-start">6</property>
                             <property name="xalign">1</property>
                             <style>
                               <class name="caption"/>
                               <class name="dim-label"/>
                             </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkRevealer" id="trash_reveal">
+                            <property name="child">
+                              <object class="GtkImage" id="trash">
+                                <property name="accessible-role">button</property>
+                                <property name="height-request">20</property>
+                                <property name="icon-name">user-trash-symbolic</property>
+                                <property name="margin-start">6</property>
+                                <property name="pixel-size">16</property>
+                                <property name="tooltip-text" translatable="yes">Move to Trash</property>
+                                <property name="width-request">20</property>
+                                <accessibility>
+                                  <property name="label" translatable="yes">Move to Trash</property>
+                                </accessibility>
+                                <child>
+                                  <object class="GtkGestureClick">
+                                    <signal name="released" handler="trash_row" object="GtkListItem"/>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkEventControllerMotion">
+                                    <signal name="enter" handler="trash_entered" object="trash"/>
+                                    <signal name="leave" handler="trash_left" object="trash"/>
+                                  </object>
+                                </child>
+                                <style>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </property>
+                            <property name="transition-duration">150</property>
+                            <property name="transition-type">slide-left</property>
                           </object>
                         </child>
                       </object>
@@ -140,27 +174,6 @@
                 </child>
               </object>
             </property>
-            <child type="overlay">
-              <object class="GtkRevealer" id="trash_reveal">
-                <property name="child">
-                  <object class="GtkButton" id="trash">
-                    <property name="focusable">false</property>
-                    <property name="icon-name">user-trash-symbolic</property>
-                    <property name="tooltip-text" translatable="yes">Move to Trash</property>
-                    <signal name="clicked" handler="trash_row" object="GtkListItem"/>
-                    <style>
-                      <class name="circular"/>
-                      <class name="flat"/>
-                    </style>
-                  </object>
-                </property>
-                <property name="halign">end</property>
-                <property name="margin-bottom">6</property>
-                <property name="margin-end">6</property>
-                <property name="transition-type">crossfade</property>
-                <property name="valign">end</property>
-              </object>
-            </child>
           </object>
         </property>
       </object>

@@ -298,34 +298,34 @@ fn a_temporary_refusal_of_structures_or_text_stores_no_row_and_names_the_server(
 }
 
 #[test]
-fn the_reader_gets_the_plain_text_and_the_preview_a_piece_of_the_page() {
+fn a_recent_messages_text_and_page_come_in_one_request() {
     let fixture = ImapFixture::start(FixtureSetup {
         messages: vec![FixtureMessage::multipart(
             10,
-            &[("plain", "the readable part"), ("html", "<p>skip me</p>")],
+            &[("plain", "the readable part"), ("html", "<p>the page</p>")],
         )],
         ..FixtureSetup::default()
     });
     let (_, stored) = synchronize_imap_inbox(&fixture);
+    // The reader shows the plain text; the preview comes from the page.
     assert_eq!(text_of(&stored[0].content), "the readable part");
-    assert_eq!(stored[0].preview, "skip me");
-    let requested: Vec<String> = fixture
+    assert_eq!(stored[0].preview, "the page");
+    let bodies: Vec<Vec<String>> = fixture
         .log()
         .fetches
         .into_iter()
-        .flat_map(|fetch| fetch.items)
+        .map(|fetch| fetch.items)
+        .filter(|items| items.iter().any(|item| item.starts_with("BODY.PEEK[1")))
         .collect();
-    assert!(
-        requested.contains(&"BODY.PEEK[1]".to_owned()),
-        "{requested:?}"
-    );
-    // The HTML alternative is read only as the preview's piece.
-    assert!(
-        requested
-            .iter()
-            .filter(|item| item.contains("[2]"))
-            .all(|item| item.ends_with("<0.16384>")),
-        "{requested:?}"
+    assert_eq!(
+        bodies,
+        [[
+            "UID",
+            "BODY.PEEK[1.MIME]",
+            "BODY.PEEK[1]",
+            "BODY.PEEK[2.MIME]",
+            "BODY.PEEK[2]"
+        ]]
     );
 }
 
@@ -1918,14 +1918,14 @@ fn an_old_message_previews_its_page_or_else_its_plain_part() {
         .log()
         .fetches
         .into_iter()
-        .filter(|fetch| fetch.items.iter().any(|item| item.ends_with("<0.16384>")))
+        .filter(|fetch| fetch.items.iter().any(|item| item.ends_with("<0.65536>")))
         .map(|fetch| (fetch.message_set, fetch.items))
         .collect();
     assert_eq!(pieces.len(), 2, "{pieces:?}");
     assert!(
         pieces.iter().any(|(uids, items)| uids == "20"
-            && items.contains(&"BODY.PEEK[2]<0.16384>".to_owned())
-            && items.contains(&"BODY.PEEK[1]<0.16384>".to_owned())),
+            && items.contains(&"BODY.PEEK[2]<0.65536>".to_owned())
+            && items.contains(&"BODY.PEEK[1]<0.65536>".to_owned())),
         "{pieces:?}"
     );
 }

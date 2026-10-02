@@ -20,7 +20,8 @@ the feature's own; no new dependency; no change to the IMAP library
 forks. The test budget was raised to 920 lines on 2026-10-01, when the
 row's portion took 261 test lines against its 170, and the budget was
 then accepted at ≈ 865 production and ≈ 995 test lines after portion 5
-and its simplify review (the maintainer's decisions). Estimates include doc comments and formatting. Reassess with the
+and its simplify review, and at ≈ 895 and ≈ 1 025 after the external
+review's fixes (the maintainer's decisions). Estimates include doc comments and formatting. Reassess with the
 maintainer before exceeding the budget or about 1.5 times an item's
 estimate; the size so far is compared with this table at every review
 pause.
@@ -41,7 +42,8 @@ pause.
 
 Every message gets a preview when its batch is stored: the cycle fetches
 the structure of each message it fetches rows for, chooses its page or
-plain part, reads the first 16 kilobytes of it, and `mailbag-content`
+plain part, reads the first 64 kilobytes of it (16 until the live check
+of 2026-10-01, research §3), and `mailbag-content`
 turns the piece into up to 400 characters of words (research §1–§6);
 Microsoft 365 hands its own text preview over instead (§7). The preview
 is a column of the message (§8). The row form is rewritten as the spec
@@ -79,7 +81,7 @@ sequenceDiagram
     K->>S: rows of the batch's messages (as today)
     K->>S: structures of those messages (one command per 100)
     K->>C: select_text_parts (recent messages) and select_preview_part (all)
-    K->>S: texts of recent messages; pieces <0.16384> of the preview parts
+    K->>S: texts of recent messages with their pages; pieces <0.65536> of the others
     K->>C: preview_of_piece(header, piece, is_html) per message
     K->>D: store_batch with Message.preview
     K-->>W: BatchStored
@@ -166,8 +168,9 @@ flowchart TD
      and the choice is opened by `open_message`; a refresh's removal of
      the open message closes the reader instead.
   2. When `Animated`, `close_leaving_rows` closes the rows that leave
-     and `update_after_closing` applies the change after one 280 ms
-     timeout (the last of the closings running); otherwise, or with
+     and `change_after_closing` applies the change after one 280 ms
+     timeout, started again by a later closing and cancelled by a change
+     at once; otherwise, or with
      nothing to close, `change_list` applies it now:
      `update_list_by_difference` as today, arrivals inserted hidden when
      animated; the read states treat rows in the read-in-window set as
@@ -204,7 +207,6 @@ Not in the minimal version; each with the situation that would call for it.
 
 | Mechanism | Situation | Cost |
 |---|---|---|
-| A larger piece for pages with a long head | A provider's newsletters mostly yield empty previews from 16 kilobytes; measured on the installed build | a constant |
 | Removing elements hidden by style | Previews led by hidden opening lines prove distracting | ≈ 40, a style-aware scan |
 | Watching the day boundary | A window left open past midnight shows "today" for yesterday's rows | a timer at midnight |
 
@@ -292,7 +294,7 @@ thread.
 - **IV. One owner per business rule**: the preview rules live in
   `mailbag-content`; the next-message rule and the filter in `mail_ui`;
   the batch shape in `mailbag-domain`.
-- **V. Responsive, bounded work**: pieces are bounded (16 kilobytes);
+- **V. Responsive, bounded work**: pieces are bounded (64 kilobytes);
   previews are made on the worker; the list builds visible rows only.
 - **VI. Evidence before completion**: SC-001 to SC-010 mapped to tests
   and the quickstart; the installed-build checks are the maintainer's.

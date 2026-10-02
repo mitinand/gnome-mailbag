@@ -118,12 +118,14 @@ impl MessageItem {
     }
 
     /// Whether the item shows `row` apart from its read state, which changes
-    /// in place.
+    /// in place; a new preview, such as a draft's edited elsewhere, needs a
+    /// new item.
     pub fn lists_same_message(&self, row: &MessageListRow) -> bool {
         let listed = self.listed();
         listed.identity == row.identity
             && listed.fields == row.fields
             && listed.received_unix == row.received_unix
+            && listed.preview == row.preview
     }
 
     /// Opens or closes the row over `transition_ms`.

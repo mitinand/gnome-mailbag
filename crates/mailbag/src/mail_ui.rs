@@ -118,8 +118,8 @@ pub struct MailUi {
     /// same for every folder and account (specs/010-message-list FR-008).
     unread_only: Cell<bool>,
     in_window: RefCell<InWindow>,
-    /// How many closings are running; the list changes after the last.
-    closings: Cell<u32>,
+    /// Applies the list's latest state once the rows that leave are closed.
+    pending_change: RefCell<Option<glib::SourceId>>,
     /// The identity of the message the reader shows.
     open_message: RefCell<Option<String>>,
     /// Counts the open message read when it fires.
@@ -174,7 +174,7 @@ impl MailUi {
             listed_rows: RefCell::new(None),
             unread_only: Cell::new(false),
             in_window: RefCell::default(),
-            closings: Cell::new(0),
+            pending_change: RefCell::new(None),
             open_message: RefCell::new(None),
             pending_read: RefCell::new(None),
             content_request: RefCell::new(None),
@@ -189,6 +189,11 @@ impl MailUi {
         messages.connect_activate(move |_, position| {
             if let Some(mail) = weak.upgrade() {
                 mail.open_message(position, true);
+                // Under the filter the message open before, if read, leaves
+                // at once (specs/010-message-list FR-008).
+                if mail.unread_only.get() {
+                    mail.update_shown(ListChange::AtOnce);
+                }
             }
         });
         mail.close_reader();
@@ -305,20 +310,30 @@ impl MailUi {
         let Some((_, rows)) = self.listed_rows.borrow().clone() else {
             return;
         };
-        // A list off screen draws no frames to open or close its rows in.
-        let change = match self.messages.is_mapped() {
+        // A list off screen draws no frames to open or close its rows in,
+        // and with the system's animations off the rows change at once.
+        let animates =
+            self.messages.is_mapped() && self.messages.settings().is_gtk_enable_animations();
+        let change = match animates {
             true => change,
             false => ListChange::AtOnce,
         };
         let open = self.open_message.borrow().clone();
         let in_window = self.in_window.borrow();
         let shown = shown_rows(&rows, self.unread_only.get(), open.as_deref(), &in_window);
-        let animated = change == ListChange::Animated;
-        if animated && close_leaving_rows(&self.items, &shown) {
-            self.update_after_closing();
-        }
-        if !animated || self.closings.get() == 0 {
-            self.change_list(&shown, change, &in_window.read);
+        match change {
+            ListChange::AtOnce => {
+                self.drop_pending_change();
+                self.change_list(&shown, change, &in_window.read);
+            }
+            ListChange::Animated => {
+                if close_leaving_rows(&self.items, &shown) {
+                    self.change_after_closing();
+                }
+                if self.pending_change.borrow().is_none() {
+                    self.change_list(&shown, change, &in_window.read);
+                }
+            }
         }
         drop(in_window);
         let Some(identity) = open else {
@@ -374,21 +389,25 @@ impl MailUi {
         }
     }
 
-    /// Applies the latest state once the rows that leave are closed. Rows
-    /// that start closing meanwhile, such as a second row sent to the trash,
-    /// close whole before the list changes.
-    fn update_after_closing(&self) {
-        self.closings.set(self.closings.get() + 1);
+    /// Applies the latest state once the rows that leave are closed. A row
+    /// that starts closing meanwhile, such as a second row sent to the
+    /// trash, starts the wait again, so it closes whole too.
+    fn change_after_closing(&self) {
+        self.drop_pending_change();
         let mail = self.myself.clone();
-        glib::timeout_add_local_once(AFTER_CLOSING, move || {
-            let Some(mail) = mail.upgrade() else {
-                return;
-            };
-            mail.closings.set(mail.closings.get() - 1);
-            if mail.closings.get() == 0 {
+        let pending = glib::timeout_add_local_once(AFTER_CLOSING, move || {
+            if let Some(mail) = mail.upgrade() {
+                mail.pending_change.take();
                 mail.update_shown(ListChange::Animated);
             }
         });
+        *self.pending_change.borrow_mut() = Some(pending);
+    }
+
+    fn drop_pending_change(&self) {
+        if let Some(pending) = self.pending_change.take() {
+            pending.remove();
+        }
     }
 
     /// Empties the list and the reader, as a mailbox without stored rows
@@ -466,6 +485,7 @@ impl MailUi {
     /// Opens the row's message: its envelope from the row at once, its
     /// content when the window has read it; a second later the window counts
     /// it read. A narrow window brings the reader forward only when asked.
+    /// The list does not change here: the action that opens decides how.
     fn open_message(&self, position: u32, bring_reader_forward: bool) {
         let Some(item) = self.items.item(position).and_downcast::<MessageItem>() else {
             return;
@@ -492,14 +512,8 @@ impl MailUi {
         );
         *self.open_message.borrow_mut() = Some(listed.identity.clone());
         self.count_read_after_opening(&listed.identity);
-        match self.unread_only.get() {
-            // The message open before may leave the list now.
-            true => self.update_shown(ListChange::Animated),
-            false => {
-                self.selection.set_selected(position);
-                self.show_envelope(listed);
-            }
-        }
+        self.selection.set_selected(position);
+        self.show_envelope(listed);
         // The body stays empty until the content is read.
         self.reader_body.set_text("");
         self.show_body_or_failure(None);
@@ -725,8 +739,10 @@ fn next_after_leaving(above: Option<bool>, below: Option<bool>) -> Option<Neighb
     }
 }
 
-/// The handlers the row template names: the trash button shows while the
-/// pointer is over the row and takes its message out of the list in the
+/// The handlers the row template names: the trash icon slides in beside the
+/// date while the pointer is over the row, turns red, Adwaita's colour for
+/// a destructive action, while the pointer is over the icon itself, and
+/// takes its message out of the list in the
 /// window (specs/010-message-list FR-002, FR-010). A signal with an object
 /// in the form passes that object first.
 fn row_handlers(mail: Weak<MailUi>) -> gtk::BuilderRustScope {
@@ -739,6 +755,21 @@ fn row_handlers(mail: Weak<MailUi>) -> gtk::BuilderRustScope {
             revealer
                 .expect("message-row.ui: trash_reveal")
                 .set_reveal_child(reveal);
+            None
+        });
+    }
+    for (handler, pointed) in [("trash_entered", true), ("trash_left", false)] {
+        scope.add_callback(handler, move |values| {
+            let icon = values
+                .first()
+                .and_then(|value| value.get::<gtk::Widget>().ok());
+            let icon = icon.expect("message-row.ui: trash");
+            let (shown, hidden) = match pointed {
+                true => ("error", "dim-label"),
+                false => ("dim-label", "error"),
+            };
+            icon.remove_css_class(hidden);
+            icon.add_css_class(shown);
             None
         });
     }
@@ -893,7 +924,11 @@ fn date_wording(received: &glib::DateTime, now: &glib::DateTime) -> String {
         0 => locale_time_form(&formatted(now, "%X"), &formatted(now, "%p")),
         1 => return "Yesterday".to_owned(),
         2..=6 => "%A",
-        _ if received.year() == now.year() => "%-d %B",
+        _ if received.year() == now.year() => {
+            let new_years_eve =
+                glib::DateTime::from_local(2000, 12, 31, 0, 0, 0.0).expect("a valid time");
+            day_month_form(&formatted(&new_years_eve, "%x"))
+        }
         _ => "%x",
     };
     formatted(received, format)
@@ -918,6 +953,16 @@ fn locale_time_form(full_time: &str, am_pm: &str) -> &'static str {
     match !am_pm.is_empty() && full_time.contains(am_pm) {
         true => "%-I:%M %p",
         false => "%H:%M",
+    }
+}
+
+/// The day and the month's name in the locale's order, told by the order
+/// of the day 31 and the month 12 in the locale's short date of 31 December
+/// (specs/010-message-list FR-004).
+fn day_month_form(short_date: &str) -> &'static str {
+    match (short_date.find("31"), short_date.find("12")) {
+        (Some(day), Some(month)) if month < day => "%B %-d",
+        _ => "%-d %B",
     }
 }
 

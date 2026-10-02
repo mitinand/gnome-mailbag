@@ -12,7 +12,7 @@ binding across crates; bodies and private helpers are the plan's.
 
 ## Content rules (`mailbag-content`)
 
-- `pub const PREVIEW_PIECE_BYTES: u32 = 16_384` — how much of the chosen
+- `pub const PREVIEW_PIECE_BYTES: u32 = 65_536` — how much of the chosen
   part is read for a preview (spec Assumptions).
 - `pub fn select_preview_part(root: &MimePart) -> Option<PreviewPart>` —
   the part to read, `PreviewPart { section: Vec<u32>, is_html: bool }`:

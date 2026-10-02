@@ -10,7 +10,7 @@ same day the maintainer added read on opening and Move to Trash from the
 row as window-only behaviour (FR-009, FR-010): one more timer, and the
 budget confirmed as at most 750 production and 850 test lines; the test
 budget raised to 920 lines on 2026-10-01, and the size accepted at
-about 865 production and 995 test lines the same day. Challenged
+about 895 production and 1 025 test lines the same day. Challenged
 on 2026-09-30 (the spec, then the plan's mechanisms, in fresh sessions);
 the decisions are under Clarifications.
 **Input**: The list pane shows a folder's messages so that a glance tells
@@ -410,9 +410,12 @@ compared with the rule in the user's locale.
   accessible description says "Unread" or "Read". Long values are cut
   with an ellipsis, never wrapped, except the preview's two lines. At the
   end of the row, over its content so that it takes no width from the
-  preview, a flat round button with the trash icon and the tooltip "Move
-  to Trash" appears while the pointer is over the row and fades away when
-  it leaves; pressing it is FR-010. Nothing else is shown in the row: no
+  preview, a small trash icon with the tooltip "Move to Trash" slides in
+  after the date on the first line while the pointer is over the row,
+  moving the date aside, and slides away when it leaves; it covers no
+  text and turns red while the pointer is over it (changed from a round
+  button over both preview lines on 2026-10-02, the maintainer's choice
+  after the live check); pressing it is FR-010. Nothing else is shown in the row: no
   attachment, star, thread or account marker (FR-011).
 - **FR-003 — A preview for every message**: Every stored message MUST have
   a preview: the first words of its text as the user would read them,
@@ -609,14 +612,21 @@ compared with the rule in the user's locale.
 
 ## Assumptions
 
-- The beginning of a text part, 16 kilobytes, is enough for 400 characters
-  of words in practice; a web page whose invisible head is longer yields
-  no words from that piece and falls back as FR-003(e) says. The bound is
-  a planning value and may change with evidence.
+- The beginning of a text part, 64 kilobytes, is enough for the words a row
+  shows in practice; a web page whose invisible head is longer yields no
+  words from that piece and falls back as FR-003(e) says. (Measured on
+  2026-10-01 on 200 messages of a real Inbox: 16 kilobytes, the planning
+  value, left 5 previews empty and 63 too short for the row's two lines;
+  64 kilobytes left none empty and 6 short, the whole part 5.)
 - Reading that piece for every message makes a first fill of a large
   folder take minutes rather than seconds on slow servers; the maintainer
-  accepted this for previews on every row. The time is measured on the
-  installed build at the feature's live check and written here. The batch
+  accepted this for previews on every row. Measured on the installed build
+  at the live check (2026-10-02), each Inbox filled from nothing: 763
+  Gmail messages in 56 s, 3 486 Microsoft 365 messages in 81 s and
+  5 976 iCloud messages in 12 min 27 s, the first batch listed after
+  about 10 s on Gmail and iCloud. iCloud spends about 75 ms opening each
+  message whatever is read of it; making a fill faster belongs to
+  synchronization (009). The batch
   stores its rows only with their previews, so an interrupted fill leaves
   complete rows. For a message older than 30 days with both forms, the
   plain form's piece is read together with the page's, so the fallback of
