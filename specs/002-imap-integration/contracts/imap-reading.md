@@ -3,7 +3,10 @@
 **Status**: The selected window, the rows and a vanished message amended on
 2026-09-29 by [Synchronization](../../009-synchronization/spec.md): a cycle
 lists every message with `UID FETCH 1:*`, reads rows by UID, and skips a
-message that disappeared (009 research §2, §3).
+message that disappeared (009 research §2, §3). Amended on 2026-10-02 by the
+same feature (research §14): compression when the server announces it, the
+row command carries the structures, a `NIL` encoding reads as 7BIT, and the
+isolation reads the unanswered messages' rows first.
 
 One selected account is loaded asynchronously on a worker's GLib MainContext.
 GTK and GOA observation remain on the main context. The worker owns all GIO
@@ -180,9 +183,11 @@ not a general retry policy:
    rows already received stay in the candidate, with their structures.
 2. Open a fresh secure session, authenticate and EXAMINE again. If UIDVALIDITY
    changed, stop with an Inbox-changed explanation.
-3. Keep the rows already parsed, read the unanswered messages' rows without
-   structures in one command (*2026-10-02*), then fetch `UID BODYSTRUCTURE`
-   separately for each of them. A reply containing only FLAGS does not supply
+3. Keep the rows already parsed with their structures; a row that came
+   without one does not count as answered, since a server may answer the
+   rows of several messages before their structures. Read the unanswered
+   messages' rows without structures in one command (*2026-10-02*), then
+   fetch `UID BODYSTRUCTURE` separately for each of them. A reply containing only FLAGS does not supply
    a structure and must not exclude its UID from isolation. Discard provisional
    entries without structures before these individual requests, so their results
    also determine whether a message disappeared. A parser failure isolated to

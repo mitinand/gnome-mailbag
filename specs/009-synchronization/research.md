@@ -556,10 +556,12 @@ net +73 after the simplify-review, accepted by the maintainer.
    2026-10-01 per message: rows and structure apart 10 + 10 ms on iCloud,
    95 + 105 on Yandex, 33 + 34 on Gmail; in one command 10, 148 and 31).
    When the command does not answer for every message, because the server
-   refused some or the parser rejected one structure, the unanswered
-   messages are read again apart: their rows in one command, then each
-   structure on its own, so that one message the server cannot describe
-   keeps its row (§3; 002 contracts/imap-reading.md, isolation).
+   refused some or the parser rejected one structure, the messages it did
+   not answer for, or answered without a structure, are read again apart:
+   their rows in one command, then each structure on its own, so that one
+   message the server cannot describe keeps its row (§3; 002
+   contracts/imap-reading.md, isolation; the second case added after the
+   review of PR #16: a server may answer rows before structures).
 
 **Measured on the installed build** (2026-10-02, accounts of each
 provider, a fill from an empty store of the same folders as the message

@@ -182,7 +182,11 @@ impl MailboxReader {
         let mut rows = collect_rows(&responses.fetches, uids);
         let refusal = match responses.end {
             FetchEnd::Completed => None,
-            FetchEnd::Rejected(reply) if rows.len() == uids.len() => Some(self.refusal(reply)),
+            FetchEnd::Rejected(reply)
+                if rows.len() == uids.len() && rows.iter().all(|row| row.structure.is_some()) =>
+            {
+                Some(self.refusal(reply))
+            }
             FetchEnd::Rejected(_) => {
                 self.read_unanswered_apart(uids, row_items, &mut rows)
                     .await?
@@ -203,7 +207,9 @@ impl MailboxReader {
         Ok(MessageList { rows, refusal })
     }
 
-    /// Reads the messages the row command did not answer for: their rows in
+    /// Reads the messages the row command did not answer for, or answered
+    /// without a structure, since a server may answer the rows of several
+    /// messages before their structures (RFC 2683 §3.4.4): their rows in
     /// one command, then each structure on its own, so that one message the
     /// server refuses to describe for good, or whose description the parser
     /// cannot read, keeps its row without a structure. A message gone
@@ -217,6 +223,7 @@ impl MailboxReader {
         row_items: RowItems,
         rows: &mut Vec<MessageRow>,
     ) -> Result<Option<ServerReply>, ImapError> {
+        rows.retain(|row| row.structure.is_some());
         let unanswered: Vec<u32> = uids
             .iter()
             .copied()

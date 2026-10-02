@@ -127,6 +127,31 @@ fn unreadable_structures_keep_their_rows_and_the_others_are_read() {
     }
 }
 
+/// A server may answer a message's row before its structure, in separate
+/// responses: after the structure fails to parse, the row is not taken for
+/// an answer, and the structure is asked for again on its own.
+#[test]
+fn a_row_answered_before_its_unreadable_structure_is_asked_for_again_apart() {
+    let fixture = ImapFixture::start(FixtureSetup {
+        messages: messages(3, &[20]),
+        split_fetch_responses: true,
+        ..FixtureSetup::default()
+    });
+    let mut reader = open_reader(&fixture);
+    let rows = expect_success(run(fetch_all_rows(&mut reader))).rows;
+    assert_eq!(rows.len(), 3);
+    assert!(!structure_is_read(&rows, 20));
+    assert!(structure_is_read(&rows, 10) && structure_is_read(&rows, 30));
+    let structures_apart: Vec<String> = fixture
+        .log()
+        .fetches
+        .into_iter()
+        .filter(|fetch| fetch.items == ["UID", "BODYSTRUCTURE"])
+        .map(|fetch| fetch.message_set)
+        .collect();
+    assert_eq!(structures_apart, ["30", "20"]);
+}
+
 #[test]
 fn a_changed_uidvalidity_on_reconnection_stops_the_load() {
     let fixture = ImapFixture::start(FixtureSetup {
