@@ -182,7 +182,7 @@ pub struct MessageListRow {
 }
 
 /// A flag of a message the user can change (specs/011-read-and-star).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MessageFlag {
     /// Read: IMAP `\Seen`, Microsoft 365 `isRead`.
     Seen,

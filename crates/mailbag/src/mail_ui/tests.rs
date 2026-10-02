@@ -162,7 +162,7 @@ impl ScriptedLoader {
             .store_batch(folder, batch, || started.cancelled.get())
             .expect("the test store takes the batch");
         if write == StoreWrite::Stored {
-            (started.on_event)(LoadEvent::BatchStored);
+            (started.on_event)(LoadEvent::StoreChanged);
         }
     }
 

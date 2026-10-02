@@ -397,16 +397,16 @@ impl MailboxReader {
 
     /// Sets (`set`) or clears `flag` on the messages `uids`, which is not
     /// empty, with one `UID STORE … +FLAGS.SILENT` or `-FLAGS.SILENT`
-    /// (specs/011-read-and-star FR-007). Returns the server's NO or BAD with
-    /// the sign-in name replaced: it refused the change. A lost connection
-    /// fails at `ImapStep::StoreFlags`; whether the server applied the change
-    /// is then unknown.
+    /// (specs/011-read-and-star FR-007). `Ok(Some(refusal))` when the server
+    /// answered NO or BAD: the refusal fails at `ImapStep::StoreFlags` with
+    /// the server's reply and alerts. A lost connection is the `Err`; whether
+    /// the server applied the change is then unknown.
     pub async fn store_flags(
         &mut self,
         uids: &[u32],
         flag: StoreFlag,
         set: bool,
-    ) -> Result<Option<ServerReply>, ImapError> {
+    ) -> Result<Option<ImapError>, ImapError> {
         if self.needs_reconnect {
             self.reconnect().await?;
         }
@@ -431,20 +431,12 @@ impl MailboxReader {
                 return Err(self.error(command_failure(ImapStep::StoreFlags, &error)));
             }
         };
-        let refusal = refusal.map(|reply| self.refusal(reply));
-        if let Some(reply) = &refusal {
-            tracing::debug!(
-                code = reply.code.as_deref(),
-                server_text = reply.text,
-                "the server refused the command"
-            );
-        }
         tracing::info!(
             messages = uids.len(),
             refused = refusal.is_some(),
             "flags stored"
         );
-        Ok(refusal)
+        Ok(refusal.map(|reply| self.error(refused(ImapStep::StoreFlags, reply))))
     }
 
     /// Runs one UID FETCH command and keeps every response received before

@@ -377,7 +377,7 @@ impl WindowUi {
                     return;
                 };
                 match event {
-                    LoadEvent::BatchStored => window.show_stored_batch(&loaded_account),
+                    LoadEvent::StoreChanged => window.show_changed_store(&loaded_account),
                     LoadEvent::Finished(result) => {
                         window.finish_load(&loaded_account, loaded_target.clone(), result)
                     }
@@ -405,11 +405,11 @@ impl WindowUi {
         self.render();
     }
 
-    /// A cycle stored a batch: the shown mailbox is read again when it
-    /// belongs to the loaded account, since a batch of one folder can change
+    /// A cycle changed the store: the shown mailbox is read again when it
+    /// belongs to the loaded account, since a change in one folder can change
     /// messages another folder of the account holds too (a Gmail label, a
     /// moved Microsoft 365 message).
-    fn show_stored_batch(self: &Rc<Self>, account_id: &AccountId) {
+    fn show_changed_store(self: &Rc<Self>, account_id: &AccountId) {
         if self
             .selected_mailbox()
             .is_some_and(|folder| folder.account == *account_id)

@@ -4,7 +4,7 @@
 //! The cycle of an IMAP folder, Generic IMAP or Gmail (spec FR-005, FR-006;
 //! research §2, §3, §4).
 
-use super::{CycleEnd, completed};
+use super::{CycleEnd, completed, pending::send_imap_changes};
 use crate::{
     LoadResult,
     gmail::{gmail_options, log_gmail_rows},
@@ -21,7 +21,10 @@ use mailbag_imap::{
     ServerReply,
 };
 use mailbag_store::FolderSync;
-use std::{collections::HashSet, time::SystemTime};
+use std::{
+    collections::{HashMap, HashSet},
+    time::SystemTime,
+};
 
 /// How many missing messages one batch fetches (research §3).
 const BATCH_SIZE: usize = 100;
@@ -45,7 +48,9 @@ struct ListedMessage {
 
 /// The cycle of an IMAP folder, Generic IMAP or Gmail (spec FR-005, FR-006;
 /// research §2, §3): list every message, store what the listing proves,
-/// then fetch the missing messages newest first, a batch at a time.
+/// then fetch the missing messages newest first, a batch at a time. The
+/// user's pending changes are sent by the listing's UIDs before each batch
+/// and once before the cycle ends (specs/011-read-and-star FR-007).
 pub(super) async fn synchronize_imap_folder(
     access: ImapAccess,
     identity_rule: IdentityRule,
@@ -56,20 +61,31 @@ pub(super) async fn synchronize_imap_folder(
     let stored = batches.read_folder_sync()?;
     let listing = server.list_messages().await?;
     let listed = server.identify(&listing, &batches.folder.identity)?;
+    let listed_uids: HashMap<String, u32> = listed
+        .iter()
+        .map(|message| (message.identity.clone(), message.uid))
+        .collect();
     let missing = missing_messages(&listed, &stored);
     batches.store(&listing_changes(&listed, &stored, &listing, &missing))?;
-    for batch_messages in missing.chunks(BATCH_SIZE) {
+    let mut missing_batches = missing.chunks(BATCH_SIZE);
+    // The rows the server withheld are missing, so the folder stays not
+    // completed; the listing's proof is stored.
+    let mut withheld = None;
+    loop {
+        send_imap_changes(&mut server.reader, &listed_uids, batches).await?;
+        if withheld.is_some() {
+            break;
+        }
+        let Some(batch_messages) = missing_batches.next() else {
+            break;
+        };
         let (batch, refusal) = server
             .fetch_arrivals(batch_messages, recent_limit, batches)
             .await?;
         batches.store(&batch)?;
-        // The rows the server withheld are missing, so the folder stays
-        // not completed; the listing's proof is stored.
-        if let Some(refusal) = refusal {
-            return Ok(batches.finish(listed.len(), Some(short_list(refusal))));
-        }
+        withheld = refusal;
     }
-    if let Some(refusal) = listing.refusal {
+    if let Some(refusal) = withheld.or(listing.refusal) {
         return Ok(batches.finish(listed.len(), Some(short_list(refusal))));
     }
     if !missing.is_empty() {

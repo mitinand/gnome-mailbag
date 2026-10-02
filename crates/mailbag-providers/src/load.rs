@@ -23,13 +23,14 @@ pub enum LoadTarget {
 }
 
 /// What a load tells whoever started it, on that caller's context: any number
-/// of stored batches, then exactly one end (specs/009-synchronization
+/// of changes to the store, then exactly one end (specs/009-synchronization
 /// research §7).
 #[derive(Debug)]
 pub enum LoadEvent {
-    /// The cycle stored a batch of its folder; the window reads the store
-    /// again.
-    BatchStored,
+    /// The cycle changed the folder's stored state, a batch or a dropped
+    /// pending change (specs/011-read-and-star FR-010); the window reads the
+    /// store again.
+    StoreChanged,
     Finished(LoadResult),
 }
 

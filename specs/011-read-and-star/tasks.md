@@ -263,19 +263,19 @@ listing, before each batch of missing messages and once before closing,
 settles accepted commands, drops refused ones and tells the window, and
 leaves the rest for the next listing (spec FR-006 to FR-010, FR-012).
 
-- [ ] T018 [US5] In crates/mailbag-providers/src/load.rs
+- [x] T018 [US5] In crates/mailbag-providers/src/load.rs
   `LoadEvent::BatchStored` becomes `StoreChanged` ("the cycle changed the
   folder's stored state, a batch or a dropped pending change; the window
   reads again"); src/store_load.rs, src/tests.rs,
   crates/mailbag/src/window_ui.rs and crates/mailbag/src/mail_ui/tests.rs
   follow the rename.
-- [ ] T019 [US1] [US5] In crates/mailbag-providers/src/store_load.rs
+- [x] T019 [US1] [US5] In crates/mailbag-providers/src/store_load.rs
   `BatchWriter::pending_changes() -> Result<Vec<PendingChange>,
   LoadResult>`, `settle(identities, flag, value)` and
   `drop_pending(identities, flag)` with the cycle's failure mapping;
   `drop_pending` sends `LoadEvent::StoreChanged`; `BatchCounts.sent`
   counted in `settle` and written by `finish`.
-- [ ] T020 [US1] [US4] [US5] New crates/mailbag-providers/src/cycle/
+- [x] T020 [US1] [US4] [US5] New crates/mailbag-providers/src/cycle/
   pending.rs, declared from src/cycle.rs: `send_imap_changes(reader:
   &mut MailboxReader, listed_uids: &HashMap<String, u32>, batches: &mut
   BatchWriter) -> Result<(), CycleEnd>`: a pending change whose wanted
@@ -294,7 +294,7 @@ leaves the rest for the next listing (spec FR-006 to FR-010, FR-012).
   pending untouched, an unknown outcome (spec FR-009, research §14).
   Record lines count sent and refused changes at info with identities at
   debug, never a subject.
-- [ ] T021 [US1] [US3] [US4] In crates/mailbag-providers/src/cycle/imap.rs
+- [x] T021 [US1] [US3] [US4] In crates/mailbag-providers/src/cycle/imap.rs
   `synchronize_imap_folder`: the listing's `identity → uid` map kept from
   `identify`; after `batches.store(&listing_changes(...))` the loop
   `loop { send_imap_changes; the next chunk of missing messages or break;
@@ -304,7 +304,7 @@ leaves the rest for the next listing (spec FR-006 to FR-010, FR-012).
   round's last page is stored, and after each stored page of a first fill
   or full re-reading, `send_graph_changes` (`GraphService::update_flags`
   of T020).
-- [ ] T022 [P] [US1] [US3] [US4] [US5] Tests in
+- [x] T022 [P] [US1] [US3] [US4] [US5] Tests in
   crates/mailbag-providers/src/tests.rs against the scripted servers:
   SC-001's server side (a stored pending change of each kind reaches the
   IMAP server as exactly one `UID STORE` with that UID and flag, and the
@@ -337,7 +337,7 @@ leaves the rest for the next listing (spec FR-006 to FR-010, FR-012).
   refuses leaves the pending change untouched and the next cycle sends
   it (SC-002's server half); after a Microsoft 365 change the next round's
   partial entry and full entry leave the effective state as it is.
-- [ ] T023 STOP: run ./scripts/check.sh and git diff --check; compare the
+- [x] T023 STOP: run ./scripts/check.sh and git diff --check; compare the
   size with plan.md (providers ≈ 150; tests ≈ 240); report, suggest the
   commit and wait before portion 5.
 

@@ -128,9 +128,10 @@ pub struct ScriptedChanges {
     /// answered with 401, as for an expired token. Any other token is
     /// accepted.
     pub token_accepted_requests: Option<usize>,
-    /// The answer to every `PATCH /me/messages/{id}`, which then changes
-    /// nothing; `None` applies the request's fields to the message and
-    /// answers 200 with it, or 404 for a message the mailbox lacks.
+    /// The answer to the next `PATCH /me/messages/{id}`, which then changes
+    /// nothing; later ones, and every one when `None`, apply the request's
+    /// fields to the message and answer 200 with it, or 404 for a message
+    /// the mailbox lacks.
     pub patch_answer: Option<ScriptedAnswer>,
 }
 
@@ -434,8 +435,8 @@ fn scripted_answer(
 /// The answer to a `PATCH` of a message: the scripted one, or the message
 /// with the request's fields applied.
 fn patched_message(changes: &mut ScriptedChanges, message_id: &str, body: &str) -> ScriptedAnswer {
-    if let Some(answer) = &changes.patch_answer {
-        return answer.clone();
+    if let Some(answer) = changes.patch_answer.take() {
+        return answer;
     }
     let Some(message) = (changes.messages.iter_mut()).find(|message| message["id"] == message_id)
     else {

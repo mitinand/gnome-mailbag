@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+mod flags;
+
 use super::*;
 use crate::renewal::AccessRenewal;
 use crate::store_load::{BatchWriter, store_folder_list};
@@ -154,7 +156,7 @@ fn read_stored_messages(
 }
 
 /// Runs one load of `target` on `worker` and waits for its end; returns it
-/// with how many batches the load reported stored before.
+/// with how many changes of the store the load reported before.
 async fn finish_load(
     worker: &MailWorker,
     kind: LoadKind,
@@ -167,14 +169,14 @@ async fn finish_load(
     load_end(&events).await
 }
 
-/// The end of a load whose events arrive on `events`, and how many batches
-/// it reported stored before.
+/// The end of a load whose events arrive on `events`, and how many changes
+/// of the store it reported before.
 async fn load_end(events: &async_channel::Receiver<LoadEvent>) -> (LoadResult, usize) {
-    let mut batches = 0;
+    let mut store_changes = 0;
     loop {
         match events.recv().await.expect("the load reports its end") {
-            LoadEvent::BatchStored => batches += 1,
-            LoadEvent::Finished(outcome) => return (outcome, batches),
+            LoadEvent::StoreChanged => store_changes += 1,
+            LoadEvent::Finished(outcome) => return (outcome, store_changes),
         }
     }
 }
@@ -1851,7 +1853,7 @@ fn row_fetches(fixture: &ImapFixture) -> Vec<String> {
 
 /// A cycle of the Generic IMAP Inbox of `fixture` into `store`, which already
 /// lists the Inbox; returns how it ended, what the Inbox then holds and how
-/// many batches were reported stored.
+/// many changes of the store were reported.
 fn synchronize_again(
     fixture: &ImapFixture,
     store: &Arc<Store>,
@@ -2233,7 +2235,7 @@ fn a_stopped_first_fill_continues_without_fetching_stored_messages_again() {
         // The listing's batch, then the first hundred.
         for _ in 0..2 {
             let event = events.recv().await.expect("a batch");
-            assert!(matches!(event, LoadEvent::BatchStored), "{event:?}");
+            assert!(matches!(event, LoadEvent::StoreChanged), "{event:?}");
         }
         drop(handle);
         let (outcome, _) = load_end(&events).await;

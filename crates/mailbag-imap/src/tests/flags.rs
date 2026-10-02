@@ -41,7 +41,7 @@ fn each_flag_and_direction_is_one_silent_command_on_a_uid_set() {
         ];
         for (uids, flag, set) in changes {
             let refusal = expect_success(run(reader.store_flags(uids, flag, set)));
-            assert_eq!(refusal, None);
+            assert!(refusal.is_none(), "{refusal:?}");
         }
         let stores: Vec<String> = (fixture.log().commands.into_iter())
             .filter(|command| command.starts_with("UID STORE"))
@@ -63,7 +63,7 @@ fn each_flag_and_direction_is_one_silent_command_on_a_uid_set() {
 }
 
 #[test]
-fn a_no_or_a_bad_is_the_servers_refusal_with_the_sign_in_name_replaced() {
+fn a_no_or_a_bad_is_a_refusal_with_the_servers_reply() {
     let completions = [("NO [CANNOT]", "CANNOT"), ("BAD [CLIENTBUG]", "CLIENTBUG")];
     for (status, code) in completions {
         let fixture = ImapFixture::start(FixtureSetup {
@@ -74,8 +74,10 @@ fn a_no_or_a_bad_is_the_servers_refusal_with_the_sign_in_name_replaced() {
         let mut reader = open_reader(&fixture);
         let refusal = expect_success(run(reader.store_flags(&[10], StoreFlag::Flagged, true)))
             .expect("the refusal");
-        assert_eq!(refusal.code.as_deref(), Some(code));
-        assert_eq!(refusal.text, "Not for <login>");
+        assert_eq!(refusal.failure, ImapFailure::Failed(ImapStep::StoreFlags));
+        let reply = refusal.server_reply.expect("the server's reply");
+        assert_eq!(reply.code.as_deref(), Some(code));
+        assert_eq!(reply.text, "Not for <login>");
         assert_eq!(listed_flags(&mut reader), [(10, false, false)]);
     }
 }
