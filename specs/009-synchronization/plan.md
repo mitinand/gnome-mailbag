@@ -419,3 +419,30 @@ older message (research §3); Microsoft 365 pages that took 20 s, once
 81 s, were the service's load at that hour (research §5). A text-only
 edit of a Microsoft 365 draft comes as a listed entry and gets the new
 text (research §5).
+
+## Amendment 2026-10-02: one connection, faster
+
+Decided at a feature-start on 2026-10-02 after the message list's
+acceptance (research §14), built on `claude/connections` in three
+portions, each reviewed and committed by the maintainer, then checked on
+the installed build with accounts of each provider. No behaviour changed
+for the user beyond speed; FR-009's refusal wording follows the one
+command.
+
+| Item | Budget | Came out |
+|---|---|---|
+| Production lines | ≤ 220 changed, net ≤ +150 | ≈ 365 changed, net +73 after the simplify-review (the retry apart after a refused row command was not in the estimate); accepted |
+| Files touched | imap `transport.rs`, `session.rs`, `reader.rs`, `fetch_responses.rs`, `lib.rs`, `test_server.rs`; providers `imap_texts.rs`, `cycle/imap.rs`; `Cargo.toml`, `Cargo.lock`, `cargo-sources.json` | as planned |
+| Threads, timers, dependencies | 0 | 0 |
+| New types | one handle on the stream for the compression swap | none: the IMAP library hands out its stream (`Connection::get_mut`), `GioStream::compress` swaps in place |
+| Fork commits | 1 (imap-proto) | 1: `NIL` encoding read as 7BIT |
+| Other features' documents | 002 contracts/imap-reading.md, 004 research | amended after the live check |
+| Tests | ≤ 250 lines | ≈ 270: compression (3), the `NIL` encoding (1), the row command with structures and its retry apart (rewritten) |
+
+Function map changes: `MailboxReader::fetch_structures` is gone;
+`fetch_rows_by_uid` asks for the structures and, when the command does not
+answer for every message, `read_unanswered_apart` reads their rows and
+then each structure alone (`fetch_structures_apart`, the former isolation
+loop); `read_contents` takes the rows. `sign_in_session` gained
+`compress_session` after the capabilities. The live check's numbers are
+in research §14.

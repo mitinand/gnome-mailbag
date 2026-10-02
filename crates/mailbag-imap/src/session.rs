@@ -206,23 +206,16 @@ pub(crate) async fn sign_in_session(
 ) -> Result<SignedInSession, StepFailure> {
     let (connection, identity) =
         transport::connect(&account.host, account.encryption, socket_timeout_seconds).await?;
-    let client = match account.encryption {
-        Encryption::ImplicitTls => {
-            let tls = transport::start_tls(&connection, &identity, account.encryption).await?;
-            let mut client = Client::new(GioStream::new(tls));
-            notices.follow(client.unsolicited_responses().clone());
-            read_greeting(&mut client, &account.login, notices).await?;
-            client
-        }
-        Encryption::StartTls => {
-            upgrade_plaintext(&connection).await?;
-            let tls = transport::start_tls(&connection, &identity, account.encryption).await?;
-            // The server sends no second greeting after STARTTLS.
-            let client = Client::new(GioStream::new(tls));
-            notices.follow(client.unsolicited_responses().clone());
-            client
-        }
-    };
+    if account.encryption == Encryption::StartTls {
+        upgrade_plaintext(&connection).await?;
+    }
+    let tls = transport::start_tls(&connection, &identity, account.encryption).await?;
+    let mut client = Client::new(GioStream::new(tls));
+    notices.follow(client.unsolicited_responses().clone());
+    // The server greets once; after STARTTLS it sends no second greeting.
+    if account.encryption == Encryption::ImplicitTls {
+        read_greeting(&mut client, &account.login, notices).await?;
+    }
     let mut session = sign_in(client, account, notices).await?;
     // A server may announce more once signed in, as Gmail does (specs/
     // 004-gmail-integration/research.md §2). The sign-in reply may carry the
@@ -234,6 +227,9 @@ pub(crate) async fn sign_in_session(
         capabilities = capability_names(capabilities.iter()),
         "server capabilities after sign-in"
     );
+    if capabilities.has_str("COMPRESS=DEFLATE") {
+        compress_session(&mut session, &account.login, opened_for).await?;
+    }
     // UTF8=ONLY includes UTF8=ACCEPT and still needs the ENABLE (RFC 6855
     // §6); RFC 5161 allows ENABLE only before a mailbox is selected.
     let utf8_names = if capabilities.has_str("UTF8=ACCEPT") || capabilities.has_str("UTF8=ONLY") {
@@ -429,6 +425,33 @@ fn capability_names<'a>(capabilities: impl IntoIterator<Item = &'a Capability>) 
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Asks the server to compress the connection, which it announced it can
+/// (`COMPRESS=DEFLATE`, RFC 4978), and puts the compression in place once it
+/// agrees. A refusal leaves the connection as it is.
+async fn compress_session(
+    session: &mut Session<GioStream>,
+    sign_in_name: &str,
+    opened_for: ImapStep,
+) -> Result<(), StepFailure> {
+    match session.run_command_and_check_ok("COMPRESS DEFLATE").await {
+        Ok(()) => {
+            session.get_mut().compress();
+            tracing::info!("compression enabled");
+            Ok(())
+        }
+        Err(Error::No(status) | Error::Bad(status)) => {
+            tracing::debug!(
+                code = status.code.as_deref(),
+                server_text = replace_sign_in_name(sign_in_name, &status.text),
+                "the server refused compression"
+            );
+            Ok(())
+        }
+        // A broken connection, not a refusal: the next step cannot follow.
+        Err(error) => Err(command_failure(opened_for, &error)),
+    }
 }
 
 /// Enables UTF-8 mailbox and label names and returns whether the server

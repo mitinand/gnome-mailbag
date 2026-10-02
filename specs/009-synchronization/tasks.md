@@ -5,7 +5,10 @@
 approved on 2026-09-29 (T001); portions 1–4 committed on 2026-09-29;
 T033–T036 done, the manual checks passed on the installed build on
 2026-09-30; T037 reported the same day; T038, the documents after the
-independent review, done on 2026-09-30.
+independent review, done on 2026-09-30. The amendment of 2026-10-02 (one
+connection, faster) was built without tasks, by the feature-start's path
+for internal changes: three reviewed portions, the installed-build check,
+then the documents (plan "Amendment 2026-10-02", research §14).
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions

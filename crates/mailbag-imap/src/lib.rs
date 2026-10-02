@@ -243,9 +243,13 @@ pub struct MessageRow {
     /// Gmail's fields, asked for with `RowItems::WithGmailAttributes` and
     /// absent when the server did not answer with them.
     pub gmail: Option<GmailRow>,
+    /// The part structure, read with the row. `None` when the server refused
+    /// to describe the message or the parser could not read its description:
+    /// the row stays, its text cannot be chosen.
+    pub structure: Option<MessagePart>,
 }
 
-/// The rows one command delivered.
+/// The rows of one batch, with their structures.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MessageList {
     /// In descending UID order.

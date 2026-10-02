@@ -3,7 +3,10 @@
 **Status**: The selected window, the rows and a vanished message amended on
 2026-09-29 by [Synchronization](../../009-synchronization/spec.md): a cycle
 lists every message with `UID FETCH 1:*`, reads rows by UID, and skips a
-message that disappeared (009 research §2, §3).
+message that disappeared (009 research §2, §3). Amended on 2026-10-02 by the
+same feature (research §14): compression when the server announces it, the
+row command carries the structures, a `NIL` encoding reads as 7BIT, and the
+isolation reads the unanswered messages' rows first.
 
 One selected account is loaded asynchronously on a worker's GLib MainContext.
 GTK and GOA observation remain on the main context. The worker owns all GIO
@@ -51,6 +54,7 @@ Quit cancels work without blocking GTK on a thread join. No command queue.
 | After STARTTLS | Create a fresh async-imap client over the verified TLS stream. Do not expect a second greeting. Read capabilities again through TLS. |
 | Sign-in | Prefer AUTHENTICATE PLAIN if advertised; otherwise LOGIN only without LOGINDISABLED. A rejected attempt does not trigger another authentication method. |
 | After sign-in | 002 uses no capability after sign-in, so none is requested. When a later feature needs one (iCloud advertised IDLE only after authentication), read capabilities again then; never reuse the pre-login set. |
+| Compression | *Added 2026-10-02 by 009 (research §14)*: when the signed-in capabilities include `COMPRESS=DEFLATE`, send `COMPRESS DEFLATE`; on OK put raw deflate between the session and the TLS stream (GIO `ZlibCompressor` and `ZlibDecompressor` as converter streams, swapped inside the stream handle the library holds); NO or BAD continues uncompressed. Never on the plaintext leg of STARTTLS. |
 | Inbox | EXAMINE INBOX; obtain UIDVALIDITY and EXISTS. Never SELECT. |
 | Finish | Close the connection after the batch. No retained idle connection and no mail-changing CLOSE/EXPUNGE/STORE/COPY/MOVE commands. |
 
@@ -93,7 +97,9 @@ without a command. The listing is complete only when the command ended with
 OK; a NO or BAD leaves it incomplete and a lost connection fails the step.
 The missing messages' rows are then read by UID, a hundred at a time,
 `UID FETCH <uids> (UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO
-SUBJECT)])`, highest UID first; the sequence-number command below goes, and
+SUBJECT)] BODYSTRUCTURE)`, highest UID first (*the structures joined this
+command on 2026-10-02, 009 research §14; the separate structure command is
+sent only in the isolation below*); the sequence-number command below goes, and
 so do the window of 100, its min(N, 100) result and the rule against an
 open-ended range.
 
@@ -124,8 +130,11 @@ sections. The protocol library owns its grammar and depth limits;
 `mailbag-imap` projects the structure and `mailbag-content` owns only section
 selection. Rows never depend on BODYSTRUCTURE: a message whose structure is
 missing, unusable or unparseable keeps its row and gets a content explanation.
-A structure response that the protocol parser cannot parse uses the isolation
-path below. If the row command itself cannot be parsed, the metadata step fails.
+A row command whose answer the protocol parser cannot parse, or that ended
+with NO leaving messages unanswered, uses the isolation path below for the
+unanswered messages (*2026-10-02*). The fork reads a `NIL` encoding as 7BIT,
+RFC 2045's default, since one server sends it (*2026-10-02*). If the row
+command read apart cannot be parsed either, the metadata step fails.
 
 ### One message's problem stays with that message
 
@@ -169,12 +178,16 @@ fork's limit, prevents the whole structure response from being parsed. Any
 sender can produce such a message. The fallback is a bounded part of this load,
 not a general retry policy:
 
-1. On a structure parsing failure, close that session. Do not continue reading
-   its parser buffer. The rows already received stay in the candidate.
+1. On a parsing failure of the row command, which one rejected structure
+   causes, close that session. Do not continue reading its parser buffer. The
+   rows already received stay in the candidate, with their structures.
 2. Open a fresh secure session, authenticate and EXAMINE again. If UIDVALIDITY
    changed, stop with an Inbox-changed explanation.
-3. Keep structures already parsed, then fetch `UID BODYSTRUCTURE` separately
-   for each remaining row's UID. A reply containing only FLAGS does not supply
+3. Keep the rows already parsed with their structures; a row that came
+   without one does not count as answered, since a server may answer the
+   rows of several messages before their structures. Read the unanswered
+   messages' rows without structures in one command (*2026-10-02*), then
+   fetch `UID BODYSTRUCTURE` separately for each of them. A reply containing only FLAGS does not supply
    a structure and must not exclude its UID from isolation. Discard provisional
    entries without structures before these individual requests, so their results
    also determine whether a message disappeared. A parser failure isolated to
@@ -190,8 +203,9 @@ not a general retry policy:
 
 Do not use this fallback for transport failures, timeouts, authentication failures,
 BAD, truncated literals or the library's buffer limit. Any such failure stops
-the attempt, and no batch is published. A NO completion is handled per message
-as described above. There is no recursive fallback or repeated attempt for an
+the attempt, and no batch is published. A NO completion of the row command
+that left messages unanswered takes steps 3 to 5 on the same session; the
+messages the server withholds again make the list incomplete (*2026-10-02*). There is no recursive fallback or repeated attempt for an
 already isolated UID.
 
 The pinned async-imap parser reports some syntax errors as `io::ErrorKind::Other`

@@ -81,6 +81,7 @@ pub(crate) fn collect_rows(fetches: &[Fetch], uids: &[u32]) -> Vec<MessageRow> {
                 internal_date: internal_date.map(|date| date.timestamp()),
                 list_headers: list_headers.to_vec(),
                 gmail: gmail_attributes(&responses),
+                structure: structure_of(uid, responses.iter().copied()),
             })
         })
         .collect()
@@ -121,39 +122,21 @@ pub(crate) async fn collect_fetches(
     FetchResponses { fetches, end }
 }
 
-/// Adds the structures among the responses. A flag change made meanwhile by
-/// another client arrives as a response without a structure: it neither hides
-/// the real one nor stands in for it, so a message that never gets a structure
-/// stays unanswered and the command's completion decides what that means.
-pub(crate) fn keep_structures(
-    fetches: &[Fetch],
-    uids: &[u32],
-    structures: &mut BTreeMap<u32, Option<MessagePart>>,
-) {
-    for fetch in fetches {
-        let Some(uid) = fetch.uid.filter(|uid| uids.contains(uid)) else {
-            continue;
-        };
-        if let Some(structure) = fetch.bodystructure() {
-            // The part tree's debug lines name the message through this span.
-            let _message = tracing::debug_span!("message", uid).entered();
-            structures.insert(uid, Some(MessagePart::from_body_structure(structure)));
-        }
-    }
-}
-
-/// After a NO completion, a message without a structure keeps its row with an
-/// unreadable structure: the server failed to answer, it did not delete it.
-pub(crate) fn keep_rows_without_structure(
-    uids: &[u32],
-    structures: &mut BTreeMap<u32, Option<MessagePart>>,
-) {
-    for &uid in uids {
-        structures.entry(uid).or_insert_with(|| {
-            tracing::debug!(uid, "structure could not be read: the server refused it");
-            None
-        });
-    }
+/// The structure among one message's responses. A flag change made meanwhile
+/// by another client arrives as a response without a structure: it neither
+/// hides the real one nor stands in for it, so a message that never gets a
+/// structure stays unanswered and the command's completion decides what that
+/// means.
+pub(crate) fn structure_of<'a>(
+    uid: u32,
+    responses: impl IntoIterator<Item = &'a Fetch>,
+) -> Option<MessagePart> {
+    let structure = responses
+        .into_iter()
+        .find_map(|fetch| fetch.bodystructure())?;
+    // The part tree's debug lines name the message through this span.
+    let _message = tracing::debug_span!("message", uid).entered();
+    Some(MessagePart::from_body_structure(structure))
 }
 
 pub(crate) fn uid_set(uids: &[u32]) -> String {

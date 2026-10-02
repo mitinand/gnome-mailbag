@@ -79,11 +79,12 @@ response sizes).
 ## §3 IMAP: arrivals and their texts, a batch at a time
 
 **Decision**: Arrivals are the listed messages the store lacks, taken
-highest UID first in batches of 100. For each batch: `UID FETCH` of the
-list fields (today's row items) by UID set; then, for the rows whose
-INTERNALDATE lies within 30 days of the cycle's start, the part structures
-and the text parts as the newest-100 load read them (002 FR-004); then the
-batch is stored. Rows older than 30 days are stored with
+highest UID first in batches of 100. For each batch: one `UID FETCH` of the
+list fields (today's row items) and the part structures by UID set
+(*amended 2026-10-02, §14: the structures were a second command*); then,
+for the rows whose INTERNALDATE lies within 30 days of the cycle's start,
+the text parts as the newest-100 load read them (002 FR-004), and the
+preview pieces of the others (010 research §3); then the batch is stored. Rows older than 30 days are stored with
 `ReceivedContent::NotDownloaded`. A message missing from the row answer
 disappeared and is skipped without failing (spec Edge Cases), and a group
 of structures that all disappeared is skipped likewise. A NO that ends a
@@ -91,13 +92,19 @@ batch's row FETCH keeps the rows received, stores them, and ends the
 cycle as an incomplete list (`IncompleteList::ServerRefused`) without the
 completed state, as today's `MessageList.refusal` does, so a folder never
 looks complete while the server withheld messages. The sequence-number
-FETCH goes. A NO the server marks temporary (RFC 5530 `UNAVAILABLE`) on a
-batch's structures or texts fails the cycle as a temporarily unavailable
-server (006) and stores nothing of the batch, so the next cycle fetches it
-again; any other NO keeps 002's rule, the message stored as unreadable,
-since a server may refuse one damaged message for good (independent
-review, 2026-09-30: with the old rule a passing refusal left up to a batch
-of messages without text until the content cache, and Retry is gone).
+FETCH goes. A NO that left messages of the row command unanswered first
+asks for them again apart, their rows in one command and then each
+structure on its own (002 contracts/imap-reading.md, isolation), so that
+a server which refuses to describe one damaged message for good leaves
+that message its row, stored as unreadable (002's rule); the messages it
+withholds still make the list incomplete (*amended 2026-10-02, §14*). A NO
+the server marks temporary (RFC 5530 `UNAVAILABLE`) on a structure asked
+for on its own or on a batch's texts fails the cycle as a temporarily
+unavailable server (006) and stores nothing of the batch, so the next
+cycle fetches it again; any other NO there keeps 002's rule, the message
+stored as unreadable (independent review, 2026-09-30: with the old rule a
+passing refusal left up to a batch of messages without text until the
+content cache, and Retry is gone).
 
 **Rationale**:
 - Texts with their rows (spec FR-003): the newest messages are readable as
@@ -423,7 +430,8 @@ parent must be `GObject`.
 **Decision**: The failure kind and its wording stay. Of its four producers
 today, three go: rows of a sequence-number FETCH that all vanished
 (`reader.rs`, `fetch_rows`), structures that all vanished
-(`fetch_structures`) and a newest-100 load whose messages all vanished
+(`fetch_structures`, itself gone on 2026-10-02 when the structures joined
+the row command, §14) and a newest-100 load whose messages all vanished
 (`imap_batch.rs`, `load_batch_from_rows`); a vanished message is a missing
 answer to a UID FETCH, which the cycle skips. One producer remains: after a structure the
 parser cannot read, the reader reconnects, and if the folder's UIDVALIDITY
@@ -508,3 +516,71 @@ adapter discards the lifetime today, and a refusal would still need
 handling; a failure shown and the next Refresh continuing:
 rejected by the maintainer, since the user would see a false sign-in
 failure.
+
+## §14 One connection, faster (amendment of 2026-10-02)
+
+**Decision**: three changes to how a cycle uses its one connection
+(FR-012), decided at a feature-start on 2026-10-02 after the message
+list's acceptance had measured the cycle on real servers, and built as a
+small amendment: build, look at the installed build, then write down.
+Budget: at most 220 production lines changed, no thread, timer or
+dependency, one fork commit; the size came out about 365 changed lines,
+net +73 after the simplify-review, accepted by the maintainer.
+
+1. **The parser accepts `NIL` as a part's encoding.** One server answers
+   `NIL` where RFC 3501 wants a string, for a part without a
+   Content-Transfer-Encoding header. The imap-proto fork rejected the
+   whole FETCH answer, so the reader reconnected and read the rest of the
+   batch one message at a time (002's isolation): 20 to 28 s per episode,
+   23 episodes and 202 s in one fill of 5 983 messages, and those messages
+   stayed without text and preview. The fork now reads `NIL` as 7BIT, the
+   default RFC 2045 §6.1 gives the absent header (fork commit `6adb660`,
+   tag `mailbag-2026-10-02`). Text is decoded from the part's own MIME
+   header, so the field changes nothing else.
+2. **Compression when the server announces it** (`COMPRESS=DEFLATE`,
+   RFC 4978). After the capabilities of the signed-in session the reader
+   sends `COMPRESS DEFLATE`; on OK, GIO's `ZlibCompressor` and
+   `ZlibDecompressor` in raw form go between the session and the TLS
+   stream as converter streams, swapped inside the stream handle the IMAP
+   library holds and hands out (`transport.rs`, `GioStream::compress`); the
+   handle keeps the TLS connection itself, since GIO's TLS input and output
+   streams do not keep it alive (found when a review removed the field: the
+   next command failed). NO or BAD leaves the connection as it is. Gmail announces it, iCloud and Yandex do not
+   (checked 2026-10-01); Google's IMAP documentation does not mention it
+   (checked 2026-10-02), so the capability decides, for any server.
+   Rejected: the IMAP library's own `compress` feature, which adds the
+   async-compression crate and changes the session's type.
+3. **Rows and structures in one command.** `UID FETCH <uids> (… BODYSTRUCTURE)`
+   per batch instead of two commands: a server spends about as much on a
+   second command for the same messages as on the first (measured
+   2026-10-01 per message: rows and structure apart 10 + 10 ms on iCloud,
+   95 + 105 on Yandex, 33 + 34 on Gmail; in one command 10, 148 and 31).
+   When the command does not answer for every message, because the server
+   refused some or the parser rejected one structure, the messages it did
+   not answer for, or answered without a structure, are read again apart:
+   their rows in one command, then each structure on its own, so that one
+   message the server cannot describe keeps its row (§3; 002
+   contracts/imap-reading.md, isolation; the second case added after the
+   review of PR #16: a server may answer rows before structures).
+
+**Measured on the installed build** (2026-10-02, accounts of each
+provider, a fill from an empty store of the same folders as the message
+list's acceptance, from the record's timestamps):
+
+| Folder | Before | After |
+|---|---|---|
+| Gmail Inbox, 763 messages | 54.5 s; texts 48.3 s | 31.5 s; texts 27.8 s; `compression enabled` in the record |
+| iCloud Inbox, 5 983 | 744.8 s; structures 202 s; 23 reconnections; 25 empty previews | 547.6 s; 0 reconnections; 15 empty previews, pages without words (010) |
+| Yandex Inbox, 9 322 | not filled in the application before | 1 587.6 s; rows with structures 1 100 s, 118 ms per message; texts 487 s |
+
+A refresh of a folder where nothing changed ends in 0.4 to 2.4 s on every
+account, with the listing only. No warning in the record; no subject,
+address or text in it.
+
+**Left for a measurement, not built**: a batch above 100 messages helps
+only where the cost is per round trip (Gmail), not per message (iCloud,
+§3), and grows the work a stop loses (FR-010); SASL-IR and Gmail's
+untagged CAPABILITY after sign-in save about two round trips per refresh;
+several connections per account belong to background synchronization
+(020): many accounts with several connections each load a server, and
+Gmail allows 15.

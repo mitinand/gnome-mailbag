@@ -12,8 +12,8 @@ use mailbag_content::{
 };
 use mailbag_domain::ReceivedContent;
 use mailbag_imap::{
-    Credential, Encryption, ImapAccount, ImapError, MailboxReader, MessagePart, MessageText,
-    TextParts, TextRequest,
+    Credential, Encryption, ImapAccount, ImapError, MailboxReader, MessagePart, MessageRow,
+    MessageText, TextParts, TextRequest,
 };
 use std::collections::BTreeMap;
 
@@ -36,21 +36,20 @@ pub(crate) fn imap_account(access: ImapAccess) -> ImapAccount {
 /// message gets its text, or why it has none; every message gets the
 /// beginning of its page or plain part for the preview
 /// (specs/010-message-list/research.md §3). A message missing from the
-/// result disappeared from the folder meanwhile. Structures and texts are
-/// asked for these messages only, never for a whole folder
-/// (specs/009-synchronization/research.md §3).
+/// result disappeared from the folder meanwhile. The structures came with
+/// the rows; texts are asked for these messages only, never for a whole
+/// folder (specs/009-synchronization/research.md §3).
 pub(crate) async fn read_contents(
     reader: &mut MailboxReader,
-    uids: &[u32],
+    rows: &[MessageRow],
     recent: &[u32],
 ) -> Result<BTreeMap<u32, (ReceivedContent, String)>, ImapError> {
-    let structures = reader.fetch_structures(uids).await?;
-    let mut readings: BTreeMap<u32, MessageReading> = structures
+    let mut readings: BTreeMap<u32, MessageReading> = rows
         .iter()
-        .map(|(uid, structure)| {
-            let _message = tracing::debug_span!("message", uid).entered();
-            let reading = plan_reading(structure.as_ref(), recent.contains(uid));
-            (*uid, reading)
+        .map(|row| {
+            let _message = tracing::debug_span!("message", uid = row.uid).entered();
+            let reading = plan_reading(row.structure.as_ref(), recent.contains(&row.uid));
+            (row.uid, reading)
         })
         .collect();
     let requests = readings

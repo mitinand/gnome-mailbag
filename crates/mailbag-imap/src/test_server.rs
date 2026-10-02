@@ -259,6 +259,21 @@ impl FixtureMessage {
         }
     }
 
+    /// A plain-text message whose BODYSTRUCTURE gives `NIL` as the part's
+    /// encoding, as a server answers for a part without a
+    /// Content-Transfer-Encoding header; RFC 3501 wants a string there.
+    pub fn nil_encoding(uid: u32, text: &str) -> Self {
+        let structure = format!(
+            "(\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL NIL {} {} NIL NIL NIL NIL)",
+            text.len(),
+            text.lines().count()
+        );
+        Self {
+            structure,
+            ..Self::plain_text(uid, text)
+        }
+    }
+
     /// A message whose BODYSTRUCTURE nests message/rfc822 parts `depth` levels
     /// deep, beyond what the IMAP parser accepts when `depth` exceeds 32.
     pub fn deeply_nested(uid: u32, depth: usize) -> Self {
@@ -309,8 +324,10 @@ pub enum StartTlsBehavior {
 pub enum FaultyCommand {
     /// The `UID FETCH 1:*` that lists every message.
     Listing,
-    /// A FETCH of message rows by UID.
+    /// A FETCH of message rows by UID, with their structures.
     Rows,
+    /// A FETCH of one structure on its own, after a row command the parser
+    /// could not read or the server did not complete.
     Structures,
     Text,
 }
@@ -362,6 +379,8 @@ pub struct FixtureSetup {
     pub rejection: String,
     /// Answers ENABLE with BAD, as Gmail does once a mailbox is open.
     pub enable_refused: bool,
+    /// Answers COMPRESS with NO although it was announced.
+    pub compress_refused: bool,
     /// LIST replies as (attributes, delimiter, name). When any is scripted,
     /// EXAMINE opens only these names; otherwise it opens any.
     pub mailboxes: Vec<(&'static str, &'static str, &'static str)>,
@@ -439,6 +458,7 @@ impl Default for FixtureSetup {
             lowercase_protocol_names: false,
             rejection: "{tag} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n".to_owned(),
             enable_refused: false,
+            compress_refused: false,
             mailboxes: Vec::new(),
             names_as_literals: false,
             list_completion: Some("{tag} OK LIST done\r\n".to_owned()),
@@ -759,6 +779,18 @@ impl Server {
                             .await?;
                     }
                 }
+                "COMPRESS" => {
+                    if self.setup.compress_refused {
+                        io.send(format!("{tag} NO Compression unavailable\r\n"))
+                            .await?;
+                    } else if arguments != "DEFLATE" {
+                        io.send(format!("{tag} BAD Unknown compression\r\n"))
+                            .await?;
+                    } else {
+                        io.send(format!("{tag} OK DEFLATE active\r\n")).await?;
+                        io.compress();
+                    }
+                }
                 "ID" => {
                     let identification = arguments.clone();
                     self.record(|log| log.client_identification = Some(identification));
@@ -916,17 +948,17 @@ impl Server {
             });
         });
         let listing = by_uid && message_set == "1:*";
-        let faulty_command = if items.iter().any(|item| item == "BODYSTRUCTURE") {
-            Some(FaultyCommand::Structures)
-        } else if items
+        let faulty_command = if items
             .iter()
             .any(|item| body_section(item).is_some_and(is_body_part))
         {
             Some(FaultyCommand::Text)
-        } else if listing {
-            Some(FaultyCommand::Listing)
         } else if items.iter().any(|item| body_section(item).is_some()) {
             Some(FaultyCommand::Rows)
+        } else if items.iter().any(|item| item == "BODYSTRUCTURE") {
+            Some(FaultyCommand::Structures)
+        } else if listing {
+            Some(FaultyCommand::Listing)
         } else {
             None
         };
@@ -1334,6 +1366,8 @@ fn string_arguments(arguments: &str) -> Vec<String> {
 /// Line and literal reading over a GIO stream.
 struct Io {
     stream: gio::IOStreamAsyncReadWrite<gio::IOStream>,
+    /// The stream underneath, which compression wraps.
+    base: gio::IOStream,
     buffer: Vec<u8>,
     /// The TCP socket underneath, for breaking the connection abruptly.
     socket: gio::Socket,
@@ -1342,10 +1376,22 @@ struct Io {
 impl Io {
     fn new(stream: gio::IOStream, socket: gio::Socket) -> Self {
         Self {
-            stream: stream.into_async_read_write().unwrap(),
+            stream: stream.clone().into_async_read_write().unwrap(),
+            base: stream,
             buffer: Vec::new(),
             socket,
         }
+    }
+
+    /// Compresses what it sends and decompresses what it reads from here on,
+    /// as a server does once it has answered COMPRESS DEFLATE with OK.
+    fn compress(&mut self) {
+        let decompressor = gio::ZlibDecompressor::new(gio::ZlibCompressorFormat::Raw);
+        let compressor = gio::ZlibCompressor::new(gio::ZlibCompressorFormat::Raw, -1);
+        let input = gio::ConverterInputStream::new(&self.base.input_stream(), &decompressor);
+        let output = gio::ConverterOutputStream::new(&self.base.output_stream(), &compressor);
+        let compressed: gio::IOStream = gio::SimpleIOStream::new(&input, &output).upcast();
+        self.stream = compressed.into_async_read_write().unwrap();
     }
 
     async fn fill(&mut self) -> std::io::Result<bool> {

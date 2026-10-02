@@ -258,8 +258,7 @@ impl ImapFolder {
             .filter(|row| row.internal_date.is_some_and(|date| date >= recent_limit))
             .map(|row| row.uid)
             .collect();
-        let fetched: Vec<u32> = rows.rows.iter().map(|row| row.uid).collect();
-        let mut contents = read_contents(&mut self.reader, &fetched, &recent).await?;
+        let mut contents = read_contents(&mut self.reader, &rows.rows, &recent).await?;
         let arrived = rows
             .rows
             .into_iter()

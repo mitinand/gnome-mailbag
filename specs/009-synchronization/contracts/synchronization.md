@@ -99,8 +99,9 @@ user's word, *mailbox*, where it names the refreshed folder
   Option<ServerReply> }` and `ListedUid { uid, seen, gmail_message_id:
   Option<u64> }` (research §2); `fetch_rows_by_uid(&[u32], row_items) ->
   MessageList` replaces the sequence-number `fetch_rows` and keeps its
-  refusal; `fetch_structures` skips a group that all vanished instead of
-  failing; `fetch_text` unchanged.
+  refusal and, since 2026-10-02, carries each row's structure
+  (`MessageRow.structure`, read in the same command; `fetch_structures` is
+  gone, research §14); `fetch_text` unchanged.
 - `mailbag-graph`: `read_message_changes(service_url, token, start:
   ChangesFrom) -> Result<ChangePage, GraphError>` with `ChangesFrom::
   FirstReading(folder_id) | Link(String)` and `ChangePage { changes:

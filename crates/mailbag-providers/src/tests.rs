@@ -271,10 +271,12 @@ fn a_message_the_server_cannot_describe_keeps_its_row() {
     assert_eq!(text_of(&stored[1].content), "readable");
 }
 
-/// A refusal the server marks temporary (RFC 5530 `UNAVAILABLE`) of a batch's
-/// structures or texts fails the cycle as a temporarily unavailable server
-/// and stores none of the batch, so the next cycle fetches it again: nothing
-/// is kept as unreadable for a passing condition (spec FR-009).
+/// A refusal the server marks temporary (RFC 5530 `UNAVAILABLE`) of a
+/// structure read apart or of a batch's texts fails the cycle as a
+/// temporarily unavailable server and stores none of the batch, so the next
+/// cycle fetches it again: nothing is kept as unreadable for a passing
+/// condition (spec FR-009). A structure is read apart after one the parser
+/// cannot read.
 #[test]
 fn a_temporary_refusal_of_structures_or_text_stores_no_row_and_names_the_server() {
     use mailbag_domain::ServerStep;
@@ -283,7 +285,10 @@ fn a_temporary_refusal_of_structures_or_text_stores_no_row_and_names_the_server(
         (FaultyCommand::Text, ServerStep::FetchText),
     ] {
         let fixture = ImapFixture::start(FixtureSetup {
-            messages: plain_messages(2),
+            messages: vec![
+                FixtureMessage::plain_text(10, "text"),
+                FixtureMessage::deeply_nested(20, 40),
+            ],
             unavailable_command: Some(command),
             ..FixtureSetup::default()
         });
@@ -365,8 +370,8 @@ fn a_cancelled_load_closes_its_connection_before_it_ends() {
             },
         );
         // Cancel while the server is stalling on the text command, after
-        // the listing, the rows and the structures.
-        wait_until(|| fixture.log().fetches.len() == 4).await;
+        // the listing and the rows with their structures.
+        wait_until(|| fixture.log().fetches.len() == 3).await;
         let cancelled_at = Instant::now();
         drop(handle);
         let (outcome, _) = load_end(&events).await;
@@ -1872,8 +1877,8 @@ fn only_messages_of_the_last_30_days_get_their_text() {
         [stored[0].preview.as_str(), stored[1].preview.as_str()],
         ["Recent", "Old"]
     );
-    // Both structures; the recent text whole, which also gives its preview,
-    // and only the old message's piece.
+    // The structures come with the rows; then the recent text whole, which
+    // also gives its preview, and only the old message's piece.
     let asked: Vec<String> = fixture
         .log()
         .fetches
@@ -1881,7 +1886,7 @@ fn only_messages_of_the_last_30_days_get_their_text() {
         .filter(|fetch| !fetch.items.contains(&"INTERNALDATE".to_owned()))
         .map(|fetch| fetch.message_set)
         .collect();
-    assert_eq!(asked, ["1:*", "20,10", "20", "10"]);
+    assert_eq!(asked, ["1:*", "20", "10"]);
 }
 
 #[test]
