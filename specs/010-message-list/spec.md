@@ -320,7 +320,7 @@ compared with the rule in the user's locale.
   the challenge, below.)
 - Q: Where is the delete control in the row? → A: At the end of the row,
   over its content, shown while the pointer is over the row, so it takes
-  no width from the preview (FR-002). Showing it while the row has the
+  no width from the preview (FR-002; moved after the date on 2026-10-02). Showing it while the row has the
   keyboard focus waits for the keyboard way to press it (moving and
   deleting, decided at the challenge below).
 - Q: How is a message opened? → A: As decided for synchronization: one
@@ -409,8 +409,8 @@ compared with the rule in the user's locale.
   place when the read state changes. The dot is decorative: the row's
   accessible description says "Unread" or "Read". Long values are cut
   with an ellipsis, never wrapped, except the preview's two lines. At the
-  end of the row, over its content so that it takes no width from the
-  preview, a small trash icon with the tooltip "Move to Trash" slides in
+  end of the first line, so that it takes no width from the preview, a
+  small trash icon with the tooltip "Move to Trash" slides in
   after the date on the first line while the pointer is over the row,
   moving the date aside, and slides away when it leaves; it covers no
   text and turns red while the pointer is over it (changed from a round
@@ -425,7 +425,8 @@ compared with the rule in the user's locale.
   own content by these rules. (a) The source is the message's readable
   text part that is not an attachment: its web-page form when it has one,
   else its plain-text form; only a bounded beginning of that part is read
-  (Assumptions). Where the mail service provides a
+  (Assumptions), except that a recent message's page is read whole in the
+  same request as its text. Where the mail service provides a
   text-only preview of the message itself, that text is the source. (b)
   The text is decoded as its character set and transfer encoding declare;
   bytes that cannot be decoded become replacement marks, never a wrong
@@ -449,8 +450,8 @@ compared with the rule in the user's locale.
 - **FR-004 — Date wording**: The row's date MUST read, by the computer's
   clock and the user's locale at the time the row is shown: for a
   message received today, its time without seconds, in the 12- or
-  24-hour form of the locale; yesterday, "Yesterday"; within the six days
-  before that, the weekday's name; earlier in the current year, the day
+  24-hour form of the locale; yesterday, "Yesterday"; two to six days ago,
+  the weekday's name; earlier in the current year, the day
   and the month's name in the locale's order; earlier, the locale's short
   date. Names, the time's form and the short date come from the locale.
   A message without a usable received date shows no date. The reader keeps the full date and

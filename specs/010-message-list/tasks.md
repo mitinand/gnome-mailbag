@@ -6,7 +6,8 @@ Documents written, challenged (the spec and the plan, in fresh
 sessions) and approved on 2026-09-30 (T001); portion 2 implemented on
 2026-09-30 and committed; portion 3 implemented and committed on 2026-10-01; portion 4 committed
 on 2026-10-01; portion 5 T021–T026 implemented on 2026-10-01 and
-simplify-reviewed (findings applied, size accepted); T027 next.
+simplify-reviewed (findings applied, size accepted); T027 and T028 done
+on 2026-10-02 and committed; final passes T029–T031 done on 2026-10-02.
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -247,7 +248,9 @@ row, all as the spec's FR-006 to FR-010 say.
   `ListChange::AtOnce` to `show_rows` when the folder shown differs from
   the previous read's folder or the list had no rows, and `Animated`
   otherwise (research §10); the filter toggle passes `AtOnce`.
-- [x] T022 [US3] In crates/mailbag/src/mail_ui.rs: `update_shown(change)`
+- [x] T022 [US3] (The splice by row object below was superseded by
+  closing first, then applying the difference after one timer, research
+  §10.) In crates/mailbag/src/mail_ui.rs: `update_shown(change)`
   — for `Animated`, arrivals inserted with `shown` false and
   `transition_ms` 220 and revealed on the second frame after the insert
   (a tick callback on the list view); removals marked leaving (`shown`
@@ -297,8 +300,9 @@ row, all as the spec's FR-006 to FR-010 say.
   animations on and off, SC-008), the first fill of the largest folder
   timed and the number written into the spec's Assumptions, the record
   checked for privacy (no preview text at any level); findings fixed
-  within this portion.
-- [ ] T028 STOP: run ./scripts/check.sh, git diff --check and each GTK test
+  within this portion (among them the trash control, moved after the
+  date: spec FR-002, research §9).
+- [x] T028 STOP: run ./scripts/check.sh, git diff --check and each GTK test
   one per process; compare the size with plan.md (animations ≈ 85, the
   next message ≈ 35, read on opening ≈ 25, the removal ≈ 35, window ≈ 20;
   tests ≈ 170) and the budget (≤ 750 / ≤ 920); report, suggest the commit
@@ -306,13 +310,16 @@ row, all as the spec's FR-006 to FR-010 say.
 
 ## Phase 6: final passes
 
-- [ ] T029 Consistency analysis (`speckit-analyze`) in a fresh session,
+- [x] T029 Consistency analysis (`speckit-analyze`) in a fresh session,
   once; document fixes applied, scope-adding findings brought to the
   maintainer.
-- [ ] T030 `simplify-review` on the branch diff in a fresh session;
+- [x] T030 `simplify-review` on the branch diff in a fresh session;
   findings reported, not applied, until the maintainer decides.
-- [ ] T031 `refactor` of what the maintainer accepted; ./scripts/check.sh
-  and each GTK test one per process.
+- [x] T031 `refactor` of what the maintainer accepted; ./scripts/check.sh
+  and each GTK test one per process. (Accepted on 2026-10-02: the opened
+  row scrolled into view, FR-007; the recent page's reading rule in one
+  match; the neighbour rule returning the position; the reader's date
+  through `formatted`; the row's `GtkOverlay` dropped.)
 - [ ] T032 STOP: final report with the size against the budget, what was
   verified and how, and the open items; the amendments of T002 checked
   against the built behaviour.
@@ -341,7 +348,7 @@ by half stops before continuing.
 
 ## Deferred, no tasks
 
-Spec FR-012: the durable removal and read state and their sending
+Spec FR-011: the durable removal and read state and their sending
 (moving and deleting; read and star), the keyboard way to the trash
 action, conversation rows, attachment and star marks, lists over several
 folders, the content cache's keeping rules.

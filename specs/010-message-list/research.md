@@ -188,27 +188,26 @@ rows. The schema hash changes, so the store is discarded once at start
 
 **Decision**: `message-row.ui` stays a `GtkListItem` template built into a
 `GtkBuilderListItemFactory`; its child is a slide-down `GtkRevealer`
-(§10) around a `GtkOverlay`: the row's box (indicator column with the
-dot; a content column with the sender and date line, the subject, the
-two-line preview) and, as the overlay's overlay child at the end and the
-bottom, a crossfade `GtkRevealer` with the trash: a 16 px icon in a
-24 px pressable area, a `GtkGestureClick` declared in the form, the
-accessible role of a button and the label "Move to Trash" (a GTK button is
-at least 34 px high in Adwaita and would make the first line taller;
-changed on 2026-10-02 after the live check), in a slide-left revealer after
-the date on the first line, so it covers no text and the row keeps its
-height (checked: every row 102 px, the date moves 26 px aside); it is dimmed
-with Adwaita's `dim-label` and takes Adwaita's `error` colour, red, while
-the pointer is over it. A
-`GtkEventControllerMotion` declared as a child of the `GtkOverlay`, which
-holds both the row's box and the button, reveals the button when the
-pointer enters and hides it when it leaves (on the row's box alone the
-pointer moving onto the button left the box and hid it: a motion
-controller contains the pointer only over its widget or a descendant,
-checked in the GTK 4.22 introspection data at an external review on
-2026-10-01), through
-signal handlers named in the form and provided by a
-`gtk::BuilderRustScope` given to the factory; the button's `clicked`
+(§10) around the row's box: an indicator column
+with the dot, and a content column with the sender and date line, the
+subject and the two-line preview. The trash sits on the first line after
+the date, in a slide-left `GtkRevealer` (150 ms): a 16 px icon in a 20 px
+area with a `GtkGestureClick` declared in the form, the accessible role of
+a button and the label "Move to Trash" (a GTK button is at least 34 px high
+in Adwaita and would make the first line taller). It covers no text and
+the row keeps its height (checked: every row 102 px, the date moves 26 px
+aside); it is dimmed with Adwaita's `dim-label` and takes Adwaita's `error`
+colour, red, while the pointer is over it, through its own
+`GtkEventControllerMotion` (handlers `trash_entered` and `trash_left`,
+object `trash`). (Changed on 2026-10-02 after the live check, the
+maintainer's choice; before it, a crossfade revealer over the row's end.)
+A `GtkEventControllerMotion` declared as a child of the row's box, which
+holds the trash, reveals the trash when the pointer enters and hides it
+when it leaves (a motion controller contains the pointer over its widget
+and its descendants, checked in the GTK 4.22 introspection data at an
+external review on 2026-10-01; the `GtkOverlay` the controller sat on
+while the trash lay over the row went at the final review), through signal handlers named in the form and provided by a
+`gtk::BuilderRustScope` given to the factory; the gesture's `released`
 handler receives the list item (`object="GtkListItem"`) and hands its
 message to the window (spec FR-002, FR-010). Every widget is declared in
 the form; code binds handlers only.

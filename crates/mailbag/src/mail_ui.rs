@@ -75,13 +75,6 @@ struct InWindow {
     removed: HashSet<String>,
 }
 
-/// A neighbour of the row that leaves (specs/010-message-list FR-007).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Neighbour {
-    Above,
-    Below,
-}
-
 /// Asks the window for the content of an account's message.
 type ContentRequest = Box<dyn Fn(&AccountId, &str)>;
 
@@ -288,16 +281,10 @@ impl MailUi {
     /// The row to open after the open row at `position` leaves: one of its
     /// neighbours in the list as shown, closed rows left out.
     fn next_after_leaving_at(&self, position: u32) -> Option<u32> {
-        let above = first_shown(&self.items, (0..position).rev());
-        let below = first_shown(&self.items, position + 1..self.items.n_items());
-        let (position, _) = match next_after_leaving(
-            above.map(|(_, unread)| unread),
-            below.map(|(_, unread)| unread),
-        )? {
-            Neighbour::Above => above?,
-            Neighbour::Below => below?,
-        };
-        Some(position)
+        next_after_leaving(
+            first_shown(&self.items, (0..position).rev()),
+            first_shown(&self.items, position + 1..self.items.n_items()),
+        )
     }
 
     /// Makes the list show what the stored rows, the filter, the open
@@ -513,6 +500,10 @@ impl MailUi {
         *self.open_message.borrow_mut() = Some(listed.identity.clone());
         self.count_read_after_opening(&listed.identity);
         self.selection.set_selected(position);
+        // A neighbour opened after the trash may lie outside the visible area.
+        self.messages
+            .activate_action("list.scroll-to-item", Some(&position.to_variant()))
+            .expect("a list view scrolls to an item");
         self.show_envelope(listed);
         // The body stays empty until the content is read.
         self.reader_body.set_text("");
@@ -563,8 +554,14 @@ impl MailUi {
             }
             None => self.reader_to.set_visible(false),
         }
-        self.reader_date
-            .set_text(&received_date_text(listed.received_unix, "%c"));
+        let received = listed
+            .received_unix
+            .and_then(|seconds| glib::DateTime::from_unix_local(seconds).ok());
+        self.reader_date.set_text(
+            &received
+                .map(|time| formatted(&time, "%c"))
+                .unwrap_or_default(),
+        );
     }
 
     fn request_content(&self, account_id: &AccountId, identity: &str) {
@@ -725,18 +722,17 @@ fn shown_rows<'a>(
         .collect()
 }
 
-/// Which neighbour opens after the open message leaves the list, from
-/// whether each is unread (`None` where there is none): the one below, unless
-/// there is none or only the one above is unread (specs/010-message-list
-/// FR-007).
-fn next_after_leaving(above: Option<bool>, below: Option<bool>) -> Option<Neighbour> {
-    match (above, below) {
+/// The position that opens after the open message leaves the list, from
+/// each neighbour's position and whether it is unread (`None` where there is
+/// none): the one below, unless there is none or only the one above is
+/// unread (specs/010-message-list FR-007).
+fn next_after_leaving(above: Option<(u32, bool)>, below: Option<(u32, bool)>) -> Option<u32> {
+    let next = match (above, below) {
         (None, None) => None,
-        (Some(_), None) | (Some(true), Some(false)) => Some(Neighbour::Above),
-        (None, Some(_)) | (Some(false), Some(_)) | (Some(true), Some(true)) => {
-            Some(Neighbour::Below)
-        }
-    }
+        (Some(_), None) | (Some((_, true)), Some((_, false))) => above,
+        (None, Some(_)) | (Some((_, false)), Some(_)) | (Some((_, true)), Some((_, true))) => below,
+    };
+    next.map(|(position, _)| position)
 }
 
 /// The handlers the row template names: the trash icon slides in beside the
@@ -888,20 +884,6 @@ fn subject_text(fields: &DisplayFields) -> String {
         Some(subject) => inert_text(subject),
         None => "No subject".to_owned(),
     }
-}
-
-/// The received date in local presentation, or nothing when the server sent
-/// no usable date.
-fn received_date_text(received_unix: Option<i64>, format: &str) -> String {
-    let Some(received) =
-        received_unix.and_then(|seconds| glib::DateTime::from_unix_local(seconds).ok())
-    else {
-        return String::new();
-    };
-    received
-        .format(format)
-        .map(|text| text.to_string())
-        .unwrap_or_default()
 }
 
 /// The row's received date as the list words it, by the computer's clock,

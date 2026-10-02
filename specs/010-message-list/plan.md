@@ -47,7 +47,7 @@ of 2026-10-01, research §3), and `mailbag-content`
 turns the piece into up to 400 characters of words (research §1–§6);
 Microsoft 365 hands its own text preview over instead (§7). The preview
 is a column of the message (§8). The row form is rewritten as the spec
-describes, with the trash button over the row's end revealed on hover
+describes, with the trash icon after the date revealed on hover
 through handlers the form names (§9). The list animates arrivals and
 removals among the rows shown, with a revealer in the row and one timer
 per change, and changes at once when the folder shown changes (§10); the
@@ -123,8 +123,8 @@ flowchart TD
      trailing replacement mark dropped.
   2. `page_words` when `is_html` — a space before each block tag, then
      `html_to_text`.
-  3. `normalise_words` — white space, invisible characters, bracketed
-     placeholders, 400 characters.
+  3. `normalise_words` — white space, invisible characters, 400
+     characters.
 - `preview_of_text(text) -> String`: step 3 alone.
 
 **`mailbag-providers`** — the preview with the batch.
@@ -149,8 +149,8 @@ flowchart TD
 **`mailbag::mail_ui`** — the list.
 
 - `MailUi::new`: the factory with a `BuilderRustScope` holding
-  `row_entered`, `row_left` (reveal or hide the revealer they receive)
-  and `trash_row` (the list item they receive → `remove_in_window`).
+  `row_entered`, `row_left` (reveal or hide the revealer they receive),
+  `trash_entered`, `trash_left` (red or dimmed trash) and `trash_row` (the list item they receive → `remove_in_window`).
 - `show_rows(folder, rows)`: `AtOnce` for another folder or an empty
   list, else `Animated`; keep the stored rows; empty the read-in-window
   set; `update_shown(change)`.
@@ -226,7 +226,8 @@ Taken on 2026-09-30:
 4. No animation flag at the load's start: a change animates unless the
    folder shown changed or the filter changed (research §10). Dropped at
    the challenge.
-5. The 16-kilobyte piece for every encoding (research §3, §4), with both
+5. The 16-kilobyte piece for every encoding (research §3, §4; 64 KiB
+   since the live check of 2026-10-01), with both
    pieces for an old message that has both forms. Accepted.
 
 ## Portions and review pauses

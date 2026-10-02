@@ -1652,11 +1652,11 @@ fn rows_with_previews_and_the_unread_filter() {
     assert!(shown_labels(&widgets).contains(&rows[0].date_text().to_string()));
 
     // The pointer over a row slides its trash icon in beside the date.
-    let first_row = descendants::<gtk::Overlay>(&widgets.messages().upcast())
+    let first_row = shown_row_boxes(&widgets)
         .into_iter()
-        .find(|overlay| overlay.is_mapped())
+        .next()
         .expect("a shown row");
-    let trash = descendants::<gtk::Revealer>(&first_row.clone().upcast())
+    let trash = descendants::<gtk::Revealer>(&first_row)
         .into_iter()
         .find(|revealer| revealer.transition_type() == gtk::RevealerTransitionType::SlideLeft)
         .expect("the trash icon's revealer");
@@ -1753,19 +1753,31 @@ fn run_for(duration: Duration) {
     }
 }
 
+/// The boxes of the rows on screen, each inside its row's slide-down
+/// revealer.
+fn shown_row_boxes(widgets: &WindowWidgets) -> Vec<gtk::Widget> {
+    descendants::<gtk::Revealer>(&widgets.messages().upcast())
+        .into_iter()
+        .filter(|revealer| {
+            revealer.is_mapped()
+                && revealer.transition_type() == gtk::RevealerTransitionType::SlideDown
+        })
+        .filter_map(|revealer| revealer.child())
+        .collect()
+}
+
 /// Presses the trash icon of the shown row whose sender reads `sender`, as
 /// a click does.
 fn press_trash_of(widgets: &WindowWidgets, sender: &str) {
-    let trash = descendants::<gtk::Overlay>(&widgets.messages().upcast())
+    let trash = shown_row_boxes(widgets)
         .into_iter()
-        .filter(|row| row.is_mapped())
         .find(|row| {
-            descendants::<gtk::Label>(&row.clone().upcast())
+            descendants::<gtk::Label>(row)
                 .iter()
                 .any(|label| label.text() == sender)
         })
         .and_then(|row| {
-            descendants::<gtk::Image>(&row.upcast())
+            descendants::<gtk::Image>(&row)
                 .into_iter()
                 .find(|image| image.icon_name().as_deref() == Some("user-trash-symbolic"))
         })
@@ -2299,18 +2311,19 @@ fn the_time_follows_the_locales_twelve_or_twenty_four_hour_form() {
 
 #[test]
 fn the_next_message_is_the_unread_neighbour_or_else_the_one_below() {
-    use Neighbour::*;
-    let (read, unread) = (Some(false), Some(true));
+    // The neighbours of the row at 5, the one above at 4 and below at 6.
+    let (read_above, unread_above) = (Some((4, false)), Some((4, true)));
+    let (read_below, unread_below) = (Some((6, false)), Some((6, true)));
     let cases = [
         // The only row, the top and the bottom.
         (None, None, None),
-        (None, read, Some(Below)),
-        (unread, None, Some(Above)),
+        (None, read_below, Some(6)),
+        (unread_above, None, Some(4)),
         // Both read, one unread above or below, both unread.
-        (read, read, Some(Below)),
-        (unread, read, Some(Above)),
-        (read, unread, Some(Below)),
-        (unread, unread, Some(Below)),
+        (read_above, read_below, Some(6)),
+        (unread_above, read_below, Some(4)),
+        (read_above, unread_below, Some(6)),
+        (unread_above, unread_below, Some(6)),
     ];
     for (above, below, next) in cases {
         assert_eq!(

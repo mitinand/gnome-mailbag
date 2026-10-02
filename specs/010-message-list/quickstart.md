@@ -46,8 +46,8 @@ the installed-build checks are the maintainer's, on a Flatpak build
    (SC-002).
 2. Open an unread message: its dot goes out about a second later; open
    another within a second: the first keeps its dot (SC-009).
-3. Hover a row: the trash button appears at its end without moving the
-   preview; press it on the open message: the row slides shut and the
+3. Hover a row: the trash icon slides in after the date, moving the
+   date aside, and turns red under the pointer; press it on the open message: the row slides shut and the
    message the rule names opens (SC-010, SC-005). Try each case of spec
    FR-007 by choosing rows with read and unread neighbours (SC-003).
 4. Turn on "Show unread only": only unread rows remain; the open message

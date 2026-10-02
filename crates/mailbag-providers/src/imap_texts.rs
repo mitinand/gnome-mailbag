@@ -143,26 +143,28 @@ fn plan_reading(structure: Option<&MessagePart>, is_recent: bool) -> MessageRead
     }
     let preview_part = select_preview_part(&described);
     reading.page_first = preview_part.as_ref().is_some_and(|part| part.is_html);
-    let piece_sections = match preview_part {
-        Some(page) if page.is_html => {
-            let plain_fallback = plain_sections.first().filter(|_| !is_recent);
-            [page.section]
-                .into_iter()
-                .chain(plain_fallback.cloned())
-                .collect()
-        }
-        Some(_) if is_recent => Vec::new(),
-        Some(plain) => vec![plain.section],
-        None => Vec::new(),
-    };
-    match (&reading.text_parts, piece_sections.as_slice()) {
-        (Some(_), [page]) if reading.page_first => {
-            let sections = [plain_sections.as_slice(), std::slice::from_ref(page)].concat();
+    match (preview_part, &reading.text_parts) {
+        (Some(page), Some(_)) if page.is_html => {
+            let sections = [
+                plain_sections.as_slice(),
+                std::slice::from_ref(&page.section),
+            ]
+            .concat();
             reading.text_parts = Some(text_parts(root, &sections));
             reading.page_with_text = true;
         }
-        (_, []) => {}
-        _ => reading.piece_parts = Some(text_parts(root, &piece_sections)),
+        (Some(page), None) if page.is_html => {
+            let sections: Vec<_> = [page.section]
+                .into_iter()
+                .chain(plain_sections.first().cloned())
+                .collect();
+            reading.piece_parts = Some(text_parts(root, &sections));
+        }
+        (Some(plain), None) if !is_recent => {
+            reading.piece_parts = Some(text_parts(root, &[plain.section]));
+        }
+        // A recent message's plain text is read whole anyway.
+        _ => {}
     }
     reading
 }

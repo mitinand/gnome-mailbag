@@ -48,7 +48,8 @@ binding across crates; bodies and private helpers are the plan's.
 ## Cycles (`mailbag-providers`)
 
 - Every arrived `Message` of a batch carries its preview: on IMAP from
-  the batch's structures and a partial read of the chosen part, with the
+  the batch's structures and a partial read of the chosen part (a recent
+  message's page read whole with its text), with the
   plain part's piece as well for a message older than 30 days that has
   both forms (`imap_texts::read_contents` returns the preview with the
   content); on Microsoft 365 from `body_preview`. A refusal of the piece stores an
@@ -74,9 +75,10 @@ binding across crates; bodies and private helpers are the plan's.
   `sender`, `subject`, `date-text`, `preview`, `unread`,
   `read-state-text`, `shown`, `transition-ms`.
 - Signal handlers the row template names, provided through the factory's
-  `gtk::BuilderRustScope`: `row_entered`, `row_left` (the motion
-  controller, with the trash revealer as their object), `trash_row` (with
-  the list item as its object).
+  `gtk::BuilderRustScope`: `row_entered`, `row_left` (the row's
+  motion controller, with the trash revealer as their object),
+  `trash_entered`, `trash_left` (the trash's motion controller, with the
+  trash as their object), `trash_row` (with the list item as its object).
 
 ## Forms (`crates/mailbag/resources/ui/`)
 
@@ -84,4 +86,7 @@ binding across crates; bodies and private helpers are the plan's.
   `dot`, `sender`, `time`, `subject`, `preview`, `trash_reveal`, `trash`.
 - `mailbag.ui`: `unread_filter` becomes sensitive and drives FR-008; the
   list's status page gets the wording "No unread messages" / "Every
-  message in this folder is read." when the filter leaves no row.
+  message in this folder is read." when the filter leaves no row; the
+  toggle shows the new `mailbag-filter-symbolic` icon, and the sidebar
+  widths grow by 4 px (304–424) for the wider row margins (approved by
+  the maintainer on 2026-10-02).
