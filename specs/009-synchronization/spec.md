@@ -545,7 +545,8 @@ documentation does not say how, and FR-007's rule covers either form.
   parts wait for the HTML reader.
   *Amended 2026-09-30 by [Message list](../010-message-list/spec.md): every message a batch stores,
   recent or not, also gets its preview (010 FR-003), made from a piece of
-  its text part read with the batch; a refusal of that piece stores an
+  its text part read with the batch (a recent message's page is read
+  whole, in the same request as its text); a refusal of that piece stores an
   empty preview with the row, and a temporary refusal fails the cycle as
   above. The 30-day text rule is unchanged.*
 

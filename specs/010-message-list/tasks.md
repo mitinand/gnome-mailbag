@@ -7,7 +7,7 @@ sessions) and approved on 2026-09-30 (T001); portion 2 implemented on
 2026-09-30 and committed; portion 3 implemented and committed on 2026-10-01; portion 4 committed
 on 2026-10-01; portion 5 T021–T026 implemented on 2026-10-01 and
 simplify-reviewed (findings applied, size accepted); T027 and T028 done
-on 2026-10-02 and committed; final passes T029–T031 done on 2026-10-02.
+on 2026-10-02 and committed; final passes T029–T032 done on 2026-10-02 (PR #15).
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -320,7 +320,7 @@ row, all as the spec's FR-006 to FR-010 say.
   row scrolled into view, FR-007; the recent page's reading rule in one
   match; the neighbour rule returning the position; the reader's date
   through `formatted`; the row's `GtkOverlay` dropped.)
-- [ ] T032 STOP: final report with the size against the budget, what was
+- [x] T032 STOP: final report with the size against the budget, what was
   verified and how, and the open items; the amendments of T002 checked
   against the built behaviour.
 
