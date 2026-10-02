@@ -4,12 +4,13 @@
 //! A scripted Microsoft Graph service for tests, on its own thread and GLib
 //! context. Over plain HTTP on loopback it answers any folder's message list
 //! with one configured answer, the folder listing page by page and the
-//! well-known folder names, and records the path, query and headers of every
-//! request. Its folders, messages and addresses are synthetic.
+//! well-known folder names, applies a message's flag changes, and records
+//! the method, path, query, headers and body of every request. Its folders, messages and addresses are synthetic.
 
 use crate::service_thread::ServiceThread;
 use soup::prelude::*;
 use std::{
+    cell::RefCell,
     collections::BTreeMap,
     io::Read,
     net::TcpListener,
@@ -79,8 +80,8 @@ impl ScriptedAnswer {
         )
     }
 
-    /// The service's answer for a folder it does not have.
-    fn not_found() -> Self {
+    /// The service's answer for a folder or message it does not have.
+    pub fn not_found() -> Self {
         Self::error(
             404,
             "ErrorItemNotFound",
@@ -95,7 +96,8 @@ impl ScriptedAnswer {
         }
     }
 
-    fn error(status: u32, code: &str, message: &str) -> Self {
+    /// A refusal in the service's documented error form.
+    pub fn error(status: u32, code: &str, message: &str) -> Self {
         let answer = serde_json::json!({
             "error": {
                 "code": code,
@@ -126,6 +128,10 @@ pub struct ScriptedChanges {
     /// answered with 401, as for an expired token. Any other token is
     /// accepted.
     pub token_accepted_requests: Option<usize>,
+    /// The answer to every `PATCH /me/messages/{id}`, which then changes
+    /// nothing; `None` applies the request's fields to the message and
+    /// answers 200 with it, or 404 for a message the mailbox lacks.
+    pub patch_answer: Option<ScriptedAnswer>,
 }
 
 /// One delta page: its entries and where the reading goes on, or the answer
@@ -230,11 +236,15 @@ fn mailbox(name: &str, address: &str) -> serde_json::Value {
 /// What the service saw of one request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReceivedRequest {
+    pub method: String,
     pub path: String,
     pub query: String,
     pub authorization: Option<String>,
     pub prefer: Option<String>,
     pub accept: Option<String>,
+    pub content_type: Option<String>,
+    /// The request's body as text; empty for a GET.
+    pub body: String,
 }
 
 pub struct ScriptedService {
@@ -274,12 +284,15 @@ impl ScriptedService {
         let service_received = received.clone();
         let (service, port) = ServiceThread::start(move |_, _| {
             let server: soup::Server = glib::Object::builder().build();
+            // A flag change is applied to the scripted message.
+            let changes = RefCell::new(changes);
             server.add_handler(None, move |_, request, path, _| {
                 let received = received_request(request, path);
                 let mut all_received = service_received.lock().unwrap();
+                let mut changes = changes.borrow_mut();
                 let answer = match expired(&changes, &received, &all_received) {
                     true => ScriptedAnswer::sign_in_refused(),
-                    false => scripted_answer(&messages, &folders, &changes, &received, request),
+                    false => scripted_answer(&messages, &folders, &mut changes, &received, request),
                 };
                 all_received.push(received);
                 request.set_status(answer.status, None);
@@ -340,14 +353,15 @@ fn expired(
 }
 
 /// The answer to one request: a folder's delta page by the token its link
-/// carries, the texts received in a date range, one message, a folder's
+/// carries, the texts received in a date range, one message or a change of
+/// its flags, a folder's
 /// message list by any id, a page of the folder listing by the page number
 /// its link carries, or the folder behind a well-known name; 404 for
 /// anything else.
 fn scripted_answer(
     messages: &ScriptedAnswer,
     folders: &ScriptedFolders,
-    changes: &ScriptedChanges,
+    changes: &mut ScriptedChanges,
     received: &ReceivedRequest,
     request: &soup::ServerMessage,
 ) -> ScriptedAnswer {
@@ -359,6 +373,9 @@ fn scripted_answer(
             .map(str::to_owned)
     };
     if let Some(message_id) = received.path.strip_prefix("/me/messages/") {
+        if received.method == "PATCH" {
+            return patched_message(changes, message_id, &received.body);
+        }
         return match changes
             .messages
             .iter()
@@ -412,6 +429,23 @@ fn scripted_answer(
         Some((_, answer)) => answer.clone(),
         None => ScriptedAnswer::not_found(),
     }
+}
+
+/// The answer to a `PATCH` of a message: the scripted one, or the message
+/// with the request's fields applied.
+fn patched_message(changes: &mut ScriptedChanges, message_id: &str, body: &str) -> ScriptedAnswer {
+    if let Some(answer) = &changes.patch_answer {
+        return answer.clone();
+    }
+    let Some(message) = (changes.messages.iter_mut()).find(|message| message["id"] == message_id)
+    else {
+        return ScriptedAnswer::not_found();
+    };
+    let update: serde_json::Value = serde_json::from_str(body).expect("a JSON body");
+    for (field, value) in update.as_object().expect("an object") {
+        message[field] = value.clone();
+    }
+    ScriptedAnswer::ok(message.clone())
 }
 
 /// A delta page by its token, with links back to this service.
@@ -480,7 +514,16 @@ fn texts_between(changes: &ScriptedChanges, folder_id: &str, filter: &str) -> Sc
 fn received_request(request: &soup::ServerMessage, path: &str) -> ReceivedRequest {
     let headers = request.request_headers().expect("a request has headers");
     let header = |name| headers.one(name).map(|value| value.to_string());
+    let body = request
+        .request_body()
+        .and_then(|body| body.flatten())
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        .unwrap_or_default();
     ReceivedRequest {
+        method: request
+            .method()
+            .map(|method| method.to_string())
+            .unwrap_or_default(),
         path: path.to_owned(),
         query: request
             .uri()
@@ -490,6 +533,8 @@ fn received_request(request: &soup::ServerMessage, path: &str) -> ReceivedReques
         authorization: header("Authorization"),
         prefer: header("Prefer"),
         accept: header("Accept"),
+        content_type: header("Content-Type"),
+        body,
     }
 }
 

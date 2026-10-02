@@ -50,7 +50,7 @@ pub(crate) struct SignedInSession {
     pub(crate) connection: ServerConnection,
 }
 
-/// A signed-in session with one mailbox open read-only.
+/// A signed-in session with one mailbox open.
 pub(crate) struct MailboxSession {
     pub(crate) session: Session<GioStream>,
     pub(crate) uid_validity: Option<u32>,
@@ -251,8 +251,10 @@ pub(crate) async fn sign_in_session(
     })
 }
 
-/// Opens `mailbox` read-only in a signed-in session.
-pub(crate) async fn examine_mailbox(
+/// Opens `mailbox` with SELECT in a signed-in session: EXAMINE would open
+/// it read-only, and the flag commands need it writable
+/// (specs/011-read-and-star/research.md §4).
+pub(crate) async fn select_mailbox(
     signed_in: SignedInSession,
     mailbox: &str,
     sign_in_name: &str,
@@ -263,24 +265,24 @@ pub(crate) async fn examine_mailbox(
         connection,
         ..
     } = signed_in;
-    let examined = session.examine(mailbox).await;
+    let selected = session.select(mailbox).await;
     notices.collect(sign_in_name);
-    let examined = examined.map_err(|error| command_failure(ImapStep::OpenMailbox, &error))?;
-    tracing::info!(messages = examined.exists, "mailbox opened");
+    let selected = selected.map_err(|error| command_failure(ImapStep::OpenMailbox, &error))?;
+    tracing::info!(messages = selected.exists, "mailbox opened");
     tracing::debug!(
         mailbox,
-        uid_validity = examined.uid_validity,
+        uid_validity = selected.uid_validity,
         "mailbox state"
     );
     Ok(MailboxSession {
         session,
-        uid_validity: examined.uid_validity,
-        message_count: examined.exists,
+        uid_validity: selected.uid_validity,
+        message_count: selected.exists,
         connection,
     })
 }
 
-/// Signs in and opens `mailbox` read-only.
+/// Signs in and opens `mailbox`.
 pub(crate) async fn open_mailbox(
     account: &ImapAccount,
     options: &OpenOptions,
@@ -296,7 +298,7 @@ pub(crate) async fn open_mailbox(
         ImapStep::OpenMailbox,
     )
     .await?;
-    examine_mailbox(signed_in, mailbox, &account.login, notices).await
+    select_mailbox(signed_in, mailbox, &account.login, notices).await
 }
 
 async fn read_greeting(

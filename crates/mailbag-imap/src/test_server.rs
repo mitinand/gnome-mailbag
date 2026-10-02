@@ -10,7 +10,7 @@ use crate::{Credential, Encryption, ImapAccount, service_thread::ServiceThread};
 use futures_util::io::{AsyncReadExt, AsyncWriteExt};
 use gio::prelude::*;
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::BTreeMap,
     error::Error,
     path::PathBuf,
@@ -338,6 +338,19 @@ pub enum FaultyCommand {
     Text,
 }
 
+/// How a `UID STORE` misbehaves, once per server.
+#[derive(Clone, Debug)]
+pub enum StoreFault {
+    /// Applies the change, then breaks the connection before the completion.
+    CloseAfterApplying,
+    /// Breaks the connection before applying the change.
+    CloseBeforeApplying,
+    /// Applies the change and sends the completion only once the test sends
+    /// on the channel's other end, so that the test can act while the
+    /// command is in flight.
+    HoldCompletion(async_channel::Receiver<()>),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FaultKind {
     /// Sends part of the response, then stays silent.
@@ -388,7 +401,7 @@ pub struct FixtureSetup {
     /// Answers COMPRESS with NO although it was announced.
     pub compress_refused: bool,
     /// LIST replies as (attributes, delimiter, name). When any is scripted,
-    /// EXAMINE opens only these names; otherwise it opens any.
+    /// SELECT and EXAMINE open only these names; otherwise they open any.
     pub mailboxes: Vec<(&'static str, &'static str, &'static str)>,
     /// LIST sends each name as a literal instead of a quoted string.
     pub names_as_literals: bool,
@@ -399,10 +412,10 @@ pub struct FixtureSetup {
     pub id_refused: bool,
     pub messages: Vec<FixtureMessage>,
     pub uid_validity: u32,
-    /// EXAMINE completion, optionally preceded by notices; accepts `{tag}`.
-    pub examine_completion: String,
-    /// Closes TLS after FLAGS, before the EXAMINE count and completion.
-    pub close_during_examine: bool,
+    /// SELECT completion, optionally preceded by notices; accepts `{tag}`.
+    pub select_completion: String,
+    /// Closes TLS after FLAGS, before the SELECT count and completion.
+    pub close_during_select: bool,
     /// UIDVALIDITY for every connection after the first.
     pub uid_validity_after_reconnect: Option<u32>,
     /// Listed by the listing, gone from later FETCH commands.
@@ -445,6 +458,15 @@ pub struct FixtureSetup {
     /// (RFC 5530).
     pub unavailable_command: Option<FaultyCommand>,
     pub fault: Option<(FaultyCommand, FaultKind)>,
+    /// Answers `UID STORE` with the new flags of each message before the
+    /// completion, as Gmail does despite `.SILENT`.
+    pub store_echoes_fetch: bool,
+    /// Answers `UID STORE` with this completion, such as a NO or a BAD, and
+    /// applies nothing; accepts `{tag}`.
+    pub store_completion: Option<String>,
+    /// The fault of the first `UID STORE`; `fault` and it share the one
+    /// fault a server has.
+    pub store_fault: Option<StoreFault>,
 }
 
 impl Default for FixtureSetup {
@@ -471,8 +493,8 @@ impl Default for FixtureSetup {
             id_refused: false,
             messages: Vec::new(),
             uid_validity: 1,
-            examine_completion: "{tag} OK [READ-ONLY] done\r\n".to_owned(),
-            close_during_examine: false,
+            select_completion: "{tag} OK [READ-WRITE] done\r\n".to_owned(),
+            close_during_select: false,
             uid_validity_after_reconnect: None,
             vanishing_uid: None,
             expunged_during_listing: Vec::new(),
@@ -489,6 +511,9 @@ impl Default for FixtureSetup {
             unfetchable_uids: Vec::new(),
             unavailable_command: None,
             fault: None,
+            store_echoes_fetch: false,
+            store_completion: None,
+            store_fault: None,
         }
     }
 }
@@ -498,7 +523,9 @@ impl Default for FixtureSetup {
 pub struct FixtureLog {
     pub connections: usize,
     pub closed_connections: usize,
-    /// Command names in order, prefixed with `plaintext` before STARTTLS.
+    /// Command names in order, prefixed with `plaintext` before STARTTLS;
+    /// a `UID STORE` with its arguments, such as
+    /// `UID STORE 10,20 +FLAGS.SILENT (\Flagged)`.
     pub commands: Vec<String>,
     pub fetches: Vec<RecordedFetch>,
     /// The mechanism of every AUTHENTICATE command, in order.
@@ -507,8 +534,8 @@ pub struct FixtureLog {
     pub client_identification: Option<String>,
     /// The arguments of every LIST command, as the client wrote them.
     pub list_arguments: Vec<String>,
-    /// The mailbox of every EXAMINE or SELECT command, unquoted.
-    pub examined_mailboxes: Vec<String>,
+    /// The mailbox of every SELECT or EXAMINE command, unquoted.
+    pub opened_mailboxes: Vec<String>,
     /// Sign-in commands that carried credentials, with or without TLS.
     pub credentials_received: usize,
     /// Empty lines the client sent in answer to a challenge, as Google's
@@ -560,8 +587,14 @@ impl ImapFixture {
                 )
                 .map_err(|error| error.to_string())?;
             let port = bound.downcast::<gio::InetSocketAddress>().unwrap().port();
+            let flags = setup
+                .messages
+                .iter()
+                .map(|message| (message.uid, (message.seen, message.flagged)))
+                .collect();
             let server = Rc::new(Server {
                 fault_pending: Cell::new(true),
+                flags: RefCell::new(flags),
                 setup,
                 log: server_log,
             });
@@ -617,6 +650,9 @@ struct Server {
     log: Arc<Mutex<FixtureLog>>,
     /// The configured fault happens once per server.
     fault_pending: Cell<bool>,
+    /// Each message's `\Seen` and `\Flagged` by UID, seeded from the
+    /// setup and changed by `UID STORE`, for every connection.
+    flags: RefCell<BTreeMap<u32, (bool, bool)>>,
 }
 
 impl Server {
@@ -718,7 +754,11 @@ impl Server {
         let mut sign_in_attempted = false;
         while let Some(command) = io.command().await? {
             let (tag, name, arguments) = split_command(&command);
-            self.record(|log| log.commands.push(name.clone()));
+            let recorded = match name.as_str() {
+                "UID STORE" => format!("{name} {arguments}"),
+                _ => name.clone(),
+            };
+            self.record(|log| log.commands.push(recorded));
             match name.as_str() {
                 "CAPABILITY" => {
                     if let Some(reply) = &self.setup.capability_reply {
@@ -841,7 +881,7 @@ impl Server {
                 }
                 "EXAMINE" | "SELECT" => {
                     let mailbox = string_arguments(&arguments).concat();
-                    self.record(|log| log.examined_mailboxes.push(mailbox.clone()));
+                    self.record(|log| log.opened_mailboxes.push(mailbox.clone()));
                     let scripted = &self.setup.mailboxes;
                     if !scripted.is_empty() && !scripted.iter().any(|(_, _, name)| *name == mailbox)
                     {
@@ -849,7 +889,7 @@ impl Server {
                             .await?;
                         continue;
                     }
-                    if self.setup.close_during_examine {
+                    if self.setup.close_during_select {
                         io.send("* FLAGS (\\Seen)\r\n").await?;
                         io.stream.close().await?;
                         return Ok(());
@@ -864,7 +904,7 @@ impl Server {
                          * OK [UIDVALIDITY {uid_validity}] UIDs valid\r\n"
                     ))
                     .await?;
-                    io.send(self.setup.examine_completion.replace("{tag}", &tag))
+                    io.send(self.setup.select_completion.replace("{tag}", &tag))
                         .await?;
                 }
                 "FETCH" | "UID FETCH" => {
@@ -873,6 +913,11 @@ impl Server {
                         .fetch(io, connection_number, &tag, &arguments, by_uid)
                         .await?
                     {
+                        return Ok(());
+                    }
+                }
+                "UID STORE" => {
+                    if !self.store(io, &tag, &arguments).await? {
                         return Ok(());
                     }
                 }
@@ -1067,6 +1112,78 @@ impl Server {
         Ok(true)
     }
 
+    /// Answers `UID STORE <UIDs> ±FLAGS[.SILENT] (<flags>)`: sets or clears
+    /// `\Seen` and `\Flagged` of the named messages, unless the setup
+    /// scripts a completion or a fault. Returns false when a fault ended the
+    /// session.
+    async fn store(&self, io: &mut Io, tag: &str, arguments: &str) -> Result<bool, Box<dyn Error>> {
+        if let Some(completion) = &self.setup.store_completion {
+            io.send(completion.replace("{tag}", tag)).await?;
+            return Ok(true);
+        }
+        let fault = self.setup.store_fault.clone().filter(|_| self.take_fault());
+        if matches!(fault, Some(StoreFault::CloseBeforeApplying)) {
+            io.socket.close()?;
+            return Ok(false);
+        }
+        let (uids, change) = arguments.split_once(' ').expect("a UID set and a change");
+        let set = change.starts_with('+');
+        let mut echoes = String::new();
+        for uid in uids
+            .split(',')
+            .map(|uid| uid.parse::<u32>().expect("a UID"))
+        {
+            let mut flags = self.flags.borrow_mut();
+            let Some((seen, flagged)) = flags.get_mut(&uid) else {
+                continue;
+            };
+            if change.contains("\\Seen") {
+                *seen = set;
+            }
+            if change.contains("\\Flagged") {
+                *flagged = set;
+            }
+            drop(flags);
+            let sequence_number = 1
+                + (self.setup.messages.iter())
+                    .position(|message| message.uid == uid)
+                    .expect("a scripted message");
+            echoes.push_str(&format!(
+                "* {sequence_number} FETCH (UID {uid} FLAGS ({}))\r\n",
+                self.flag_names(uid)
+            ));
+        }
+        match fault {
+            Some(StoreFault::CloseAfterApplying) => {
+                io.socket.close()?;
+                return Ok(false);
+            }
+            Some(StoreFault::HoldCompletion(release)) => {
+                release.recv().await.ok();
+            }
+            _ => {}
+        }
+        if self.setup.store_echoes_fetch {
+            io.send(echoes).await?;
+        }
+        io.send(format!("{tag} OK STORE completed\r\n")).await?;
+        Ok(true)
+    }
+
+    /// The message's flags as a FLAGS item writes them.
+    fn flag_names(&self, uid: u32) -> String {
+        let (seen, flagged) = self.flags.borrow()[&uid];
+        [(seen, "\\Seen"), (flagged, "\\Flagged")]
+            .into_iter()
+            .filter(|(set, _)| *set)
+            .map(|(_, name)| match self.setup.lowercase_protocol_names {
+                true => name.to_lowercase(),
+                false => name.to_owned(),
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     /// Whether the configured fault happens now; it happens once.
     fn take_fault(&self) -> bool {
         self.fault_pending.replace(false)
@@ -1120,16 +1237,7 @@ impl Server {
             match item.as_str() {
                 "UID" => fields.push(format!("UID {}", message.uid).into_bytes()),
                 "FLAGS" => {
-                    let names = [(message.seen, "\\Seen"), (message.flagged, "\\Flagged")];
-                    let flags: Vec<String> = names
-                        .into_iter()
-                        .filter(|(set, _)| *set)
-                        .map(|(_, name)| match self.setup.lowercase_protocol_names {
-                            true => name.to_lowercase(),
-                            false => name.to_owned(),
-                        })
-                        .collect();
-                    fields.push(format!("FLAGS ({})", flags.join(" ")).into_bytes());
+                    fields.push(format!("FLAGS ({})", self.flag_names(message.uid)).into_bytes());
                 }
                 "INTERNALDATE" => fields.push(
                     format!("INTERNALDATE \"{}\"", internal_date(message.received_unix))
@@ -1340,7 +1448,7 @@ fn quoted(name: &str) -> String {
 }
 
 /// The quoted strings and literals among a command's arguments, such as the
-/// login and password of LOGIN or the mailbox of EXAMINE, with `\"` and `\\`
+/// login and password of LOGIN or the mailbox of SELECT, with `\"` and `\\`
 /// unescaped.
 fn string_arguments(arguments: &str) -> Vec<String> {
     let mut values = Vec::new();

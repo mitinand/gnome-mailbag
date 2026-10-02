@@ -2,14 +2,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::{
-    ChangePage, ChangesFrom, GraphError, GraphFailure, GraphFolder, GraphMessage, Mailbox,
-    MessageChange, NextPage, WellKnownFolder, list_folders, read_message, read_message_changes,
-    read_message_changes_with_short_wait_limit, read_message_text, read_texts_received_between,
+    ChangePage, ChangesFrom, FlagUpdate, GraphError, GraphFailure, GraphFolder, GraphMessage,
+    Mailbox, MessageChange, NextPage, WellKnownFolder, list_folders, read_message,
+    read_message_changes, read_message_changes_with_short_wait_limit, read_message_text,
+    read_texts_received_between,
     test_server::{
         ReceivedRequest, ScriptedAnswer, ScriptedChanges, ScriptedFolders, ScriptedNext,
         ScriptedPage, ScriptedService, TEST_ACCESS_TOKEN, delta_entry, fixture_immutable_id,
         fixture_received_unix, folder_entry, stored_message,
     },
+    update_message_flags,
 };
 use std::{
     collections::BTreeMap,
@@ -68,6 +70,7 @@ fn a_first_reading_reaches_the_service_as_documented() {
     assert_eq!(
         service.received_requests(),
         [ReceivedRequest {
+            method: "GET".to_owned(),
             path: "/me/mailFolders/inbox/messages/delta".to_owned(),
             query: "$select=subject,from,toRecipients,receivedDateTime,isRead,flag,bodyPreview\
                     &$orderby=receivedDateTime%20desc"
@@ -75,6 +78,8 @@ fn a_first_reading_reaches_the_service_as_documented() {
             authorization: Some(format!("Bearer {TEST_ACCESS_TOKEN}")),
             prefer: Some(r#"IdType="ImmutableId", odata.maxpagesize=500"#.to_owned()),
             accept: Some("application/json".to_owned()),
+            content_type: None,
+            body: String::new(),
         }]
     );
 }
@@ -222,6 +227,105 @@ fn one_message_comes_with_its_folder_and_a_missing_one_is_none() {
     assert_eq!(folder, "archive");
     let missing = run(read_message(service.url(), TEST_ACCESS_TOKEN, "gone"));
     assert_eq!(missing, Ok(None));
+}
+
+fn update_flags(
+    service: &ScriptedService,
+    message_id: &str,
+    update: FlagUpdate,
+) -> Result<(), GraphError> {
+    run(update_message_flags(
+        service.url(),
+        TEST_ACCESS_TOKEN,
+        message_id,
+        update,
+    ))
+}
+
+#[test]
+fn a_flag_update_is_a_patch_of_its_one_field_and_changes_the_message() {
+    let service = ScriptedService::start_with_changes(ScriptedChanges {
+        messages: vec![stored_message(1, "inbox"), stored_message(2, "inbox")],
+        ..ScriptedChanges::default()
+    });
+    let (read, unread) = (fixture_immutable_id(1), fixture_immutable_id(2));
+    let updates = [
+        (&read, FlagUpdate::Read(false), r#"{"isRead":false}"#),
+        (
+            &unread,
+            FlagUpdate::Starred(true),
+            r#"{"flag":{"flagStatus":"flagged"}}"#,
+        ),
+        (
+            &read,
+            FlagUpdate::Starred(false),
+            r#"{"flag":{"flagStatus":"notFlagged"}}"#,
+        ),
+    ];
+    for (message_id, update, body) in updates {
+        assert_eq!(update_flags(&service, message_id, update), Ok(()));
+        let received = service.received_requests().pop().expect("the request");
+        assert_eq!(
+            received,
+            ReceivedRequest {
+                method: "PATCH".to_owned(),
+                path: format!("/me/messages/{message_id}"),
+                query: String::new(),
+                authorization: Some(format!("Bearer {TEST_ACCESS_TOKEN}")),
+                prefer: Some(
+                    r#"IdType="ImmutableId", outlook.body-content-type="text""#.to_owned()
+                ),
+                accept: Some("application/json".to_owned()),
+                content_type: Some("application/json".to_owned()),
+                body: body.to_owned(),
+            }
+        );
+    }
+    let read_again = |message_id: &str| {
+        run(read_message(service.url(), TEST_ACCESS_TOKEN, message_id))
+            .expect("an answer")
+            .expect("the message")
+            .0
+    };
+    let (first, second) = (read_again(&read), read_again(&unread));
+    assert_eq!((first.is_read, first.flagged), (false, false));
+    assert_eq!((second.is_read, second.flagged), (false, true));
+}
+
+#[test]
+fn a_refused_flag_update_gives_the_status_and_code() {
+    let refusals = [
+        (
+            Some(ScriptedAnswer::error(
+                400,
+                "ErrorInvalidIdMalformed",
+                "Id is malformed.",
+            )),
+            400,
+            "ErrorInvalidIdMalformed",
+        ),
+        // The mailbox lacks the message.
+        (None, 404, "ErrorItemNotFound"),
+        (
+            Some(ScriptedAnswer::throttled()),
+            429,
+            "ApplicationThrottled",
+        ),
+    ];
+    for (patch_answer, status, code) in refusals {
+        let service = ScriptedService::start_with_changes(ScriptedChanges {
+            patch_answer,
+            ..ScriptedChanges::default()
+        });
+        let refused = update_flags(&service, "message-1", FlagUpdate::Read(true));
+        assert_eq!(
+            refused.map_err(|error| error.failure),
+            Err(GraphFailure::Refused {
+                status,
+                code: Some(code.to_owned()),
+            })
+        );
+    }
 }
 
 #[test]

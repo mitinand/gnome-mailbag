@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Lists the mailboxes of an IMAP account and reads one of them over a
-//! verified GIO TLS connection.
+//! verified GIO TLS connection; of the mail it changes only the messages'
+//! read state and star.
 //!
-//! This crate owns the protocol: the secure connection, sign-in, read-only
+//! This crate owns the protocol: the secure connection, sign-in, the
 //! commands, mailbox names and the message part structure with IMAP section
 //! numbers. It has no notion of a mail provider and never decodes message
 //! content. Its futures must run on one thread with a running GLib main
@@ -114,6 +115,17 @@ pub enum ImapStep {
     /// The message list or part structures.
     FetchMessages,
     FetchText,
+    /// Setting or clearing a flag of messages.
+    StoreFlags,
+}
+
+/// A flag `MailboxReader::store_flags` sets or clears.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StoreFlag {
+    /// `\Seen`: read.
+    Seen,
+    /// `\Flagged`: starred.
+    Flagged,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

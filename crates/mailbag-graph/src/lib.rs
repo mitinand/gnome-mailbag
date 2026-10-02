@@ -177,6 +177,16 @@ pub enum MessageChange {
     },
 }
 
+/// A change of one of the user's flags of a message
+/// (specs/011-read-and-star/research.md §6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlagUpdate {
+    /// The read mark, `isRead`.
+    Read(bool),
+    /// The star, the follow-up flag `flagged` or `notFlagged`.
+    Starred(bool),
+}
+
 /// A sender or recipient as the service names it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Mailbox {
@@ -443,6 +453,39 @@ pub async fn read_message(
     reply::read_one_message(&answer)
         .map(Some)
         .map_err(|failure| failed(failure, None))
+}
+
+/// Sets the message's read mark or follow-up flag with `PATCH
+/// /me/messages/{id}` (specs/011-read-and-star FR-007). The service answers
+/// 200 with the whole message, which is not read; any other status is its
+/// refusal.
+pub async fn update_message_flags(
+    service_url: &str,
+    access_token: &str,
+    message_id: &str,
+    update: FlagUpdate,
+) -> Result<(), GraphError> {
+    let session = open_session(WAIT_LIMIT_SECONDS);
+    let address = format!("{service_url}/me/messages/{}", escaped(message_id));
+    let (field, body) = match update {
+        FlagUpdate::Read(read) => ("isRead", serde_json::json!({ "isRead": read })),
+        FlagUpdate::Starred(starred) => {
+            let status = if starred { "flagged" } else { "notFlagged" };
+            (
+                "flag",
+                serde_json::json!({ "flag": { "flagStatus": status } }),
+            )
+        }
+    };
+    let request = build_request(&address, access_token)?;
+    request.set_method("PATCH");
+    let body = glib::Bytes::from_owned(body.to_string().into_bytes());
+    request.set_request_body_from_bytes(Some("application/json"), Some(&body));
+    prefer(&request, PREFERENCES);
+    let answer = send(&session, &request).await?;
+    check_status(&request, &answer)?;
+    tracing::debug!(field, "message flag changed");
+    Ok(())
 }
 
 /// The answer about one message, or `None` for a 404.

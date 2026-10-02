@@ -3,7 +3,7 @@
 
 use crate::{
     FolderListing, ImapAccount, ImapError, ImapFailure, ImapStep, MessageList, MessageRow,
-    MessageText, OpenOptions, RowItems, ServerReply, TextParts, TextRequest,
+    MessageText, OpenOptions, RowItems, ServerReply, StoreFlag, TextParts, TextRequest,
     fetch_responses::{
         FetchEnd, FetchResponses, collect_fetches, collect_rows, keep_listed, message_text,
         section_paths, structure_of, uid_set,
@@ -27,8 +27,9 @@ const GMAIL_LISTING_ITEMS: &str = "(UID FLAGS X-GM-MSGID)";
 /// The command that reads one structure on its own (`fetch_structures_apart`).
 const STRUCTURE_ITEMS: &str = "(UID BODYSTRUCTURE)";
 
-/// A signed-in, read-only session with one mailbox of an account. It never
-/// changes mail on the server. Dropping it closes the connection at once.
+/// A signed-in session with one mailbox of an account. Of the mail on the
+/// server it changes only the messages' read state and star, and only on
+/// request (`store_flags`). Dropping it closes the connection at once.
 pub struct MailboxReader {
     account: ImapAccount,
     /// Kept for the reconnection that an unreadable structure forces.
@@ -42,8 +43,8 @@ pub struct MailboxReader {
 }
 
 impl MailboxReader {
-    /// Connects securely, signs in and opens the mailbox read-only. `mailbox`
-    /// is the name as LIST gave it, or `INBOX`.
+    /// Connects securely, signs in and opens the mailbox. `mailbox` is the
+    /// name as LIST gave it, or `INBOX`.
     pub async fn open(
         account: ImapAccount,
         options: OpenOptions,
@@ -392,6 +393,58 @@ impl MailboxReader {
         }
         tracing::info!(messages, commands, "text loaded");
         Ok(())
+    }
+
+    /// Sets (`set`) or clears `flag` on the messages `uids`, which is not
+    /// empty, with one `UID STORE … +FLAGS.SILENT` or `-FLAGS.SILENT`
+    /// (specs/011-read-and-star FR-007). Returns the server's NO or BAD with
+    /// the sign-in name replaced: it refused the change. A lost connection
+    /// fails at `ImapStep::StoreFlags`; whether the server applied the change
+    /// is then unknown.
+    pub async fn store_flags(
+        &mut self,
+        uids: &[u32],
+        flag: StoreFlag,
+        set: bool,
+    ) -> Result<Option<ServerReply>, ImapError> {
+        if self.needs_reconnect {
+            self.reconnect().await?;
+        }
+        let sign = if set { '+' } else { '-' };
+        let flag_name = match flag {
+            StoreFlag::Seen => "\\Seen",
+            StoreFlag::Flagged => "\\Flagged",
+        };
+        let change = format!("{sign}FLAGS.SILENT ({flag_name})");
+        // Gmail answers with the new flags all the same; they are dropped.
+        let session = &mut self.mailbox.session;
+        let responses = match session.uid_store(uid_set(uids), &change).await {
+            Ok(responses) => collect_fetches(responses).await,
+            Err(error) => FetchResponses::failed(error),
+        };
+        self.notices.collect(&self.account.login);
+        let refusal = match responses.end {
+            FetchEnd::Completed => None,
+            FetchEnd::Rejected(reply) => Some(reply),
+            FetchEnd::Failed(Error::Bad(status)) => Some(ServerReply::from(&status)),
+            FetchEnd::Failed(error) => {
+                return Err(self.error(command_failure(ImapStep::StoreFlags, &error)));
+            }
+        };
+        let refusal = refusal.map(|reply| self.refusal(reply));
+        if let Some(reply) = &refusal {
+            tracing::debug!(
+                code = reply.code.as_deref(),
+                server_text = reply.text,
+                "the server refused the command"
+            );
+        }
+        tracing::info!(
+            messages = uids.len(),
+            refused = refusal.is_some(),
+            "flags stored"
+        );
+        Ok(refusal)
     }
 
     /// Runs one UID FETCH command and keeps every response received before

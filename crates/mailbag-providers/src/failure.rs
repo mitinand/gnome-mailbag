@@ -204,6 +204,7 @@ fn server_step(step: ImapStep) -> ServerStep {
         ImapStep::OpenMailbox => ServerStep::OpenMailbox,
         ImapStep::FetchMessages => ServerStep::FetchMessages,
         ImapStep::FetchText => ServerStep::FetchText,
+        ImapStep::StoreFlags => ServerStep::ChangeFlags,
     }
 }
 

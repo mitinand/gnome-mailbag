@@ -907,7 +907,7 @@ fn graph_mailbox(
             .map(|(token, page)| (token.to_owned(), page))
             .collect(),
         messages,
-        token_accepted_requests: None,
+        ..graph_service::ScriptedChanges::default()
     }
 }
 
@@ -1808,7 +1808,7 @@ fn a_mailbox_load_stores_the_messages_of_the_folder_it_names() {
         read_stored_messages(&store, &folder_of("synthetic-account", "INBOX")),
         Ok(None)
     );
-    assert_eq!(fixture.log().examined_mailboxes, ["Work"]);
+    assert_eq!(fixture.log().opened_mailboxes, ["Work"]);
 }
 
 #[test]

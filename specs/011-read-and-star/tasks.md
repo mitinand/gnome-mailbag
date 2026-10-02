@@ -191,13 +191,13 @@ Goal: a mailbox is opened for writing, the IMAP reader can set and clear
 message's read mark and follow-up flag, and both scripted servers accept,
 refuse and record those commands. No cycle uses them yet.
 
-- [ ] T011 [US1] In crates/mailbag-imap/src/session.rs `examine_mailbox`
+- [x] T011 [US1] In crates/mailbag-imap/src/session.rs `examine_mailbox`
   becomes `select_mailbox` sending `SELECT` (the fork's `select`, the same
   `Mailbox` out); `open_mailbox` and therefore `MailboxReader::reconnect`
   use it; doc comments no longer say read-only; in src/test_server.rs the
   log's `examined_mailboxes` becomes `opened_mailboxes` and records the
   command name; a test asserts `SELECT` is sent and `EXAMINE` is not.
-- [ ] T012 [US1] [US5] In crates/mailbag-imap/src/lib.rs
+- [x] T012 [US1] [US5] In crates/mailbag-imap/src/lib.rs
   `ImapStep::StoreFlags` and `pub enum StoreFlag { Seen, Flagged }` (the
   crate does not depend on `mailbag-domain`; the sender maps
   `MessageFlag` to it); in src/reader.rs `MailboxReader::store_flags
@@ -210,7 +210,7 @@ refuse and record those commands. No cycle uses them yet.
   `ImapStep::StoreFlags`; `notices.collect` as other commands; in
   crates/mailbag-providers/src/failure.rs `ImapStep::StoreFlags →
   ServerStep::ChangeFlags`.
-- [ ] T013 [US1] [US5] In crates/mailbag-imap/src/test_server.rs: the
+- [x] T013 [US1] [US5] In crates/mailbag-imap/src/test_server.rs: the
   flags of a session's messages become mutable state (a `RefCell` map
   `uid → (seen, flagged)` seeded from the fixture, read by the `FLAGS`
   answers); `UID STORE` parsed (UID set with commas,
@@ -224,7 +224,7 @@ refuse and record those commands. No cycle uses them yet.
   before applying; `HoldCompletion(receiver)`: apply, then send the
   completion only when the test signals, so a test can write a pending
   change while the command is in flight).
-- [ ] T014 [US1] [US4] [US5] In crates/mailbag-graph/src/lib.rs
+- [x] T014 [US1] [US4] [US5] In crates/mailbag-graph/src/lib.rs
   `FlagUpdate { Read(bool), Starred(bool) }` and
   `update_message_flags(service_url, access_token, id, update) ->
   Result<(), GraphError>`: `build_request` takes the method and an
@@ -239,19 +239,19 @@ refuse and record those commands. No cycle uses them yet.
   the scripted message and answers 200 with it, or the setup's scripted
   answer (`patch_answer: Option<ScriptedAnswer>` for 400, 404, 429 or
   504).
-- [ ] T015 [P] [US1] [US5] Tests in crates/mailbag-imap/src/tests/
+- [x] T015 [P] [US1] [US5] Tests in crates/mailbag-imap/src/tests/
   (a new `flags.rs` beside `mailboxes.rs`): `store_flags` sends the
   expected command text for each flag and direction and a UID set; an
   `OK` with and without the echoed `FETCH` line returns `None`; a `NO`
   and a `BAD` return the reply with the code; a connection closed before
   the completion fails at `StoreFlags`; the scripted server's flags
   change and show in a later `FETCH`.
-- [ ] T016 [P] [US4] [US5] Tests in crates/mailbag-graph/src/tests.rs:
+- [x] T016 [P] [US4] [US5] Tests in crates/mailbag-graph/src/tests.rs:
   the request's method, path, headers (`Content-Type`, `Prefer`,
   `Authorization`) and body for each `FlagUpdate`; a 200 is `Ok`; a 400,
   a 404 and a 429 are `Refused` with their status and code; the scripted
   message carries the new value afterwards.
-- [ ] T017 STOP: run ./scripts/check.sh and git diff --check; compare the
+- [x] T017 STOP: run ./scripts/check.sh and git diff --check; compare the
   size with plan.md (imap ≈ 60, graph ≈ 40; tests ≈ 200 with the
   scripted servers' ≈ 100); report, suggest the commit and wait before
   portion 4.
