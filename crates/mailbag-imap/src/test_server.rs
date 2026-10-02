@@ -377,6 +377,8 @@ pub struct FixtureSetup {
     pub rejection: String,
     /// Answers ENABLE with BAD, as Gmail does once a mailbox is open.
     pub enable_refused: bool,
+    /// Answers COMPRESS with NO although it was announced.
+    pub compress_refused: bool,
     /// LIST replies as (attributes, delimiter, name). When any is scripted,
     /// EXAMINE opens only these names; otherwise it opens any.
     pub mailboxes: Vec<(&'static str, &'static str, &'static str)>,
@@ -454,6 +456,7 @@ impl Default for FixtureSetup {
             lowercase_protocol_names: false,
             rejection: "{tag} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n".to_owned(),
             enable_refused: false,
+            compress_refused: false,
             mailboxes: Vec::new(),
             names_as_literals: false,
             list_completion: Some("{tag} OK LIST done\r\n".to_owned()),
@@ -772,6 +775,18 @@ impl Server {
                     } else {
                         io.send(format!("* ENABLED {arguments}\r\n{tag} OK Enabled\r\n"))
                             .await?;
+                    }
+                }
+                "COMPRESS" => {
+                    if self.setup.compress_refused {
+                        io.send(format!("{tag} NO Compression unavailable\r\n"))
+                            .await?;
+                    } else if arguments != "DEFLATE" {
+                        io.send(format!("{tag} BAD Unknown compression\r\n"))
+                            .await?;
+                    } else {
+                        io.send(format!("{tag} OK DEFLATE active\r\n")).await?;
+                        io.compress();
                     }
                 }
                 "ID" => {
@@ -1349,6 +1364,8 @@ fn string_arguments(arguments: &str) -> Vec<String> {
 /// Line and literal reading over a GIO stream.
 struct Io {
     stream: gio::IOStreamAsyncReadWrite<gio::IOStream>,
+    /// The stream underneath, which compression wraps.
+    base: gio::IOStream,
     buffer: Vec<u8>,
     /// The TCP socket underneath, for breaking the connection abruptly.
     socket: gio::Socket,
@@ -1357,10 +1374,22 @@ struct Io {
 impl Io {
     fn new(stream: gio::IOStream, socket: gio::Socket) -> Self {
         Self {
-            stream: stream.into_async_read_write().unwrap(),
+            stream: stream.clone().into_async_read_write().unwrap(),
+            base: stream,
             buffer: Vec::new(),
             socket,
         }
+    }
+
+    /// Compresses what it sends and decompresses what it reads from here on,
+    /// as a server does once it has answered COMPRESS DEFLATE with OK.
+    fn compress(&mut self) {
+        let decompressor = gio::ZlibDecompressor::new(gio::ZlibCompressorFormat::Raw);
+        let compressor = gio::ZlibCompressor::new(gio::ZlibCompressorFormat::Raw, -1);
+        let input = gio::ConverterInputStream::new(&self.base.input_stream(), &decompressor);
+        let output = gio::ConverterOutputStream::new(&self.base.output_stream(), &compressor);
+        let compressed: gio::IOStream = gio::SimpleIOStream::new(&input, &output).upcast();
+        self.stream = compressed.into_async_read_write().unwrap();
     }
 
     async fn fill(&mut self) -> std::io::Result<bool> {

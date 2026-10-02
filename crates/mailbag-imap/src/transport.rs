@@ -6,9 +6,11 @@ use futures_util::io::{AsyncRead, AsyncWrite};
 use gio::prelude::*;
 use glib::thread_guard::ThreadGuard;
 use std::{
+    cell::RefCell,
     error::Error,
     fmt, io,
     pin::Pin,
+    rc::Rc,
     task::{Context, Poll},
 };
 
@@ -101,18 +103,55 @@ fn step_failure(step: ImapStep, error: &glib::Error) -> ImapFailure {
 }
 
 /// A GIO stream as the futures-io stream that async-imap reads and writes.
+/// Two handles share it: the session's, and the one that puts compression
+/// in between once the server has agreed to it (`compress`), while the
+/// session keeps reading and writing through its own handle.
 ///
 /// `ThreadGuard` meets async-imap's `Send` bound without making the stream
 /// usable elsewhere: it is created, polled and dropped on the mail worker.
-pub(crate) struct GioStream(ThreadGuard<gio::IOStreamAsyncReadWrite<gio::IOStream>>);
+pub(crate) struct GioStream {
+    stream: ThreadGuard<Rc<RefCell<gio::IOStreamAsyncReadWrite<gio::IOStream>>>>,
+    /// The secured stream underneath, which compression wraps.
+    secured: ThreadGuard<gio::IOStream>,
+}
 
 impl GioStream {
-    pub(crate) fn new(stream: gio::IOStream) -> Self {
-        let stream = stream
-            .into_async_read_write()
-            .expect("GIO socket and TLS streams are pollable");
-        Self(ThreadGuard::new(stream))
+    pub(crate) fn new(secured: gio::IOStream) -> Self {
+        Self {
+            stream: ThreadGuard::new(Rc::new(RefCell::new(pollable(secured.clone())))),
+            secured: ThreadGuard::new(secured),
+        }
     }
+
+    /// Another handle on the same stream.
+    pub(crate) fn share(&self) -> Self {
+        Self {
+            stream: ThreadGuard::new(Rc::clone(self.stream.get_ref())),
+            secured: ThreadGuard::new(self.secured.get_ref().clone()),
+        }
+    }
+
+    /// Puts DEFLATE compression between the session and the secured stream,
+    /// once the server has agreed to `COMPRESS DEFLATE` (RFC 4978): raw
+    /// deflate without the zlib header, as the extension defines. From here
+    /// on every command the session flushes reaches the server compressed,
+    /// and every byte read is decompressed first.
+    pub(crate) fn compress(&self) {
+        let secured = self.secured.get_ref();
+        let decompressor = gio::ZlibDecompressor::new(gio::ZlibCompressorFormat::Raw);
+        let compressor = gio::ZlibCompressor::new(gio::ZlibCompressorFormat::Raw, -1);
+        let input = gio::ConverterInputStream::new(&secured.input_stream(), &decompressor);
+        let output = gio::ConverterOutputStream::new(&secured.output_stream(), &compressor);
+        let compressed = gio::SimpleIOStream::new(&input, &output);
+        *self.stream.get_ref().borrow_mut() = pollable(compressed.upcast());
+    }
+}
+
+/// The stream as futures-io reads and writes it.
+fn pollable(stream: gio::IOStream) -> gio::IOStreamAsyncReadWrite<gio::IOStream> {
+    stream
+        .into_async_read_write()
+        .expect("GIO socket, TLS and converter streams are pollable")
 }
 
 impl fmt::Debug for GioStream {
@@ -127,7 +166,8 @@ impl AsyncRead for GioStream {
         context: &mut Context<'_>,
         buffer: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(self.get_mut().0.get_mut())
+        let mut stream = self.stream.get_ref().borrow_mut();
+        Pin::new(&mut *stream)
             .poll_read(context, buffer)
             .map_err(mark_transport_error)
     }
@@ -139,19 +179,22 @@ impl AsyncWrite for GioStream {
         context: &mut Context<'_>,
         buffer: &[u8],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(self.get_mut().0.get_mut())
+        let mut stream = self.stream.get_ref().borrow_mut();
+        Pin::new(&mut *stream)
             .poll_write(context, buffer)
             .map_err(mark_transport_error)
     }
 
     fn poll_flush(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(self.get_mut().0.get_mut())
+        let mut stream = self.stream.get_ref().borrow_mut();
+        Pin::new(&mut *stream)
             .poll_flush(context)
             .map_err(mark_transport_error)
     }
 
     fn poll_close(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(self.get_mut().0.get_mut())
+        let mut stream = self.stream.get_ref().borrow_mut();
+        Pin::new(&mut *stream)
             .poll_close(context)
             .map_err(mark_transport_error)
     }
