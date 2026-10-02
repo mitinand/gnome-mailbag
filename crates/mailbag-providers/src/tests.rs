@@ -145,6 +145,7 @@ fn read_stored_messages(
                 received_unix: row.received_unix,
                 seen: row.seen,
                 content,
+                preview: row.preview,
             })
         })
         .collect::<Result<_, Failure>>()?;
@@ -297,30 +298,34 @@ fn a_temporary_refusal_of_structures_or_text_stores_no_row_and_names_the_server(
 }
 
 #[test]
-fn only_the_selected_text_parts_are_requested() {
+fn a_recent_messages_text_and_page_come_in_one_request() {
     let fixture = ImapFixture::start(FixtureSetup {
         messages: vec![FixtureMessage::multipart(
             10,
-            &[("plain", "the readable part"), ("html", "<p>skip me</p>")],
+            &[("plain", "the readable part"), ("html", "<p>the page</p>")],
         )],
         ..FixtureSetup::default()
     });
     let (_, stored) = synchronize_imap_inbox(&fixture);
+    // The reader shows the plain text; the preview comes from the page.
     assert_eq!(text_of(&stored[0].content), "the readable part");
-    let requested: Vec<String> = fixture
+    assert_eq!(stored[0].preview, "the page");
+    let bodies: Vec<Vec<String>> = fixture
         .log()
         .fetches
         .into_iter()
-        .flat_map(|fetch| fetch.items)
+        .map(|fetch| fetch.items)
+        .filter(|items| items.iter().any(|item| item.starts_with("BODY.PEEK[1")))
         .collect();
-    assert!(
-        requested.contains(&"BODY.PEEK[1]".to_owned()),
-        "{requested:?}"
-    );
-    // The HTML alternative is described but never downloaded.
-    assert!(
-        !requested.iter().any(|item| item.contains("[2]")),
-        "{requested:?}"
+    assert_eq!(
+        bodies,
+        [[
+            "UID",
+            "BODY.PEEK[1.MIME]",
+            "BODY.PEEK[1]",
+            "BODY.PEEK[2.MIME]",
+            "BODY.PEEK[2]"
+        ]]
     );
 }
 
@@ -649,6 +654,7 @@ fn stored_earlier_message() -> Message {
         received_unix: None,
         seen: true,
         content: ReceivedContent::Text("Stored earlier".to_owned()),
+        preview: "Stored earlier".to_owned(),
     }
 }
 
@@ -949,6 +955,9 @@ fn a_microsoft_365_first_fill_stores_page_by_page_with_recent_texts() {
     assert_eq!(batches, 2);
     assert_eq!(identities(&stored), [1, 2, 3, 800].map(graph_identity));
     assert_eq!(text_of(&stored[0].content), "Text 1");
+    // The service's preview, normalised, for recent and old messages alike.
+    assert_eq!(stored[0].preview, "Preview of message 1");
+    assert_eq!(stored[3].preview, "Preview of message 800");
     // Message 3 has no body in the service.
     assert_eq!(stored[2].content, ReceivedContent::TextNotReturned);
     assert_eq!(stored[3].content, ReceivedContent::NotDownloaded);
@@ -1089,6 +1098,8 @@ fn a_microsoft_365_round_applies_removals_partial_entries_and_arrivals() {
         [graph_identity(2), graph_identity(3), graph_identity(4)]
     );
     assert!(stored[0].seen);
+    // A read-state entry leaves the preview of the first reading.
+    assert_eq!(stored[0].preview, "Preview of message 2");
     assert_eq!(stored[1].fields.subject.as_deref(), Some("Renamed"));
     // The stored content stays with the renamed message: the service had
     // no text for message 3.
@@ -1494,6 +1505,7 @@ fn message_with(number: u32, content: ReceivedContent) -> Message {
         received_unix: None,
         seen: false,
         content,
+        preview: String::new(),
     }
 }
 
@@ -1856,7 +1868,12 @@ fn only_messages_of_the_last_30_days_get_their_text() {
     assert_eq!(identities(&stored), [imap_identity(20), imap_identity(10)]);
     assert_eq!(text_of(&stored[0].content).trim(), "Recent");
     assert_eq!(stored[1].content, ReceivedContent::NotDownloaded);
-    // Neither the structure nor the text of the old message was asked for.
+    assert_eq!(
+        [stored[0].preview.as_str(), stored[1].preview.as_str()],
+        ["Recent", "Old"]
+    );
+    // Both structures; the recent text whole, which also gives its preview,
+    // and only the old message's piece.
     let asked: Vec<String> = fixture
         .log()
         .fetches
@@ -1864,7 +1881,66 @@ fn only_messages_of_the_last_30_days_get_their_text() {
         .filter(|fetch| !fetch.items.contains(&"INTERNALDATE".to_owned()))
         .map(|fetch| fetch.message_set)
         .collect();
-    assert_eq!(asked, ["1:*", "20", "20"]);
+    assert_eq!(asked, ["1:*", "20,10", "20", "10"]);
+}
+
+#[test]
+fn an_old_message_previews_its_page_or_else_its_plain_part() {
+    let old = |message: FixtureMessage| message.received_at(days_ago(60));
+    let fixture = imap_server(vec![
+        old(FixtureMessage::multipart(
+            10,
+            &[("html", "<p>Page words</p>")],
+        )),
+        old(FixtureMessage::multipart(
+            20,
+            &[
+                ("plain", "Plain words"),
+                ("html", "<img src=\"cid:x\" alt=\"Banner\">"),
+            ],
+        )),
+        old(FixtureMessage::multipart(30, &[("plain", "Plain only")])),
+    ]);
+    let (_, stored) = synchronize_imap_inbox(&fixture);
+    let previews: Vec<&str> = stored
+        .iter()
+        .map(|message| message.preview.as_str())
+        .collect();
+    assert_eq!(previews, ["Page words", "Plain words", "Plain only"]);
+    assert!(
+        stored
+            .iter()
+            .all(|message| message.content == ReceivedContent::NotDownloaded)
+    );
+    // Pieces of the same shape share a command, and the page and the plain
+    // part of message 20 are read together.
+    let pieces: Vec<(String, Vec<String>)> = fixture
+        .log()
+        .fetches
+        .into_iter()
+        .filter(|fetch| fetch.items.iter().any(|item| item.ends_with("<0.65536>")))
+        .map(|fetch| (fetch.message_set, fetch.items))
+        .collect();
+    assert_eq!(pieces.len(), 2, "{pieces:?}");
+    assert!(
+        pieces.iter().any(|(uids, items)| uids == "20"
+            && items.contains(&"BODY.PEEK[2]<0.65536>".to_owned())
+            && items.contains(&"BODY.PEEK[1]<0.65536>".to_owned())),
+        "{pieces:?}"
+    );
+}
+
+#[test]
+fn a_piece_the_server_did_not_return_stores_the_row_with_an_empty_preview() {
+    let fixture = ImapFixture::start(FixtureSetup {
+        messages: vec![FixtureMessage::plain_text(10, "Old").received_at(days_ago(60))],
+        nil_body_uid: Some(10),
+        ..FixtureSetup::default()
+    });
+    let (_, stored) = synchronize_imap_inbox(&fixture);
+    assert_eq!(identities(&stored), [imap_identity(10)]);
+    assert_eq!(stored[0].preview, "");
+    assert_eq!(stored[0].content, ReceivedContent::NotDownloaded);
 }
 
 /// SC-002: a folder that did not change costs one listing and no write.
@@ -2168,15 +2244,18 @@ fn a_first_fill_stopped_before_any_row_is_no_mail_loaded() {
     assert_eq!(store.read_folder_rows(&inbox), Ok(None));
 }
 
-/// SC-001, SC-002 on a scripted folder of 10 000 messages. The times are
-/// printed for the reader; the machine decides them.
+/// SC-001, SC-002 of synchronization and SC-002 of the message list on a
+/// scripted folder of 10 000 messages. The times are printed for the
+/// reader; the machine decides them.
 #[test]
-fn a_large_folder_fills_in_batches_and_a_second_cycle_fetches_nothing() {
-    // The newest hundred are recent, so the first batch carries their texts.
+fn a_large_folder_fills_in_batches_with_previews_and_a_second_cycle_fetches_nothing() {
+    // The newest hundred are recent, so the first batch carries their texts;
+    // the others have a page and a plain part, read as pieces.
     let messages = (1..=10_000)
         .map(|uid| match uid > 9_900 {
             true => FixtureMessage::plain_text(uid, "Text"),
-            false => FixtureMessage::plain_text(uid, "Text").received_at(days_ago(60)),
+            false => FixtureMessage::multipart(uid, &[("plain", "Text"), ("html", "<p>Page</p>")])
+                .received_at(days_ago(60)),
         })
         .collect();
     let fixture = imap_server(messages);
@@ -2224,6 +2303,16 @@ fn a_large_folder_fills_in_batches_and_a_second_cycle_fetches_nothing() {
             .all(|message| matches!(message.content, ReceivedContent::Text(_)))
     );
     assert_eq!(stored[100].content, ReceivedContent::NotDownloaded);
+    assert!(
+        stored[..100]
+            .iter()
+            .all(|message| message.preview == "Text")
+    );
+    assert!(
+        stored[100..]
+            .iter()
+            .all(|message| message.preview == "Page")
+    );
     assert_eq!(fixture.log().fetches.len(), fetches_before + 1);
 }
 

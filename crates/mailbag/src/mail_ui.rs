@@ -16,9 +16,16 @@ mod tests;
 use crate::failure_declarations::{DeclaredFailure, declare_content, declare_failure};
 use crate::failure_dialog::{RetriedOperation, show_action_button, status_description};
 use adw::{gio, glib, gtk, prelude::*};
-use mailbag_domain::{AccountId, DisplayFields, Failure, MessageListRow, ReceivedContent};
+use mailbag_domain::{
+    AccountId, DisplayFields, Failure, FolderRef, MessageListRow, ReceivedContent,
+};
 use message_item::MessageItem;
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::{HashMap, HashSet},
+    rc::{Rc, Weak},
+    time::Duration,
+};
 
 /// How much text a GTK label shows, in UTF-8 bytes. Longer text is cut at a
 /// character boundary without an explanation; the stored text keeps its
@@ -36,11 +43,47 @@ const DISPLAY_LIMIT_BYTES: usize = 65_536;
 /// inside it is expected anyway.
 const LONGEST_WORD_WRAPPED_RUN: usize = 100;
 
+/// How long a row takes to open when it arrives or to close when it leaves
+/// (specs/010-message-list FR-006).
+const ROW_TRANSITION_MS: u32 = 220;
+
+/// When the rows that close are taken out of the list and the others come
+/// in: after the closing, with a margin. A row scrolled out of view while it
+/// closes has no widget to report the end of its transition.
+const AFTER_CLOSING: Duration = Duration::from_millis(280);
+
+/// How long a message stays open before the window counts it read
+/// (specs/010-message-list FR-009).
+const READ_AFTER_OPENING: Duration = Duration::from_secs(1);
+
+/// How a change of the rows shown reaches the screen: at once, as for a
+/// folder shown anew or the filter changed, or with arriving rows opening
+/// and leaving rows closing (specs/010-message-list FR-006).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ListChange {
+    AtOnce,
+    Animated,
+}
+
+/// What the window alone remembers of the shown folder since the latest
+/// read of its stored rows: messages counted read after opening, and
+/// messages taken out with their trash button
+/// (specs/010-message-list FR-009, FR-010).
+#[derive(Default)]
+struct InWindow {
+    read: HashSet<String>,
+    removed: HashSet<String>,
+}
+
 /// Asks the window for the content of an account's message.
 type ContentRequest = Box<dyn Fn(&AccountId, &str)>;
 
 pub struct MailUi {
-    /// The list's row objects, in the order the stored rows were read.
+    /// The window's handle on itself, for the timers and the row handlers.
+    myself: Weak<MailUi>,
+    messages: gtk::ListView,
+    /// The list's row objects, in the order the stored rows were read; rows
+    /// that leave stay, closed, until the change is applied.
     items: gio::ListStore,
     /// The list's selection: the open message's row, or none.
     selection: gtk::SingleSelection,
@@ -61,12 +104,22 @@ pub struct MailUi {
     content_status: adw::StatusPage,
     content_action: gtk::Button,
     sender_avatar: adw::Avatar,
-    /// Whose stored rows the list shows, as the latest read found them, to
-    /// update the list only when a new read answered.
-    listed_rows: RefCell<Option<(AccountId, Rc<[MessageListRow]>)>>,
+    /// Which folder's stored rows the list shows, as the latest read found
+    /// them, to update the list only when a new read answered.
+    listed_rows: RefCell<Option<(FolderRef, Rc<[MessageListRow]>)>>,
+    /// Whether the list shows only the unread messages and the open one; the
+    /// same for every folder and account (specs/010-message-list FR-008).
+    unread_only: Cell<bool>,
+    in_window: RefCell<InWindow>,
+    /// Applies the list's latest state once the rows that leave are closed.
+    pending_change: RefCell<Option<glib::SourceId>>,
     /// The identity of the message the reader shows.
     open_message: RefCell<Option<String>>,
+    /// Counts the open message read when it fires.
+    pending_read: RefCell<Option<glib::SourceId>>,
     content_request: RefCell<Option<ContentRequest>>,
+    /// Tells the window that the user took a row out of the list.
+    row_removed: RefCell<Option<Box<dyn Fn()>>>,
 }
 
 impl MailUi {
@@ -75,11 +128,6 @@ impl MailUi {
         let reader = build_reader(builder);
         // The row template names the row object's type.
         MessageItem::ensure_type();
-        let factory = gtk::BuilderListItemFactory::from_bytes(
-            None::<&gtk::BuilderScope>,
-            &glib::Bytes::from_static(include_bytes!("../resources/ui/message-row.ui")),
-        );
-        messages.set_factory(Some(&factory));
         let items = gio::ListStore::new::<MessageItem>();
         let selection = gtk::SingleSelection::builder()
             .model(&items)
@@ -87,7 +135,9 @@ impl MailUi {
             .can_unselect(true)
             .build();
         messages.set_model(Some(&selection));
-        let mail = Rc::new(Self {
+        let mail = Rc::new_cyclic(|myself: &Weak<Self>| Self {
+            myself: myself.clone(),
+            messages: messages.clone(),
             items,
             selection,
             list_title: builder
@@ -115,13 +165,28 @@ impl MailUi {
             content_action: reader.content_action,
             sender_avatar: reader.avatar,
             listed_rows: RefCell::new(None),
+            unread_only: Cell::new(false),
+            in_window: RefCell::default(),
+            pending_change: RefCell::new(None),
             open_message: RefCell::new(None),
+            pending_read: RefCell::new(None),
             content_request: RefCell::new(None),
+            row_removed: RefCell::new(None),
         });
+        let factory = gtk::BuilderListItemFactory::from_bytes(
+            Some(&row_handlers(Rc::downgrade(&mail))),
+            &glib::Bytes::from_static(include_bytes!("../resources/ui/message-row.ui")),
+        );
+        messages.set_factory(Some(&factory));
         let weak = Rc::downgrade(&mail);
         messages.connect_activate(move |_, position| {
             if let Some(mail) = weak.upgrade() {
-                mail.open_message(position);
+                mail.open_message(position, true);
+                // Under the filter the message open before, if read, leaves
+                // at once (specs/010-message-list FR-008).
+                if mail.unread_only.get() {
+                    mail.update_shown(ListChange::AtOnce);
+                }
             }
         });
         mail.close_reader();
@@ -134,37 +199,201 @@ impl MailUi {
         *self.content_request.borrow_mut() = Some(Box::new(request));
     }
 
-    /// Shows the rows of a stored mailbox. A new read updates the list by its
-    /// difference with the rows shown and keeps the open message while it is
-    /// listed, with its envelope from the new row; the same read changes
-    /// nothing. The content is not read again: a text a cycle replaced, such
-    /// as an edited draft's, shows when the message is opened again.
-    pub fn show_rows(&self, account_id: &AccountId, rows: &Rc<[MessageListRow]>) {
-        let (same_account, same_read) = match &*self.listed_rows.borrow() {
-            Some((listed_account, listed)) => {
-                let same_account = listed_account == account_id;
-                (same_account, same_account && Rc::ptr_eq(listed, rows))
+    /// Sets how the window hears that the user took a row out of the list,
+    /// which may leave the list with no row to show.
+    pub fn connect_row_removed(&self, removed: impl Fn() + 'static) {
+        *self.row_removed.borrow_mut() = Some(Box::new(removed));
+    }
+
+    /// Shows a folder's stored rows. A new read of the folder shown updates
+    /// the list by its difference with the rows shown, with animations; a
+    /// folder shown anew changes at once (specs/010-message-list FR-006). The
+    /// open message stays while it is listed, with its envelope from the new
+    /// row, and what the window alone remembered is forgotten; the same read
+    /// changes nothing. The content is not read again: a text a cycle
+    /// replaced, such as an edited draft's, shows when the message is opened
+    /// again.
+    pub fn show_rows(&self, folder: &FolderRef, rows: &Rc<[MessageListRow]>) {
+        let (same_account, change) = match &*self.listed_rows.borrow() {
+            Some((listed, listed_rows)) if listed == folder && Rc::ptr_eq(listed_rows, rows) => {
+                return;
             }
-            None => (false, false),
+            Some((listed, _)) if listed == folder => (true, ListChange::Animated),
+            Some((listed, _)) => (listed.account == folder.account, ListChange::AtOnce),
+            None => (false, ListChange::AtOnce),
         };
-        if same_read {
-            return;
-        }
         // Identities name messages within one account.
         if !same_account {
             self.clear();
         }
-        update_list_by_difference(&self.items, rows);
-        *self.listed_rows.borrow_mut() = Some((account_id.clone(), rows.clone()));
-        let Some(identity) = self.open_message.borrow().clone() else {
+        *self.listed_rows.borrow_mut() = Some((folder.clone(), rows.clone()));
+        *self.in_window.borrow_mut() = InWindow::default();
+        self.update_shown(change);
+    }
+
+    /// Shows only the unread messages and the open one, or every message.
+    pub fn set_unread_filter(&self, unread_only: bool) {
+        self.unread_only.set(unread_only);
+        self.update_shown(ListChange::AtOnce);
+    }
+
+    /// Whether the list is on and shows only the unread messages.
+    pub fn unread_filter(&self) -> bool {
+        self.unread_only.get()
+    }
+
+    /// Whether the filter or the rows taken out in the window leave none of
+    /// the stored rows in the list (specs/010-message-list FR-008, FR-010).
+    pub fn shows_no_row(&self) -> bool {
+        let Some((_, rows)) = self.listed_rows.borrow().clone() else {
+            return false;
+        };
+        let open = self.open_message.borrow();
+        let in_window = self.in_window.borrow();
+        shown_rows(&rows, self.unread_only.get(), open.as_deref(), &in_window).is_empty()
+    }
+
+    /// Takes a message out of the list in the window only, as its trash
+    /// button does: nothing is stored or sent, and the next read of the
+    /// stored rows lists it again. When it was the open message, the
+    /// neighbour the rule names opens, without bringing the reader forward
+    /// in a narrow window (specs/010-message-list FR-007, FR-010).
+    pub fn remove_in_window(&self, identity: &str) {
+        let Some(position) = position_of(&self.items, identity) else {
             return;
         };
-        match position_of(&self.items, &identity) {
+        self.in_window
+            .borrow_mut()
+            .removed
+            .insert(identity.to_owned());
+        if self.open_message.borrow().as_deref() == Some(identity) {
+            match self.next_after_leaving_at(position) {
+                Some(next) => self.open_message(next, false),
+                None => self.close_reader(),
+            }
+        }
+        self.update_shown(ListChange::Animated);
+        if let Some(removed) = &*self.row_removed.borrow() {
+            removed();
+        }
+    }
+
+    /// The row to open after the open row at `position` leaves: one of its
+    /// neighbours in the list as shown, closed rows left out.
+    fn next_after_leaving_at(&self, position: u32) -> Option<u32> {
+        next_after_leaving(
+            first_shown(&self.items, (0..position).rev()),
+            first_shown(&self.items, position + 1..self.items.n_items()),
+        )
+    }
+
+    /// Makes the list show what the stored rows, the filter, the open
+    /// message and the window's own changes call for, and keeps the open
+    /// message while it is listed, with its envelope from its new row.
+    /// Animated, the rows that leave close first and the list changes once
+    /// they are closed; the rows that arrive then open
+    /// (specs/010-message-list/research.md §10).
+    fn update_shown(&self, change: ListChange) {
+        let Some((_, rows)) = self.listed_rows.borrow().clone() else {
+            return;
+        };
+        // A list off screen draws no frames to open or close its rows in,
+        // and with the system's animations off the rows change at once.
+        let animates =
+            self.messages.is_mapped() && self.messages.settings().is_gtk_enable_animations();
+        let change = match animates {
+            true => change,
+            false => ListChange::AtOnce,
+        };
+        let open = self.open_message.borrow().clone();
+        let in_window = self.in_window.borrow();
+        let shown = shown_rows(&rows, self.unread_only.get(), open.as_deref(), &in_window);
+        match change {
+            ListChange::AtOnce => {
+                self.drop_pending_change();
+                self.change_list(&shown, change, &in_window.read);
+            }
+            ListChange::Animated => {
+                if close_leaving_rows(&self.items, &shown) {
+                    self.change_after_closing();
+                }
+                if self.pending_change.borrow().is_none() {
+                    self.change_list(&shown, change, &in_window.read);
+                }
+            }
+        }
+        drop(in_window);
+        let Some(identity) = open else {
+            return;
+        };
+        let still_listed = shown.iter().any(|row| row.identity == identity);
+        match position_of(&self.items, &identity).filter(|_| still_listed) {
             Some(position) => {
                 self.selection.set_selected(position);
-                self.show_envelope(&rows[position as usize]);
+                self.show_envelope(item_at(&self.items, position).listed());
             }
             None => self.close_reader(),
+        }
+    }
+
+    /// Changes the list to `shown` by difference. The rows closed or come in
+    /// closed open, on the second frame after the change when animated,
+    /// since before that their widgets are not on screen and would jump
+    /// open. A list at its top stays at its top, so rows arriving there are
+    /// seen.
+    fn change_list(
+        &self,
+        shown: &[&MessageListRow],
+        change: ListChange,
+        read_in_window: &HashSet<String>,
+    ) {
+        let at_top = self
+            .messages
+            .vadjustment()
+            .is_some_and(|scrolling| scrolling.value() == 0.0);
+        let closed = update_list_by_difference(&self.items, shown, change, read_in_window);
+        match change {
+            ListChange::AtOnce => closed.iter().for_each(|item| item.show_over(true, 0)),
+            ListChange::Animated if !closed.is_empty() => {
+                let frames = Cell::new(0);
+                self.messages.add_tick_callback(move |_, _| {
+                    frames.set(frames.get() + 1);
+                    if frames.get() < 2 {
+                        return glib::ControlFlow::Continue;
+                    }
+                    for item in &closed {
+                        item.show_over(true, ROW_TRANSITION_MS);
+                    }
+                    glib::ControlFlow::Break
+                });
+            }
+            ListChange::Animated => {}
+        }
+        if at_top && self.items.n_items() > 0 {
+            self.messages
+                .activate_action("list.scroll-to-item", Some(&0_u32.to_variant()))
+                .expect("a list view scrolls to an item");
+        }
+    }
+
+    /// Applies the latest state once the rows that leave are closed. A row
+    /// that starts closing meanwhile, such as a second row sent to the
+    /// trash, starts the wait again, so it closes whole too.
+    fn change_after_closing(&self) {
+        self.drop_pending_change();
+        let mail = self.myself.clone();
+        let pending = glib::timeout_add_local_once(AFTER_CLOSING, move || {
+            if let Some(mail) = mail.upgrade() {
+                mail.pending_change.take();
+                mail.update_shown(ListChange::Animated);
+            }
+        });
+        *self.pending_change.borrow_mut() = Some(pending);
+    }
+
+    fn drop_pending_change(&self) {
+        if let Some(pending) = self.pending_change.take() {
+            pending.remove();
         }
     }
 
@@ -203,8 +432,8 @@ impl MailUi {
     /// The account and identity of the message the reader shows.
     fn open_message_of(&self) -> Option<(AccountId, String)> {
         let identity = self.open_message.borrow().clone()?;
-        let (account_id, _) = self.listed_rows.borrow().clone()?;
-        Some((account_id, identity))
+        let (folder, _) = self.listed_rows.borrow().clone()?;
+        Some((folder.account, identity))
     }
 
     /// Shows a read of the open message's stored content: its text, why it
@@ -241,12 +470,25 @@ impl MailUi {
     }
 
     /// Opens the row's message: its envelope from the row at once, its
-    /// content when the window has read it.
-    fn open_message(&self, position: u32) {
+    /// content when the window has read it; a second later the window counts
+    /// it read. A narrow window brings the reader forward only when asked.
+    /// The list does not change here: the action that opens decides how.
+    fn open_message(&self, position: u32, bring_reader_forward: bool) {
         let Some(item) = self.items.item(position).and_downcast::<MessageItem>() else {
             return;
         };
-        let Some((account_id, _)) = self.listed_rows.borrow().clone() else {
+        // A closing row is leaving the list.
+        if !item.shown() {
+            return;
+        }
+        let Some((
+            FolderRef {
+                account: account_id,
+                ..
+            },
+            _,
+        )) = self.listed_rows.borrow().clone()
+        else {
             return;
         };
         let listed = item.listed();
@@ -256,15 +498,47 @@ impl MailUi {
             "message opened"
         );
         *self.open_message.borrow_mut() = Some(listed.identity.clone());
+        self.count_read_after_opening(&listed.identity);
         self.selection.set_selected(position);
+        // A neighbour opened after the trash may lie outside the visible area.
+        self.messages
+            .activate_action("list.scroll-to-item", Some(&position.to_variant()))
+            .expect("a list view scrolls to an item");
         self.show_envelope(listed);
         // The body stays empty until the content is read.
         self.reader_body.set_text("");
         self.show_body_or_failure(None);
         self.singleton_slot.set_visible(true);
         self.reader_stack.set_visible_child_name("message");
-        self.mail_split.set_show_content(true);
+        if bring_reader_forward {
+            self.mail_split.set_show_content(true);
+        }
         self.request_content(&account_id, &listed.identity);
+    }
+
+    /// Counts the message read in the window a second after it opened,
+    /// unless another opens or the reader closes first (FR-009).
+    fn count_read_after_opening(&self, identity: &str) {
+        self.drop_pending_read();
+        let mail = self.myself.clone();
+        let identity = identity.to_owned();
+        let pending = glib::timeout_add_local_once(READ_AFTER_OPENING, move || {
+            let Some(mail) = mail.upgrade() else {
+                return;
+            };
+            mail.pending_read.take();
+            if let Some(position) = position_of(&mail.items, &identity) {
+                item_at(&mail.items, position).set_unread(false);
+            }
+            mail.in_window.borrow_mut().read.insert(identity);
+        });
+        *self.pending_read.borrow_mut() = Some(pending);
+    }
+
+    fn drop_pending_read(&self) {
+        if let Some(pending) = self.pending_read.take() {
+            pending.remove();
+        }
     }
 
     /// The open message's subject, sender, recipients and date.
@@ -280,8 +554,14 @@ impl MailUi {
             }
             None => self.reader_to.set_visible(false),
         }
-        self.reader_date
-            .set_text(&received_date_text(listed.received_unix, "%c"));
+        let received = listed
+            .received_unix
+            .and_then(|seconds| glib::DateTime::from_unix_local(seconds).ok());
+        self.reader_date.set_text(
+            &received
+                .map(|time| formatted(&time, "%c"))
+                .unwrap_or_default(),
+        );
     }
 
     fn request_content(&self, account_id: &AccountId, identity: &str) {
@@ -305,6 +585,7 @@ impl MailUi {
     }
 
     fn close_reader(&self) {
+        self.drop_pending_read();
         *self.open_message.borrow_mut() = None;
         self.selection.set_selected(gtk::INVALID_LIST_POSITION);
         self.singleton_slot.set_visible(false);
@@ -314,33 +595,35 @@ impl MailUi {
 }
 
 /// Makes the list's row objects follow `rows`: the common beginning and end
-/// stay, with their read state changed in place; one splice replaces the
-/// middle, keeping the object of a message still listed there unchanged, so
-/// the arrival or removal of a few messages rebuilds no other row
-/// (specs/009-synchronization/research.md §9).
-fn update_list_by_difference(items: &gio::ListStore, rows: &[MessageListRow]) {
-    let item_at = |position: usize| {
-        items
-            .item(position as u32)
-            .and_downcast::<MessageItem>()
-            .expect("the list holds message items")
-    };
+/// stay; one splice replaces the middle, keeping the object of a message
+/// still listed there unchanged, so the arrival or removal of a few messages
+/// rebuilds no other row (specs/009-synchronization/research.md §9). Every
+/// row's read state then changes in place, counting the window's reads. An
+/// animated change brings new rows in closed; the closed rows are returned,
+/// to open them.
+fn update_list_by_difference(
+    items: &gio::ListStore,
+    rows: &[&MessageListRow],
+    change: ListChange,
+    read_in_window: &HashSet<String>,
+) -> Vec<MessageItem> {
     let shown = items.n_items() as usize;
     let mut same_start = 0;
     while same_start < shown.min(rows.len())
-        && item_at(same_start).lists_same_message(&rows[same_start])
+        && item_at(items, same_start as u32).lists_same_message(rows[same_start])
     {
         same_start += 1;
     }
     let mut same_end = 0;
     while same_end < (shown - same_start).min(rows.len() - same_start)
-        && item_at(shown - 1 - same_end).lists_same_message(&rows[rows.len() - 1 - same_end])
+        && item_at(items, (shown - 1 - same_end) as u32)
+            .lists_same_message(rows[rows.len() - 1 - same_end])
     {
         same_end += 1;
     }
     let removed: HashMap<String, MessageItem> = (same_start..shown - same_end)
         .map(|position| {
-            let item = item_at(position);
+            let item = item_at(items, position as u32);
             (item.listed().identity.clone(), item)
         })
         .collect();
@@ -348,28 +631,162 @@ fn update_list_by_difference(items: &gio::ListStore, rows: &[MessageListRow]) {
         .iter()
         .map(|row| match removed.get(&row.identity) {
             Some(item) if item.lists_same_message(row) => item.clone(),
-            _ => MessageItem::new(row.clone()),
+            _ => {
+                let item = MessageItem::new((*row).clone());
+                if change == ListChange::Animated {
+                    item.show_over(false, ROW_TRANSITION_MS);
+                }
+                item
+            }
         })
         .collect();
     if !removed.is_empty() || !added.is_empty() {
         items.splice(same_start as u32, removed.len() as u32, &added);
     }
+    let mut closed = Vec::new();
     for (position, row) in rows.iter().enumerate() {
-        let item = item_at(position);
-        if item.unread() == row.seen {
-            item.set_unread(!row.seen);
+        let item = item_at(items, position as u32);
+        let unread = unread_in_window(row, read_in_window);
+        if item.unread() != unread {
+            item.set_unread(unread);
+        }
+        if !item.shown() {
+            closed.push(item);
         }
     }
+    closed
+}
+
+/// Whether a row shows as unread: stored so, and not counted read in the
+/// window (specs/010-message-list FR-009).
+fn unread_in_window(row: &MessageListRow, read_in_window: &HashSet<String>) -> bool {
+    !row.seen && !read_in_window.contains(&row.identity)
+}
+
+/// Starts closing the rows whose message `rows` no longer lists, and says
+/// whether any started.
+fn close_leaving_rows(items: &gio::ListStore, rows: &[&MessageListRow]) -> bool {
+    let listed: HashMap<&str, &MessageListRow> = rows
+        .iter()
+        .map(|row| (row.identity.as_str(), *row))
+        .collect();
+    let mut started = false;
+    for item in (0..items.n_items()).map(|position| item_at(items, position)) {
+        let stays = listed
+            .get(item.listed().identity.as_str())
+            .is_some_and(|row| item.lists_same_message(row));
+        if !stays && item.shown() {
+            item.show_over(false, ROW_TRANSITION_MS);
+            started = true;
+        }
+    }
+    started
+}
+
+/// The first row at `positions` that is not closed, and whether it is
+/// unread.
+fn first_shown(
+    items: &gio::ListStore,
+    positions: impl Iterator<Item = u32>,
+) -> Option<(u32, bool)> {
+    positions
+        .map(|position| (position, item_at(items, position)))
+        .find(|(_, item)| item.shown())
+        .map(|(position, item)| (position, item.unread()))
+}
+
+fn item_at(items: &gio::ListStore, position: u32) -> MessageItem {
+    items
+        .item(position)
+        .and_downcast::<MessageItem>()
+        .expect("the list holds message items")
+}
+
+/// The rows the list shows: the stored rows but those taken out in the
+/// window, and with the unread filter on only the unread ones, counting the
+/// window's reads, and the open message (specs/010-message-list FR-008 to
+/// FR-010).
+fn shown_rows<'a>(
+    rows: &'a [MessageListRow],
+    unread_only: bool,
+    open: Option<&str>,
+    in_window: &InWindow,
+) -> Vec<&'a MessageListRow> {
+    rows.iter()
+        .filter(|row| !in_window.removed.contains(&row.identity))
+        .filter(|row| {
+            !unread_only
+                || unread_in_window(row, &in_window.read)
+                || open == Some(row.identity.as_str())
+        })
+        .collect()
+}
+
+/// The position that opens after the open message leaves the list, from
+/// each neighbour's position and whether it is unread (`None` where there is
+/// none): the one below, unless there is none or only the one above is
+/// unread (specs/010-message-list FR-007).
+fn next_after_leaving(above: Option<(u32, bool)>, below: Option<(u32, bool)>) -> Option<u32> {
+    let next = match (above, below) {
+        (None, None) => None,
+        (Some(_), None) | (Some((_, true)), Some((_, false))) => above,
+        (None, Some(_)) | (Some((_, false)), Some(_)) | (Some((_, true)), Some((_, true))) => below,
+    };
+    next.map(|(position, _)| position)
+}
+
+/// The handlers the row template names: the trash icon slides in beside the
+/// date while the pointer is over the row, turns red, Adwaita's colour for
+/// a destructive action, while the pointer is over the icon itself, and
+/// takes its message out of the list in the
+/// window (specs/010-message-list FR-002, FR-010). A signal with an object
+/// in the form passes that object first.
+fn row_handlers(mail: Weak<MailUi>) -> gtk::BuilderRustScope {
+    let scope = gtk::BuilderRustScope::new();
+    for (handler, reveal) in [("row_entered", true), ("row_left", false)] {
+        scope.add_callback(handler, move |values| {
+            let revealer = values
+                .first()
+                .and_then(|value| value.get::<gtk::Revealer>().ok());
+            revealer
+                .expect("message-row.ui: trash_reveal")
+                .set_reveal_child(reveal);
+            None
+        });
+    }
+    for (handler, pointed) in [("trash_entered", true), ("trash_left", false)] {
+        scope.add_callback(handler, move |values| {
+            let icon = values
+                .first()
+                .and_then(|value| value.get::<gtk::Widget>().ok());
+            let icon = icon.expect("message-row.ui: trash");
+            let (shown, hidden) = match pointed {
+                true => ("error", "dim-label"),
+                false => ("dim-label", "error"),
+            };
+            icon.remove_css_class(hidden);
+            icon.add_css_class(shown);
+            None
+        });
+    }
+    scope.add_callback("trash_row", move |values| {
+        let item = values
+            .first()
+            .and_then(|value| value.get::<gtk::ListItem>().ok())
+            .expect("message-row.ui: the row's list item")
+            .item()
+            .and_downcast::<MessageItem>();
+        if let (Some(mail), Some(item)) = (mail.upgrade(), item) {
+            mail.remove_in_window(&item.listed().identity);
+        }
+        None
+    });
+    scope
 }
 
 /// Where the message with this identity is listed.
 fn position_of(items: &gio::ListStore, identity: &str) -> Option<u32> {
-    (0..items.n_items()).find(|position| {
-        items
-            .item(*position)
-            .and_downcast::<MessageItem>()
-            .is_some_and(|item| item.listed().identity == identity)
-    })
+    (0..items.n_items()).find(|position| item_at(items, *position).listed().identity == identity)
 }
 
 /// The reader widgets that exist once for the window.
@@ -469,16 +886,70 @@ fn subject_text(fields: &DisplayFields) -> String {
     }
 }
 
-/// The received date in local presentation, or nothing when the server sent
-/// no usable date.
-fn received_date_text(received_unix: Option<i64>, format: &str) -> String {
-    let Some(received) =
-        received_unix.and_then(|seconds| glib::DateTime::from_unix_local(seconds).ok())
-    else {
-        return String::new();
+/// The row's received date as the list words it, by the computer's clock,
+/// or nothing when the server sent no usable date
+/// (specs/010-message-list FR-004).
+fn row_date_text(received_unix: Option<i64>) -> String {
+    let received = received_unix.and_then(|seconds| glib::DateTime::from_unix_local(seconds).ok());
+    match (received, glib::DateTime::now_local()) {
+        (Some(received), Ok(now)) => date_wording(&received, &now),
+        _ => String::new(),
+    }
+}
+
+/// How the row words `received` at `now`, both in local time: today's time
+/// in the locale's form, "Yesterday", the weekday within the six days
+/// before, the day and month earlier this year, the locale's short date
+/// before that.
+fn date_wording(received: &glib::DateTime, now: &glib::DateTime) -> String {
+    let format = match days_before(received, now) {
+        0 => locale_time_form(&formatted(now, "%X"), &formatted(now, "%p")),
+        1 => return "Yesterday".to_owned(),
+        2..=6 => "%A",
+        _ if received.year() == now.year() => {
+            let new_years_eve =
+                glib::DateTime::from_local(2000, 12, 31, 0, 0, 0.0).expect("a valid time");
+            day_month_form(&formatted(&new_years_eve, "%x"))
+        }
+        _ => "%x",
     };
-    received
-        .format(format)
+    formatted(received, format)
+}
+
+/// How many local calendar days `received`'s day lies before `now`'s. A
+/// day changing to or from summer time is an hour shorter or longer, so the
+/// difference is rounded.
+fn days_before(received: &glib::DateTime, now: &glib::DateTime) -> i64 {
+    let day_start = |time: &glib::DateTime| {
+        glib::DateTime::from_local(time.year(), time.month(), time.day_of_month(), 0, 0, 0.0)
+            .expect("the start of a valid time's day")
+    };
+    let seconds = day_start(now).difference(&day_start(received)).as_seconds();
+    (seconds as f64 / 86_400.0).round() as i64
+}
+
+/// The locale's time without seconds: the 12-hour form when the locale's
+/// full time shows its AM/PM marker, else the 24-hour form
+/// (specs/010-message-list/research.md §14).
+fn locale_time_form(full_time: &str, am_pm: &str) -> &'static str {
+    match !am_pm.is_empty() && full_time.contains(am_pm) {
+        true => "%-I:%M %p",
+        false => "%H:%M",
+    }
+}
+
+/// The day and the month's name in the locale's order, told by the order
+/// of the day 31 and the month 12 in the locale's short date of 31 December
+/// (specs/010-message-list FR-004).
+fn day_month_form(short_date: &str) -> &'static str {
+    match (short_date.find("31"), short_date.find("12")) {
+        (Some(day), Some(month)) if month < day => "%B %-d",
+        _ => "%-d %B",
+    }
+}
+
+fn formatted(time: &glib::DateTime, format: &str) -> String {
+    time.format(format)
         .map(|text| text.to_string())
         .unwrap_or_default()
 }

@@ -234,7 +234,9 @@ pub(crate) fn message_text(
             false => MessageText::Disappeared,
         };
     }
-    // Headers and bodies may arrive in separate responses, mixed with flag updates.
+    // Headers and bodies may arrive in separate responses, mixed with flag
+    // updates. A partial body arrives with its origin octet, which
+    // `Fetch::section` does not compare.
     paths
         .iter()
         .map(|(header, body)| {

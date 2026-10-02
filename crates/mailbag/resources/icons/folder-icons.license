@@ -44,3 +44,12 @@ Source: the icon `star` of the GNOME icon-development-kit
 (https://gitlab.gnome.org/Teams/Design/icon-development-kit), as the Icon
 Library application 0.0.23 ships it
 Changes: none; the file name gives it an application-specific name.
+
+mailbag-filter-symbolic.svg (in scalable/actions)
+Author: Jakub Steiner (GNOME)
+License: CC0-1.0, as the file's own metadata states (see
+LICENSES/CC0-1.0.txt in the source tree)
+Source: the icon `filter` of the GNOME icon-development-kit
+(https://gitlab.gnome.org/Teams/Design/icon-development-kit), as the Icon
+Library application 0.0.23 ships it
+Changes: none; the file name gives it an application-specific name.

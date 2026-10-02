@@ -17,6 +17,7 @@ fn single_part_requests(uids: &[u32]) -> Vec<TextRequest> {
         .map(|&uid| TextRequest {
             uid,
             parts: TextParts::SinglePartBody,
+            limit: None,
         })
         .collect()
 }
@@ -27,7 +28,7 @@ fn read_text(
 ) -> Result<BTreeMap<u32, MessageText>, crate::ImapError> {
     let mut reader = open_reader(fixture);
     let mut results = BTreeMap::new();
-    run(reader.fetch_text(requests, |uid, text| {
+    run(reader.fetch_text(requests, |uid, _, text| {
         assert!(results.insert(uid, text).is_none(), "UID {uid} twice");
     }))?;
     Ok(results)
@@ -71,10 +72,12 @@ fn split_responses_supply_all_single_and_multipart_sections() {
             TextRequest {
                 uid: 10,
                 parts: TextParts::SinglePartBody,
+                limit: None,
             },
             TextRequest {
                 uid: 20,
                 parts: leaves(&[&[1], &[2]]),
+                limit: None,
             },
         ],
     ));
@@ -122,7 +125,11 @@ fn one_command_reads_each_request_shape_matched_by_uid_and_section() {
         interleave_flag_changes: true,
         ..FixtureSetup::default()
     });
-    let request = |uid, parts| TextRequest { uid, parts };
+    let request = |uid, parts| TextRequest {
+        uid,
+        parts,
+        limit: None,
+    };
     let results = expect_success(read_text(
         &fixture,
         vec![
@@ -235,4 +242,66 @@ fn a_message_that_disappears_is_reported_as_gone() {
     let results = expect_success(read_text(&fixture, single_part_requests(&[10, 20])));
     assert!(matches!(results[&10], MessageText::Received(_)));
     assert_eq!(results[&20], MessageText::Disappeared);
+}
+
+#[test]
+fn a_limited_request_reads_the_first_octets_of_its_bodies_in_its_own_command() {
+    let messages = vec![
+        FixtureMessage::plain_text(10, "first body"),
+        FixtureMessage::multipart(20, &[("plain", "plain words"), ("html", "<p>page</p>")]),
+    ];
+    let fixture = ImapFixture::start(FixtureSetup {
+        messages: messages.clone(),
+        split_fetch_responses: true,
+        ..FixtureSetup::default()
+    });
+    let request = |uid, parts, limit| TextRequest { uid, parts, limit };
+    let mut reader = open_reader(&fixture);
+    let mut results = BTreeMap::new();
+    expect_success(run(reader.fetch_text(
+        vec![
+            request(10, TextParts::SinglePartBody, None),
+            request(10, TextParts::SinglePartBody, Some(5)),
+            request(20, leaves(&[&[2], &[1]]), Some(5)),
+        ],
+        |uid, limit, text| {
+            assert!(results.insert((uid, limit), text).is_none());
+        },
+    )));
+
+    let text_fetches: Vec<Vec<String>> = fixture
+        .log()
+        .fetches
+        .into_iter()
+        .map(|fetch| fetch.items)
+        .collect();
+    assert_eq!(
+        text_fetches,
+        [
+            vec!["UID", "BODY.PEEK[HEADER]", "BODY.PEEK[1]"],
+            vec!["UID", "BODY.PEEK[HEADER]", "BODY.PEEK[1]<0.5>"],
+            vec![
+                "UID",
+                "BODY.PEEK[2.MIME]",
+                "BODY.PEEK[2]<0.5>",
+                "BODY.PEEK[1.MIME]",
+                "BODY.PEEK[1]<0.5>"
+            ],
+        ]
+    );
+    assert_eq!(
+        results[&(10, None)],
+        received(&[(&messages[0].header, "first body")])
+    );
+    assert_eq!(
+        results[&(10, Some(5))],
+        received(&[(&messages[0].header, "first")])
+    );
+    assert_eq!(
+        results[&(20, Some(5))],
+        received(&[
+            (&messages[1].sections["2.MIME"], "<p>pa"),
+            (&messages[1].sections["1.MIME"], "plain"),
+        ])
+    );
 }

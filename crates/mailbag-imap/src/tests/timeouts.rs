@@ -32,8 +32,9 @@ async fn read_text(fixture: &ImapFixture) -> Result<(), crate::ImapError> {
     let requests = vec![TextRequest {
         uid: 10,
         parts: TextParts::SinglePartBody,
+        limit: None,
     }];
-    reader.fetch_text(requests, |_, _| {}).await
+    reader.fetch_text(requests, |_, _, _| {}).await
 }
 
 #[test]

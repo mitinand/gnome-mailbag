@@ -6,9 +6,11 @@
 //! to these properties, so a changed read state updates the shown row in
 //! place (specs/009-synchronization/research.md §9). The texts are made when
 //! a shown row reads them, since a folder may list 100 000 messages and only
-//! a screenful is shown.
+//! a screenful is shown. `shown` and `transition-ms` drive the row's
+//! revealer, which animates its arrival and leaving
+//! (specs/010-message-list/research.md §10).
 
-use super::{received_date_text, sender_text, subject_text};
+use super::{row_date_text, sender_text, subject_text};
 use adw::{glib, prelude::*, subclass::prelude::*};
 use mailbag_domain::MessageListRow;
 use std::cell::{Cell, OnceCell};
@@ -29,12 +31,20 @@ mod imp {
         subject: PhantomData<String>,
         #[property(get = Self::date_text)]
         date_text: PhantomData<String>,
+        #[property(get = Self::preview)]
+        preview: PhantomData<String>,
         #[property(get, set = Self::set_unread)]
         pub(super) unread: Cell<bool>,
         /// "Read" or "Unread", which the row speaks in place of the
         /// decorative dot.
         #[property(get = Self::read_state_text)]
         read_state_text: PhantomData<String>,
+        /// Whether the row is open; a row arriving or leaving is closed.
+        #[property(get, set, default = true)]
+        pub(super) shown: Cell<bool>,
+        /// How long the row takes to open or close; 0 changes it at once.
+        #[property(get, set)]
+        transition_ms: Cell<u32>,
     }
 
     #[glib::object_subclass]
@@ -60,7 +70,12 @@ mod imp {
         }
 
         fn date_text(&self) -> String {
-            received_date_text(self.listed().received_unix, "%x")
+            row_date_text(self.listed().received_unix)
+        }
+
+        /// The stored preview; the row's two lines cut it further.
+        fn preview(&self) -> String {
+            self.listed().preview.clone()
         }
 
         fn set_unread(&self, unread: bool) {
@@ -87,6 +102,7 @@ impl MessageItem {
     /// The row object of a stored message, with the list's text rules.
     pub fn new(row: MessageListRow) -> Self {
         let item: Self = glib::Object::new();
+        item.imp().shown.set(true);
         item.imp().unread.set(!row.seen);
         item.imp()
             .listed
@@ -102,11 +118,19 @@ impl MessageItem {
     }
 
     /// Whether the item shows `row` apart from its read state, which changes
-    /// in place.
+    /// in place; a new preview, such as a draft's edited elsewhere, needs a
+    /// new item.
     pub fn lists_same_message(&self, row: &MessageListRow) -> bool {
         let listed = self.listed();
         listed.identity == row.identity
             && listed.fields == row.fields
             && listed.received_unix == row.received_unix
+            && listed.preview == row.preview
+    }
+
+    /// Opens or closes the row over `transition_ms`.
+    pub fn show_over(&self, shown: bool, transition_ms: u32) {
+        self.set_transition_ms(transition_ms);
+        self.set_shown(shown);
     }
 }

@@ -32,9 +32,10 @@ fn text_is_received_after_the_last_isolated_structure_fails() {
         let requests = [10, 30].map(|uid| TextRequest {
             uid,
             parts: TextParts::SinglePartBody,
+            limit: None,
         });
         let mut received = Vec::new();
-        expect_success(run(reader.fetch_text(requests.to_vec(), |uid, text| {
+        expect_success(run(reader.fetch_text(requests.to_vec(), |uid, _, text| {
             let MessageText::Received(parts) = text else {
                 panic!("UID {uid} must keep its text after isolation");
             };
@@ -57,7 +58,7 @@ fn no_reconnection_is_needed_when_no_text_remains_after_isolation() {
     assert_eq!(structures[&10], None);
     assert_eq!(fixture.log().connections, 2);
     wait_until(|| fixture.log().closed_connections == 2);
-    expect_success(run(reader.fetch_text(Vec::new(), |_, _| {
+    expect_success(run(reader.fetch_text(Vec::new(), |_, _, _| {
         panic!("no text was requested");
     })));
     assert_eq!(fixture.log().connections, 2);

@@ -106,7 +106,7 @@ type Banner = (DeclaredFailure, RetriedOperation);
 enum ShownMail {
     /// The stored rows, and the latest refresh's failure or short list.
     Messages {
-        account_id: AccountId,
+        folder: FolderRef,
         rows: Rc<[MessageListRow]>,
         banner: Option<Banner>,
     },
@@ -204,6 +204,22 @@ impl WindowUi {
                     window.read_message_content(account_id.clone(), identity.to_owned());
                 }
             });
+        let filtering = Rc::downgrade(&window);
+        builder
+            .object::<gtk::ToggleButton>("unread_filter")
+            .expect("mailbag.ui: unread_filter")
+            .connect_toggled(move |toggle| {
+                if let Some(window) = filtering.upgrade() {
+                    window.mail.set_unread_filter(toggle.is_active());
+                    window.render();
+                }
+            });
+        let removing = Rc::downgrade(&window);
+        window.mail.connect_row_removed(move || {
+            if let Some(window) = removing.upgrade() {
+                window.render();
+            }
+        });
         let explaining = Rc::downgrade(&window);
         window.failure_details.connect_clicked(move |_| {
             if let Some(window) = explaining.upgrade() {
@@ -599,9 +615,7 @@ impl WindowUi {
     fn render(&self) {
         let shown_mail = self.shown_mail();
         match &shown_mail {
-            ShownMail::Messages {
-                account_id, rows, ..
-            } => self.mail.show_rows(account_id, rows),
+            ShownMail::Messages { folder, rows, .. } => self.mail.show_rows(folder, rows),
             // A mailbox read again keeps its rows until the read answers, so
             // a read that finds them unchanged keeps the open message.
             ShownMail::Reading { again: true } => {}
@@ -628,6 +642,17 @@ impl WindowUi {
             self.show_account_page(&sidebar);
         } else {
             match shown_mail {
+                // The filter or the window's removals may leave no row.
+                ShownMail::Messages { banner, .. } if self.mail.shows_no_row() => {
+                    match self.mail.unread_filter() {
+                        true => self.show_mail_status(
+                            "No unread messages",
+                            Some("Every message in this folder is read."),
+                        ),
+                        false => self.show_mail_status("Mailbox is empty", None),
+                    }
+                    self.show_banner(banner);
+                }
                 ShownMail::Messages { banner, .. } => {
                     self.list_stack.set_visible_child_name("messages");
                     self.show_banner(banner);
@@ -699,13 +724,13 @@ impl WindowUi {
             description: Some("Choose Refresh Account or Refresh Mailbox in the main menu."),
         };
         let shown = self.shown_mailbox.borrow();
-        let stored = match shown_folder {
-            Some(folder) if shown.folder.as_ref() == Some(folder) => &shown.stored,
-            _ => &StoredMailbox::NotRead,
+        let (read_folder, stored) = match shown_folder {
+            Some(folder) if shown.folder.as_ref() == Some(folder) => (Some(folder), &shown.stored),
+            _ => (None, &StoredMailbox::NotRead),
         };
         match (stored, outcome) {
             (StoredMailbox::Read(Some(rows)), _) if !rows.is_empty() => ShownMail::Messages {
-                account_id: account.clone(),
+                folder: read_folder.expect("only a shown folder is read").clone(),
                 rows: rows.clone(),
                 banner,
             },

@@ -34,6 +34,11 @@ credential an account has; no provider knowledge enters goa-adapter beyond
 recognition. `expires_in` is read for the signature and discarded: a load
 lasts seconds and GOA already renewed anything close to expiry.
 
+**Alternatives considered**: the Gmail API. The token Online Accounts grants
+carries the `https://mail.google.com/` scope, but Online Accounts' own Google
+project has the Gmail API disabled, so every API call is refused with 403
+(checked on 2026-10-01). Gmail is therefore read over IMAP.
+
 ## 2. Signing in with the token
 
 Google's [XOAUTH2 page](https://developers.google.com/workspace/gmail/imap/xoauth2-protocol):

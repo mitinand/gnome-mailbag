@@ -7,10 +7,10 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 /// A sample message as the protocol layer delivers it: the structure the
 /// server would report, and the raw bytes of each section.
-struct Sample {
-    root: MimePart,
+pub(crate) struct Sample {
+    pub(crate) root: MimePart,
     /// Section name, such as `2.1`, to its MIME header and encoded body.
-    sections: BTreeMap<String, (Vec<u8>, Vec<u8>)>,
+    pub(crate) sections: BTreeMap<String, (Vec<u8>, Vec<u8>)>,
     /// The From, To and Subject lines, as BODY[HEADER.FIELDS] returns them.
     header_lines: Vec<u8>,
 }
@@ -36,7 +36,7 @@ fn section_name(section: &[u32]) -> String {
         .join(".")
 }
 
-fn load_sample(name: &str) -> Sample {
+pub(crate) fn load_sample(name: &str) -> Sample {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/fixtures/mime")
         .join(name);
@@ -360,7 +360,7 @@ fn nobody_to_name_gives_no_display_names() {
 }
 
 /// Builds a part the way a server's BODYSTRUCTURE describes one.
-fn part(section: &[u32], media_type: &str, subtype: &str) -> MimePart {
+pub(crate) fn part(section: &[u32], media_type: &str, subtype: &str) -> MimePart {
     MimePart {
         section: section.to_vec(),
         media_type: media_type.to_owned(),
@@ -372,7 +372,7 @@ fn part(section: &[u32], media_type: &str, subtype: &str) -> MimePart {
     }
 }
 
-fn multipart(subtype: &str, children: Vec<MimePart>) -> MimePart {
+pub(crate) fn multipart(subtype: &str, children: Vec<MimePart>) -> MimePart {
     MimePart {
         children,
         ..part(&[], "multipart", subtype)

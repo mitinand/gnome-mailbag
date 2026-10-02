@@ -295,29 +295,31 @@ impl MailboxReader {
         Ok(())
     }
 
-    /// Reads text parts, one command per distinct request shape, and passes the
-    /// result for each requested message to `on_message` before the next command.
+    /// Reads text parts, one command per distinct request shape (its parts and
+    /// limit), and passes the result for each requested message, with the
+    /// request's limit, to `on_message` before the next command.
     /// A refusal the server marks temporary (RFC 5530 `UNAVAILABLE`) fails the
     /// read, as for the structures.
     pub async fn fetch_text(
         &mut self,
         requests: Vec<TextRequest>,
-        mut on_message: impl FnMut(u32, MessageText),
+        mut on_message: impl FnMut(u32, Option<u32>, MessageText),
     ) -> Result<(), ImapError> {
         let messages = requests.len();
-        let mut uids_by_parts = BTreeMap::<TextParts, Vec<u32>>::new();
+        let mut uids_by_shape = BTreeMap::<(TextParts, Option<u32>), Vec<u32>>::new();
         for request in requests {
-            uids_by_parts
-                .entry(request.parts)
+            uids_by_shape
+                .entry((request.parts, request.limit))
                 .or_default()
                 .push(request.uid);
         }
-        let commands = uids_by_parts.len();
-        for (parts, uids) in uids_by_parts {
+        let commands = uids_by_shape.len();
+        for ((parts, limit), uids) in uids_by_shape {
             let paths = section_paths(&parts);
+            let partial = limit.map_or(String::new(), |limit| format!("<0.{limit}>"));
             let items = paths
                 .iter()
-                .map(|(header, body)| format!("BODY.PEEK[{header}] BODY.PEEK[{body}]"))
+                .map(|(header, body)| format!("BODY.PEEK[{header}] BODY.PEEK[{body}]{partial}"))
                 .collect::<Vec<_>>()
                 .join(" ");
             let responses = self.fetch(&uids, &format!("(UID {items})")).await?;
@@ -354,7 +356,7 @@ impl MailboxReader {
                     }
                     MessageText::Received(_) => {}
                 }
-                on_message(uid, text);
+                on_message(uid, limit, text);
             }
         }
         tracing::info!(messages, commands, "text loaded");

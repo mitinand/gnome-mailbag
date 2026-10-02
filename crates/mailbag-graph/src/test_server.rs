@@ -213,6 +213,7 @@ pub fn inbox_message(number: u32) -> serde_json::Value {
         "toRecipients": recipients,
         "receivedDateTime": received.as_str(),
         "isRead": number % 2 == 1,
+        "bodyPreview": format!("Preview of\r\n\r\nmessage {number}"),
         "body": { "contentType": "text", "content": format!("Text {number}") },
     });
     if number == 3 {

@@ -31,6 +31,10 @@ user's word, *mailbox*, where it names the refreshed folder
   (its delta link, not completed, before the one more round) (spec FR-008).
 - `MessageListRow { identity, fields: DisplayFields, received_unix, seen }`:
   a message as the list shows it, without its content.
+- *Amended 2026-09-30 by [Message list](../../010-message-list/spec.md):* every `Message` of `arrived`
+  carries `preview: String`, the preview 010 FR-003 makes with the batch
+  (empty when there is none), and `MessageListRow` carries it as
+  `preview` (010 contracts/message-list.md).
 - `ReceivedContent::NotDownloaded`: the reader says the text was not
   downloaded (spec FR-009).
 - `FailureKind::MailboxChanged` stays only for a UIDVALIDITY that changed
@@ -120,7 +124,9 @@ user's word, *mailbox*, where it names the refreshed folder
   template binds: `identity`, `sender`, `subject`, `date-text`, `unread`,
   and `read-state-text` ("Read" or "Unread") for the row's accessible
   description (research §9). `message-row.ui` is a `GtkListItem` template,
-  its preview hidden in the template; the window builds the
+  its preview hidden in the template (*amended 2026-09-30 by
+  [Message list](../../010-message-list/spec.md): the row shows the preview; its properties and
+  handlers are 010 contracts/message-list.md*); the window builds the
   `GtkBuilderListItemFactory` from the form's bytes, as it loads every form,
   and sets it on the list view that `mailbag.ui` declares.
 - `MailUi::show_rows(account, rows: Rc<[MessageListRow]>)` updates the list

@@ -1126,7 +1126,13 @@ impl Server {
                     } else {
                         &message.sections[section]
                     };
-                    let mut field = format!("BODY[{section}] {{{}}}\r\n", data.len()).into_bytes();
+                    // A partial read answers its first octets with their origin.
+                    let (data, origin) = match partial_length(item) {
+                        Some(length) => (&data[..length.min(data.len())], "<0>"),
+                        None => (&data[..], ""),
+                    };
+                    let mut field =
+                        format!("BODY[{section}]{origin} {{{}}}\r\n", data.len()).into_bytes();
                     field.extend(data);
                     fields.push(field);
                 }
@@ -1231,6 +1237,12 @@ fn body_section(item: &str) -> Option<&str> {
     }
     let start = item.find('[')? + 1;
     Some(&item[start..item.rfind(']')?])
+}
+
+/// The length of a partial read, `<0.N>` after the section, if any.
+fn partial_length(item: &str) -> Option<usize> {
+    let partial = &item[item.rfind(']')? + 1..];
+    partial.strip_prefix("<0.")?.strip_suffix('>')?.parse().ok()
 }
 
 /// Whether a section names a part body rather than a header.

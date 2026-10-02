@@ -31,13 +31,15 @@ const WAIT_LIMIT_SECONDS: u32 = 60;
 const FOLDER_LISTING_PATH: &str = "/me/mailFolders/delta";
 const FOLDER_FIELDS: &str = "id,displayName,parentFolderId,isHidden";
 /// A message's list fields, which a delta entry carries in full for a listed
-/// message and in part for a change.
-pub(crate) const CHANGE_FIELDS: [&str; 5] = [
+/// message and in part for a change. `bodyPreview` is the service's text
+/// preview (specs/010-message-list/research.md §7).
+pub(crate) const CHANGE_FIELDS: [&str; 6] = [
     "subject",
     "from",
     "toRecipients",
     "receivedDateTime",
     "isRead",
+    "bodyPreview",
 ];
 /// Identifiers that survive folder moves, and bodies rendered as text.
 const PREFERENCES: &str = r#"IdType="ImmutableId", outlook.body-content-type="text""#;
@@ -104,6 +106,8 @@ pub struct GraphMessage {
     /// When the message arrived, as seconds since the Unix epoch.
     pub received_unix: Option<i64>,
     pub is_read: bool,
+    /// The beginning of the message's text as the service gives it.
+    pub body_preview: Option<String>,
 }
 
 /// Leaves the received mail out of the record.
