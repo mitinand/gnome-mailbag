@@ -348,7 +348,7 @@ and Mark as Unread change the open message; read on opening stores its
 change; the row shows the star; every row state comes from a read of the
 store (spec FR-001 to FR-004).
 
-- [ ] T024 [US1] Form, edited as text (a list item template; Cambalache
+- [x] T024 [US1] Form, edited as text (a list item template; Cambalache
   cannot open it, 010 research §9), presented as a diff with a rendering
   for approval before the code is written: crates/mailbag/resources/ui/
   message-row.ui gains, in the first line's box between `sender` and
@@ -358,11 +358,11 @@ store (spec FR-001 to FR-004).
   for the star's colour as libadwaita names it); nothing else in the row
   changes. Workbench: no demo fits a mail row; the icon is the stock
   `starred-symbolic` the envelope's toggle uses.
-- [ ] T025 [US1] In crates/mailbag/src/mail_ui/message_item.rs the
+- [x] T025 [US1] In crates/mailbag/src/mail_ui/message_item.rs the
   `starred` property (get, set) seeded from `row.flagged` in `new`;
   `read_state_text` says "Unread, starred" / "Read, starred" when
   starred; `set_unread` and `set_starred` notify it.
-- [ ] T026 [US1] [US2] In crates/mailbag/src/mail_ui.rs: a
+- [x] T026 [US1] [US2] In crates/mailbag/src/mail_ui.rs: a
   `gio::SimpleActionGroup` named `message` inserted on `reader_stack`
   (the envelope's toggle and menu are its descendants) with `star` (stateful,
   boolean state, `change-state` → `change_flag(MessageFlag::Flagged,
@@ -379,7 +379,7 @@ store (spec FR-001 to FR-004).
   `star` action's state and the toggle's icon (`starred-symbolic` while
   starred, `non-starred-symbolic` otherwise) from `listed.flagged`; the
   old `in_window.removed` stays as it is.
-- [ ] T027 [US1] [US2] [US5] In crates/mailbag/src/window_ui.rs:
+- [x] T027 [US1] [US2] [US5] In crates/mailbag/src/window_ui.rs:
   `connect_flag_change` → the change joins a `VecDeque` of pending writes
   and one `run_on_pool(store.write_pending_flag(...))` runs at a time, the
   next starting when it ends (research §14); after each,
@@ -392,7 +392,7 @@ store (spec FR-001 to FR-004).
   crates/mailbag/src/main.rs the `app.mark-scope-read` and
   `app.mark-scope-unread` actions calling the mail pane's `change_flag`
   for the open message.
-- [ ] T028 [P] [US1] [US2] [US5] Tests in crates/mailbag/src/mail_ui/
+- [x] T028 [P] [US1] [US2] [US5] Tests in crates/mailbag/src/mail_ui/
   tests.rs, one GUI test per process: pressing the star stores
   `flagged_pending` for the open message, the row's `starred` and the
   toggle follow after the re-read, and the test loader records no load
@@ -408,10 +408,36 @@ store (spec FR-001 to FR-004).
   `ServerStep::ChangeFlags` shows the row as the store has it and the
   failed-refresh banner with the server's words; a store that refuses the
   write (a read-only file) shows the toast and changes no row.
-- [ ] T029 STOP: run ./scripts/check.sh, git diff --check and each GTK
+- [x] T029 STOP: run ./scripts/check.sh, git diff --check and each GTK
   test one per process; compare the size with plan.md (mailbag ≈ 130;
   tests ≈ 235) and the budget (≤ 600 / ≤ 850); show the row's rendering;
   report, suggest the commit and wait.
+
+Amended on 2026-10-03 at the review of portion 5 (spec FR-002, FR-004,
+Clarifications "the window's review"): the row's star moves under the
+date and becomes a control.
+
+- [x] T034 Amend spec.md (status, Clarifications, FR-002, FR-004),
+  specs/010-message-list/spec.md (status, FR-002), plan.md (decision 6,
+  the row's star in the function map, the optional "star from the row"
+  gone) and this file.
+- [x] T035 STOP: crates/mailbag/resources/ui/message-row.ui: the star
+  leaves the first line and ends the second, after the subject, in a
+  place every row keeps (a fixed width); its icon follows a `star-icon`
+  property of `MessageItem` (filled while starred, the outline while the
+  pointer is over the row, none otherwise); a click gesture claims the
+  press and stars or unstars on release; a motion controller on the row
+  tells the item the pointer is over it. Presented as a diff with a
+  rendering for approval before the code is written.
+- [x] T036 In crates/mailbag/src/mail_ui/message_item.rs the `pointed`
+  and `star-icon` properties; in src/mail_ui.rs the row handlers
+  (`star_pressed` claims the press, `star_row` asks for the opposite
+  star, `row_pointed`/`row_unpointed`) and `change_row_flag(identity,
+  flag, wanted)`; a GUI test in src/mail_ui/tests.rs: the row's star
+  stores the change of its message, open or not, without opening it, the
+  outline shows only while pointed, and the subject keeps its width. Then
+  STOP with ./scripts/check.sh, the GTK tests one per process and the
+  live rendering.
 
 ## Phase 6: final passes (portion 6)
 

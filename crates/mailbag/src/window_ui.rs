@@ -10,7 +10,9 @@
 mod tests;
 
 use crate::accounts::{AccountPage, Selection};
-use crate::failure_declarations::{DeclaredFailure, declare_failure, declare_short_list};
+use crate::failure_declarations::{
+    DeclaredFailure, MESSAGE_NOT_CHANGED, declare_failure, declare_short_list,
+};
 use crate::failure_dialog::{self, RetriedOperation, show_action_button, status_description};
 use crate::mail_ui::MailUi;
 use crate::refreshes::{RefreshOutcome, Refreshes};
@@ -18,13 +20,13 @@ use crate::sidebar_ui::{PageAction, SidebarUi, show_check_progress};
 use adw::{gio, glib, gtk, prelude::*};
 use goa_adapter::AccountUpdate;
 use mailbag_domain::{
-    AccountId, Failure, FailureKind, Folder, FolderRef, MessageListRow, catch_panic,
+    AccountId, Failure, FailureKind, Folder, FolderRef, MessageFlag, MessageListRow, catch_panic,
 };
 use mailbag_providers::{LoadEvent, LoadResult, LoadTarget, LoadsMail, MailProvider};
 use mailbag_store::Store;
 use std::{
     cell::{Cell, RefCell},
-    collections::BTreeSet,
+    collections::{BTreeSet, VecDeque},
     rc::Rc,
     sync::Arc,
 };
@@ -53,10 +55,27 @@ pub struct WindowUi {
     refresh_mailbox: gio::SimpleAction,
     refresh_account: gio::SimpleAction,
     read_stored_mail: gio::SimpleAction,
+    /// The reader header menu's Mark as Read and Mark as Unread, for the
+    /// open message.
+    mark_read: gio::SimpleAction,
+    mark_unread: gio::SimpleAction,
+    /// The user's changes of messages' flags not written yet, in the order
+    /// made; one is written at a time, so a later change lands last
+    /// (specs/011-read-and-star research §14).
+    flag_writes: RefCell<VecDeque<FlagWrite>>,
+    writing_flag: Cell<bool>,
     /// The sidebar box that shows the spinner while a load runs.
     loading_spinner_box: gtk::Box,
     /// How many reads of an opened message's content are running.
     content_reads: Cell<u32>,
+}
+
+/// The user's wanted value of a flag of an account's message.
+struct FlagWrite {
+    account: AccountId,
+    identity: String,
+    flag: MessageFlag,
+    wanted: bool,
 }
 
 /// The shown accounts' folder lists as the window last read them. The
@@ -172,6 +191,10 @@ impl WindowUi {
             refresh_mailbox: gio::SimpleAction::new("refresh-mailbox", None),
             refresh_account: gio::SimpleAction::new("refresh-account", None),
             read_stored_mail: gio::SimpleAction::new("read-stored-mail", None),
+            mark_read: gio::SimpleAction::new("mark-scope-read", None),
+            mark_unread: gio::SimpleAction::new("mark-scope-unread", None),
+            flag_writes: RefCell::default(),
+            writing_flag: Cell::new(false),
             loading_spinner_box,
             content_reads: Cell::new(0),
         });
@@ -204,6 +227,27 @@ impl WindowUi {
                     window.read_message_content(account_id.clone(), identity.to_owned());
                 }
             });
+        let changing = Rc::downgrade(&window);
+        window
+            .mail
+            .connect_flag_change(move |account, identity, flag, wanted| {
+                if let Some(window) = changing.upgrade() {
+                    window.write_flag(FlagWrite {
+                        account: account.clone(),
+                        identity: identity.to_owned(),
+                        flag,
+                        wanted,
+                    });
+                }
+            });
+        for (action, wanted) in [(&window.mark_read, true), (&window.mark_unread, false)] {
+            let marking = Rc::downgrade(&window);
+            action.connect_activate(move |_, _| {
+                if let Some(window) = marking.upgrade() {
+                    window.mail.change_flag(MessageFlag::Seen, wanted);
+                }
+            });
+        }
         let filtering = Rc::downgrade(&window);
         builder
             .object::<gtk::ToggleButton>("unread_filter")
@@ -249,6 +293,12 @@ impl WindowUi {
     /// Refresh Mailbox, for the application to publish under its menu item.
     pub fn refresh_mailbox_action(&self) -> &gio::SimpleAction {
         &self.refresh_mailbox
+    }
+
+    /// Mark as Read and Mark as Unread of the reader header's menu, for the
+    /// application to publish.
+    pub fn mark_actions(&self) -> [&gio::SimpleAction; 2] {
+        [&self.mark_read, &self.mark_unread]
     }
 
     /// Refresh Account, for the application to publish under its menu item.
@@ -571,6 +621,57 @@ impl WindowUi {
         });
     }
 
+    /// Queues the user's change of a message's flag; changes are written one
+    /// at a time in the order made.
+    fn write_flag(self: &Rc<Self>, change: FlagWrite) {
+        self.flag_writes.borrow_mut().push_back(change);
+        if !self.writing_flag.get() {
+            self.write_next_flag();
+        }
+    }
+
+    /// Writes the oldest queued change on GIO's thread pool, then reads the
+    /// shown mailbox again, whose rows show the change, or shows the toast
+    /// of a change not saved and changes no row (specs/011-read-and-star
+    /// FR-001, FR-011); then the next. No load starts: Refresh Mailbox
+    /// sends the change.
+    fn write_next_flag(self: &Rc<Self>) {
+        let Some(change) = self.flag_writes.borrow_mut().pop_front() else {
+            self.writing_flag.set(false);
+            return;
+        };
+        self.writing_flag.set(true);
+        let store = self.store.clone();
+        let window = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let account = change.account.clone();
+            let written = run_on_pool(FailureKind::MailNotSaved, move || {
+                store.write_pending_flag(
+                    &change.account,
+                    &change.identity,
+                    change.flag,
+                    change.wanted,
+                )
+            })
+            .await;
+            if let Err(failure) = &written {
+                tracing::error!(
+                    account = account.as_str(),
+                    cause = ?failure.kind,
+                    "message change not saved"
+                );
+            }
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            match written {
+                Ok(()) => window.read_shown_mailbox_again(),
+                Err(_) => window.sidebar.borrow().show_toast(MESSAGE_NOT_CHANGED),
+            }
+            window.write_next_flag();
+        });
+    }
+
     /// Reads an opened message's stored content on GIO's thread pool and
     /// hands it to the reader, which drops it when another message is open
     /// by then. A failed read writes its error line.
@@ -815,13 +916,14 @@ impl WindowUi {
         failure_dialog::present(&self.list_stack, &failure, retried);
     }
 
-    /// Whether a read of the stored mail is running, for the graphical test
-    /// to wait for.
+    /// Whether a read of the stored mail or a write of a message's flag is
+    /// running, for the graphical test to wait for.
     #[cfg(test)]
-    pub fn reads_stored_mail(&self) -> bool {
+    pub fn works_on_stored_mail(&self) -> bool {
         self.content_reads.get() > 0
             || self.folder_lists.borrow().reading
             || self.shown_mailbox.borrow().is_reading()
+            || self.writing_flag.get()
     }
 }
 

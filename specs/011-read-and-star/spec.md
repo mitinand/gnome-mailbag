@@ -13,7 +13,9 @@ live servers the same day, are recorded under Clarifications and
 Assumptions. Challenged on 2026-10-02 (the requirements, then the plan's
 mechanisms, in fresh sessions), analysed for consistency and reviewed
 once more from outside on 2026-10-03; the decisions are under
-Clarifications.
+Clarifications. FR-002 and FR-004 amended on 2026-10-03 at the review of
+the window: the row's star stands under the date and stars or unstars
+its message (Clarifications, the window's review).
 **Input**: Marking a message read or unread and starring or unstarring it
 are the first changes the user makes that last: they survive a refresh and
 a restart, reach the server, and show up in every other client of the
@@ -295,7 +297,8 @@ the stored state, the banner and the server's record are compared.
   and an exception for read on opening.
 - Q: Where is the star in the row? → A: In the first line, before the
   date (FR-004); a star under the dot in the status column was shown and
-  found odd. Form change approved by the maintainer.
+  found odd. Form change approved by the maintainer. (Superseded at the
+  window's review, below.)
 - Q: Which controls act? → A: The envelope's star toggle, Mark as Unread
   in the message menu, and Mark as Read and Mark as Unread in the reader
   header's menu, all on the open message (FR-002). No keyboard shortcuts
@@ -394,6 +397,19 @@ the stored state, the banner and the server's record are compared.
   command line.
 - Q: Test budget. → A: Raised to 850 for the two race tests.
 
+### Session 2026-10-03 (the window's review)
+
+- Q: Where is the row's star, and can the row change it? → A: Under the
+  date, at the end of the second line, in a place every row keeps so that
+  nothing moves when it shows. While the pointer is over the row, an
+  outline star shows there; a click on it stars the row's message, a
+  click on the filled star unstars it, and neither click opens the
+  message (FR-002, FR-004). Without a pointer, as on a touch screen, only
+  the filled star shows, so the row can unstar but not star; the
+  envelope's star stays the full path. The maintainer's choice after
+  seeing the first line's star in the live window, with the place kept
+  rather than the star sliding in.
+
 ## Requirements
 
 ### Functional Requirements
@@ -417,7 +433,8 @@ the stored state, the banner and the server's record are compared.
   and unstarred by the star toggle in the reader's envelope, which shows
   the effective state with the filled star icon while the message is
   starred, and marked unread by Mark as Unread in the message menu; the reader header's menu offers Mark as Read and Mark as Unread
-  for the open message. Each action stores its change; the row and the
+  for the open message. A row's star (FR-004) stars and unstars that
+  row's message, open or not, without opening it. Each action stores its change; the row and the
   reader then show it from the store (FR-001). Mark as Unread leaves the message open
   and unread; it is not counted read again until it is opened anew. A
   message that is already in the wanted state is left as it is. The
@@ -433,11 +450,16 @@ the stored state, the banner and the server's record are compared.
   The window writes its changes one at a time, in the order of the user's
   actions, so a wish made while an earlier write is still running lands
   after it.
-- **FR-004 — The star in the row**: A row MUST show a star mark at the
-  end of its first line, before the date, while the message's effective
-  state is starred, and none otherwise, changing in place; the row's
+- **FR-004 — The star in the row**: A row MUST show a filled star at the
+  end of its second line, under the date, while the message's effective
+  state is starred, changing in place; every row keeps that place, so the
+  subject never moves when a star shows. While the pointer is over a row
+  whose message is not starred, an outline star shows in that place. A
+  click on the star, outline or filled, asks for the opposite state of
+  that row's message (FR-002) and does not open the message. The row's
   accessible description says "Starred" with its read state. (Amends 010
-  FR-002 and FR-011(b); the form change was approved on 2026-10-02.)
+  FR-002 and FR-011(b); the form change was approved on 2026-10-02 and
+  amended on 2026-10-03.)
 
 **Sending**
 

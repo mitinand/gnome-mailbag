@@ -30,7 +30,9 @@
             <child>
               <object class="GtkEventControllerMotion">
                 <signal name="enter" handler="row_entered" object="trash_reveal"/>
+                <signal name="enter" handler="row_pointed" object="GtkListItem"/>
                 <signal name="leave" handler="row_left" object="trash_reveal"/>
+                <signal name="leave" handler="row_unpointed" object="GtkListItem"/>
               </object>
             </child>
             <child>
@@ -46,7 +48,6 @@
                     <property name="halign">center</property>
                     <property name="icon-name">media-record-symbolic</property>
                     <property name="pixel-size">8</property>
-                    <property name="tooltip-text" translatable="yes">Unread</property>
                     <binding name="visible">
                       <lookup name="unread" type="MessageItem">
                         <lookup name="item">GtkListItem</lookup>
@@ -138,15 +139,48 @@
                   </object>
                 </child>
                 <child>
-                  <object class="GtkLabel" id="subject">
-                    <property name="ellipsize">end</property>
-                    <binding name="label">
-                      <lookup name="subject" type="MessageItem">
-                        <lookup name="item">GtkListItem</lookup>
-                      </lookup>
-                    </binding>
-                    <property name="max-width-chars">1</property>
-                    <property name="xalign">0</property>
+                  <object class="GtkBox">
+                    <child>
+                      <object class="GtkLabel" id="subject">
+                        <property name="ellipsize">end</property>
+                        <property name="hexpand">true</property>
+                        <binding name="label">
+                          <lookup name="subject" type="MessageItem">
+                            <lookup name="item">GtkListItem</lookup>
+                          </lookup>
+                        </binding>
+                        <property name="max-width-chars">1</property>
+                        <property name="xalign">0</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkImage" id="star">
+                        <property name="accessible-role">button</property>
+                        <binding name="icon-name">
+                          <lookup name="star-icon" type="MessageItem">
+                            <lookup name="item">GtkListItem</lookup>
+                          </lookup>
+                        </binding>
+                        <property name="margin-start">6</property>
+                        <property name="pixel-size">14</property>
+                        <property name="valign">center</property>
+                        <property name="width-request">20</property>
+                        <accessibility>
+                          <property name="label" translatable="yes">Star</property>
+                        </accessibility>
+                        <binding name="css-classes">
+                          <lookup name="star-style" type="MessageItem">
+                            <lookup name="item">GtkListItem</lookup>
+                          </lookup>
+                        </binding>
+                        <child>
+                          <object class="GtkGestureClick">
+                            <signal name="pressed" handler="star_pressed"/>
+                            <signal name="released" handler="star_row" object="GtkListItem"/>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
                   </object>
                 </child>
                 <child>

@@ -4,7 +4,7 @@
 **Created**: 2026-09-30
 **Status**: Approved on 2026-09-30 (tasks T001). FR-002, FR-009,
 FR-011(b) and the Row entity amended on 2026-10-03 by
-[Read and star](../011-read-and-star/spec.md): the row shows a star before the date, the
+[Read and star](../011-read-and-star/spec.md): the row shows a star under the date, the
 second's read state is stored and sent, the window's own record of
 messages counted read is retired, and a row's read state and star are
 the store's effective values. Sized at the feature-start on 2026-09-30 (budget: at most
@@ -422,8 +422,10 @@ compared with the rule in the user's locale.
   button over both preview lines on 2026-10-02, the maintainer's choice
   after the live check); pressing it is FR-010. Nothing else is shown in the row: no
   attachment, thread or account marker (FR-011). *Amended 2026-10-03 by
-  [Read and star](../011-read-and-star/spec.md)*: a star mark stands at the end of the first
-  line, before the date, while the message is starred (011 FR-004).
+  [Read and star](../011-read-and-star/spec.md)*: a star stands at the end of the second
+  line, under the date, while the message is starred, and an outline star
+  shows there while the pointer is over the row; a click on it stars or
+  unstars the message (011 FR-004).
 - **FR-003 — A preview for every message**: Every stored message MUST have
   a preview: the first words of its text as the user would read them,
   made once, with the batch that stores the message and off the window's

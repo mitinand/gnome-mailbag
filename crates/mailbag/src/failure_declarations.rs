@@ -47,6 +47,11 @@ pub enum FailureAction {
     OnlineAccounts,
 }
 
+/// The toast for the user's change to a message that the store could not
+/// write: title and advice in one line (specs/011-read-and-star FR-011;
+/// specs/006-error-handling FR-006).
+pub const MESSAGE_NOT_CHANGED: &str = "Message not changed. Try again.";
+
 /// The words that name the failed load: the account's folder list when Retry
 /// refreshes the account, otherwise the mailbox (specs/008-folders FR-011).
 fn choose_by_load(

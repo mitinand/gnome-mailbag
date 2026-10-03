@@ -4,7 +4,9 @@
 use super::message_item::MessageItem;
 use super::*;
 use crate::accounts::Selection;
-use crate::failure_declarations::{declare_content, declare_failure, declare_short_list};
+use crate::failure_declarations::{
+    MESSAGE_NOT_CHANGED, declare_content, declare_failure, declare_short_list,
+};
 use crate::failure_dialog::RetriedOperation;
 use crate::test_directory::TestDirectory;
 use crate::window_ui::WindowUi;
@@ -14,8 +16,8 @@ use goa_adapter::{
 };
 use mailbag_domain::{
     AccountId, ContentExplanation, Failure, FailureKind, Folder, FolderBatch, FolderRef,
-    FolderRole, FolderState, IncompleteList, Message, MessageFlags, RemoteSource, RemoteText,
-    ServerStep,
+    FolderRole, FolderState, IncompleteList, Message, MessageFlag, MessageFlags, PendingChange,
+    RemoteSource, RemoteText, ServerStep,
 };
 use mailbag_providers::{
     CancelsLoadOnDrop, LoadEvent, LoadResult, LoadTarget, LoadsMail, MailProvider,
@@ -164,6 +166,14 @@ impl ScriptedLoader {
         if write == StoreWrite::Stored {
             (started.on_event)(LoadEvent::StoreChanged);
         }
+    }
+
+    /// Reports that the running load changed the store, as a cycle does
+    /// after dropping a change the server refused; the test changed it.
+    fn report_store_changed(&self) {
+        let mut loads = self.started_loads.borrow_mut();
+        let started = loads.last_mut().expect("a load is running");
+        (started.on_event)(LoadEvent::StoreChanged);
     }
 
     /// Ends the running folder-list load as a completed one, as the worker
@@ -383,7 +393,7 @@ fn settle(ui: &WindowUi) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         dispatch_pending();
-        if !ui.reads_stored_mail() {
+        if !ui.works_on_stored_mail() {
             return;
         }
         assert!(Instant::now() < deadline, "the stored mail was not read");
@@ -1418,7 +1428,7 @@ fn batches_update_the_shown_folder() {
     ui.apply_account_update(&imap_and_google_accounts());
     assert!(widgets.banner().is_revealed());
     assert_eq!(widgets.rows().len(), 2);
-    while ui.reads_stored_mail() {
+    while ui.works_on_stored_mail() {
         dispatch_pending();
         assert!(widgets.banner().is_revealed());
     }
@@ -1604,6 +1614,81 @@ fn message_received(identity: &str, hours_ago: i64, seen: bool) -> Message {
         flagged: false,
         content: ReceivedContent::NotDownloaded,
         preview: format!("Preview of {identity}"),
+    }
+}
+
+/// The first widget of `identity`'s row on screen that `matches`.
+fn row_widget<T: IsA<gtk::Widget>>(
+    widgets: &WindowWidgets,
+    identity: &str,
+    matches: impl Fn(&T) -> bool,
+) -> T {
+    let sender = format!("Sender of {identity}");
+    let row = shown_row_boxes(widgets)
+        .into_iter()
+        .find(|row| {
+            descendants::<gtk::Label>(row)
+                .iter()
+                .any(|label| label.text() == sender)
+        })
+        .expect("the row on screen");
+    descendants::<T>(&row)
+        .into_iter()
+        .find(|widget| matches(widget))
+        .expect("the row's widget")
+}
+
+/// The star under the row's date: the image that acts as a button and is
+/// not the trash.
+fn row_star(widgets: &WindowWidgets, identity: &str) -> gtk::Image {
+    row_widget::<gtk::Image>(widgets, identity, |image| {
+        image.accessible_role() == gtk::AccessibleRole::Button
+            && image.icon_name().as_deref() != Some("user-trash-symbolic")
+    })
+}
+
+/// Moves the pointer onto the row (`enter`) or off it (`leave`).
+fn point_at_row(widgets: &WindowWidgets, identity: &str, crossing: &str) {
+    let row = row_widget::<gtk::Widget>(widgets, identity, |widget| {
+        widget.parent().and_downcast::<gtk::Revealer>().is_some()
+    });
+    let motion = (row.observe_controllers().into_iter().flatten())
+        .find_map(|controller| controller.downcast::<gtk::EventControllerMotion>().ok())
+        .expect("the row's pointer controller");
+    match crossing {
+        "enter" => motion.emit_by_name::<()>("enter", &[&1.0_f64, &1.0_f64]),
+        _ => motion.emit_by_name::<()>("leave", &[]),
+    }
+}
+
+/// Presses and releases the star, as a click does.
+fn click_star(star: &gtk::Image) {
+    let press = star
+        .observe_controllers()
+        .into_iter()
+        .find_map(|controller| controller.ok()?.downcast::<gtk::GestureClick>().ok())
+        .expect("the star's click");
+    for signal in ["pressed", "released"] {
+        press.emit_by_name::<()>(signal, &[&1_i32, &0.0_f64, &0.0_f64]);
+    }
+    dispatch_pending();
+}
+
+/// The envelope's star, which the reader holds.
+fn star_button(widgets: &WindowWidgets) -> gtk::ToggleButton {
+    let reader: gtk::Widget = widgets.builder.object("reader_stack").expect("reader");
+    descendants::<gtk::ToggleButton>(&reader)
+        .into_iter()
+        .find(|button| button.action_name().as_deref() == Some("message.star"))
+        .expect("the envelope's star")
+}
+
+fn pending_change(identity: &str, flag: MessageFlag, wanted: bool, server: bool) -> PendingChange {
+    PendingChange {
+        identity: identity.to_owned(),
+        flag,
+        wanted,
+        server,
     }
 }
 
@@ -1868,13 +1953,12 @@ fn the_trash_button_removes_the_row_in_the_window() {
     window.destroy();
 }
 
-/// An opened message counts as read in the window after a second, not
-/// before and not when left sooner; under the filter it stays listed until
-/// another opens; a read of the stored rows shows the stored state again
-/// (010 FR-008, FR-009; SC-004, SC-009).
+/// An opened unread message is marked read a second after opening, in the
+/// store, so a refresh keeps it read; one left within the second stays
+/// unread, and no load starts (010 FR-009; 011 FR-003, SC-007).
 #[test]
 #[ignore = "requires a graphical GTK session"]
-fn an_opened_message_counts_as_read_after_a_second() {
+fn an_opened_message_is_marked_read_after_a_second_for_good() {
     adw::init().expect("GTK display");
     let messages = [
         message_received("uid:30", 1, false),
@@ -1882,33 +1966,251 @@ fn an_opened_message_counts_as_read_after_a_second() {
         message_received("uid:10", 3, false),
     ];
     let (window, ui, loader, widgets) = window_with_inbox(&messages);
+    let inbox = folder_of(&account("synthetic-generic"), "INBOX");
+    let pending = || loader.store.read_pending_changes(&inbox).unwrap();
     let filter: gtk::ToggleButton = widgets.builder.object("unread_filter").expect("filter");
     filter.set_active(true);
     settle(&ui);
-    // Left within half a second, the message keeps its dot.
+    // Left within half a second, the message stays unread.
     widgets.open_row(2);
     run_for(Duration::from_millis(500));
+    let opened = Instant::now();
     widgets.open_row(0);
-    run_for(Duration::from_millis(800));
-    assert!(shows_unread_dot(&widgets.rows()[2]));
-    assert!(shows_unread_dot(&widgets.rows()[0]));
-    run_for(Duration::from_millis(700));
+    run_for(Duration::from_millis(500));
+    assert_eq!(pending(), []);
+    wait_until(|| !pending().is_empty());
+    let marked_after = opened.elapsed();
+    assert!(
+        (Duration::from_millis(800)..Duration::from_millis(1500)).contains(&marked_after),
+        "{marked_after:?}"
+    );
+    assert_eq!(
+        pending(),
+        [pending_change("uid:30", MessageFlag::Seen, true, false)]
+    );
+    settle(&ui);
     assert!(!shows_unread_dot(&widgets.rows()[0]));
+    assert!(shows_unread_dot(&widgets.rows()[2]));
+    assert_eq!(loader.running_loads(), 0);
     // The read message stays listed while open and leaves when another opens.
     assert_eq!(listed_identities(&widgets), ["uid:30", "uid:20", "uid:10"]);
     widgets.open_row(1);
     settle(&ui);
     assert_eq!(listed_identities(&widgets), ["uid:20", "uid:10"]);
-    // The filter toggled does not bring the dot back.
+    // A refresh that finds the server's unread state keeps it read.
     filter.set_active(false);
-    settle(&ui);
-    assert!(!shows_unread_dot(&widgets.rows()[0]));
-    // A read of the stored rows shows their stored state.
     ui.refresh_mailbox_action().activate(None);
     settle(&ui);
     loader.report_stored(&messages, None);
     settle(&ui);
-    assert!(widgets.rows().iter().all(shows_unread_dot));
+    assert!(!shows_unread_dot(&widgets.rows()[0]));
+    window.destroy();
+}
+
+/// The envelope's star and the menus' Mark as Read and Mark as Unread store
+/// the open message's change, which its row and the star show once read
+/// again, without a load; a change the server refused comes back with the
+/// refresh's failure (011 FR-001 to FR-004, FR-010; SC-001's window side).
+#[test]
+#[ignore = "requires a graphical GTK session"]
+fn the_star_and_the_mark_actions_change_the_open_message_in_the_store() {
+    use MessageFlag::Flagged;
+    adw::init().expect("GTK display");
+    let messages = [
+        message_received("uid:20", 2, true),
+        message_received("uid:10", 3, false),
+    ];
+    let (window, ui, loader, widgets) = window_with_inbox(&messages);
+    let inbox = folder_of(&account("synthetic-generic"), "INBOX");
+    let pending = || loader.store.read_pending_changes(&inbox).unwrap();
+    let star = star_button(&widgets);
+    widgets.open_row(0);
+    settle(&ui);
+    assert!(!star.is_active());
+    star.emit_clicked();
+    settle(&ui);
+    assert_eq!(pending(), [pending_change("uid:20", Flagged, true, false)]);
+    assert!(widgets.rows()[0].starred());
+    assert!(star.is_active());
+    assert_eq!(star.icon_name().as_deref(), Some("starred-symbolic"));
+    assert_eq!(loader.running_loads(), 0);
+    // Marked unread after it was marked read, the message stays open and
+    // unread: no second after opening marks it read again.
+    widgets.open_row(1);
+    run_for(Duration::from_millis(1300));
+    settle(&ui);
+    assert!(!shows_unread_dot(&widgets.rows()[1]));
+    let reader: gtk::Widget = widgets.builder.object("reader_stack").expect("reader");
+    reader
+        .activate_action("message.mark-unread", None)
+        .expect("the message actions");
+    settle(&ui);
+    run_for(Duration::from_secs(2));
+    settle(&ui);
+    assert!(shows_unread_dot(&widgets.rows()[1]));
+    assert_eq!(widgets.selected_row(), Some(1));
+    let seen_wanted = || {
+        pending()
+            .into_iter()
+            .find(|change| change.identity == "uid:10")
+            .map(|change| change.wanted)
+    };
+    assert_eq!(seen_wanted(), Some(false));
+    // Marked unread within the second after opening, it is not marked read
+    // when the second ends (research §14).
+    widgets.open_row(0);
+    settle(&ui);
+    widgets.open_row(1);
+    run_for(Duration::from_millis(300));
+    reader
+        .activate_action("message.mark-unread", None)
+        .expect("the message actions");
+    run_for(Duration::from_millis(1500));
+    settle(&ui);
+    assert!(shows_unread_dot(&widgets.rows()[1]));
+    assert_eq!(seen_wanted(), Some(false));
+    // Changes made at once are written in the order made.
+    let [mark_read, mark_unread] = ui.mark_actions();
+    for (actions, wanted) in [
+        ([mark_read, mark_unread, mark_read], true),
+        ([mark_unread, mark_read, mark_unread], false),
+    ] {
+        actions.iter().for_each(|action| action.activate(None));
+        settle(&ui);
+        assert_eq!(seen_wanted(), Some(wanted));
+    }
+    assert_eq!(loader.running_loads(), 0);
+    // The refresh's cycle drops the star the server refused and fails.
+    ui.refresh_mailbox_action().activate(None);
+    settle(&ui);
+    loader
+        .store
+        .drop_pending_flags(&inbox.account, &["uid:20".to_owned()], Flagged, true)
+        .unwrap();
+    loader.report_store_changed();
+    settle(&ui);
+    assert!(!widgets.rows()[0].starred());
+    let refused = Failure {
+        kind: FailureKind::ServerStepFailed(ServerStep::ChangeFlags),
+        remote_texts: vec![RemoteText {
+            source: RemoteSource::ServerReply,
+            text: "Flags are locked".to_owned(),
+        }],
+        details: String::new(),
+    };
+    loader.report(LoadResult::Failed(refused.clone()));
+    settle(&ui);
+    let declared = declare_failure(&refused, RetriedOperation::RefreshMailbox);
+    assert_eq!(widgets.banner_title(), Some(declared.title.to_owned()));
+    window.destroy();
+}
+
+/// The star under the date shows its outline while the pointer is over its
+/// row, in a place the subject never takes, and stars or unstars the row's
+/// message, open or not, without opening it (011 FR-002, FR-004).
+#[test]
+#[ignore = "requires a graphical GTK session"]
+fn the_row_star_changes_its_message_without_opening_it() {
+    adw::init().expect("GTK display");
+    let messages = [
+        message_received("uid:20", 2, true),
+        message_received("uid:10", 3, false),
+    ];
+    let (window, ui, loader, widgets) = window_with_inbox(&messages);
+    let inbox = folder_of(&account("synthetic-generic"), "INBOX");
+    let wanted_star = || {
+        (loader
+            .store
+            .read_pending_changes(&inbox)
+            .unwrap()
+            .into_iter())
+        .find(|change| change.identity == "uid:10" && change.flag == MessageFlag::Flagged)
+        .map(|change| change.wanted)
+    };
+    widgets.open_row(0);
+    settle(&ui);
+    // Laid out before the subject is measured.
+    run_for(Duration::from_millis(100));
+    let subject_width = row_widget::<gtk::Label>(&widgets, "uid:10", |label| {
+        label.text() == "Subject of uid:10"
+    })
+    .width();
+    let star = || row_star(&widgets, "uid:10");
+    assert_eq!(star().icon_name(), None);
+    point_at_row(&widgets, "uid:10", "enter");
+    assert_eq!(star().icon_name().as_deref(), Some("non-starred-symbolic"));
+    assert!(star().has_css_class("dim-label"));
+    run_for(Duration::from_millis(100));
+    let subject = row_widget::<gtk::Label>(&widgets, "uid:10", |label| {
+        label.text() == "Subject of uid:10"
+    });
+    assert_eq!(subject.width(), subject_width);
+    // The outline stars the message; the open one stays open.
+    click_star(&star());
+    settle(&ui);
+    assert_eq!(wanted_star(), Some(true));
+    assert!(widgets.rows()[1].starred());
+    assert_eq!(widgets.selected_row(), Some(0));
+    assert_eq!(widgets.reader_subject(), "Subject of uid:20");
+    assert_eq!(star().icon_name().as_deref(), Some("starred-symbolic"));
+    assert!(star().has_css_class("warning"));
+    // Without the pointer only the filled star shows, and it unstars.
+    point_at_row(&widgets, "uid:10", "leave");
+    assert_eq!(star().icon_name().as_deref(), Some("starred-symbolic"));
+    click_star(&star());
+    settle(&ui);
+    assert_eq!(wanted_star(), Some(false));
+    assert_eq!(star().icon_name(), None);
+    // Where no star shows, a click asks for nothing.
+    click_star(&star());
+    settle(&ui);
+    assert_eq!(wanted_star(), Some(false));
+    assert_eq!(loader.running_loads(), 0);
+    window.destroy();
+}
+
+/// A change the store cannot write shows a toast and changes no row
+/// (011 FR-011).
+#[test]
+#[ignore = "requires a graphical GTK session"]
+fn a_change_the_store_cannot_write_shows_a_toast() {
+    adw::init().expect("GTK display");
+    let directory = TestDirectory::new();
+    let store_path = directory.store_path();
+    let generic = account("synthetic-generic");
+    store_mail(
+        &Store::at(store_path.clone()),
+        &generic,
+        &[message_received("uid:20", 2, true)],
+    );
+    for suffix in ["", "-wal", "-shm"] {
+        let mut file = store_path.clone().into_os_string();
+        file.push(suffix);
+        if let Ok(metadata) = std::fs::metadata(&file) {
+            let mut permissions = metadata.permissions();
+            permissions.set_readonly(true);
+            std::fs::set_permissions(&file, permissions).unwrap();
+        }
+    }
+    let (window, ui, loader, widgets) = open_window(Arc::new(Store::at(store_path)));
+    ui.apply_account_update(&imap_and_google_accounts());
+    settle(&ui);
+    widgets.select(&ui, &generic, Some("INBOX"));
+    settle(&ui);
+    widgets.open_row(0);
+    settle(&ui);
+    let star = star_button(&widgets);
+    star.emit_clicked();
+    settle(&ui);
+    let toasts: gtk::Widget = widgets.builder.object("toasts").expect("toasts");
+    wait_until(|| {
+        descendants::<gtk::Label>(&toasts)
+            .iter()
+            .any(|label| label.label() == MESSAGE_NOT_CHANGED)
+    });
+    assert!(!widgets.rows()[0].starred());
+    assert!(!star.is_active());
+    assert_eq!(loader.running_loads(), 0);
     window.destroy();
 }
 
@@ -2064,7 +2366,7 @@ fn listed_row(identity: &str, seen: bool) -> MessageListRow {
 /// unread filter.
 fn update_list(items: &gio::ListStore, rows: &[MessageListRow]) {
     let rows: Vec<&MessageListRow> = rows.iter().collect();
-    update_list_by_difference(items, &rows, ListChange::AtOnce, &HashSet::new());
+    update_list_by_difference(items, &rows, ListChange::AtOnce);
 }
 
 /// Each change of a list's items as `(position, removed, added)`.
@@ -2348,14 +2650,13 @@ fn the_next_message_is_the_unread_neighbour_or_else_the_one_below() {
 }
 
 #[test]
-fn the_window_s_own_reads_and_removals_change_the_rows_shown() {
+fn the_window_s_removals_and_the_filter_change_the_rows_shown() {
     let rows = [
         listed_row("removed", false),
-        listed_row("read in window", false),
+        listed_row("read", true),
         listed_row("unread", false),
     ];
     let in_window = InWindow {
-        read: HashSet::from(["read in window".to_owned()]),
         removed: HashSet::from(["removed".to_owned()]),
     };
     let identities = |unread_only| -> Vec<&str> {
@@ -2364,7 +2665,7 @@ fn the_window_s_own_reads_and_removals_change_the_rows_shown() {
             .map(|row| row.identity.as_str())
             .collect()
     };
-    assert_eq!(identities(false), ["read in window", "unread"]);
+    assert_eq!(identities(false), ["read", "unread"]);
     assert_eq!(identities(true), ["unread"]);
 }
 
@@ -2379,7 +2680,7 @@ fn an_animated_change_closes_the_rows_that_leave_and_brings_new_ones_in_closed()
     assert_eq!(shown, [true, false, true]);
     assert!(!close_leaving_rows(&items, &second));
     // Then the change comes in, "d" closed until it opens.
-    update_list_by_difference(&items, &second, ListChange::Animated, &HashSet::new());
+    update_list_by_difference(&items, &second, ListChange::Animated);
     assert_eq!(identities(&items), ["d", "c", "a"]);
     let shown: Vec<bool> = item_list(&items).iter().map(|item| item.shown()).collect();
     assert_eq!(shown, [false, true, true]);

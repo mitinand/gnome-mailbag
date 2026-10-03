@@ -232,6 +232,15 @@ flowchart TD
 **`mailbag::mail_ui::message_item`**: `starred` property bound by the row
 form; `read_state_text` says "Starred" too.
 
+**The row's star** (amended 2026-10-03): `message-row.ui` holds the star
+in the second line, after the subject, always allocated; its icon and
+opacity follow `starred` and whether the pointer is over the row. Its
+click gesture claims the press, so the list's own click, which opens the
+message on release in the bubble phase (GTK 4.22
+`gtklistfactorywidget.c`), never sees it; on release
+`MailUi::change_row_flag(identity, Flagged, !starred)` asks the window as
+`change_flag` does for the open message.
+
 **`mailbag::window_ui`**
 
 - `connect_flag_change`: the requested changes queue in a `VecDeque`
@@ -265,7 +274,6 @@ Not in the minimal version; each with the situation that would call for it.
 | Re-read the text only when list fields differ | On Microsoft 365 a star on a recent message comes back as a full entry and 009 re-reads its text once (research §6); many stars on recent mail cost one GET each | ≈ 20 |
 | Smaller PATCH answers | The service returns the whole message (≈ 85 KB) to every change; on a slow link ten changes cost nearly a megabyte | unknown: a `Prefer: return=minimal` the service may not honour |
 | Keep a pending change through a refusal the server marks temporary | Throttling or `UNAVAILABLE` drops the user's star with a truthful banner; the maintainer chose to treat every server error alike | ≈ 10 |
-| Star from the row | Users expect to star without opening | with the selection the list will gain (spec FR-013) |
 
 ## Decisions for the maintainer
 
@@ -282,7 +290,10 @@ Taken on 2026-10-02 and 2026-10-03; recorded in the spec's Clarifications:
 5. No change starts a cycle; Refresh does (§8). Accepted after the
    challenge.
 6. The star in the row's first line before the date; the reader header's
-   Mark as Read / Mark as Unread act on the open message. Accepted.
+   Mark as Read / Mark as Unread act on the open message. Accepted;
+   amended on 2026-10-03 at the window's review: the row's star stands
+   under the date, in a place every row keeps, and stars or unstars its
+   message, with an outline star while the pointer is over the row.
 7. Every write of a server value ends an equal pending value (§11); the
    window re-reads the folder's rows after a write (§12; decided
    2026-10-03, one row stays optional); the cycle's event is named for
