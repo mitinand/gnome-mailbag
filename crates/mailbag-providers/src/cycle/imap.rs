@@ -13,9 +13,7 @@ use crate::{
 };
 use goa_adapter::ImapAccess;
 use mailbag_content::decode_display_fields;
-use mailbag_domain::{
-    FlagChanges, FolderBatch, FolderState, IncompleteList, Message, MessageFlags,
-};
+use mailbag_domain::{FolderBatch, FolderState, IncompleteList, Message, MessageFlags};
 use mailbag_imap::{
     FolderListing, ImapError, ImapFailure, ImapStep, MailboxReader, OpenOptions, RowItems,
     ServerReply,
@@ -67,25 +65,20 @@ pub(super) async fn synchronize_imap_folder(
         .collect();
     let missing = missing_messages(&listed, &stored);
     batches.store(&listing_changes(&listed, &stored, &listing, &missing))?;
-    let mut missing_batches = missing.chunks(BATCH_SIZE);
-    // The rows the server withheld are missing, so the folder stays not
-    // completed; the listing's proof is stored.
-    let mut withheld = None;
-    loop {
-        send_imap_changes(&mut server.reader, &listed_uids, batches).await?;
-        if withheld.is_some() {
-            break;
-        }
-        let Some(batch_messages) = missing_batches.next() else {
-            break;
-        };
+    send_imap_changes(&mut server.reader, &listed_uids, batches).await?;
+    for batch_messages in missing.chunks(BATCH_SIZE) {
         let (batch, refusal) = server
             .fetch_arrivals(batch_messages, recent_limit, batches)
             .await?;
         batches.store(&batch)?;
-        withheld = refusal;
+        send_imap_changes(&mut server.reader, &listed_uids, batches).await?;
+        // The rows the server withheld are missing, so the folder stays
+        // not completed; the listing's proof is stored.
+        if let Some(refusal) = refusal {
+            return Ok(batches.finish(listed.len(), Some(short_list(refusal))));
+        }
     }
-    if let Some(refusal) = withheld.or(listing.refusal) {
+    if let Some(refusal) = listing.refusal {
         return Ok(batches.finish(listed.len(), Some(short_list(refusal))));
     }
     if !missing.is_empty() {
@@ -143,13 +136,7 @@ fn listing_changes(
                 .get(&message.identity)
                 .is_some_and(|flags| *flags != message.flags)
         })
-        .map(|message| {
-            let changes = FlagChanges {
-                seen: Some(message.flags.seen),
-                flagged: Some(message.flags.flagged),
-            };
-            (message.identity.clone(), changes)
-        })
+        .map(|message| (message.identity.clone(), message.flags.into()))
         .collect();
     let state = if !missing.is_empty() {
         Some(FolderState::default())

@@ -59,7 +59,8 @@ when nothing is pending, next to `message.seen` and the new
 **Rationale**: a desired value per property, the newest replacing the
 older, is what the feature needs; two columns are exactly that. The effective state is one `COALESCE` in the row read; the
 cycle's read gets the pending values with the server values it already
-reads; a wish equal to the server value is dropped in the same `UPDATE`.
+reads. (A wish equal to the server value was first to be dropped in the
+same `UPDATE`; §14 keeps it, and the sending step ends it.)
 
 **Alternatives**: a `pending_change` table (message, flag, wanted,
 created): keeps history nobody reads, needs a join in every read and a
@@ -225,6 +226,12 @@ already exist.
 **Alternatives**: end the equal pending values in the sending step by a
 separate write; a second owner of the same rule, rejected.
 
+**Amended by §14**: a wish is stored as made, even one equal to the
+stored server value, since a command in flight may change that value;
+the sending step therefore compares each pending value with the stored
+server value and ends an equal one without a command (a settle with that
+value). The writes still end an equal pending value as above.
+
 ## §12 The window re-reads the rows after a write
 
 **Decision**: after `write_pending_flag` succeeds, the window reads the
@@ -291,7 +298,10 @@ maintainer decided them the same day.
 3. **Mark as Unread in the first second.** The plan checked "already in
    the wanted state" before dropping the read timer; an open unread
    message is still unread, so the handler returned and the timer later
-   marked it read. The timer is dropped first. When the timer's write has
+   marked it read. The timer is dropped first (as built, the window no
+   longer checks the state at all: the timer checks it when it fires, and
+   a change equal to the shown state is stored and ended by the next
+   sending step). When the timer's write has
    already started, a second write on GIO's pool could land before it, so
    the window's writes run one at a time through a small queue.
 4. **A lost Microsoft 365 answer.** The service documents that a change

@@ -155,7 +155,8 @@ impl<'a> BatchWriter<'a> {
 
     /// Ends the cycle as stored, with its record line: how many messages the
     /// server listed, or on Microsoft 365 reported, how many pending changes
-    /// the server agreed with, and what the batches changed. The folder's name stays at debug (specs/003-logging FR-010).
+    /// the server agreed with, and what the batches changed. The folder's
+    /// name stays at debug (specs/003-logging FR-010).
     pub(crate) fn finish(&self, listed: usize, incomplete: Option<IncompleteList>) -> LoadResult {
         let account = self.folder.account.as_str();
         let counts = &self.counts;

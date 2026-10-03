@@ -205,6 +205,16 @@ pub struct FlagChanges {
     pub flagged: Option<bool>,
 }
 
+/// A report that names both flags, as an IMAP listing does.
+impl From<MessageFlags> for FlagChanges {
+    fn from(flags: MessageFlags) -> Self {
+        Self {
+            seen: Some(flags.seen),
+            flagged: Some(flags.flagged),
+        }
+    }
+}
+
 /// A change of one flag the user wants and the server may not have yet,
 /// with the server's value as last stored.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -213,7 +223,7 @@ pub struct PendingChange {
     pub identity: String,
     pub flag: MessageFlag,
     pub wanted: bool,
-    pub server: bool,
+    pub server_value: bool,
 }
 
 /// Subject, sender and recipients for the list and the reader.

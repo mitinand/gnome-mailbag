@@ -114,8 +114,8 @@ user's word, *mailbox*, where it names the refreshed folder
   ImapError>` with `FolderListing { messages: Vec<ListedUid>, refusal:
   Option<ServerReply> }` and `ListedUid { uid, seen, flagged,
   gmail_message_id: Option<u64> }` (research §2; `flagged` since 011);
-  `store_flags(uids, flag: StoreFlag, set) -> Result<Option<ServerReply>,
-  ImapError>` since 011 (its FR-005, FR-008); `fetch_rows_by_uid(&[u32], row_items) ->
+  `store_flags(uids, flag: StoreFlag, set) -> Result<Option<ImapError>,
+  ImapError>` (a refusal with the server's reply and alerts) since 011 (its FR-005, FR-008); `fetch_rows_by_uid(&[u32], row_items) ->
   MessageList` replaces the sequence-number `fetch_rows` and keeps its
   refusal and, since 2026-10-02, carries each row's structure
   (`MessageRow.structure`, read in the same command; `fetch_structures` is

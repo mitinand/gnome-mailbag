@@ -268,13 +268,7 @@ pub(crate) fn relate_known(
     }
     let flag_states: Vec<(String, FlagChanges)> = known_arrived
         .iter()
-        .map(|(identity, flags)| {
-            let changes = FlagChanges {
-                seen: Some(flags.seen),
-                flagged: Some(flags.flagged),
-            };
-            (identity.clone(), changes)
-        })
+        .map(|(identity, flags)| (identity.clone(), (*flags).into()))
         .collect();
     set_flag_states(transaction, account, &flag_states)
 }
@@ -307,13 +301,13 @@ pub(crate) fn read_pending_changes(
                 row.get("flagged_pending")?,
             ),
         ];
-        for (flag, server, wanted) in flags {
+        for (flag, server_value, wanted) in flags {
             if let Some(wanted) = wanted {
                 changes.push(PendingChange {
                     identity: identity.clone(),
                     flag,
                     wanted,
-                    server,
+                    server_value,
                 });
             }
         }

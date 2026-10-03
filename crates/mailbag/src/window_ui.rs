@@ -55,15 +55,11 @@ pub struct WindowUi {
     refresh_mailbox: gio::SimpleAction,
     refresh_account: gio::SimpleAction,
     read_stored_mail: gio::SimpleAction,
-    /// The reader header menu's Mark as Read and Mark as Unread, for the
-    /// open message.
-    mark_read: gio::SimpleAction,
-    mark_unread: gio::SimpleAction,
-    /// The user's changes of messages' flags not written yet, in the order
-    /// made; one is written at a time, so a later change lands last
-    /// (specs/011-read-and-star research §14).
+    /// The user's changes of messages' flags in the order made; the oldest
+    /// is being written and leaves when its write ends, so one is written
+    /// at a time and a later change lands last (specs/011-read-and-star
+    /// research §14).
     flag_writes: RefCell<VecDeque<FlagWrite>>,
-    writing_flag: Cell<bool>,
     /// The sidebar box that shows the spinner while a load runs.
     loading_spinner_box: gtk::Box,
     /// How many reads of an opened message's content are running.
@@ -71,6 +67,7 @@ pub struct WindowUi {
 }
 
 /// The user's wanted value of a flag of an account's message.
+#[derive(Clone)]
 struct FlagWrite {
     account: AccountId,
     identity: String,
@@ -191,10 +188,7 @@ impl WindowUi {
             refresh_mailbox: gio::SimpleAction::new("refresh-mailbox", None),
             refresh_account: gio::SimpleAction::new("refresh-account", None),
             read_stored_mail: gio::SimpleAction::new("read-stored-mail", None),
-            mark_read: gio::SimpleAction::new("mark-scope-read", None),
-            mark_unread: gio::SimpleAction::new("mark-scope-unread", None),
             flag_writes: RefCell::default(),
-            writing_flag: Cell::new(false),
             loading_spinner_box,
             content_reads: Cell::new(0),
         });
@@ -240,14 +234,6 @@ impl WindowUi {
                     });
                 }
             });
-        for (action, wanted) in [(&window.mark_read, true), (&window.mark_unread, false)] {
-            let marking = Rc::downgrade(&window);
-            action.connect_activate(move |_, _| {
-                if let Some(window) = marking.upgrade() {
-                    window.mail.change_flag(MessageFlag::Seen, wanted);
-                }
-            });
-        }
         let filtering = Rc::downgrade(&window);
         builder
             .object::<gtk::ToggleButton>("unread_filter")
@@ -298,7 +284,7 @@ impl WindowUi {
     /// Mark as Read and Mark as Unread of the reader header's menu, for the
     /// application to publish.
     pub fn mark_actions(&self) -> [&gio::SimpleAction; 2] {
-        [&self.mark_read, &self.mark_unread]
+        self.mail.mark_actions()
     }
 
     /// Refresh Account, for the application to publish under its menu item.
@@ -624,23 +610,24 @@ impl WindowUi {
     /// Queues the user's change of a message's flag; changes are written one
     /// at a time in the order made.
     fn write_flag(self: &Rc<Self>, change: FlagWrite) {
-        self.flag_writes.borrow_mut().push_back(change);
-        if !self.writing_flag.get() {
-            self.write_next_flag();
+        let mut writes = self.flag_writes.borrow_mut();
+        writes.push_back(change);
+        let none_running = writes.len() == 1;
+        drop(writes);
+        if none_running {
+            self.write_oldest_flag();
         }
     }
 
     /// Writes the oldest queued change on GIO's thread pool, then reads the
     /// shown mailbox again, whose rows show the change, or shows the toast
     /// of a change not saved and changes no row (specs/011-read-and-star
-    /// FR-001, FR-011); then the next. No load starts: Refresh Mailbox
-    /// sends the change.
-    fn write_next_flag(self: &Rc<Self>) {
-        let Some(change) = self.flag_writes.borrow_mut().pop_front() else {
-            self.writing_flag.set(false);
+    /// FR-001, FR-011); then takes it off the queue and writes the next. No
+    /// load starts: Refresh Mailbox sends the change.
+    fn write_oldest_flag(self: &Rc<Self>) {
+        let Some(change) = self.flag_writes.borrow().front().cloned() else {
             return;
         };
-        self.writing_flag.set(true);
         let store = self.store.clone();
         let window = Rc::downgrade(self);
         glib::spawn_future_local(async move {
@@ -668,7 +655,8 @@ impl WindowUi {
                 Ok(()) => window.read_shown_mailbox_again(),
                 Err(_) => window.sidebar.borrow().show_toast(MESSAGE_NOT_CHANGED),
             }
-            window.write_next_flag();
+            window.flag_writes.borrow_mut().pop_front();
+            window.write_oldest_flag();
         });
     }
 
@@ -923,7 +911,7 @@ impl WindowUi {
         self.content_reads.get() > 0
             || self.folder_lists.borrow().reading
             || self.shown_mailbox.borrow().is_reading()
-            || self.writing_flag.get()
+            || !self.flag_writes.borrow().is_empty()
     }
 }
 

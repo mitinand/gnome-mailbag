@@ -99,7 +99,7 @@ and the window changes nothing yet.
   Seen, Flagged }`, `MessageFlags { seen: bool, flagged: bool }`,
   `FlagChanges { seen: Option<bool>, flagged: Option<bool> }` (what a
   server report named), `PendingChange { identity: String, flag:
-  MessageFlag, wanted: bool, server: bool }`; `Message.flagged: bool` and
+  MessageFlag, wanted: bool, server_value: bool }`; `Message.flagged: bool` and
   `MessageListRow.flagged: bool`; `FolderBatch.read_states` becomes
   `flag_states: Vec<(String, FlagChanges)>` and `known_arrived:
   Vec<(String, MessageFlags)>`;
@@ -166,7 +166,7 @@ and the window changes nothing yet.
   ends an equal pending value, leaves a differing one and leaves a flag
   the report did not name, through `flag_states`, an upsert and a
   related known message; `read_pending_changes` lists only the folder's
-  non-null values, as `(identity, flag, wanted, server)`; `settle_flags`
+  non-null values, as `(identity, flag, wanted, server_value)`; `settle_flags`
   ends a pending value equal to the sent value and keeps a differing one;
   `drop_pending_flags` the same with the refused value; a second
   `Store::at` over the same file reads the pending state again (spec
@@ -202,11 +202,13 @@ refuse and record those commands. No cycle uses them yet.
   crate does not depend on `mailbag-domain`; the sender maps
   `MessageFlag` to it); in src/reader.rs `MailboxReader::store_flags
   (&mut self, uids: &[u32], flag: StoreFlag, set: bool) ->
-  Result<Option<ServerReply>, ImapError>`: one `UID STORE <set>
+  Result<Option<ImapError>, ImapError>`: one `UID STORE <set>
   +FLAGS.SILENT (\Seen)` (or `-FLAGS.SILENT`, `\Flagged`), the UID set
   written as `1,5,9`; the answer drained with `collect_fetches` (Gmail
   still sends a `FETCH` line); a `NO`/`BAD` completion returns
-  `Some(reply)` with the sign-in name replaced; a lost connection fails at
+  `Some(refusal)`, an error at `StoreFlags` built where every reader error
+  is, so the reply has the sign-in name replaced and the alerts are kept
+  (changed in portion 4); a lost connection fails at
   `ImapStep::StoreFlags`; `notices.collect` as other commands; in
   crates/mailbag-providers/src/failure.rs `ImapStep::StoreFlags →
   ServerStep::ChangeFlags`.
@@ -272,9 +274,10 @@ leaves the rest for the next listing (spec FR-006 to FR-010, FR-012).
 - [x] T019 [US1] [US5] In crates/mailbag-providers/src/store_load.rs
   `BatchWriter::pending_changes() -> Result<Vec<PendingChange>,
   LoadResult>`, `settle(identities, flag, value)` and
-  `drop_pending(identities, flag)` with the cycle's failure mapping;
-  `drop_pending` sends `LoadEvent::StoreChanged`; `BatchCounts.sent`
-  counted in `settle` and written by `finish`.
+  `drop_pending(identities, flag, refused)` with the cycle's failure
+  mapping; `drop_pending` sends `LoadEvent::StoreChanged`;
+  `BatchCounts.settled` (accepted changes and those the server already
+  had) counted in `settle` and written by `finish`.
 - [x] T020 [US1] [US4] [US5] New crates/mailbag-providers/src/cycle/
   pending.rs, declared from src/cycle.rs: `send_imap_changes(reader:
   &mut MailboxReader, listed_uids: &HashMap<String, u32>, batches: &mut
@@ -366,32 +369,34 @@ store (spec FR-001 to FR-004).
   `gio::SimpleActionGroup` named `message` inserted on `reader_stack`
   (the envelope's toggle and menu are its descendants) with `star` (stateful,
   boolean state, `change-state` → `change_flag(MessageFlag::Flagged,
-  state)`), `mark-unread` (→ `change_flag(Seen, false)`) and `mark-read`
-  (→ `change_flag(Seen, true)`); `change_flag(flag, wanted)`: for `Seen =
-  false` `drop_pending_read` first of all (research §14); then the open
-  message's row from `items`; nothing when its effective state already
-  equals `wanted`; then the `flag_change` callback
-  (`connect_flag_change(impl Fn(&AccountId, &str, MessageFlag, bool))`); `count_read_after_opening`'s timer calls
-  `change_flag(Seen, true)`; `InWindow.read`, `unread_in_window` and the
+  state)`) and `mark-unread` (→ `change_flag(Seen, false)`), no
+  `mark-read`, since no form names it; `change_flag(flag, wanted)`: for
+  `Seen = false` `drop_pending_read` first of all (research §14); then the
+  `flag_change` callback for the open message
+  (`connect_flag_change(impl Fn(&AccountId, &str, MessageFlag, bool))`),
+  without a check of the shown state, so two quick opposite changes are
+  both written; the timer, renamed `mark_read_after_opening`, calls
+  `change_flag(Seen, true)` while the open row is unread; `InWindow.read`, `unread_in_window` and the
   read-in-window arguments removed (`unread` is `!row.seen`);
-  `update_list_by_difference` sets `starred` beside `unread` and
-  `lists_same_message` compares `flagged`; `show_envelope` sets the
-  `star` action's state and the toggle's icon (`starred-symbolic` while
-  starred, `non-starred-symbolic` otherwise) from `listed.flagged`; the
+  `update_list_by_difference` sets `starred` beside `unread`, in place
+  (`lists_same_message` leaves it out, or the row would animate away and
+  back); `show_envelope` sets the `star` action's state and the toggle's
+  icon (`starred-symbolic` while starred, `non-starred-symbolic`
+  otherwise) from the item's `starred`; the envelope's menu is enabled; the
   old `in_window.removed` stays as it is.
 - [x] T027 [US1] [US2] [US5] In crates/mailbag/src/window_ui.rs:
   `connect_flag_change` → the change joins a `VecDeque` of pending writes
   and one `run_on_pool(store.write_pending_flag(...))` runs at a time, the
   next starting when it ends (research §14); after each,
   `read_shown_mailbox_again()` on success, or on failure the toast
-  "Message not changed" with the advice to try again (spec FR-011;
-  `FailureKind::MailNotSaved` with a third explanation "The change to
-  this message could not be saved.", shown as a toast) without any row
+  "Message not changed. Try again." (spec FR-011; one constant,
+  `MESSAGE_NOT_CHANGED` in failure_declarations.rs) without any row
   change; no load starts;
-  `LoadEvent::StoreChanged` handled as `BatchStored` was. In
-  crates/mailbag/src/main.rs the `app.mark-scope-read` and
-  `app.mark-scope-unread` actions calling the mail pane's `change_flag`
-  for the open message.
+  `LoadEvent::StoreChanged` handled as `BatchStored` was; the mail pane
+  owns the `app.mark-scope-read` and `app.mark-scope-unread` actions
+  calling its `change_flag` for the open message (moved there at the
+  simplification review), and crates/mailbag/src/main.rs publishes them
+  through the window.
 - [x] T028 [P] [US1] [US2] [US5] Tests in crates/mailbag/src/mail_ui/
   tests.rs, one GUI test per process: pressing the star stores
   `flagged_pending` for the open message, the row's `starred` and the
@@ -441,10 +446,10 @@ date and becomes a control.
 
 ## Phase 6: final passes (portion 6)
 
-- [ ] T030 Consistency analysis (`speckit-analyze`) in a fresh session,
+- [x] T030 Consistency analysis (`speckit-analyze`) in a fresh session,
   once; document fixes applied, scope-adding findings brought to the
   maintainer.
-- [ ] T031 Each GTK test of the branch one per process; the
+- [x] T031 Each GTK test of the branch one per process; the
   simplification review of the branch diff in a fresh session; findings
   reported, not applied, until the maintainer decides; the accepted ones
   applied with ./scripts/check.sh.

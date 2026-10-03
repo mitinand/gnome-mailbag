@@ -22,7 +22,7 @@ client open beside the window.
   the test releases it.
 - `mailbag-graph`: `update_message_flags` sends `PATCH` with the JSON
   body, the content type and the ImmutableId preference; a 200, a 400, a
-  404 and a 504; a partial entry with `flag` only and a full entry; the
+  404 and a 429; a partial entry with `flag` only and a full entry; the
   scripted service records the method and the body.
 - `mailbag-providers` (scripted servers): each change reaches the server
   as one command for exactly its messages, at the next cycle (SC-001); a

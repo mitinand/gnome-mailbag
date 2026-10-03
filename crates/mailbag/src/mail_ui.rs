@@ -113,6 +113,10 @@ pub struct MailUi {
     /// The open message's star as the latest read of its row found it; the
     /// envelope's star asks to change it.
     star_action: gio::SimpleAction,
+    /// The reader header menu's Mark as Read and Mark as Unread, which the
+    /// application publishes, for the open message.
+    mark_read: gio::SimpleAction,
+    mark_unread: gio::SimpleAction,
     /// Which folder's stored rows the list shows, as the latest read found
     /// them, to update the list only when a new read answered.
     listed_rows: RefCell<Option<(FolderRef, Rc<[MessageListRow]>)>>,
@@ -176,6 +180,8 @@ impl MailUi {
             sender_avatar: reader.avatar,
             star_button: reader.star_button,
             star_action: gio::SimpleAction::new_stateful("star", None, &false.to_variant()),
+            mark_read: gio::SimpleAction::new("mark-scope-read", None),
+            mark_unread: gio::SimpleAction::new("mark-scope-unread", None),
             listed_rows: RefCell::new(None),
             unread_only: Cell::new(false),
             in_window: RefCell::default(),
@@ -222,10 +228,17 @@ impl MailUi {
         *self.flag_change.borrow_mut() = Some(Box::new(change));
     }
 
-    /// The reader's `message` actions, which the envelope's star and menu
-    /// name: `star` asks for the opposite of the open message's star, and
-    /// `mark-unread` marks it unread. Their state is set only from the
-    /// stored rows (specs/011-read-and-star research §9).
+    /// Mark as Read and Mark as Unread of the reader header's menu, for the
+    /// application to publish.
+    pub fn mark_actions(&self) -> [&gio::SimpleAction; 2] {
+        [&self.mark_read, &self.mark_unread]
+    }
+
+    /// The actions on the open message: the reader's `message` actions,
+    /// which the envelope's star and menu name (`star` asks for the
+    /// opposite of its star, `mark-unread` marks it unread), and the header
+    /// menu's two. The star's state is set only from the stored rows
+    /// (specs/011-read-and-star research §9).
     fn add_message_actions(&self) {
         let mail = self.myself.clone();
         self.star_action.connect_change_state(move |_, wanted| {
@@ -247,13 +260,21 @@ impl MailUi {
         actions.add_action(&mark_unread);
         self.reader_stack
             .insert_action_group("message", Some(&actions));
+        for (action, wanted) in [(&self.mark_read, true), (&self.mark_unread, false)] {
+            let mail = self.myself.clone();
+            action.connect_activate(move |_, _| {
+                if let Some(mail) = mail.upgrade() {
+                    mail.change_flag(MessageFlag::Seen, wanted);
+                }
+            });
+        }
     }
 
     /// Asks the window to store the user's wanted value of the open
     /// message's flag (specs/011-read-and-star FR-001). Marking it unread
     /// first stops the second after opening from marking it read again
     /// (research §14). Nothing happens without an open message.
-    pub fn change_flag(&self, flag: MessageFlag, wanted: bool) {
+    fn change_flag(&self, flag: MessageFlag, wanted: bool) {
         if flag == MessageFlag::Seen && !wanted {
             self.drop_pending_read();
         }

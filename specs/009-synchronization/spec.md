@@ -625,12 +625,14 @@ documentation does not say how, and FR-007's rule covers either form.
 - **FR-015 — Deferred, with the layer each waits for**:
   (a) *Read and star*: a change the user makes is kept apart from what the
   server reported, and the window shows the server's state with the
-  pending changes applied over it; a cycle never overwrites or drops a
-  pending change the server does not have yet. A pending change wins
+  pending changes applied over it; a cycle never overwrites a pending
+  change the server does not have yet, and drops one only when the server
+  refuses it (011 FR-010). A pending change wins
   until the server has it; after that the server's state is the truth. A
   change whose outcome is unknown (the connection dropped after sending)
   is settled by the next cycle's reading, never by sending it blindly
-  again. Messages are addressed on the server by their identity and, on
+  again on IMAP; on Microsoft 365 one the next round does not report is
+  sent again (011 FR-009). Messages are addressed on the server by their identity and, on
   IMAP, by the number the cycle's own listing shows for it (007
   FR-014(c)). *Built by [Read and star](../011-read-and-star/spec.md) (011 FR-001, FR-006
   to FR-010), amended 2026-10-03*: a cycle sends after storing its
@@ -693,7 +695,7 @@ flowchart TD
     provider -->|Microsoft 365| position{Saved position<br/>accepted?}
     position -->|yes| changes[Changes since the position,<br/>page by page, with texts<br/>of the last 30 days]
     position -->|no| full[Whole folder, latest first,<br/>page by page, with texts of the<br/>last 30 days; at its end, removed:<br/>stored messages it did not list]
-    changes --> pending365[/"Send the folder's pending changes<br/>after each page (011 FR-007)"/]
+    changes --> pending365[/"Send the folder's pending changes<br/>after the round's last page, and after<br/>each page of a whole reading (011 FR-007)"/]
     full --> pending365
 
     arrive --> done([Cycle complete:<br/>state saved, folder in agreement])

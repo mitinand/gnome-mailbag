@@ -55,6 +55,10 @@ pub(crate) enum LoadFailure {
     Imap(ImapError),
     /// The Microsoft Graph request failed or was refused.
     MicrosoftGraph(GraphError),
+    /// The mail service refused to change a message's read state or star,
+    /// which the failure names as IMAP's refusal does
+    /// (specs/011-read-and-star FR-010).
+    MicrosoftGraphChangeRefused(GraphError),
     /// The mail worker stopped the load without a result: a panic, with its
     /// message and place as `message at file:line`, or `None` when the worker
     /// vanished without one.

@@ -10,7 +10,7 @@ use super::{
     CycleEnd,
     graph::{GraphService, graph_id},
 };
-use crate::store_load::BatchWriter;
+use crate::{LoadFailure, store_load::BatchWriter};
 use mailbag_domain::{MessageFlag, PendingChange};
 use mailbag_graph::{FlagUpdate, GraphError, GraphFailure};
 use mailbag_imap::{MailboxReader, StoreFlag};
@@ -66,9 +66,8 @@ pub(super) async fn send_graph_changes(
     batches: &mut BatchWriter<'_>,
 ) -> Result<(), CycleEnd> {
     for change in changes_to_send(batches)? {
-        let Some(id) = graph_id(&change.identity) else {
-            continue;
-        };
+        // A Microsoft 365 folder's messages all have such an identity.
+        let id = graph_id(&change.identity).expect("a Microsoft 365 identity");
         let update = match change.flag {
             MessageFlag::Seen => FlagUpdate::Read(change.wanted),
             MessageFlag::Flagged => FlagUpdate::Starred(change.wanted),
@@ -84,7 +83,9 @@ pub(super) async fn send_graph_changes(
             Ok(()) => batches.settle(&identities, change.flag, change.wanted)?,
             Err(error) if refuses_the_change(&error) => {
                 batches.drop_pending(&identities, change.flag, change.wanted)?;
-                return Err(error.into());
+                return Err(CycleEnd::Failed(LoadFailure::MicrosoftGraphChangeRefused(
+                    error,
+                )));
             }
             Err(error) => return Err(error.into()),
         }
@@ -100,7 +101,7 @@ fn changes_to_send(batches: &mut BatchWriter<'_>) -> Result<Vec<PendingChange>, 
     let (agreed, to_send): (Vec<_>, Vec<_>) = batches
         .pending_changes()?
         .into_iter()
-        .partition(|change| change.wanted == change.server);
+        .partition(|change| change.wanted == change.server_value);
     for change in agreed {
         batches.settle(&[change.identity], change.flag, change.wanted)?;
     }

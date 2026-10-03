@@ -427,8 +427,9 @@ the stored state, the banner and the server's record are compared.
   (FR-010), or when the message leaves the store. A cycle writes the
   server state it was told, a report that names one flag writing that
   flag alone: a pending change equal to the value written ends with that
-  write, and one the server does not have yet is never changed or dropped
-  by a cycle (009 FR-002, amended).
+  write, and one the server does not have yet is never changed by a
+  cycle's report; only the server's refusal drops it (FR-010; 009 FR-002,
+  amended).
 - **FR-002 — Actions in the window**: The open message MUST be starred
   and unstarred by the star toggle in the reader's envelope, which shows
   the effective state with the filled star icon while the message is
@@ -437,15 +438,18 @@ the stored state, the banner and the server's record are compared.
   row's message, open or not, without opening it. Each action stores its change; the row and the
   reader then show it from the store (FR-001). Mark as Unread leaves the message open
   and unread; it is not counted read again until it is opened anew. A
-  message that is already in the wanted state is left as it is. The
+  change to the state the window already shows is stored all the same
+  and ends at the next sending step without a command (FR-007): two quick
+  opposite changes are both written, in order, before the rows are read
+  again. The
   actions are available in every folder, the Starred, Important and All
   Mail views included (008 FR-013(d)).
 - **FR-003 — Read on opening is durable**: When the second of 010 FR-009
   passes for an unread message, the window MUST store a pending change
   to read for it, with FR-001's effect; the dot goes out once it is
-  stored. Opening another message within the second, or Mark as Unread
-  within it, drops the timer and stores nothing. Opening a read message
-  stores nothing. The window's own record of messages counted read (010
+  stored. Opening another message within the second drops the timer and
+  stores nothing; Mark as Unread within it drops the timer, so the
+  message stays unread. Opening a read message stores nothing. The window's own record of messages counted read (010
   FR-009) is retired: the row's read state is the stored effective state.
   The window writes its changes one at a time, in the order of the user's
   actions, so a wish made while an earlier write is still running lands
@@ -531,7 +535,8 @@ the stored state, the banner and the server's record are compared.
   the store cannot write (a full disk, a damaged store) changes nothing
   on screen and is a failed user action under 006: shown once, as a
   toast titled "Message not changed" with the advice to try again, no
-  button; the record line holds the store's reason (006 FR-006, amended).
+  button; the record's error line names the failure's kind and the
+  store's debug line its reason (006 FR-006, amended).
 
 **Gmail**
 

@@ -1683,12 +1683,17 @@ fn star_button(widgets: &WindowWidgets) -> gtk::ToggleButton {
         .expect("the envelope's star")
 }
 
-fn pending_change(identity: &str, flag: MessageFlag, wanted: bool, server: bool) -> PendingChange {
+fn pending_change(
+    identity: &str,
+    flag: MessageFlag,
+    wanted: bool,
+    server_value: bool,
+) -> PendingChange {
     PendingChange {
         identity: identity.to_owned(),
         flag,
         wanted,
-        server,
+        server_value,
     }
 }
 

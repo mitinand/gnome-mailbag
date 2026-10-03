@@ -6,9 +6,9 @@
 //! its star to these properties, so a changed read state or star updates
 //! the shown row in place (specs/009-synchronization/research.md §9); the
 //! star's icon and colour follow the star and the pointer over the row
-//! (specs/011-read-and-star FR-004). The
-//! texts are made when a shown row reads them, since a folder may list
-//! 100 000 messages and only a screenful is shown. `shown` and `transition-ms` drive the row's
+//! (specs/011-read-and-star FR-004). The texts are made when a shown row
+//! reads them, since a folder may list 100 000 messages and only a
+//! screenful is shown. `shown` and `transition-ms` drive the row's
 //! revealer, which animates its arrival and leaving
 //! (specs/010-message-list/research.md §10).
 

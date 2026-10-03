@@ -156,6 +156,56 @@ fn a_change_made_while_a_command_is_out_is_sent_before_the_next_batch() {
     assert!(!store.read_folder_sync(&inbox).unwrap().stored[&starred].flagged);
 }
 
+/// SC-003's second half: a change made while the cycle fetches its last
+/// batch reaches the server before the cycle ends.
+#[test]
+fn a_change_made_during_the_last_batch_is_sent_before_the_cycle_ends() {
+    let inbox = folder_of(IMAP_ACCOUNT, "INBOX");
+    let store = Arc::new(store_with_inbox(&inbox));
+    synchronize_again(&imap_server(plain_messages(1)), &store);
+    let (release, held) = async_channel::bounded(1);
+    // Message 10 is stored; 99 are missing, one batch.
+    let fixture = ImapFixture::start(FixtureSetup {
+        messages: plain_messages(100),
+        store_fault: Some(StoreFault::HoldCompletion(held)),
+        ..FixtureSetup::default()
+    });
+    let message = imap_identity(10);
+    want(&store, IMAP_ACCOUNT, &message, MessageFlag::Flagged, true);
+    let worker = MailWorker::new(store.clone());
+    let kind = LoadKind::GenericImap(account_access(&fixture));
+    let (outcome, _) = run_on_context(async {
+        let load = glib::spawn_future_local(async move {
+            finish_load(
+                &worker,
+                kind,
+                LoadTarget::Mailbox(folder_of(IMAP_ACCOUNT, "INBOX")),
+            )
+            .await
+        });
+        // While the star is out, the sending step before the batch has
+        // read the folder's changes already: the read waits for the next.
+        wait_until(|| store_commands(&fixture).len() == 1).await;
+        want(&store, IMAP_ACCOUNT, &message, MessageFlag::Seen, true);
+        release.send(()).await.unwrap();
+        load.await.unwrap()
+    });
+    assert_stored(&outcome);
+    let log = fixture.log();
+    let read = (log.commands.iter())
+        .position(|command| command == r"UID STORE 10 +FLAGS.SILENT (\Seen)")
+        .expect("the read was sent");
+    let fetches_before = (log.commands[..read].iter())
+        .filter(|command| *command == "UID FETCH")
+        .count();
+    let row_batches_before = (log.fetches[..fetches_before].iter())
+        .filter(|fetch| fetch.items.contains(&"INTERNALDATE".to_owned()))
+        .count();
+    assert_eq!(row_batches_before, row_fetches(&fixture).len());
+    assert_eq!(row_batches_before, 1);
+    assert_eq!(pending_in(&store, &inbox), []);
+}
+
 /// SC-004: whether a change reached the server before the connection broke
 /// is settled by the next listing, never by sending it blindly.
 #[test]
@@ -402,7 +452,8 @@ fn microsoft_365_changes_go_after_the_round_and_its_reports_keep_them() {
 }
 
 /// SC-005 on Microsoft 365 and spec FR-009: a 4xx refuses the change, which
-/// is dropped; a 5xx leaves its outcome unknown, so it is sent again.
+/// is dropped, and the failure names the change with the service's words,
+/// as on IMAP; a 5xx leaves its outcome unknown, so it is sent again.
 #[test]
 fn a_microsoft_365_refusal_drops_the_change_and_a_504_keeps_it() {
     let refusals = [
@@ -413,13 +464,17 @@ fn a_microsoft_365_refusal_drops_the_change_and_a_504_keeps_it() {
                 "Id is malformed.",
             ),
             false,
+            FailureKind::ServerStepFailed(ServerStep::ChangeFlags),
+            "Id is malformed.",
         ),
         (
             graph_service::ScriptedAnswer::error(504, "GatewayTimeout", "The gateway timed out."),
             true,
+            FailureKind::RequestRefused,
+            "The gateway timed out.",
         ),
     ];
-    for (answer, kept) in refusals {
+    for (answer, kept, kind, service_message) in refusals {
         let status = answer.status;
         let mut mailbox = graph_mailbox_with_rounds(Vec::new());
         mailbox.patch_answer = Some(answer);
@@ -435,9 +490,13 @@ fn a_microsoft_365_refusal_drops_the_change_and_a_504_keeps_it() {
         );
         let (outcome, stored, store_changes) =
             synchronize_kind_again(microsoft365_kind(&service), &store);
+        let failure = failure_of(outcome);
+        assert_eq!(failure.kind, kind, "{status}");
         assert!(
-            matches!(outcome, LoadResult::Failed(_)),
-            "{status}: {outcome:?}"
+            (failure.remote_texts.iter())
+                .any(|remote| remote.source == RemoteSource::ServiceMessage
+                    && remote.text == service_message),
+            "{status}: {failure:?}"
         );
         assert_eq!(
             pending_in(&store, &inbox).len(),
@@ -489,6 +548,45 @@ fn a_change_refused_for_its_token_is_sent_again_with_a_renewed_one() {
             Some("Bearer renewed-token".to_owned()),
         ]
     );
+    assert_eq!(pending_in(&store, &inbox), []);
+}
+
+/// A change goes after a round's last page, never between its pages, whose
+/// later ones may still report older values (011 FR-007).
+#[test]
+fn a_microsoft_365_change_waits_for_the_rounds_last_page() {
+    use graph_service::{ScriptedNext::*, delta_entry};
+    let service = graph_service::ScriptedService::start_with_changes(graph_mailbox(
+        vec![
+            (
+                "first",
+                delta_page((1..=3).map(delta_entry).collect(), Done("round-1")),
+            ),
+            ("round-1", delta_page(Vec::new(), More("round-1b"))),
+            ("round-1b", delta_page(Vec::new(), Done("round-2"))),
+            ("round-2", delta_page(Vec::new(), Done("round-2"))),
+        ],
+        inbox_messages(&[1, 2, 3]),
+    ));
+    let (store, inbox) = microsoft365_inbox();
+    synchronize_kind_again(microsoft365_kind(&service), &store);
+    want(
+        &store,
+        MICROSOFT365_ACCOUNT,
+        &graph_identity(2),
+        MessageFlag::Flagged,
+        true,
+    );
+    let (outcome, _, _) = synchronize_kind_again(microsoft365_kind(&service), &store);
+    assert_stored(&outcome);
+    let requests = service.received_requests();
+    let last_page = (requests.iter())
+        .position(|request| request.query.contains("$skiptoken=round-1b"))
+        .expect("the round's last page");
+    let change = (requests.iter())
+        .position(|request| request.method == "PATCH")
+        .expect("the change");
+    assert!(last_page < change, "{requests:?}");
     assert_eq!(pending_in(&store, &inbox), []);
 }
 

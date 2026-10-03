@@ -981,12 +981,12 @@ fn message_with_flags(identity: &str, seen: bool, flagged: bool) -> Message {
     }
 }
 
-fn pending(identity: &str, flag: MessageFlag, wanted: bool, server: bool) -> PendingChange {
+fn pending(identity: &str, flag: MessageFlag, wanted: bool, server_value: bool) -> PendingChange {
     PendingChange {
         identity: identity.to_owned(),
         flag,
         wanted,
-        server,
+        server_value,
     }
 }
 

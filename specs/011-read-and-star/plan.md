@@ -85,7 +85,7 @@ sequenceDiagram
 
     U->>W: star / Mark as Unread / the second after opening
     W->>P: write_pending_flag(account, identity, flag, wanted)
-    P->>D: UPDATE message SET flagged_pending = … (NULL when equal to the server value)
+    P->>D: UPDATE message SET flagged_pending = … (the wish as made)
     P-->>W: written
     W->>P: read_folder_rows (as after every stored batch)
     P-->>W: rows with the effective state → the row and the toggle
@@ -150,7 +150,7 @@ flowchart TD
   `MailboxSession` out; the reconnect path calls it.
 - `fetch_responses`: `\Flagged` read next to `\Seen` into `ListedUid` and
   `MessageRow`.
-- `MailboxReader::store_flags(uids, flag: StoreFlag, set) -> Result<Option<ServerReply>, ImapError>`,
+- `MailboxReader::store_flags(uids, flag: StoreFlag, set) -> Result<Option<ImapError>, ImapError>`,
   with `StoreFlag { Seen, Flagged }` the crate's own enum (`mailbag-imap`
   does not depend on `mailbag-domain`; the sender maps `MessageFlag` to
   it):
@@ -187,14 +187,16 @@ flowchart TD
 - `send_graph_changes(service, batches)`: the same per message with
   `GraphService::update_flags(id, update)`, which runs
   `update_message_flags` through `request` (the renewal applies once as
-  for any request); a 4xx other than the refused token drops and fails;
+  for any request); a 4xx other than the refused token drops and fails
+  with `LoadFailure::MicrosoftGraphChangeRefused`, worded as IMAP's
+  refused change ("Message not changed on the server");
   a 5xx fails the cycle with the pending change untouched, an unknown
   outcome (§14).
 - `BatchWriter::pending_changes`, `settle`, `drop_pending`: the store
   calls with the cycle's failure mapping; `drop_pending` sends
   `LoadEvent::StoreChanged`, since the window must read the reverted row;
   `settle` changes no effective state and sends nothing; `finish` counts
-  `sent`.
+  `settled`, the changes the server accepted or already had.
 - `LoadEvent::BatchStored` is renamed `StoreChanged`: "the cycle changed
   the folder's stored state, a batch or a dropped pending change; the
   window reads again" (the challenge found the old name false for the
@@ -210,31 +212,39 @@ flowchart TD
 **`mailbag::mail_ui`** — the actions.
 
 - `MailUi::new`: a `message` action group on the reader page: `star`
-  (stateful boolean; `change-state` → `change_flag(Flagged, state)`),
-  `mark-unread` and `mark-read` (→ `change_flag(Seen, false | true)`);
-  the window's `app.mark-scope-read` / `app.mark-scope-unread` call the
-  same two.
-- `change_flag(flag, wanted)`: the open message's identity and account;
-  for `Seen = false` the pending read timer is dropped first of all, so
-  Mark as Unread within the second leaves no timer to fire; then nothing
-  when the row's effective state already equals `wanted`; then the
-  `flag_change` callback to the window.
-- `count_read_after_opening`: the timer's closure calls
-  `change_flag(Seen, true)` instead of the read-in-window set, which is
-  removed (010's `InWindow.read`).
-- `update_list_by_difference`: sets `starred` as it sets `unread`;
-  `lists_same_message` compares `flagged` too.
+  (stateful boolean; `change-state` → `change_flag(Flagged, state)`) and
+  `mark-unread` (→ `change_flag(Seen, false)`), the names the envelope's
+  toggle and menu use; the menu, insensitive before, is enabled, its
+  Archive and Move to Trash items staying greyed without actions. The
+  mail pane also owns `app.mark-scope-read` / `app.mark-scope-unread`,
+  which call `change_flag(Seen, true | false)`; `main.rs` publishes them
+  through the window. With no message open they do nothing.
+- `change_flag(flag, wanted)`: for `Seen = false` the pending read timer
+  is dropped first of all, so Mark as Unread within the second leaves no
+  timer to fire; then `change_listed_flag` for the open message, which
+  hands the change to the window's `flag_change` callback. No check of
+  the shown state: two quick opposite changes are both written, in order.
+- `mark_read_after_opening`: the timer's closure calls
+  `change_flag(Seen, true)` when the open row is still unread, instead of
+  the read-in-window set, which is removed (010's `InWindow.read`).
+- `update_list_by_difference`: sets `starred` as it sets `unread`, in
+  place; `lists_same_message` leaves both out, since a new item would
+  animate the row away and back.
 - `show_envelope`: the star action's state and the toggle's icon
   (`starred-symbolic` while starred, `non-starred-symbolic` otherwise)
-  from the row's `flagged`; it runs on opening and after every re-read of
-  the open message's row.
+  from the item's `starred`; it runs on opening and after every re-read
+  of the open message's row.
 
 **`mailbag::mail_ui::message_item`**: `starred` property bound by the row
 form; `read_state_text` says "Starred" too.
 
 **The row's star** (amended 2026-10-03): `message-row.ui` holds the star
 in the second line, after the subject, always allocated; its icon and
-opacity follow `starred` and whether the pointer is over the row. Its
+colour follow the item's `star-icon` and `star-style` (bound to
+`css-classes`), which follow `starred` and `pointed`, the latter set by
+the row's motion controller. For assistive technology it is a button
+named "Star", as the trash is. The unread dot's tooltip went with the
+form's review on 2026-10-03. Its
 click gesture claims the press, so the list's own click, which opens the
 message on release in the bubble phase (GTK 4.22
 `gtklistfactorywidget.c`), never sees it; on release
@@ -250,9 +260,10 @@ message on release in the bubble phase (GTK 4.22
   §14); after each, on success `read_shown_mailbox_again()`, the same
   read as after a stored batch, whose answer sets the row and the toggle;
   on failure a toast
-  "Message not changed" with the advice to try again (spec FR-011),
-  nothing shown as changed,
-  the store's reason in the record. No cycle starts here.
+  "Message not changed. Try again." (spec FR-011; the constant
+  `MESSAGE_NOT_CHANGED` in `failure_declarations`), nothing shown as
+  changed, an error line with the failure's kind (the store writes its
+  reason at debug). No cycle starts here.
 - `LoadEvent::StoreChanged`: handled as `BatchStored` is today.
 - `failure_declarations`: `ServerStep::ChangeFlags` → "Message not
   changed on the server", "The mail server refused to change this

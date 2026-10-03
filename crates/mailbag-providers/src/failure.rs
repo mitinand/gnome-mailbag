@@ -85,6 +85,9 @@ impl LoadFailure {
                 GraphFailure::Refused { .. } => FailureKind::RequestRefused,
                 GraphFailure::InvalidReply => FailureKind::UnexpectedAnswer,
             },
+            Self::MicrosoftGraphChangeRefused(_) => {
+                FailureKind::ServerStepFailed(ServerStep::ChangeFlags)
+            }
             Self::WorkerStopped(_) => FailureKind::Stopped,
         }
     }
@@ -109,7 +112,7 @@ impl LoadFailure {
                     .map(|reply| remote_text(RemoteSource::ServerReply, &reply.text));
                 alerts.chain(reply).collect()
             }
-            Self::MicrosoftGraph(error) => {
+            Self::MicrosoftGraph(error) | Self::MicrosoftGraphChangeRefused(error) => {
                 let source = match error.failure {
                     GraphFailure::Refused { .. } => RemoteSource::ServiceMessage,
                     _ => RemoteSource::System,
@@ -130,6 +133,10 @@ impl LoadFailure {
             Self::MicrosoftGraph(GraphError {
                 failure: GraphFailure::Refused { status, .. },
                 ..
+            })
+            | Self::MicrosoftGraphChangeRefused(GraphError {
+                failure: GraphFailure::Refused { status, .. },
+                ..
             }) => Some(*status),
             _ => None,
         }
@@ -140,6 +147,10 @@ impl LoadFailure {
         match self {
             Self::Imap(error) => error.server_reply.as_ref()?.code.as_deref(),
             Self::MicrosoftGraph(GraphError {
+                failure: GraphFailure::Refused { code, .. },
+                ..
+            })
+            | Self::MicrosoftGraphChangeRefused(GraphError {
                 failure: GraphFailure::Refused { code, .. },
                 ..
             }) => code.as_deref(),
@@ -156,7 +167,7 @@ impl LoadFailure {
         }
         if let Some(code) = self.server_code() {
             let label = match self {
-                Self::MicrosoftGraph(_) => "Service code",
+                Self::MicrosoftGraph(_) | Self::MicrosoftGraphChangeRefused(_) => "Service code",
                 _ => "Server code",
             };
             lines.push(format!("{label}: {code}"));
@@ -180,7 +191,10 @@ impl LoadFailure {
             Self::MicrosoftGraph(error) => {
                 matches!(error.failure, GraphFailure::Refused { status: 401, .. })
             }
-            Self::OnlineAccounts(_) | Self::WorkerStopped(_) => false,
+            // A refused token is not a refused change.
+            Self::OnlineAccounts(_)
+            | Self::MicrosoftGraphChangeRefused(_)
+            | Self::WorkerStopped(_) => false,
         }
     }
 
