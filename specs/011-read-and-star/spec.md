@@ -949,7 +949,11 @@ cycle whose pass listed nothing waits for the next cycle (FR-006).
   request such a replay writes the older value as the server's, and with
   nothing pending the row shows it until the message changes again. Any
   change from another client meets the same replay; ordering delta
-  reports belongs to 009's reading of the service.
+  reports belongs to 009's reading of the service. Probed on 2026-10-05
+  (research §6): ten requests, each followed at once by a delta round,
+  showed no replay of an older value; the service did answer two rapid
+  requests with a completed follow-up, which reads as not starred, at a
+  pace the application does not produce.
 - *Known limitation, every IMAP server (observed 2026-10-04)*: a cycle
   learns the server's flags and removals of the messages it already holds
   from its state pass at the start and, after batches or its own commands,

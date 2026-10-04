@@ -160,6 +160,27 @@ plan. A malformed id answers 400 `ErrorInvalidIdMalformed`; a wrong
 `mail.readwrite` (005 research). A follow-up marked `complete` reads as
 not starred: the application has no state for a done follow-up.
 
+**Probed on 2026-10-05** (an Inbox of about 3 500 messages; one read,
+unflagged message's follow-up flag set and cleared ten times, half a
+second apart, and restored; after each `PATCH` a delta round from the
+saved link and a `GET` of the message): the round right after an accepted
+request reported the message every time, in one entry, with the value
+the request set, never an older one, in 0.4 s; the first reading to a
+delta link took 4.4 s with `odata.maxpagesize=500`; a `PATCH` 0.5 s and a
+`GET` 0.35 s; a round five seconds after the last request reported
+nothing. So the replay of an older value after an accepted request (§15,
+the recorded limitation) did not show in ten tries, and reading the
+message again before writing a delta entry's flags, the review's proposed
+remedy, was not taken. Twice the service answered a `flagged` request
+made half a second after a `notFlagged` one with `complete`: once in the
+round and the `GET` alike, once in the `GET` while the round said
+`flagged`; the service's flag properties settle asynchronously under
+rapid changes. The application reads `complete` as not starred, so such a
+star would show as gone until the next change; a cycle sends one request
+per flag and message, the latest wish, so it never changes one flag twice
+within a cycle, and the pace that showed it is faster than the
+application produces. Recorded, no code.
+
 **Unknown**: whether a `Prefer: return=minimal` header shrinks the
 answer; not tried, listed as optional.
 
