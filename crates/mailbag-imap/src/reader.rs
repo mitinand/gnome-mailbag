@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::{
-    FolderListing, ImapAccount, ImapError, ImapFailure, ImapStep, MessageList, MessageRow,
-    MessageText, OpenOptions, RowItems, ServerReply, TextParts, TextRequest,
+    FolderListing, ImapAccount, ImapError, ImapFailure, ImapStep, MailboxNumbers, MessageList,
+    MessageRow, MessageText, OpenOptions, RowItems, ServerReply, StoreFlag, TextParts, TextRequest,
     fetch_responses::{
         FetchEnd, FetchResponses, collect_fetches, collect_rows, keep_listed, message_text,
         section_paths, structure_of, uid_set,
@@ -27,8 +27,9 @@ const GMAIL_LISTING_ITEMS: &str = "(UID FLAGS X-GM-MSGID)";
 /// The command that reads one structure on its own (`fetch_structures_apart`).
 const STRUCTURE_ITEMS: &str = "(UID BODYSTRUCTURE)";
 
-/// A signed-in, read-only session with one mailbox of an account. It never
-/// changes mail on the server. Dropping it closes the connection at once.
+/// A signed-in session with one mailbox of an account. Of the mail on the
+/// server it changes only the messages' read state and star, and only on
+/// request (`store_flags`). Dropping it closes the connection at once.
 pub struct MailboxReader {
     account: ImapAccount,
     /// Kept for the reconnection that an unreadable structure forces.
@@ -42,8 +43,8 @@ pub struct MailboxReader {
 }
 
 impl MailboxReader {
-    /// Connects securely, signs in and opens the mailbox read-only. `mailbox`
-    /// is the name as LIST gave it, or `INBOX`.
+    /// Connects securely, signs in and opens the mailbox. `mailbox` is the
+    /// name as LIST gave it, or `INBOX`.
     pub async fn open(
         account: ImapAccount,
         options: OpenOptions,
@@ -94,31 +95,118 @@ impl MailboxReader {
 
     /// The mailbox version the read UIDs belong to.
     pub fn uid_validity(&self) -> Option<u32> {
-        self.mailbox.uid_validity
+        self.mailbox.numbers.uid_validity
     }
 
-    /// Lists every message of the mailbox by UID with its read state, in
-    /// one `UID FETCH 1:*` read as it arrives, so a large mailbox costs a
-    /// few bytes per message. A NO or BAD leaves the listing incomplete with
+    /// The numbers the latest opening of the mailbox returned
+    /// (specs/009-synchronization FR-005).
+    pub fn numbers(&self) -> MailboxNumbers {
+        self.mailbox.numbers
+    }
+
+    /// Opens the mailbox again, so that its numbers are the server's now,
+    /// for a cycle's second state pass (specs/009-synchronization FR-005):
+    /// a SELECT on the open session, or a fresh session when the earlier one
+    /// was closed after an unreadable structure. Another UIDVALIDITY fails
+    /// as `MailboxChanged`, as a reconnection does.
+    pub async fn reopen(&mut self) -> Result<(), ImapError> {
+        if self.needs_reconnect {
+            return self.reconnect().await;
+        }
+        let opened = session::open_selected(
+            &mut self.mailbox.session,
+            &self.mailbox_name,
+            self.mailbox.condstore,
+            &self.account.login,
+            &mut self.notices,
+        )
+        .await;
+        let numbers = match opened {
+            Ok(numbers) => numbers,
+            Err(failure) => return Err(self.error(failure)),
+        };
+        self.require_same_numbering(numbers)?;
+        self.mailbox.numbers = numbers;
+        Ok(())
+    }
+
+    /// Another UIDVALIDITY means the UIDs now name other messages.
+    fn require_same_numbering(&mut self, numbers: MailboxNumbers) -> Result<(), ImapError> {
+        match numbers.uid_validity == self.mailbox.numbers.uid_validity {
+            true => Ok(()),
+            false => Err(self.error(ImapFailure::MailboxChanged.into())),
+        }
+    }
+
+    /// Lists every message of the mailbox by UID with its flags, in one
+    /// `UID FETCH 1:*` read as it arrives, so a large mailbox costs a few
+    /// bytes per message. A NO or BAD leaves the listing incomplete with
     /// the server's reason, which then proves nothing about the messages it
     /// did not report; a lost connection fails. An empty mailbox is listed
     /// without a command, since servers answer `1:*` there differently.
     pub async fn list_messages(&mut self, row_items: RowItems) -> Result<FolderListing, ImapError> {
-        let mut listed = BTreeMap::new();
-        if self.mailbox.message_count == 0 {
+        self.list(row_items, None).await
+    }
+
+    /// Lists only the messages whose mod-sequence rose above `since`, with
+    /// the `CHANGEDSINCE` modifier of CONDSTORE (RFC 7162 §3.1.4.1): the
+    /// flags changed and the messages arrived since a state pass saw
+    /// `since` as HIGHESTMODSEQ (specs/009-synchronization FR-005). Read
+    /// and completed as `list_messages` is.
+    pub async fn list_changed_flags(
+        &mut self,
+        since: u64,
+        row_items: RowItems,
+    ) -> Result<FolderListing, ImapError> {
+        self.list(row_items, Some(since)).await
+    }
+
+    async fn list(
+        &mut self,
+        row_items: RowItems,
+        changed_since: Option<u64>,
+    ) -> Result<FolderListing, ImapError> {
+        if self.mailbox.numbers.message_count == 0 {
             return Ok(FolderListing {
                 messages: Vec::new(),
                 refusal: None,
             });
         }
-        if self.needs_reconnect {
-            self.reconnect().await?;
-        }
         let items = match row_items {
             RowItems::Standard => LISTING_ITEMS,
             RowItems::WithGmailAttributes => GMAIL_LISTING_ITEMS,
         };
-        let end = match self.mailbox.session.uid_fetch("1:*", items).await {
+        let items = match changed_since {
+            Some(since) => format!("{items} (CHANGEDSINCE {since})"),
+            None => items.to_owned(),
+        };
+        let listing = self.fetch_listing("1:*", &items).await?;
+        tracing::info!(messages = listing.messages.len(), "mailbox listed");
+        Ok(listing)
+    }
+
+    /// Reads the flags of the given messages, right after a command changed
+    /// them, which confirms the command (specs/011-read-and-star FR-007(d)):
+    /// a message the server does not report is no longer in the mailbox.
+    /// Read and completed as `list_messages` is.
+    pub async fn fetch_flags(&mut self, uids: &[u32]) -> Result<FolderListing, ImapError> {
+        let listing = self.fetch_listing(&uid_set(uids), LISTING_ITEMS).await?;
+        tracing::debug!(
+            asked = uids.len(),
+            reported = listing.messages.len(),
+            "flags read after the command"
+        );
+        Ok(listing)
+    }
+
+    /// One `UID FETCH` of `items` for the messages `set` names, read as it
+    /// arrives, so a large mailbox costs a few bytes per message.
+    async fn fetch_listing(&mut self, set: &str, items: &str) -> Result<FolderListing, ImapError> {
+        let mut listed = BTreeMap::new();
+        if self.needs_reconnect {
+            self.reconnect().await?;
+        }
+        let end = match self.mailbox.session.uid_fetch(set, items).await {
             Ok(mut responses) => loop {
                 match responses.try_next().await {
                     Ok(Some(fetch)) => keep_listed(&fetch, &mut listed),
@@ -147,7 +235,6 @@ impl MailboxReader {
                 return Err(self.error(command_failure(ImapStep::FetchMessages, &error)));
             }
         };
-        tracing::info!(messages = listed.len(), "mailbox listed");
         Ok(FolderListing {
             messages: listed.into_values().collect(),
             refusal,
@@ -317,10 +404,7 @@ impl MailboxReader {
             Ok(mailbox) => mailbox,
             Err(failure) => return Err(self.error(failure)),
         };
-        // Another UIDVALIDITY means the UIDs now name other messages.
-        if mailbox.uid_validity != self.mailbox.uid_validity {
-            return Err(self.error(ImapFailure::MailboxChanged.into()));
-        }
+        self.require_same_numbering(mailbox.numbers)?;
         self.mailbox = mailbox;
         self.needs_reconnect = false;
         Ok(())
@@ -392,6 +476,50 @@ impl MailboxReader {
         }
         tracing::info!(messages, commands, "text loaded");
         Ok(())
+    }
+
+    /// Sets (`set`) or clears `flag` on the messages `uids`, which is not
+    /// empty, with one `UID STORE … +FLAGS.SILENT` or `-FLAGS.SILENT`
+    /// (specs/011-read-and-star FR-007). `Ok(Some(refusal))` when the server
+    /// answered NO or BAD: the refusal fails at `ImapStep::StoreFlags` with
+    /// the server's reply and alerts. A lost connection is the `Err`; whether
+    /// the server applied the change is then unknown.
+    pub async fn store_flags(
+        &mut self,
+        uids: &[u32],
+        flag: StoreFlag,
+        set: bool,
+    ) -> Result<Option<ImapError>, ImapError> {
+        if self.needs_reconnect {
+            self.reconnect().await?;
+        }
+        let sign = if set { '+' } else { '-' };
+        let flag_name = match flag {
+            StoreFlag::Seen => "\\Seen",
+            StoreFlag::Flagged => "\\Flagged",
+        };
+        let change = format!("{sign}FLAGS.SILENT ({flag_name})");
+        // Gmail answers with the new flags all the same; they are dropped.
+        let session = &mut self.mailbox.session;
+        let responses = match session.uid_store(uid_set(uids), &change).await {
+            Ok(responses) => collect_fetches(responses).await,
+            Err(error) => FetchResponses::failed(error),
+        };
+        self.notices.collect(&self.account.login);
+        let refusal = match responses.end {
+            FetchEnd::Completed => None,
+            FetchEnd::Rejected(reply) => Some(reply),
+            FetchEnd::Failed(Error::Bad(status)) => Some(ServerReply::from(&status)),
+            FetchEnd::Failed(error) => {
+                return Err(self.error(command_failure(ImapStep::StoreFlags, &error)));
+            }
+        };
+        tracing::info!(
+            messages = uids.len(),
+            refused = refusal.is_some(),
+            "flags stored"
+        );
+        Ok(refusal.map(|reply| self.error(refused(ImapStep::StoreFlags, reply))))
     }
 
     /// Runs one UID FETCH command and keeps every response received before

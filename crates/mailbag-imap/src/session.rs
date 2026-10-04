@@ -3,7 +3,7 @@
 
 use crate::{
     ClientIdentity, Credential, Encryption, ImapAccount, ImapError, ImapFailure, ImapStep,
-    OpenOptions, ServerReply,
+    MailboxNumbers, OpenOptions, ServerReply,
     transport::{self, GioStream, ServerConnection},
 };
 use async_imap::{
@@ -50,11 +50,14 @@ pub(crate) struct SignedInSession {
     pub(crate) connection: ServerConnection,
 }
 
-/// A signed-in session with one mailbox open read-only.
+/// A signed-in session with one mailbox open.
 pub(crate) struct MailboxSession {
     pub(crate) session: Session<GioStream>,
-    pub(crate) uid_validity: Option<u32>,
-    pub(crate) message_count: u32,
+    /// The numbers the latest opening returned.
+    pub(crate) numbers: MailboxNumbers,
+    /// Whether the server announced CONDSTORE, so the mailbox is opened
+    /// with the parameter (RFC 7162 §3.1.8).
+    pub(crate) condstore: bool,
     /// Dropped after `session`, closing the socket.
     pub(crate) connection: ServerConnection,
 }
@@ -251,8 +254,9 @@ pub(crate) async fn sign_in_session(
     })
 }
 
-/// Opens `mailbox` read-only in a signed-in session.
-pub(crate) async fn examine_mailbox(
+/// Opens `mailbox` in a signed-in session, with the CONDSTORE parameter
+/// when the server announced CONDSTORE.
+pub(crate) async fn select_mailbox(
     signed_in: SignedInSession,
     mailbox: &str,
     sign_in_name: &str,
@@ -261,26 +265,57 @@ pub(crate) async fn examine_mailbox(
     let SignedInSession {
         mut session,
         connection,
+        capabilities,
         ..
     } = signed_in;
-    let examined = session.examine(mailbox).await;
-    notices.collect(sign_in_name);
-    let examined = examined.map_err(|error| command_failure(ImapStep::OpenMailbox, &error))?;
-    tracing::info!(messages = examined.exists, "mailbox opened");
-    tracing::debug!(
-        mailbox,
-        uid_validity = examined.uid_validity,
-        "mailbox state"
-    );
+    let condstore = capabilities.has_str("CONDSTORE");
+    let numbers = open_selected(&mut session, mailbox, condstore, sign_in_name, notices).await?;
     Ok(MailboxSession {
         session,
-        uid_validity: examined.uid_validity,
-        message_count: examined.exists,
+        numbers,
+        condstore,
         connection,
     })
 }
 
-/// Signs in and opens `mailbox` read-only.
+/// Runs SELECT on `mailbox` and returns the numbers its answer carries:
+/// EXAMINE would open the mailbox read-only, and the flag commands need it
+/// writable (specs/011-read-and-star/research.md §4). With `condstore` the
+/// command carries the CONDSTORE parameter, and the server answers with
+/// HIGHESTMODSEQ, or NOMODSEQ for a mailbox without mod-sequences (RFC 7162
+/// §3.1.8, §3.1.2). A SELECT of the mailbox already open deselects it first
+/// (RFC 3501 §6.3.1), which a cycle's second state pass relies on.
+pub(crate) async fn open_selected(
+    session: &mut Session<GioStream>,
+    mailbox: &str,
+    condstore: bool,
+    sign_in_name: &str,
+    notices: &mut ServerNotices,
+) -> Result<MailboxNumbers, StepFailure> {
+    let selected = match condstore {
+        true => session.select_condstore(mailbox).await,
+        false => session.select(mailbox).await,
+    };
+    notices.collect(sign_in_name);
+    let selected = selected.map_err(|error| command_failure(ImapStep::OpenMailbox, &error))?;
+    let numbers = MailboxNumbers {
+        uid_validity: selected.uid_validity,
+        message_count: selected.exists,
+        uid_next: selected.uid_next,
+        highest_modseq: selected.highest_modseq,
+    };
+    tracing::info!(messages = numbers.message_count, "mailbox opened");
+    tracing::debug!(
+        mailbox,
+        uid_validity = numbers.uid_validity,
+        uid_next = numbers.uid_next,
+        highest_modseq = numbers.highest_modseq,
+        "mailbox state"
+    );
+    Ok(numbers)
+}
+
+/// Signs in and opens `mailbox`.
 pub(crate) async fn open_mailbox(
     account: &ImapAccount,
     options: &OpenOptions,
@@ -296,7 +331,7 @@ pub(crate) async fn open_mailbox(
         ImapStep::OpenMailbox,
     )
     .await?;
-    examine_mailbox(signed_in, mailbox, &account.login, notices).await
+    select_mailbox(signed_in, mailbox, &account.login, notices).await
 }
 
 async fn read_greeting(

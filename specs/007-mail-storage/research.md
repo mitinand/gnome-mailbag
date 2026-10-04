@@ -1,8 +1,8 @@
 # Research: Mail Storage
 
 Decisions that had alternatives or needed a probe. Probes ran on 2026-09-25
-outside the repository, against the GNOME 50 runtime installed on the
-maintainer's machine and on the host (Fedora 44).
+outside the repository, against the GNOME 50 runtime and on a Fedora 44
+host, the acceptance environment of 001.
 
 ## 1. SQLite through rusqlite, with the system library
 
@@ -58,7 +58,7 @@ thread of Mailbag's own.
   `PoisonError::into_inner`.
 - `rusqlite::Connection` is `Send` (rusqlite 0.40.2 `lib.rs:364`), so a
   mutex makes it shareable.
-- Cost on the maintainer's machine, WAL with `synchronous=NORMAL`: writing
+- Cost on a development machine, WAL with `synchronous=NORMAL`: writing
   100 messages of 5 KB in one transaction 1.2–1.6 ms; reading 100 rows
   45–52 µs; about 550 KB on disk.
 

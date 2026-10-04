@@ -114,14 +114,17 @@ pub struct FolderRef {
 pub struct Message {
     /// The message's identity within its account, by which the store keeps
     /// it once however many folders list it: `gmail:<X-GM-MSGID>`,
-    /// `graph:<immutable id>`, or `imap:<folder identity>/<uid>` for a
-    /// Generic IMAP message, which has no identity beyond its place.
+    /// `graph:<immutable id>`, or `imap:<folder identity>/<UIDVALIDITY>/<uid>`
+    /// for a Generic IMAP message, which has no identity beyond its place.
     pub identity: String,
     pub fields: DisplayFields,
     /// The received date as seconds since the Unix epoch.
     pub received_unix: Option<i64>,
     /// The read state as the server last reported it.
     pub seen: bool,
+    /// The star as the server last reported it: IMAP `\Flagged`, a
+    /// Microsoft 365 follow-up flag `flagged`.
+    pub flagged: bool,
     pub content: ReceivedContent,
     /// The first readable words of the message for its list row; empty when
     /// it has none (specs/010-message-list FR-003). Mail content: never logged.
@@ -139,6 +142,25 @@ pub struct FolderState {
     pub fill_place: Option<String>,
     /// Whether the folder's latest cycle completed.
     pub synchronized: bool,
+    /// IMAP only: the numbers of the folder's latest state pass, which the
+    /// next pass compares with the opening's (specs/009-synchronization
+    /// FR-005); `None` before a pass and on Microsoft 365.
+    pub numbers: Option<FolderNumbers>,
+}
+
+/// The numbers an IMAP folder's opening returns, as the folder's latest
+/// state pass saw them (specs/009-synchronization/data-model.md).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FolderNumbers {
+    /// UIDVALIDITY, the folder's numbering version; a server may give none.
+    pub uid_validity: Option<u32>,
+    /// EXISTS, how many messages the folder held.
+    pub message_count: u32,
+    /// UIDNEXT, the next UID the server predicted; a server may give none.
+    pub uid_next: Option<u32>,
+    /// HIGHESTMODSEQ, on a server that announces CONDSTORE for a mailbox
+    /// that keeps mod-sequences; `None` otherwise.
+    pub highest_modseq: Option<u64>,
 }
 
 /// One whole part of a cycle's result, which the store writes in one
@@ -148,11 +170,12 @@ pub struct FolderState {
 pub struct FolderBatch {
     /// Identities proven gone from the folder.
     pub removed: Vec<String>,
-    /// The new read state of messages the folder holds.
-    pub read_states: Vec<(String, bool)>,
+    /// The server's flags of messages the folder holds, as a listing or a
+    /// reading of the messages reported them.
+    pub flag_states: Vec<(String, MessageFlags)>,
     /// Messages the folder did not hold but its account did, with their
-    /// listed read state: related to the folder without fetching them.
-    pub known_arrived: Vec<(String, bool)>,
+    /// listed flags: related to the folder without fetching them.
+    pub known_arrived: Vec<(String, MessageFlags)>,
     /// Full records to insert or update, each with its content or
     /// `ReceivedContent::NotDownloaded`.
     pub arrived: Vec<Message>,
@@ -169,9 +192,37 @@ pub struct MessageListRow {
     pub fields: DisplayFields,
     /// The received date as seconds since the Unix epoch.
     pub received_unix: Option<i64>,
+    /// The read state and the star as the user sees them: the user's pending
+    /// change where there is one, otherwise the server's.
     pub seen: bool,
+    pub flagged: bool,
     /// The stored preview. Mail content: never logged.
     pub preview: String,
+}
+
+/// A flag of a message the user can change (specs/011-read-and-star).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum MessageFlag {
+    /// Read: IMAP `\Seen`, Microsoft 365 `isRead`.
+    Seen,
+    /// The star: IMAP `\Flagged`, Microsoft 365 `flag.flagStatus`.
+    Flagged,
+}
+
+/// Both flags of a message as a server reported them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MessageFlags {
+    pub seen: bool,
+    pub flagged: bool,
+}
+
+/// A change of one flag the user wants and the server may not have yet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingChange {
+    /// The message's `Message::identity`.
+    pub identity: String,
+    pub flag: MessageFlag,
+    pub wanted: bool,
 }
 
 /// Subject, sender and recipients for the list and the reader.
@@ -268,6 +319,8 @@ pub enum ServerStep {
     /// The message list or the messages' structures.
     FetchMessages,
     FetchText,
+    /// Setting or clearing a message's read state or star.
+    ChangeFlags,
 }
 
 /// Words of the remote side, and who said them.
@@ -372,6 +425,7 @@ impl fmt::Debug for Message {
             .debug_struct("Message")
             .field("identity", &self.identity)
             .field("seen", &self.seen)
+            .field("flagged", &self.flagged)
             .field("content", &self.content)
             .finish_non_exhaustive()
     }
@@ -384,6 +438,7 @@ impl fmt::Debug for FolderState {
             .field("server_position", &self.server_position.is_some())
             .field("fill_place", &self.fill_place.is_some())
             .field("synchronized", &self.synchronized)
+            .field("numbers", &self.numbers)
             .finish()
     }
 }
@@ -394,6 +449,7 @@ impl fmt::Debug for MessageListRow {
             .debug_struct("MessageListRow")
             .field("identity", &self.identity)
             .field("seen", &self.seen)
+            .field("flagged", &self.flagged)
             .finish_non_exhaustive()
     }
 }

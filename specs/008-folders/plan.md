@@ -10,7 +10,10 @@ earlier decision), aligned with the spec and tasks by the consistency
 analysis, and corrected after an external review the same day; see Size.
 Before the window portion (2026-09-27) the budget was raised to the
 forecast, and the empty list's hidden account and the folder-list read's
-own Retry were dropped (spec Clarifications).
+own Retry were dropped (spec Clarifications). Superseded in part by
+[009](../009-synchronization/plan.md) on 2026-09-29 (whole-folder cycles,
+`read_folder_rows`, no `position`): the tasks' disclaimer applies to this
+plan too.
 
 ## Size
 

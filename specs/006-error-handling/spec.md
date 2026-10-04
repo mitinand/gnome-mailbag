@@ -6,7 +6,12 @@
 maintainer 2026-09-25 (plan.md, "Post-implementation"); where the wording
 is written in code corrected 2026-09-26, and failures handed to the
 application as domain values decided the same day and built in portion 6
-(research §1). The decisions taken
+(research §1). FR-006 amended on 2026-10-03 by
+[Read and star](../011-read-and-star/spec.md): the toast also carries a
+change to stored mail that could not be written; FR-002 and the contract
+amended on 2026-10-05 at its consistency analysis: the application scope
+names that change, the contract gains `ChangeFlags` and the toast's advice
+by the failure's kind. The decisions taken
 at sizing, at the specification challenge and on the prototype are
 recorded under Clarifications. FR-004 and the contract amended on
 2026-09-27 by [Folders](../008-folders/spec.md), built and accepted with it
@@ -316,9 +321,14 @@ from the approved forms, and decided:
   messages are shown than the Inbox offered), *the account* (nothing of its
   mail could be loaded, or a setting or credential of the account is wrong),
   *the application* (something outside any account's mail, such as Settings
-  that did not open). A failure MUST NOT widen its scope:
-  one message's problem never fails the list, a list short of messages never
-  fails the account, and an account's failure never hides another account.
+  that did not open, or a change of the user's that the store could not
+  write, which changes nothing on screen, 011 FR-011; *amended
+  2026-10-05*). A failure MUST NOT widen its scope:
+  one message's problem never fails the list (a server's refusal of the
+  user's change to a message is the refresh's own step, so it fails the
+  refresh, 011 FR-010 and research §7; *recorded 2026-10-05*), a list
+  short of messages never fails the account, and an account's failure
+  never hides another account.
   It MUST NOT narrow it either: a load that delivered nothing is an account
   failure, never an empty Inbox; a list short of messages is shown as
   incomplete, never as complete (constitution III).
@@ -385,7 +395,7 @@ from the approved forms, and decided:
   | The list: fewer messages arrived than the Inbox offered | The banner above the list; the rows that arrived stay | Title; one button opening the failure dialog | While that list is on screen |
   | The account: its load failed, nothing to show | The status page in place of the list | Warning icon, title, explanation, advice; the action button when declared, and a Details button opening the failure dialog | Until the account's next load replaces it |
   | The account: a problem Online Accounts reports | The account row's problem icon, as [001](../001-goa-account-observation/spec.md) defines it | As 001 | As 001 |
-  | The application: an operation outside any account's mail | A toast | Title and advice in one line, nothing else; a failed Settings launch writes no record line (003 FR-004) | The platform's default |
+  | The application: an operation outside any account's mail, or a change to stored mail that could not be written (011 FR-011, *amended 2026-10-03*) | A toast | Title and advice in one line, nothing else; a failed Settings launch writes no record line (003 FR-004) | The platform's default |
 
   A banner is one line and one button: the title, and a button that opens
   the failure dialog, which carries everything else, the action included.

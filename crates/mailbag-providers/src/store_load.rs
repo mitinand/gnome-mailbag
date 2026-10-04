@@ -8,14 +8,16 @@
 
 use crate::{LoadEvent, LoadResult, failure::log_load_failure};
 use mailbag_domain::{
-    AccountId, Failure, Folder, FolderBatch, FolderRef, IncompleteList, ReceivedContent,
+    AccountId, Failure, Folder, FolderBatch, FolderRef, IncompleteList, MessageFlag, PendingChange,
+    ReceivedContent,
 };
 use mailbag_store::{FolderSync, Store, StoreWrite};
 use std::collections::HashSet;
 
 /// A cycle's access to its folder in the store: it reads what the cycle
-/// starts from, stores each batch and tells the window, and counts what
-/// the batches held for the cycle's record line. A read or write that fails
+/// starts from and the user's pending changes, stores each batch and the
+/// server's answers to those changes and tells the window, and counts what
+/// it wrote for the cycle's record line. A read or write that fails
 /// or finds the load cancelled ends the cycle with its result.
 pub(crate) struct BatchWriter<'a> {
     store: &'a Store,
@@ -25,11 +27,13 @@ pub(crate) struct BatchWriter<'a> {
     counts: BatchCounts,
 }
 
-/// What a cycle's stored batches held.
+/// What a cycle's stored batches held, and how many pending changes ended
+/// with the server's agreement.
 #[derive(Default)]
 struct BatchCounts {
+    settled: usize,
     removed: usize,
-    read_states: usize,
+    flag_states: usize,
     related: usize,
     arrived: usize,
     texts: usize,
@@ -82,6 +86,45 @@ impl<'a> BatchWriter<'a> {
             .map_err(|failure| self.store_failed(failure))
     }
 
+    /// The folder's pending changes.
+    pub(crate) fn pending_changes(&self) -> Result<Vec<PendingChange>, LoadResult> {
+        self.store
+            .read_pending_changes(&self.folder)
+            .map_err(|failure| self.store_failed(failure))
+    }
+
+    /// The server has `value` of `flag` for the messages: it becomes their
+    /// server value and ends a pending value equal to it. The window shows
+    /// the pending value already, so it is not told.
+    pub(crate) fn settle(
+        &mut self,
+        identities: &[String],
+        flag: MessageFlag,
+        value: bool,
+    ) -> Result<(), LoadResult> {
+        self.store
+            .settle_flags(&self.folder.account, identities, flag, value)
+            .map_err(|failure| self.store_failed(failure))?;
+        self.counts.settled += identities.len();
+        Ok(())
+    }
+
+    /// The server refused `refused` of `flag` for the messages: a pending
+    /// value equal to it ends, and the window is told, since its rows show
+    /// the change undone (specs/011-read-and-star FR-010).
+    pub(crate) fn drop_pending(
+        &self,
+        identities: &[String],
+        flag: MessageFlag,
+        refused: bool,
+    ) -> Result<(), LoadResult> {
+        self.store
+            .drop_pending_flags(&self.folder.account, identities, flag, refused)
+            .map_err(|failure| self.store_failed(failure))?;
+        self.events.try_send(LoadEvent::StoreChanged).ok();
+        Ok(())
+    }
+
     /// Stores one batch whole and tells the window; a batch that changes
     /// nothing is not written. A load cancelled before the store took the
     /// batch writes nothing (specs/007-mail-storage/research.md §6).
@@ -94,8 +137,16 @@ impl<'a> BatchWriter<'a> {
             .store_batch(&self.folder, batch, || self.cancelled.is_closed());
         match written {
             Ok(StoreWrite::Stored) => {
+                tracing::debug!(
+                    arrived = batch.arrived.len(),
+                    related = batch.known_arrived.len(),
+                    removed = batch.removed.len(),
+                    flag_states = batch.flag_states.len(),
+                    completed = batch.state.as_ref().map(|state| state.synchronized),
+                    "batch stored"
+                );
                 self.counts.add(batch);
-                self.events.try_send(LoadEvent::BatchStored).ok();
+                self.events.try_send(LoadEvent::StoreChanged).ok();
                 Ok(())
             }
             // The cancellation was recorded where it was requested.
@@ -111,8 +162,9 @@ impl<'a> BatchWriter<'a> {
     }
 
     /// Ends the cycle as stored, with its record line: how many messages the
-    /// server listed, or on Microsoft 365 reported, and what the batches
-    /// changed. The folder's name stays at debug (specs/003-logging FR-010).
+    /// server listed, or on Microsoft 365 reported, how many pending changes
+    /// the server agreed with, and what the batches changed. The folder's
+    /// name stays at debug (specs/003-logging FR-010).
     pub(crate) fn finish(&self, listed: usize, incomplete: Option<IncompleteList>) -> LoadResult {
         let account = self.folder.account.as_str();
         let counts = &self.counts;
@@ -124,8 +176,9 @@ impl<'a> BatchWriter<'a> {
         tracing::info!(
             account,
             listed,
+            settled = counts.settled,
             removed = counts.removed,
-            read_states = counts.read_states,
+            flag_states = counts.flag_states,
             related = counts.related,
             arrived = counts.arrived,
             texts = counts.texts,
@@ -140,7 +193,7 @@ impl<'a> BatchWriter<'a> {
 impl BatchCounts {
     fn add(&mut self, batch: &FolderBatch) {
         self.removed += batch.removed.len();
-        self.read_states += batch.read_states.len();
+        self.flag_states += batch.flag_states.len();
         self.related += batch.known_arrived.len();
         self.arrived += batch.arrived.len();
         for message in &batch.arrived {

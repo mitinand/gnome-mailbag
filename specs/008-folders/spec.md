@@ -29,7 +29,11 @@ day. FR-010 amended on 2026-09-29 by
 [Synchronization](../009-synchronization/spec.md): the reader stays open
 while its message is listed. FR-004, FR-007, FR-012, FR-013(b), Key
 Entities, Assumptions and SC-002 amended the same day by Synchronization:
-Refresh Mailbox runs a cycle over the whole folder.
+Refresh Mailbox runs a cycle over the whole folder. Key Entities and the
+data model amended on 2026-10-03 by
+[Read and star](../011-read-and-star/spec.md) (the message's flag columns;
+no IMAP UID on a membership) and on 2026-10-04 by Synchronization's state
+pass (the folder's numbers); recorded 2026-10-05.
 **Input**: Support for several mailboxes per account: their discovery, role
 recognition, nesting, storage and display in the sidebar. Deleting mailboxes
 is not built. Once mailboxes are shown, the account itself can no longer be
@@ -46,8 +50,8 @@ its roles), how a message belongs to folders, how the folder list is
 obtained and kept, and how the user moves between folders. It does not own
 how deep a folder is fetched: a load keeps delivering the newest 100
 messages of one folder and replaces what the store holds for that folder
-([007](../007-mail-storage/spec.md) FR-004); fetching a whole folder belongs
-to synchronization. Whatever waits for a layer that does not exist yet is
+([007](../007-mail-storage/spec.md) FR-004; *since 009 FR-012* a cycle over
+the whole folder); fetching a whole folder belongs to synchronization. Whatever waits for a layer that does not exist yet is
 marked deferred in FR-013 and gets no plan decisions, tasks or code until
 that layer exists.
 
@@ -493,7 +497,8 @@ rows and the failure shown after each.
   list without any folder stores nothing and changes nothing shown; the
   record says that no mailbox was found. Refresh Mailbox loads
   the selected folder's newest messages as today (002 FR-002, 004 FR-003,
-  005 FR-003) and does not touch the folder list. One load runs at a time;
+  005 FR-003; *since 009 FR-012* a cycle over the whole folder) and does
+  not touch the folder list. One load runs at a time;
   both actions are unavailable while one runs (007).
 - **FR-002 — What a folder is**: A folder belongs to one account and has: the
   identity its provider gives it (a Generic IMAP or Gmail mailbox name as
@@ -609,7 +614,9 @@ rows and the failure shown after each.
   removes its folders with its mail. *Amended by 009 FR-001 and FR-008*:
   a folder's messages and relations are what its cycles stored; the folder
   state is the saved server position, the place an unfinished first fill
-  continues from, and whether its latest cycle completed; a relation carries no position.
+  continues from, whether its latest cycle completed and, on IMAP since
+  2026-10-04, the four numbers of its latest state pass (009 FR-005); a
+  relation carries no position.
 - **FR-008 — The window reads folders from the store**: The sidebar's folders
   and a selected folder's rows MUST be read from the store, never from a
   load's result directly (007 FR-001): at start, when an account appears,
@@ -703,7 +710,9 @@ rows and the failure shown after each.
   Starred, Important or All Mail folder there is no move and no delete,
   because the standard does not define their effect on the message's real
   folder, while flag changes are allowed; a provider that documents the
-  effect (Gmail) may allow more in its own terms.
+  effect (Gmail) may allow more in its own terms. *Flag changes in the
+  views built 2026-10-03 by [Read and star](../011-read-and-star/spec.md) (011 FR-002); the
+  rule for moves and deletes stands.*
   (e) *Background*: folder lists and folders kept fresh without a user
   action, for every account.
   (f) *Folder management*: creating, renaming, moving, deleting and hiding
@@ -741,7 +750,8 @@ rows and the failure shown after each.
   identity where the provider gives one.
 - **Membership**: The relation between a message and a folder. *Amended by
   009*: it carries no position (rows are ordered by received date), and no
-  IMAP UID until read and star (007 FR-003 as amended).
+  IMAP UID (007 FR-003 as amended by Read and star: a message is addressed
+  by what the cycle's own listing shows).
 - **Account**: As in 001 and 007; in the sidebar an empty selectable row
   until its folders are known, then a heading over them.
 

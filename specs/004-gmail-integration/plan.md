@@ -253,8 +253,8 @@ and proposes one `load_inbox_batch(access, provider)` with `match provider`
 arms, saving `load_batch_from_rows` and about 60 lines. The plan keeps two
 functions, `load_imap_inbox` and `load_gmail_inbox`, over shared steps.
 Recommendation: keep the plan's shape. A `match provider` inside one sequence
-is the provider flag that 002 research §9 ruled out, small today and the
-pattern that grew to 56 sites in the earlier client; and Graph will not share
+is the provider flag that 002 research §9 ruled out, small today and a
+pattern that grows with every provider; and Graph will not share
 this sequence at all, so the two-functions shape is what 005 extends. Cost of
 the recommendation: about 60 lines. The maintainer agreed: a provider check
 inside one sequence would be checked again and again, and the two servers'

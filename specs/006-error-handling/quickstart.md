@@ -4,7 +4,7 @@ Applies after portion 4. Automated checks run with `scripts/check.sh`;
 they cover every declaration and the channels of a failed load, a short
 list and a message's content (SC-001 to SC-004, SC-006); the Settings
 toast has no window test (plan.md, "Post-implementation"). The steps below need the installed build and the
-maintainer's accounts in GNOME Online Accounts; they cover what tests
+accounts in GNOME Online Accounts; they cover what tests
 cannot: the real widgets, the keyboard and the screen reader (SC-005).
 
 ## A failed load (US1)
@@ -32,8 +32,8 @@ cannot: the real widgets, the keyboard and the screen reader (SC-005).
 ## A short list and a content problem (US3, US5)
 
 4. With the scripted server only (tests): a refused list shows the banner
-   "Some messages not loaded" with Details; a page cut short by the Graph
-   service shows "Not all messages loaded". Live, the banner cannot be
+   "Some messages not loaded" with Details (the Graph page cut short went with
+   009). Live, the banner cannot be
    provoked on demand; the tests are the evidence.
 5. Open an encrypted message and one with an unknown character set (the
    002 fixtures, or real ones in the Inbox). Expect the envelope, then the

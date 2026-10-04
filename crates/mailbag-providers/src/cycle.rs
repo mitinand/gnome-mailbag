@@ -7,6 +7,7 @@
 
 mod graph;
 mod imap;
+mod pending;
 
 use crate::{LoadFailure, LoadResult, store_load::BatchWriter, worker::LoadKind};
 use graph::synchronize_graph_folder;
@@ -78,6 +79,7 @@ fn completed(server_position: Option<String>) -> FolderState {
         server_position,
         fill_place: None,
         synchronized: true,
+        numbers: None,
     }
 }
 

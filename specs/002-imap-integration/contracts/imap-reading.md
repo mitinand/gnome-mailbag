@@ -6,7 +6,15 @@ lists every message with `UID FETCH 1:*`, reads rows by UID, and skips a
 message that disappeared (009 research §2, §3). Amended on 2026-10-02 by the
 same feature (research §14): compression when the server announces it, the
 row command carries the structures, a `NIL` encoding reads as 7BIT, and the
-isolation reads the unanswered messages' rows first.
+isolation reads the unanswered messages' rows first. Amended on
+2026-10-03 by [Read and star](../../011-read-and-star/spec.md): mailboxes are opened with `SELECT`, and the
+flag commands of 011 FR-007 (`UID STORE … ±FLAGS.SILENT (\Seen)` or
+`(\Flagged)`) are the only mail-changing commands a session sends. Amended on
+2026-10-04 by Synchronization (FR-005): `SELECT` with `(CONDSTORE)`, the
+state pass's numbers and `CHANGEDSINCE`; and by Read and star (FR-007(d)):
+the flags read right after a command. Recorded on 2026-10-05: a `SELECT`
+ends `\Recent` for later sessions on servers that still keep it (RFC 3501
+§2.3.2), an accepted consequence of opening for writing (011 FR-008).
 
 One selected account is loaded asynchronously on a worker's GLib MainContext.
 GTK and GOA observation remain on the main context. The worker owns all GIO
@@ -53,10 +61,10 @@ Quit cancels work without blocking GTK on a thread join. No command queue.
 | STARTTLS | Read the greeting, reject PREAUTH, get capabilities, require STARTTLS and wait for tagged OK. Discard the plaintext client's parser buffers and capabilities, then wrap the same socket in TLS. |
 | After STARTTLS | Create a fresh async-imap client over the verified TLS stream. Do not expect a second greeting. Read capabilities again through TLS. |
 | Sign-in | Prefer AUTHENTICATE PLAIN if advertised; otherwise LOGIN only without LOGINDISABLED. A rejected attempt does not trigger another authentication method. |
-| After sign-in | 002 uses no capability after sign-in, so none is requested. When a later feature needs one (iCloud advertised IDLE only after authentication), read capabilities again then; never reuse the pre-login set. |
+| After sign-in | Capabilities are read again after sign-in, since COMPRESS, UTF8 and CONDSTORE depend on the signed-in set (009 research §14, FR-005); never reuse the pre-login set. |
 | Compression | *Added 2026-10-02 by 009 (research §14)*: when the signed-in capabilities include `COMPRESS=DEFLATE`, send `COMPRESS DEFLATE`; on OK put raw deflate between the session and the TLS stream (GIO `ZlibCompressor` and `ZlibDecompressor` as converter streams, swapped inside the stream handle the library holds); NO or BAD continues uncompressed. Never on the plaintext leg of STARTTLS. |
-| Inbox | EXAMINE INBOX; obtain UIDVALIDITY and EXISTS. Never SELECT. |
-| Finish | Close the connection after the batch. No retained idle connection and no mail-changing CLOSE/EXPUNGE/STORE/COPY/MOVE commands. |
+| Inbox | SELECT the folder (EXAMINE until 2026-10-03; 011 FR-008), with the `(CONDSTORE)` parameter when the signed-in capabilities include CONDSTORE (*since 2026-10-04, 009 FR-005*); obtain UIDVALIDITY, EXISTS, UIDNEXT and, where given, HIGHESTMODSEQ. |
+| Finish | Close the connection after the batch. No retained idle connection and no mail-changing CLOSE/EXPUNGE/COPY/MOVE commands; the only STORE commands are the flag changes of 011 FR-007. |
 
 A missing/rejected STARTTLS command, handshake error or invalid certificate ends
 the attempt before password transmission. No cleartext fallback, second insecure
@@ -78,7 +86,7 @@ is missing. OAuth and other SASL methods are outside 002.
 
 ## Metadata and the selected window
 
-After the matching successful EXAMINE completion, let N be EXISTS. A connection
+After the matching successful SELECT completion (EXAMINE until 2026-10-03), let N be EXISTS. A connection
 closed before that completion is an opening failure, not confirmation of an
 empty Inbox. N = 0 yields a confirmed empty batch. Otherwise calculate explicit
 sequence bounds max(1, N-99) through N and issue two commands:
@@ -95,6 +103,21 @@ first, so both describe the same messages even if the Inbox changes in between.
 FLAGS)` (Gmail adds `X-GM-MSGID`), read as a stream, and N = 0 lists nothing
 without a command. The listing is complete only when the command ended with
 OK; a NO or BAD leaves it incomplete and a lost connection fails the step.
+*Since 2026-10-04 (009 FR-005)*: what the cycle lists is 009 FR-005(b)'s
+choice by the opening's four numbers (UIDVALIDITY, EXISTS, UIDNEXT,
+HIGHESTMODSEQ): every message when a number is missing on either side or
+differs, when the folder's fill did not complete or, at the first pass,
+when it holds pending changes; only the changed flags, with `UID FETCH 1:*
+(UID FLAGS [X-GM-MSGID]) (CHANGEDSINCE <stored>)`, when EXISTS and UIDNEXT
+are equal and a HIGHESTMODSEQ serves on both sides; nothing when all four
+are equal. A cycle
+that fetched messages or sent flag commands opens the folder again (a
+second SELECT in the same session, or in a fresh one when the session was
+closed) and repeats the comparison before it closes. *Since 2026-10-04
+(later, 011 FR-007(d))*: right after each flag command the cycle reads the flags of the messages the
+command named (`UID FETCH <uids> (UID FLAGS)`), which confirms each named
+message the reading reports with the sent value (011 FR-007(d)); a UID the
+mailbox lacks is not reported.
 The missing messages' rows are then read by UID, a hundred at a time,
 `UID FETCH <uids> (UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO
 SUBJECT)] BODYSTRUCTURE)`, highest UID first (*the structures joined this
@@ -181,8 +204,8 @@ not a general retry policy:
 1. On a parsing failure of the row command, which one rejected structure
    causes, close that session. Do not continue reading its parser buffer. The
    rows already received stay in the candidate, with their structures.
-2. Open a fresh secure session, authenticate and EXAMINE again. If UIDVALIDITY
-   changed, stop with an Inbox-changed explanation.
+2. Open a fresh secure session, authenticate and SELECT again (EXAMINE until
+   2026-10-03). If UIDVALIDITY changed, stop with an Inbox-changed explanation.
 3. Keep the rows already parsed with their structures; a row that came
    without one does not count as answered, since a server may answer the
    rows of several messages before their structures. Read the unanswered
@@ -313,7 +336,8 @@ or subsequent load failure. This covers the greeting, untagged replies and
 tagged completions, including a rejected sign-in, which the fork exposes
 through `Client::unsolicited_responses()`. Collect notices before returning from
 CAPABILITY, including failure or no supported sign-in method. Preserve ALERTs
-from EXAMINE's untagged replies and tagged completion. An OK with ALERT can
+from SELECT's (until 2026-10-03, EXAMINE's) untagged replies and tagged
+completion. An OK with ALERT can
 continue. Successful attempts do not produce a standalone ALERT notification.
 
 An untagged NO or BAD is a warning under
@@ -346,8 +370,9 @@ fixed phrases of the TLS library and no server data.
 For SC-002, “not downloaded” covers **every unselected payload**: attachments,
 attached text, HTML alternatives, inline images, signatures and nested messages.
 BODYSTRUCTURE and selected header fields may describe them. Assert exact requested
-sections and their absence in the scripted server, read-only EXAMINE/BODY.PEEK,
-unchanged flags and zero requests on opening.
+sections and their absence in the scripted server, BODY.PEEK (and, until
+2026-10-03, read-only EXAMINE), flags unchanged except by the flag commands
+of 011 FR-007, and zero requests on opening.
 
 Use the Rust/GIO server and MIME fixtures described in [quickstart](../quickstart.md).
 Do not port the prototype's real-mail printing switches or raw debug transcripts.

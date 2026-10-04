@@ -47,6 +47,21 @@ pub enum FailureAction {
     OnlineAccounts,
 }
 
+/// The toast for the user's change to a message that the store could not
+/// write: title and advice in one line (specs/011-read-and-star FR-011;
+/// specs/006-error-handling FR-006).
+pub const MESSAGE_NOT_CHANGED: &str = "Message not changed. Try again.";
+
+/// The same toast with the advice the failure's kind gets elsewhere, so
+/// that a full disk reads the same in the toast and in a banner
+/// (specs/006-error-handling FR-001, FR-004).
+pub fn message_not_changed(kind: &FailureKind) -> &'static str {
+    match kind {
+        FailureKind::StorageFull => "Message not changed. Free some disk space, then try again.",
+        _ => MESSAGE_NOT_CHANGED,
+    }
+}
+
 /// The words that name the failed load: the account's folder list when Retry
 /// refreshes the account, otherwise the mailbox (specs/008-folders FR-011).
 fn choose_by_load(
@@ -357,6 +372,7 @@ fn failed_step_title(step: ServerStep) -> &'static str {
         ServerStep::OpenMailbox => "Mailbox not opened",
         ServerStep::FetchMessages => "Message list not received",
         ServerStep::FetchText => "Message text not received",
+        ServerStep::ChangeFlags => "Message change not confirmed",
     }
 }
 
@@ -372,6 +388,7 @@ fn failed_step_explanation(step: ServerStep) -> &'static str {
         ServerStep::OpenMailbox => "The mail server did not open this mailbox.",
         ServerStep::FetchMessages => "The mail server did not send this mailbox's messages.",
         ServerStep::FetchText => "The mail server did not send the text of these messages.",
+        ServerStep::ChangeFlags => "The mail server did not confirm the change to these messages.",
     }
 }
 
@@ -391,6 +408,9 @@ fn waiting_step_explanation(step: ServerStep) -> &'static str {
         }
         ServerStep::FetchText => {
             "The mail server stopped responding while sending the message text."
+        }
+        ServerStep::ChangeFlags => {
+            "The mail server stopped responding while changing these messages."
         }
     }
 }

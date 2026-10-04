@@ -219,6 +219,9 @@ fn connect_account_updates(builder: &gtk::Builder, window: &adw::Window) {
     app.add_action(window_ui.refresh_account_action());
     app.add_action(window_ui.read_stored_mail_action());
     app.add_action(window_ui.sidebar().borrow().retry_check_action());
+    for action in window_ui.mark_actions() {
+        app.add_action(action);
+    }
     let held_window = std::cell::RefCell::new(Some(window_ui));
     window.connect_destroy(move |_| {
         app.remove_action("accounts");
@@ -227,6 +230,9 @@ fn connect_account_updates(builder: &gtk::Builder, window: &adw::Window) {
         app.remove_action("read-stored-mail");
         app.remove_action("retry-accounts");
         if let Some(ui) = held_window.borrow_mut().take() {
+            for action in ui.mark_actions() {
+                app.remove_action(&action.name());
+            }
             // The worker closes its connection on its own thread.
             ui.cancel_loads();
         }

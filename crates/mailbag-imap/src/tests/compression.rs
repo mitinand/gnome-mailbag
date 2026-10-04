@@ -53,7 +53,7 @@ fn compression_is_asked_for_when_announced_and_carries_commands_and_text() {
             commands[..compress].contains(&"AUTHENTICATE".to_owned()),
             "{commands:?}"
         );
-        assert!(commands[compress + 1..].contains(&"EXAMINE".to_owned()));
+        assert!(commands[compress + 1..].contains(&"SELECT".to_owned()));
         assert!(commands[compress + 1..].contains(&"UID FETCH".to_owned()));
     }
 }

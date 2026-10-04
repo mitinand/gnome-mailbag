@@ -85,6 +85,9 @@ impl LoadFailure {
                 GraphFailure::Refused { .. } => FailureKind::RequestRefused,
                 GraphFailure::InvalidReply => FailureKind::UnexpectedAnswer,
             },
+            Self::MicrosoftGraphChangeRefused(_) => {
+                FailureKind::ServerStepFailed(ServerStep::ChangeFlags)
+            }
             Self::WorkerStopped(_) => FailureKind::Stopped,
         }
     }
@@ -109,7 +112,7 @@ impl LoadFailure {
                     .map(|reply| remote_text(RemoteSource::ServerReply, &reply.text));
                 alerts.chain(reply).collect()
             }
-            Self::MicrosoftGraph(error) => {
+            Self::MicrosoftGraph(error) | Self::MicrosoftGraphChangeRefused(error) => {
                 let source = match error.failure {
                     GraphFailure::Refused { .. } => RemoteSource::ServiceMessage,
                     _ => RemoteSource::System,
@@ -124,13 +127,18 @@ impl LoadFailure {
         }
     }
 
+    /// The mail service's failure, whatever the request was.
+    fn graph_error(&self) -> Option<&GraphError> {
+        match self {
+            Self::MicrosoftGraph(error) | Self::MicrosoftGraphChangeRefused(error) => Some(error),
+            _ => None,
+        }
+    }
+
     /// The mail service's status for a refused request.
     fn status(&self) -> Option<u32> {
-        match self {
-            Self::MicrosoftGraph(GraphError {
-                failure: GraphFailure::Refused { status, .. },
-                ..
-            }) => Some(*status),
+        match self.graph_error()?.failure {
+            GraphFailure::Refused { status, .. } => Some(status),
             _ => None,
         }
     }
@@ -139,11 +147,10 @@ impl LoadFailure {
     fn server_code(&self) -> Option<&str> {
         match self {
             Self::Imap(error) => error.server_reply.as_ref()?.code.as_deref(),
-            Self::MicrosoftGraph(GraphError {
-                failure: GraphFailure::Refused { code, .. },
-                ..
-            }) => code.as_deref(),
-            _ => None,
+            _ => match &self.graph_error()?.failure {
+                GraphFailure::Refused { code, .. } => code.as_deref(),
+                _ => None,
+            },
         }
     }
 
@@ -155,9 +162,9 @@ impl LoadFailure {
             lines.push(format!("Status: {status}"));
         }
         if let Some(code) = self.server_code() {
-            let label = match self {
-                Self::MicrosoftGraph(_) => "Service code",
-                _ => "Server code",
+            let label = match self.graph_error() {
+                Some(_) => "Service code",
+                None => "Server code",
             };
             lines.push(format!("{label}: {code}"));
         }
@@ -180,7 +187,10 @@ impl LoadFailure {
             Self::MicrosoftGraph(error) => {
                 matches!(error.failure, GraphFailure::Refused { status: 401, .. })
             }
-            Self::OnlineAccounts(_) | Self::WorkerStopped(_) => false,
+            // A refused token is not a refused change.
+            Self::OnlineAccounts(_)
+            | Self::MicrosoftGraphChangeRefused(_)
+            | Self::WorkerStopped(_) => false,
         }
     }
 
@@ -204,6 +214,7 @@ fn server_step(step: ImapStep) -> ServerStep {
         ImapStep::OpenMailbox => ServerStep::OpenMailbox,
         ImapStep::FetchMessages => ServerStep::FetchMessages,
         ImapStep::FetchText => ServerStep::FetchText,
+        ImapStep::StoreFlags => ServerStep::ChangeFlags,
     }
 }
 

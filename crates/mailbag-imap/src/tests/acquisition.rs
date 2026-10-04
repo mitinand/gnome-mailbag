@@ -116,10 +116,10 @@ fn an_alert_from_a_successful_fetch_explains_a_later_failure() {
 }
 
 #[test]
-fn examine_alerts_explain_a_later_text_failure() {
+fn select_alerts_explain_a_later_text_failure() {
     let fixture = ImapFixture::start(FixtureSetup {
         messages: plain_messages(1),
-        examine_completion: "* OK [ALERT] Maintenance tonight\r\n\
+        select_completion: "* OK [ALERT] Maintenance tonight\r\n\
                              {tag} OK [ALERT] Backup in progress\r\n"
             .to_owned(),
         fault: Some((FaultyCommand::Text, FaultKind::Close)),
@@ -142,13 +142,13 @@ fn examine_alerts_explain_a_later_text_failure() {
     assert_eq!(error.alerts, ["Maintenance tonight", "Backup in progress"]);
 }
 
-/// EXAMINE counted messages that another client deleted before the listing:
+/// SELECT counted messages that another client deleted before the listing:
 /// the completed listing proves them gone.
 #[test]
-fn a_mailbox_emptied_after_examine_lists_no_message() {
+fn a_mailbox_emptied_after_select_lists_no_message() {
     let fixture = ImapFixture::start(FixtureSetup::default());
     let mut reader = open_reader(&fixture);
-    reader.mailbox.message_count = 3;
+    reader.mailbox.numbers.message_count = 3;
     let listing = expect_success(run(reader.list_messages(RowItems::Standard)));
     assert!(listing.messages.is_empty());
     assert_eq!(listing.refusal, None);
@@ -433,7 +433,7 @@ fn loading_sends_only_read_only_commands() {
             "CAPABILITY",
             "AUTHENTICATE",
             "CAPABILITY",
-            "EXAMINE",
+            "SELECT",
             "UID FETCH",
             "UID FETCH",
             "UID FETCH"
@@ -447,10 +447,10 @@ fn loading_sends_only_read_only_commands() {
 
 /// An untagged NO is a warning: the tagged completion decides.
 #[test]
-fn a_warning_before_the_examine_completion_does_not_fail_it() {
+fn a_warning_before_the_select_completion_does_not_fail_it() {
     let fixture = ImapFixture::start(FixtureSetup {
-        examine_completion: "* NO [ALERT] Mailbox is almost full\r\n\
-                             {tag} OK [READ-ONLY] done\r\n"
+        select_completion: "* NO [ALERT] Mailbox is almost full\r\n\
+                             {tag} OK [READ-WRITE] done\r\n"
             .to_owned(),
         messages: plain_messages(1),
         ..FixtureSetup::default()
@@ -466,7 +466,7 @@ fn a_warning_before_the_examine_completion_does_not_fail_it() {
 #[test]
 fn a_bye_while_opening_a_mailbox_keeps_its_reason() {
     let fixture = ImapFixture::start(FixtureSetup {
-        examine_completion: "* BYE Server is shutting down for maintenance\r\n".to_owned(),
+        select_completion: "* BYE Server is shutting down for maintenance\r\n".to_owned(),
         messages: plain_messages(1),
         ..FixtureSetup::default()
     });

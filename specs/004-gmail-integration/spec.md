@@ -6,7 +6,11 @@
 **Status**: Approved and implemented on `claude/gmail`; live acceptance by the maintainer 2026-09-23;
 FR-003 and FR-005 amended on 2026-09-27 by [Folders](../008-folders/spec.md),
 built and accepted with it the same day. FR-003 and the deferred All Mail
-model amended on 2026-09-29 by [Synchronization](../009-synchronization/spec.md)
+model amended on 2026-09-29 by [Synchronization](../009-synchronization/spec.md);
+the deferred CONDSTORE row built by it on 2026-10-04; FR-003's
+no-remote-changes clause, US2 AS1 and the lasting guarantee amended on
+2026-10-05 for [Read and star](../011-read-and-star/spec.md): only the
+user's own read and star changes reach the server
 **Input**: On an explicit refresh, load recent Inbox message metadata and
 plain-text body parts of the selected Google account into memory, the way
 [IMAP integration](../002-imap-integration/spec.md) does for a Generic IMAP
@@ -42,7 +46,8 @@ integration. They exist to evaluate the integration and stay minimal; later
 features may replace them without retaining these mechanisms.
 
 The lasting guarantees are: secure connections (002 FR-010); reading without
-remote changes (002 FR-005); no token on disk or in diagnostics (FR-002);
+remote changes (002 FR-005, as amended on 2026-10-05: only the user's own
+read and star changes reach the server, 011); no token on disk or in diagnostics (FR-002);
 no mail shown for another or a confirmed excluded account (002 FR-007–008);
 no false empty result or partial load presented as complete (002 FR-003);
 responsive operation without endless loading or crashes (002 FR-009);
@@ -59,7 +64,7 @@ provider (FR-006). Technical mechanisms and concrete limits belong to the plan.
   and it is one command. Decided during implementation (2026-09-23): the
   identification carries the fields Google's example asks for, `name`,
   `version`, `vendor` and `contact`, plus `support-url`; the contact is the
-  maintainer's address.
+  project's contact address.
 - Q: Where do the two providers' load sequences live? → A: In a provider layer
   of their own, outside the window code; the plan describes the structure.
 
@@ -122,7 +127,8 @@ sends no request and no attachment contents were downloaded.
 1. **Given** a loaded Gmail message, **when** opened or reopened, **then** the
    IMAP integration's User Story 2 applies unchanged: received text appears
    without a network request, HTML-only mail is explained, unread messages
-   stay unread on the server, no other flags or labels change.
+   stay unread on the server until the user keeps one open for a second
+   (011 FR-003), no other flags or labels change.
 
 ### User Story 3 — Sign in with the account's authorization (Priority: P1)
 
@@ -220,9 +226,10 @@ server reason and are shown the way 002 shows any refusal (see Assumptions).
   account's sign-in.
 - **FR-003 — Acquisition and reading as for IMAP**: The IMAP integration's
   FR-002 (batch), FR-003 (loading and refresh), FR-004 (received text),
-  FR-005 (no remote changes), FR-006 (memory), FR-007 (correct view),
-  FR-008 (account changes), FR-009 (failures and bounded work) and
-  FR-010 (secure connection) MUST hold for a Google account unchanged. Gmail
+  FR-005 (no remote changes beyond the user's own, as amended), FR-006
+  (memory), FR-007 (correct view), FR-008 (account changes), FR-009
+  (failures and bounded work) and FR-010 (secure connection) MUST hold for
+  a Google account unchanged. Gmail
   serves IMAP only over an encrypted dedicated port, and GOA stores it that
   way. Mailbag uses one connection per load and none between loads, and MUST
   NOT reconnect or retry automatically when Gmail ends a session or refuses
@@ -350,7 +357,7 @@ them gets requirements, plan decisions or code in this feature.
 |---|---|---|
 | All Mail as the account's store: every message once, with its labels | Storage and synchronization of the whole account; deletion proof across labels | Mail storage and synchronization. *Replaced by 009 FR-006*: each label folder is synchronized as a folder, one stored message per Gmail identifier |
 | Labels as folders in the sidebar; label counts; the Inbox as the `\Inbox` label; special folders found by their role attribute, never by their localized name | Folder navigation and combined Inbox | Folders, labels and combined Inbox |
-| Change detection with modification sequences and label changes | "What changed since the last load" without refetching | Mail storage and synchronization; the probe facts in Assumptions are its evidence |
+| Change detection with modification sequences and label changes | "What changed since the last load" without refetching | Mail storage and synchronization; the probe facts in Assumptions are its evidence. *Built by 009 on 2026-10-04 (FR-005), by the announced capability; label changes stay deferred* |
 | Deletion semantics: removing the Inbox label versus deleting, expunge behaviour set in Gmail's settings | Archive, trash and permanent deletion | Moving and deleting |
 | Thread identifier | Grouping messages into conversations; reading it needs an accessor in the protocol library fork | Conversations |
 | Gmail's own search syntax through IMAP | Remote search | Search |
@@ -364,7 +371,7 @@ them gets requirements, plan decisions or code in this feature.
   deferred; the two providers' load logic moves out of the window code into a
   provider layer of its own. The size budget agreed on 2026-09-22 is the limit
   on what this feature builds.
-- The maintainer's read-only probe of 2026-09-22 against a Google account in
+- The read-only probe of 2026-09-22 against a Google account in
   GOA is accepted evidence for the plan: sign-in with the documented OAuth
   mechanism works without an initial response; a refused token yields Google's
   documented error exchange; Gmail announces modification sequences, readable
@@ -397,7 +404,7 @@ them gets requirements, plan decisions or code in this feature.
   *Amended 2026-09-23 by [Microsoft 365 integration](../005-microsoft-graph-integration/spec.md):
   that feature makes Microsoft 365 accounts eligible.*
 - Acceptance uses the existing Fedora/GNOME environment, the installed
-  application and the maintainer's Google account in GOA, with a user label
+  application and a Google account in GOA, with a user label
   whose name uses non-Latin letters on at least one Inbox message.
 - Automatic polling, server push, reconnection, older history, persistent
   storage, previews, HTML, attachments, conversations, search, sending and

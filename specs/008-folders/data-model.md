@@ -4,7 +4,12 @@
 [009's data model](../009-synchronization/data-model.md): `folder.loaded`
 becomes `synchronized` beside new `server_position` and `fill_place`, `membership.position`
 goes, a Generic IMAP identity carries its UIDVALIDITY, and batches replace
-"Replacing a mailbox" and "Reading a mailbox" below.
+"Replacing a mailbox" and "Reading a mailbox" below. Amended on 2026-10-03
+by [Read and star](../011-read-and-star/spec.md): the message's `flagged`,
+`seen_pending` and `flagged_pending` columns, below. Amended on 2026-10-04
+by Synchronization's state pass: the folder keeps the four numbers of its
+latest state pass (`uid_validity`, `message_count`, `uid_next`,
+`highest_modseq`), in 009's data model.
 
 The persisted form of the store after this feature (spec FR-004, FR-007),
 replacing 007's two tables. Before the first release a change to this model
@@ -35,9 +40,11 @@ list; an empty completed list is never stored (spec FR-001).
 |---|---|---|
 | `id` | INTEGER, primary key | Row identity for memberships |
 | `account` | TEXT, not null | The Online Accounts ID |
-| `identity` | TEXT, not null | `gmail:<X-GM-MSGID>`, `graph:<immutable id>`, or `imap:<folder identity>/<uid>` |
+| `identity` | TEXT, not null | `gmail:<X-GM-MSGID>`, `graph:<immutable id>`, or `imap:<folder identity>/<UIDVALIDITY>/<uid>` (009) |
 | `subject`, `sender`, `recipients`, `received`, `seen`, `content_kind`, `content_detail` | as in 007 | The list fields, read state and content |
 | `preview` | TEXT, not null | The first readable words of the message; empty when there are none (added on 2026-09-30 by [Message list](../010-message-list/spec.md), [its data model](../010-message-list/data-model.md)) |
+| `flagged` | INTEGER, 0 or 1 | The star as the server last reported it (added on 2026-10-03 by [Read and star](../011-read-and-star/spec.md), [its data model](../011-read-and-star/data-model.md)) |
+| `seen_pending`, `flagged_pending` | INTEGER, 0 or 1, null | The read state and star the user wants and the server may not have yet; null when nothing is pending (011) |
 
 Unique on `(account, identity)`.
 
@@ -70,7 +77,8 @@ checks and deletions.
   joined through `membership`, by position.
 - **Deleting an account's mail** (007 FR-008): delete its `folder` and
   `message` rows.
-- **Not stored**: UIDVALIDITY and UIDs, the server's attributes and Gmail's
+- **Not stored**: UIDs (UIDVALIDITY is in a Generic IMAP identity and, since
+  2026-10-04, on the folder for 009's state pass), the server's attributes and Gmail's
   labels until the feature that reads them (spec Clarifications,
   simplification review), counts, expansion state, credentials, server
   replies, failures, load state (007 FR-002, spec FR-013).

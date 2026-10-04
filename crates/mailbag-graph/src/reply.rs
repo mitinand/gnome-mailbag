@@ -10,8 +10,8 @@
 //! the name rule falls back to the address. A folder needs its id and name.
 
 use crate::{
-    CHANGE_FIELDS, ChangePage, GraphFailure, GraphFolder, GraphMessage, Mailbox, MessageChange,
-    MessageTexts, NextPage,
+    CHANGE_FIELDS, ChangePage, FLAG_FIELDS, GraphFailure, GraphFolder, GraphMessage, Mailbox,
+    MessageChange, MessageTexts, NextPage,
 };
 use serde_json::Value;
 
@@ -98,9 +98,10 @@ fn read_change(entry: &Value) -> Option<MessageChange> {
     Some(MessageChange::Changed {
         id,
         is_read: entry["isRead"].as_bool(),
+        flagged: read_flagged(&entry["flag"]),
         other_fields: CHANGE_FIELDS
             .iter()
-            .any(|field| *field != "isRead" && entry.get(field).is_some()),
+            .any(|field| !FLAG_FIELDS.contains(field) && entry.get(field).is_some()),
     })
 }
 
@@ -156,8 +157,17 @@ fn read_message(entry: &Value) -> Option<GraphMessage> {
             .unwrap_or_default(),
         received_unix: entry["receivedDateTime"].as_str().and_then(unix_seconds),
         is_read: entry["isRead"].as_bool()?,
+        flagged: read_flagged(&entry["flag"]).unwrap_or(false),
         body_preview: present_text(&entry["bodyPreview"]),
     })
+}
+
+/// Whether a follow-up flag marks the message starred; `None` without a
+/// flag status.
+fn read_flagged(flag: &Value) -> Option<bool> {
+    flag["flagStatus"]
+        .as_str()
+        .map(|status| status == "flagged")
 }
 
 fn read_mailbox(recipient: &Value) -> Option<Mailbox> {
@@ -216,6 +226,7 @@ mod tests {
                     ],
                     "receivedDateTime": "2018-09-09T03:15:08Z",
                     "isRead": true,
+                    "flag": {"flagStatus": "flagged"},
                     "bodyPreview": "The figures are attached."
                 }],
                 "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$skiptoken=1"
@@ -250,6 +261,7 @@ mod tests {
                 ],
                 received_unix: Some(1_536_462_908),
                 is_read: true,
+                flagged: true,
                 body_preview: Some("The figures are attached.".to_owned()),
             })]
         );
@@ -261,6 +273,9 @@ mod tests {
             r#"{"value":[
                 {"id":"gone","@removed":{"reason":"deleted"}},
                 {"id":"read","isRead":true},
+                {"id":"starred","flag":{"flagStatus":"flagged"}},
+                {"id":"done","flag":{"flagStatus":"complete"}},
+                {"id":"unread and unstarred","isRead":false,"flag":{"flagStatus":"notFlagged"}},
                 {"id":"renamed","subject":"New subject"},
                 {"id":"touched"}
             ],"@odata.deltaLink":"https://example.invalid/delta?$deltatoken=2"}"#,
@@ -270,18 +285,24 @@ mod tests {
             page.next,
             NextPage::Done("https://example.invalid/delta?$deltatoken=2".to_owned())
         );
-        let changed = |id: &str, is_read, other_fields| MessageChange::Changed {
+        let changed = |id: &str, is_read, flagged, other_fields| MessageChange::Changed {
             id: id.to_owned(),
             is_read,
+            flagged,
             other_fields,
         };
+        // A change of the read state or the star alone is not one of other
+        // fields; a follow-up flag marked complete is not a star.
         assert_eq!(
             page.changes,
             [
                 MessageChange::Removed("gone".to_owned()),
-                changed("read", Some(true), false),
-                changed("renamed", None, true),
-                changed("touched", None, false),
+                changed("read", Some(true), None, false),
+                changed("starred", None, Some(true), false),
+                changed("done", None, Some(false), false),
+                changed("unread and unstarred", Some(false), Some(false), false),
+                changed("renamed", None, None, true),
+                changed("touched", None, None, false),
             ]
         );
     }

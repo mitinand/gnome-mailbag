@@ -138,7 +138,7 @@ The fork revision and the content decoding changed after this run; what that
 means for these results is in phase 8.
 
 - [X] T046 Run acceptance from specs/002-imap-integration/quickstart.md “Installed-app fixture and host trust” and “Visible integration and final acceptance” for SC-001–SC-007: both TLS modes, certificate failures with zero passwords, false/false refusal, STARTTLS downgrade attempts, display clipping at 64 KiB, reopening without requests, restart without restored mail and installed permissions. The certificate and STARTTLS matrix runs on the host build, because Flatpak keeps the host's trust store out of the sandbox (scope note in spec.md “Assumptions”); the installed application shows a load from a real server instead. Record GOA, GLib, GnuTLS and Flatpak versions.
-- [X] T047 Run the SC-006 checks and a load of the maintainer's real mailbox in the installed app: unchanged F01 accessibility, Refresh Inbox and rows by keyboard, spoken read/unread state, navigation and quitting during a stall. Completion requires the maintainer's confirmation.
+- [X] T047 Run the SC-006 checks and a load of a real mailbox in the installed app: unchanged F01 accessibility, Refresh Inbox and rows by keyboard, spoken read/unread state, navigation and quitting during a stall. Completion requires the maintainer's confirmation.
 - [X] T048 STOP: run scripts/check.sh and git diff --check, keep unmet acceptance unchecked in specs/002-imap-integration/tasks.md and report it; do not declare 002 complete from synthetic tests alone.
 
 ## Phase 8: review follow-ups

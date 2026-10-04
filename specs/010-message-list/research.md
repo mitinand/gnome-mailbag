@@ -60,12 +60,12 @@ costs no second round trip (added at the challenge); a recent message's
 plain text is fetched whole anyway, and its page is read whole in the same
 request as its text (added at the live check).
 
-**Measured at the live check** (2026-10-01, the maintainer's iCloud,
-Gmail accounts, throwaway scripts): the 16 KiB piece of the plan left 21%
+**Measured at the live check** (2026-10-01, a Generic IMAP and a
+Gmail account, throwaway scripts): the 16 KiB piece of the plan left 21%
 of a 5 958-message Inbox's pages without words and cut about half short,
 since newsletters open with tens of kilobytes of styles; on 200 of them
 64 KiB gave 194 previews long enough for the row's two lines, the whole
-part 195, 16 KiB 137. iCloud spends about 75 ms per message whatever is
+part 195, 16 KiB 137. The Generic IMAP server spends about 75 ms per message whatever is
 read of it (200 pieces: 16 KiB 15–16 s, 64 KiB 15.5–16 s, whole parts
 15 s), and one request for two parts of a message costs half of two
 requests (80 messages: 3.0–3.3 s against 6.0–7.3 s); Gmail's time grows
@@ -90,7 +90,7 @@ about 92 messages per second on the slowest of the probed servers
 
 **Alternatives considered**: the server's own preview (RFC 8970
 `PREVIEW`): none of the three probed servers announces it
-(`CAPABILITY` before sign-in on Gmail, Yandex and iCloud; Gmail after
+(`CAPABILITY` before sign-in on Gmail and two Generic IMAP servers; Gmail after
 sign-in as well) — not relied on; the full part: a page of a newsletter
 is often 50 to 200 kilobytes, the piece is enough for 400 characters.
 
@@ -172,7 +172,7 @@ today.
 255 characters of the message body. It is in text format" (Microsoft
 Graph v1.0 reference). The delta query returns it under `$select`:
 checked on 2026-10-01 with one live request of the cycle's `$select` and
-order to a personal account's Inbox, whose first page of 10 entries all
+order to an account's Inbox, whose first page of 10 entries all
 carried a non-empty `bodyPreview` of at most 255 characters. The
 scripted service returns it in tests.
 
@@ -297,7 +297,11 @@ window-only read state (spec FR-009) is a set of identities that the
 read-on-opening timeout fills and a new read of the stored rows empties;
 the derivation and the read-state reset of the difference update both
 treat a row in the set as read, so a toggle or another opening does not
-bring the dot back (found at the challenge).
+bring the dot back (found at the challenge). *Since 2026-10-03*: Read and
+star stores the read state, and the set is retired; *since 2026-10-05*:
+the set of rows taken out by the trash button is emptied only when another
+folder is shown, since every stored change reads the rows again (spec
+FR-010).
 
 **Alternatives considered**: a filter model over the row objects: a row
 that becomes read would vanish at once instead of leaving as a removed
@@ -329,7 +333,9 @@ object's `unread` becomes false, which hides the dot and counts for
 FR-007 and FR-008; opening another message or the message's leaving
 drops a pending timeout. A new read of the stored rows empties the set
 and sets every row's read state from the store again, which is how the
-stored state returns (spec FR-009). Nothing is sent or stored.
+stored state returns (spec FR-009). Nothing is sent or stored. *Since
+2026-10-03*: the second's read state is a pending change the store holds
+and a cycle sends (011 FR-003, FR-006); the window's set is retired.
 
 ## §14 Date wording
 

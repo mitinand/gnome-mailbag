@@ -81,7 +81,7 @@ Do not introduce another application depth/size policy or a vendored codec patch
 | Criterion | Evidence |
 |---|---|
 | SC-001 — Batch | Stable 0/1/100/101-message Inboxes yield 0/1/100/100 unique rows. Descending UID order follows addition. |
-| SC-002 — Acquisition/content | EXAMINE and exact selected BODY.PEEK sections; no mutation commands or changed flags. HTML, inline images, signatures, text attachments and nested messages are never fetched as payload. Opening sends nothing. |
+| SC-002 — Acquisition/content | SELECT (since 011) and exact selected BODY.PEEK sections; no mutation commands beyond the flag changes of 011 FR-007 and no implicit flag changes. HTML, inline images, signatures, text attachments and nested messages are never fetched as payload. Opening sends nothing. |
 | SC-003 — Refresh | Selection never loads. Refresh clears rows and reader, then loads; a failure leaves the list empty and names its step; refreshing again recovers. A message with an unreadable structure keeps its row and shows an explanation. A list the server refused after answering for part of it keeps those rows and names the reason in a toast, and is never shown as complete. |
 | SC-004 — Privacy/storage | Synthetic markers never enter diagnostics; command tracing stays compiled out in debug/release. Permanent: no application password files. This stage: no application mail files or restoration after restart. |
 | SC-005 — Ownership | Switch accounts during GOA access, connect and text transfer: the result is stored only for its own account. No overlapping acquisitions. Confirmed exclusion during a load discards the account's mail, and the late result does not restore it. |
@@ -171,7 +171,7 @@ sudo update-ca-trust
 ```
 
 Use only the disposable account for state inspection; do not remove or alter
-personal accounts. The prototype's real iCloud/GOA access is existing evidence,
+personal accounts. The prototype's real GOA access is existing evidence,
 not proof that this host has no Generic IMAP account. Record actual GOA, GLib,
 GnuTLS and Flatpak versions for Mailbag's installed acceptance.
 

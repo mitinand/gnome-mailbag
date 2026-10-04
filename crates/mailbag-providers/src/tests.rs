@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+mod flags;
+mod state_pass;
+
 use super::*;
 use crate::renewal::AccessRenewal;
 use crate::store_load::{BatchWriter, store_folder_list};
@@ -9,7 +12,7 @@ use crate::worker::{LoadKind, MailWorker, report_events};
 use goa_adapter::{GraphAccess, ImapAccess, ImapCredential, ImapEncryption};
 use mailbag_domain::{
     AccountId, ContentExplanation, DisplayFields, Failure, FailureKind, Folder, FolderBatch,
-    FolderRef, FolderRole, FolderState, IncompleteList, Message, ReceivedContent,
+    FolderRef, FolderRole, FolderState, IncompleteList, Message, MessageFlags, ReceivedContent,
 };
 use mailbag_graph::test_server as graph_service;
 use mailbag_imap::test_server::{
@@ -144,6 +147,7 @@ fn read_stored_messages(
                 fields: row.fields,
                 received_unix: row.received_unix,
                 seen: row.seen,
+                flagged: row.flagged,
                 content,
                 preview: row.preview,
             })
@@ -153,7 +157,7 @@ fn read_stored_messages(
 }
 
 /// Runs one load of `target` on `worker` and waits for its end; returns it
-/// with how many batches the load reported stored before.
+/// with how many changes of the store the load reported before.
 async fn finish_load(
     worker: &MailWorker,
     kind: LoadKind,
@@ -166,14 +170,14 @@ async fn finish_load(
     load_end(&events).await
 }
 
-/// The end of a load whose events arrive on `events`, and how many batches
-/// it reported stored before.
+/// The end of a load whose events arrive on `events`, and how many changes
+/// of the store it reported before.
 async fn load_end(events: &async_channel::Receiver<LoadEvent>) -> (LoadResult, usize) {
-    let mut batches = 0;
+    let mut store_changes = 0;
     loop {
         match events.recv().await.expect("the load reports its end") {
-            LoadEvent::BatchStored => batches += 1,
-            LoadEvent::Finished(outcome) => return (outcome, batches),
+            LoadEvent::StoreChanged => store_changes += 1,
+            LoadEvent::Finished(outcome) => return (outcome, store_changes),
         }
     }
 }
@@ -658,6 +662,7 @@ fn stored_earlier_message() -> Message {
         fields: DisplayFields::default(),
         received_unix: None,
         seen: true,
+        flagged: false,
         content: ReceivedContent::Text("Stored earlier".to_owned()),
         preview: "Stored earlier".to_owned(),
     }
@@ -905,7 +910,7 @@ fn graph_mailbox(
             .map(|(token, page)| (token.to_owned(), page))
             .collect(),
         messages,
-        token_accepted_requests: None,
+        ..graph_service::ScriptedChanges::default()
     }
 }
 
@@ -1004,7 +1009,12 @@ fn a_continued_microsoft_365_first_fill_reads_one_more_round() {
                 ),
             ),
         ],
-        inbox_messages(&[1, 2]),
+        {
+            // Read during the pause: the round names it, the reading finds it.
+            let mut messages = inbox_messages(&[1, 2]);
+            messages[1]["isRead"] = true.into();
+            messages
+        },
     );
     // The token runs out after the first page and its texts.
     mailbox.token_accepted_requests = Some(2);
@@ -1082,6 +1092,8 @@ fn a_microsoft_365_round_applies_removals_partial_entries_and_arrivals() {
     let mut renamed = graph_service::stored_message(3, "inbox");
     renamed["subject"] = "Renamed".into();
     let mut messages = inbox_messages(&[1, 2, 4]);
+    // Read at the round's end, as its later entry says.
+    messages[1]["isRead"] = true.into();
     messages.push(renamed);
     let store = Arc::new(Store::in_memory());
     let (_, outcome, stored) = graph_round(
@@ -1103,13 +1115,118 @@ fn a_microsoft_365_round_applies_removals_partial_entries_and_arrivals() {
         [graph_identity(2), graph_identity(3), graph_identity(4)]
     );
     assert!(stored[0].seen);
-    // A read-state entry leaves the preview of the first reading.
+    // The reading of the named message keeps the preview of the first one.
     assert_eq!(stored[0].preview, "Preview of message 2");
     assert_eq!(stored[1].fields.subject.as_deref(), Some("Renamed"));
     // The stored content stays with the renamed message: the service had
     // no text for message 3.
     assert_eq!(stored[1].content, ReceivedContent::TextNotReturned);
     assert_eq!(text_of(&stored[2].content), "Text 4");
+}
+
+/// 009 FR-007 (2026-10-05): a round that names more than a hundred stored
+/// messages, as a folder marked read in another client does, is not read
+/// message by message: the cycle reads the whole folder, as after a rejected
+/// position, so its cost is the folder's pages whatever the number of changes.
+#[test]
+fn a_round_naming_many_stored_messages_reads_the_whole_folder_instead() {
+    use graph_service::{ScriptedNext::*, delta_entry};
+    let id = graph_service::fixture_immutable_id;
+    let numbers: Vec<u32> = (1..=120).collect();
+    let service = graph_service::ScriptedService::start_with_changes(graph_mailbox(
+        vec![
+            (
+                "first",
+                delta_page(
+                    numbers.iter().map(|n| delta_entry(*n)).collect(),
+                    Done("round-1"),
+                ),
+            ),
+            (
+                "round-1",
+                delta_page(
+                    (1..=101)
+                        .map(|n| serde_json::json!({"id": id(n), "isRead": true}))
+                        .collect(),
+                    Done("round-2"),
+                ),
+            ),
+            ("round-2", delta_page(Vec::new(), Done("round-2"))),
+        ],
+        inbox_messages(&numbers),
+    ));
+    let store = Arc::new(Store::in_memory());
+    let inbox = folder_of("synthetic-microsoft365", "inbox");
+    store_inbox(&store, &inbox);
+    synchronize_kind_again(microsoft365_kind(&service), &store);
+    let asked_before = service.received_requests().len();
+    let (outcome, stored, _) = synchronize_kind_again(microsoft365_kind(&service), &store);
+    assert!(matches!(outcome, LoadResult::Stored { .. }), "{outcome:?}");
+    assert_eq!(stored.len(), 120);
+    let later = &service.received_requests()[asked_before..];
+    // No message was read on its own; the folder was read whole, from its
+    // first page, and the folder is synchronized at the round's position.
+    assert!(
+        !later
+            .iter()
+            .any(|request| request.path.starts_with("/me/messages/")),
+        "{later:?}"
+    );
+    let whole_readings = (later.iter())
+        .filter(|request| {
+            request.path.ends_with("/messages/delta") && !request.query.contains("token")
+        })
+        .count();
+    assert_eq!(whole_readings, 1);
+    let state = store.read_folder_sync(&inbox).unwrap().state;
+    assert!(state.synchronized);
+    assert!(
+        state
+            .server_position
+            .is_some_and(|link| link.ends_with("$deltatoken=round-1"))
+    );
+}
+
+/// 009 FR-007 (2026-10-05): a round's entry older than the service, here a
+/// star the service no longer holds, writes nothing of its own; the store
+/// gets the message as the service holds it.
+#[test]
+fn a_rounds_entry_older_than_the_service_writes_nothing_of_its_own() {
+    let id = graph_service::fixture_immutable_id;
+    let store = Arc::new(Store::in_memory());
+    let (_, outcome, stored) = graph_round(
+        vec![serde_json::json!({"id": id(1), "flag": {"flagStatus": "flagged"}})],
+        inbox_messages(&[1, 2, 3]),
+        &store,
+    );
+    assert!(matches!(outcome, LoadResult::Stored { .. }), "{outcome:?}");
+    assert_eq!(identities(&stored)[0], graph_identity(1));
+    assert!(!stored[0].flagged, "{:?}", stored[0]);
+}
+
+/// A star set elsewhere comes as a partial entry with the follow-up flag
+/// alone: the entry names the message, whose star and read state the cycle
+/// reads from the message itself, since the entry may be older than the
+/// store (009 FR-007, amended 2026-10-05); nothing else is read again.
+#[test]
+fn a_microsoft_365_star_alone_is_read_from_the_message_and_keeps_the_read_state() {
+    let id = graph_service::fixture_immutable_id;
+    let store = Arc::new(Store::in_memory());
+    let mut messages = inbox_messages(&[1, 2, 3]);
+    messages[0]["flag"]["flagStatus"] = "flagged".into();
+    let (service, outcome, stored) = graph_round(
+        vec![serde_json::json!({"id": id(1), "flag": {"flagStatus": "flagged"}})],
+        messages,
+        &store,
+    );
+    assert!(matches!(outcome, LoadResult::Stored { .. }), "{outcome:?}");
+    assert_eq!(identities(&stored)[0], graph_identity(1));
+    assert!(stored[0].flagged && stored[0].seen, "{:?}", stored[0]);
+    assert!(!stored[1].flagged);
+    let readings: Vec<String> = (graph_paths(&service).into_iter())
+        .filter(|path| path.starts_with("/me/messages/"))
+        .collect();
+    assert_eq!(readings, [format!("/me/messages/{}", id(1))]);
 }
 
 /// Research §5: a message moved from the Inbox to Archive and marked unread
@@ -1152,7 +1269,7 @@ fn an_entry_for_a_message_another_folder_holds_is_read_again_first() {
     // Archive's own cycle related the message there, unread.
     let archive = folder_of("synthetic-microsoft365", "archive");
     let archived = FolderBatch {
-        known_arrived: vec![(graph_identity(2), false)],
+        known_arrived: vec![(graph_identity(2), MessageFlags::default())],
         ..FolderBatch::default()
     };
     store.store_batch(&archive, &archived, || false).unwrap();
@@ -1265,6 +1382,7 @@ fn a_rejected_position_rereads_the_folder_and_removes_what_it_did_not_list() {
             )),
             fill_place: None,
             synchronized: true,
+            numbers: None,
         }),
         ..FolderBatch::default()
     };
@@ -1509,6 +1627,7 @@ fn message_with(number: u32, content: ReceivedContent) -> Message {
         fields: DisplayFields::default(),
         received_unix: None,
         seen: false,
+        flagged: false,
         content,
         preview: String::new(),
     }
@@ -1782,7 +1901,8 @@ fn a_mailbox_load_stores_the_messages_of_the_folder_it_names() {
         read_stored_messages(&store, &folder_of("synthetic-account", "INBOX")),
         Ok(None)
     );
-    assert_eq!(fixture.log().examined_mailboxes, ["Work"]);
+    // Opened once for the listing and once more for the pass at the end.
+    assert_eq!(fixture.log().opened_mailboxes, ["Work", "Work"]);
 }
 
 #[test]
@@ -1825,7 +1945,7 @@ fn row_fetches(fixture: &ImapFixture) -> Vec<String> {
 
 /// A cycle of the Generic IMAP Inbox of `fixture` into `store`, which already
 /// lists the Inbox; returns how it ended, what the Inbox then holds and how
-/// many batches were reported stored.
+/// many changes of the store were reported.
 fn synchronize_again(
     fixture: &ImapFixture,
     store: &Arc<Store>,
@@ -1878,7 +1998,8 @@ fn only_messages_of_the_last_30_days_get_their_text() {
         ["Recent", "Old"]
     );
     // The structures come with the rows; then the recent text whole, which
-    // also gives its preview, and only the old message's piece.
+    // also gives its preview, and only the old message's piece; the pass at
+    // the end lists the folder again, since this server has no CONDSTORE.
     let asked: Vec<String> = fixture
         .log()
         .fetches
@@ -1886,7 +2007,7 @@ fn only_messages_of_the_last_30_days_get_their_text() {
         .filter(|fetch| !fetch.items.contains(&"INTERNALDATE".to_owned()))
         .map(|fetch| fetch.message_set)
         .collect();
-    assert_eq!(asked, ["1:*", "20", "10"]);
+    assert_eq!(asked, ["1:*", "20", "10", "1:*"]);
 }
 
 #[test]
@@ -1997,15 +2118,17 @@ fn a_microsoft_365_round_without_changes_costs_one_request() {
     assert!(later[0].query.contains("$deltatoken=round-1"), "{later:?}");
 }
 
-/// SC-003: arrivals are fetched, read states change in place and messages
-/// the complete listing no longer reports leave.
+/// SC-003: arrivals are fetched, read states and stars change in place and
+/// messages the complete listing no longer reports leave.
 #[test]
-fn a_later_cycle_brings_arrivals_read_states_and_removals() {
+fn a_later_cycle_brings_arrivals_flags_and_removals() {
     let store = Arc::new(store_with_inbox(&folder_of("synthetic-account", "INBOX")));
     synchronize_again(&imap_server(plain_messages(3)), &store);
     let mut changed = plain_messages(4);
     changed.remove(0); // 10 is gone
     changed[0].seen = true; // 20 was read elsewhere
+    changed[1].flagged = true; // 30 was starred elsewhere
+    changed[2].flagged = true; // 40 arrives starred
     let fixture = imap_server(changed);
     let (outcome, stored, _) = synchronize_again(&fixture, &store);
     assert!(
@@ -2016,7 +2139,11 @@ fn a_later_cycle_brings_arrivals_read_states_and_removals() {
         identities(&stored),
         [imap_identity(40), imap_identity(30), imap_identity(20)]
     );
-    assert!(stored[2].seen);
+    let flags: Vec<(bool, bool)> = stored
+        .iter()
+        .map(|message| (message.seen, message.flagged))
+        .collect();
+    assert_eq!(flags, [(false, true), (false, true), (true, false)]);
     // Only the arrival was fetched.
     assert_eq!(row_fetches(&fixture), ["40"]);
 }
@@ -2201,7 +2328,7 @@ fn a_stopped_first_fill_continues_without_fetching_stored_messages_again() {
         // The listing's batch, then the first hundred.
         for _ in 0..2 {
             let event = events.recv().await.expect("a batch");
-            assert!(matches!(event, LoadEvent::BatchStored), "{event:?}");
+            assert!(matches!(event, LoadEvent::StoreChanged), "{event:?}");
         }
         drop(handle);
         let (outcome, _) = load_end(&events).await;
@@ -2343,6 +2470,7 @@ fn store_completed_cycle(
             server_position: None,
             fill_place: None,
             synchronized: true,
+            numbers: None,
         }),
         ..FolderBatch::default()
     };
@@ -2453,6 +2581,7 @@ fn a_stopped_full_reading_after_a_rejected_place_starts_again_in_full() {
                 stopping.url()
             )),
             synchronized: false,
+            numbers: None,
         }),
         ..FolderBatch::default()
     };
@@ -2544,6 +2673,7 @@ fn an_interrupted_round_after_a_continued_fill_is_continued_as_a_round() {
             )),
             fill_place: None,
             synchronized: false,
+            numbers: None,
         }),
         ..FolderBatch::default()
     };
@@ -2598,6 +2728,7 @@ fn an_edited_recent_message_gets_its_text_again() {
             )),
             fill_place: None,
             synchronized: true,
+            numbers: None,
         }),
         ..FolderBatch::default()
     };

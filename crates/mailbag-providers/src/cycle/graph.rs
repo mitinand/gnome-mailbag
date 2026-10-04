@@ -5,7 +5,7 @@
 //! service's delta reading, one batch per page, from the folder's saved
 //! position.
 
-use super::{CycleEnd, completed};
+use super::{CycleEnd, completed, pending::send_graph_changes};
 use crate::{
     LoadResult, microsoft365::received_fields, renewal::AccessRenewal, store_load::BatchWriter,
 };
@@ -13,17 +13,25 @@ use goa_adapter::GraphAccess;
 use mailbag_content::preview_of_text;
 use mailbag_domain::{FolderBatch, FolderState, Message, ReceivedContent};
 use mailbag_graph::{
-    ChangePage, ChangesFrom, GraphError, GraphFailure, GraphMessage, MessageChange, NextPage,
-    read_message, read_message_changes, read_message_text, read_texts_received_between,
+    ChangePage, ChangesFrom, FlagUpdate, GraphError, GraphFailure, GraphMessage, MessageChange,
+    NextPage, read_message, read_message_changes, read_message_text, read_texts_received_between,
+    update_message_flags,
 };
 use mailbag_store::FolderSync;
 use std::{
     collections::{HashMap, HashSet},
-    time::SystemTime,
+    time::{Instant, SystemTime},
 };
 
 /// What the cycle is reading, which decides how texts are fetched, whether
 /// each page saves its place and what completes the cycle.
+/// How many messages the folder holds a round may name before the cycle
+/// reads the whole folder instead of each named message: a folder marked
+/// read in another client names them all, and one reading per message
+/// would take minutes and meet the service's limits, the next refresh
+/// starting the same round again (specs/009-synchronization FR-007).
+const ROUND_READINGS_LIMIT: usize = 100;
+
 enum Reading {
     /// A first reading of a folder never synchronized. `continued` when it
     /// goes on from a place an earlier cycle saved: it then reads one more
@@ -39,7 +47,10 @@ enum Reading {
 
 /// The cycle of a Microsoft 365 folder: pages of the delta reading, each
 /// stored as a batch, until the reading completes with the position the
-/// next cycle starts from.
+/// next cycle starts from. The user's pending changes are sent after each
+/// stored page of a first or full reading and after a round's last page,
+/// never within a round, whose later pages may still report older values
+/// (specs/011-read-and-star FR-007).
 pub(super) async fn synchronize_graph_folder(
     access: GraphAccess,
     service_url: String,
@@ -55,6 +66,8 @@ pub(super) async fn synchronize_graph_folder(
     let mut round_start = stored.state.server_position.clone();
     // Messages the service reported, for the record.
     let mut reported = 0;
+    // Stored messages the round's entries named so far (FR-007's limit).
+    let mut stored_named_in_round = 0;
     loop {
         let page = match service.read_changes(&from).await {
             // Only a saved link can be rejected into a full reading, once; a
@@ -78,6 +91,25 @@ pub(super) async fn synchronize_graph_folder(
         };
         let changes = merge_per_message(page.changes);
         reported += changes.len();
+        if matches!(reading, Reading::Round) {
+            stored_named_in_round += (changes.keys())
+                .filter(|id| stored.stored.contains_key(&identity(id)))
+                .count();
+            // Too many stored messages to read one by one: the whole folder
+            // is read instead, as after a rejected position (FR-007).
+            if stored_named_in_round > ROUND_READINGS_LIMIT {
+                tracing::info!(
+                    named = stored_named_in_round,
+                    "the round names too many stored messages; reading the whole folder"
+                );
+                stored = batches.read_folder_sync()?;
+                from = ChangesFrom::FirstReading(folder_id.clone());
+                reading = Reading::FullRereading {
+                    listed: HashSet::new(),
+                };
+                continue;
+            }
+        }
         if let Reading::FullRereading { listed } = &mut reading {
             listed.extend(changes.keys().map(|id| identity(id)));
         }
@@ -92,14 +124,19 @@ pub(super) async fn synchronize_graph_folder(
                         server_position: None,
                         fill_place: Some(next_link.clone()),
                         synchronized: false,
+                        numbers: None,
                     },
                     Reading::Round | Reading::FullRereading { .. } => FolderState {
                         server_position: round_start.clone(),
                         fill_place: None,
                         synchronized: false,
+                        numbers: None,
                     },
                 });
                 batches.store(&batch)?;
+                if !matches!(reading, Reading::Round) {
+                    send_graph_changes(&mut service, batches).await?;
+                }
                 from = ChangesFrom::Link(next_link);
             }
             NextPage::Done(delta_link)
@@ -109,8 +146,10 @@ pub(super) async fn synchronize_graph_folder(
                     server_position: Some(delta_link.clone()),
                     fill_place: None,
                     synchronized: false,
+                    numbers: None,
                 });
                 batches.store(&batch)?;
+                send_graph_changes(&mut service, batches).await?;
                 round_start = Some(delta_link.clone());
                 from = ChangesFrom::Link(delta_link);
                 reading = Reading::Round;
@@ -127,6 +166,7 @@ pub(super) async fn synchronize_graph_folder(
                 }
                 batch.state = Some(completed(Some(delta_link)));
                 batches.store(&batch)?;
+                send_graph_changes(&mut service, batches).await?;
                 return Ok(batches.finish(reported, None));
             }
         }
@@ -159,10 +199,10 @@ fn where_to_start(stored: &FolderSync, folder_id: &str) -> (ChangesFrom, Reading
 
 /// A page's entries merged per message in their order, since the service
 /// may repeat and reorder them: a later entry wins, and a partial one never
-/// drops an earlier read state. An entry marking the message removed, met
-/// with another entry for it, is trusted neither way: the message is read
-/// as the service holds it now, like an entry that changed other fields,
-/// whatever else the page says about it (research §5).
+/// drops an earlier read state or star. An entry marking the message
+/// removed, met with another entry for it, is trusted neither way: the
+/// message is read as the service holds it now, like an entry that changed
+/// other fields, whatever else the page says about it (research §5).
 fn merge_per_message(changes: Vec<MessageChange>) -> HashMap<String, MessageChange> {
     let mut merged: HashMap<String, MessageChange> = HashMap::new();
     let mut read_again: HashSet<String> = HashSet::new();
@@ -180,6 +220,7 @@ fn merge_per_message(changes: Vec<MessageChange>) -> HashMap<String, MessageChan
                 MessageChange::Changed {
                     id: id.clone(),
                     is_read: None,
+                    flagged: None,
                     other_fields: true,
                 }
             }
@@ -187,27 +228,29 @@ fn merge_per_message(changes: Vec<MessageChange>) -> HashMap<String, MessageChan
                 Some(MessageChange::Listed(mut message)),
                 MessageChange::Changed {
                     is_read,
+                    flagged,
                     other_fields: false,
                     ..
                 },
             ) => {
                 message.is_read = is_read.unwrap_or(message.is_read);
+                message.flagged = flagged.unwrap_or(message.flagged);
                 MessageChange::Listed(message)
             }
+            // Two partial entries: only whether other fields changed matters,
+            // since a changed message is read again (009 FR-007).
             (
                 Some(MessageChange::Changed {
-                    is_read: earlier_read,
                     other_fields: earlier_fields,
                     ..
                 }),
                 MessageChange::Changed {
-                    id,
-                    is_read,
-                    other_fields,
+                    id, other_fields, ..
                 },
             ) => MessageChange::Changed {
                 id,
-                is_read: is_read.or(earlier_read),
+                is_read: None,
+                flagged: None,
                 other_fields: other_fields || earlier_fields,
             },
             (_, change) => change,
@@ -226,9 +269,14 @@ fn identity(graph_id: &str) -> String {
     format!("graph:{graph_id}")
 }
 
+/// The service's id of a stored Microsoft 365 message.
+pub(super) fn graph_id(identity: &str) -> Option<&str> {
+    identity.strip_prefix("graph:")
+}
+
 /// Microsoft Graph for one cycle, with the one renewal of its token the
 /// cycle may use (research §13).
-struct GraphService {
+pub(super) struct GraphService {
     service_url: String,
     access_token: String,
     renewal: Option<AccessRenewal>,
@@ -258,6 +306,18 @@ impl GraphService {
         .await
     }
 
+    /// Sets the message's read mark or star.
+    pub(super) async fn update_flags(
+        &mut self,
+        id: &str,
+        update: FlagUpdate,
+    ) -> Result<(), GraphError> {
+        self.request(async |service_url, token| {
+            update_message_flags(service_url, token, id, update).await
+        })
+        .await
+    }
+
     /// One page's changes as a batch. A message another folder of the
     /// account holds, a partial entry that changed other list fields and an
     /// entry for a message the account lacks are read again; a message read
@@ -275,6 +335,8 @@ impl GraphService {
         let held_by_account = batches.stored_identities(&identities)?;
         let mut batch = FolderBatch::default();
         let mut arrivals = Vec::new();
+        let mut read_again_count = 0;
+        let reading_started = Instant::now();
         for (id, change) in changes {
             let stored_identity = identity(&id);
             let known = held_by_account.contains(&stored_identity);
@@ -301,10 +363,17 @@ impl GraphService {
                     continue;
                 }
                 _ if held_elsewhere.contains(&stored_identity) => true,
-                MessageChange::Listed(_) => false,
-                MessageChange::Changed { other_fields, .. } => *other_fields || !known,
+                // A round's entry about a message the account holds names it
+                // and no more: the message is read as the service holds it
+                // now, since the entry may be older than a change the
+                // application made and the service accepted (009 FR-007,
+                // amended 2026-10-05); a whole reading's pages are stored as
+                // reported.
+                MessageChange::Listed(_) => known && matches!(reading, Reading::Round),
+                MessageChange::Changed { .. } => true,
             };
             if read_again {
+                read_again_count += 1;
                 match self.read_in_folder(&id, &batches.folder.identity).await? {
                     Some(message) => arrivals.push(Arrival {
                         wants_text: wants_text(&message),
@@ -316,17 +385,19 @@ impl GraphService {
                 }
                 continue;
             }
-            match change {
-                MessageChange::Listed(message) => arrivals.push(Arrival {
+            if let MessageChange::Listed(message) = change {
+                arrivals.push(Arrival {
                     wants_text: wants_text(&message),
                     message,
-                }),
-                MessageChange::Changed {
-                    is_read: Some(seen),
-                    ..
-                } => batch.read_states.push((stored_identity, seen)),
-                _ => {}
+                });
             }
+        }
+        if read_again_count > 0 {
+            tracing::debug!(
+                messages = read_again_count,
+                ms = reading_started.elapsed().as_millis() as u64,
+                "changed messages read again"
+            );
         }
         let texts = self
             .read_texts(&arrivals, reading, &batches.folder.identity)
@@ -446,6 +517,7 @@ fn stored_message(arrival: Arrival, texts: &HashMap<String, Option<String>>) -> 
         fields: received_fields(&message),
         received_unix: message.received_unix,
         seen: message.is_read,
+        flagged: message.flagged,
         content,
         preview: preview_of_text(message.body_preview.as_deref().unwrap_or_default()),
     }

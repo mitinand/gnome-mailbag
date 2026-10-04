@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Lists the mailboxes of an IMAP account and reads one of them over a
-//! verified GIO TLS connection.
+//! verified GIO TLS connection; of the mail it changes only the messages'
+//! read state and star.
 //!
-//! This crate owns the protocol: the secure connection, sign-in, read-only
+//! This crate owns the protocol: the secure connection, sign-in, the
 //! commands, mailbox names and the message part structure with IMAP section
 //! numbers. It has no notion of a mail provider and never decodes message
 //! content. Its futures must run on one thread with a running GLib main
@@ -114,6 +115,32 @@ pub enum ImapStep {
     /// The message list or part structures.
     FetchMessages,
     FetchText,
+    /// Setting or clearing a flag of messages.
+    StoreFlags,
+}
+
+/// The numbers a mailbox's opening returns, which a state pass compares
+/// with the ones the folder stored (specs/009-synchronization FR-005).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MailboxNumbers {
+    /// UIDVALIDITY, the mailbox's numbering version; a server may give none.
+    pub uid_validity: Option<u32>,
+    /// EXISTS, how many messages the mailbox holds.
+    pub message_count: u32,
+    /// UIDNEXT, the next UID the server predicts; a server may give none.
+    pub uid_next: Option<u32>,
+    /// HIGHESTMODSEQ, when the mailbox was opened with CONDSTORE and keeps
+    /// mod-sequences (RFC 7162); `None` otherwise, NOMODSEQ included.
+    pub highest_modseq: Option<u64>,
+}
+
+/// A flag `MailboxReader::store_flags` sets or clears.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StoreFlag {
+    /// `\Seen`: read.
+    Seen,
+    /// `\Flagged`: starred.
+    Flagged,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -226,6 +253,8 @@ pub struct FolderListing {
 pub struct ListedUid {
     pub uid: u32,
     pub seen: bool,
+    /// `\Flagged`: the message is starred.
+    pub flagged: bool,
     /// X-GM-MSGID, asked for with `RowItems::WithGmailAttributes` and absent
     /// when the server did not answer with it.
     pub gmail_message_id: Option<u64>,
@@ -236,6 +265,8 @@ pub struct ListedUid {
 pub struct MessageRow {
     pub uid: u32,
     pub seen: bool,
+    /// `\Flagged`: the message is starred.
+    pub flagged: bool,
     /// INTERNALDATE as seconds since the Unix epoch.
     pub internal_date: Option<i64>,
     /// The raw From, To and Subject header lines.

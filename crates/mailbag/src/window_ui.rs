@@ -10,7 +10,9 @@
 mod tests;
 
 use crate::accounts::{AccountPage, Selection};
-use crate::failure_declarations::{DeclaredFailure, declare_failure, declare_short_list};
+use crate::failure_declarations::{
+    DeclaredFailure, declare_failure, declare_short_list, message_not_changed,
+};
 use crate::failure_dialog::{self, RetriedOperation, show_action_button, status_description};
 use crate::mail_ui::MailUi;
 use crate::refreshes::{RefreshOutcome, Refreshes};
@@ -18,13 +20,13 @@ use crate::sidebar_ui::{PageAction, SidebarUi, show_check_progress};
 use adw::{gio, glib, gtk, prelude::*};
 use goa_adapter::AccountUpdate;
 use mailbag_domain::{
-    AccountId, Failure, FailureKind, Folder, FolderRef, MessageListRow, catch_panic,
+    AccountId, Failure, FailureKind, Folder, FolderRef, MessageFlag, MessageListRow, catch_panic,
 };
 use mailbag_providers::{LoadEvent, LoadResult, LoadTarget, LoadsMail, MailProvider};
 use mailbag_store::Store;
 use std::{
     cell::{Cell, RefCell},
-    collections::BTreeSet,
+    collections::{BTreeSet, VecDeque},
     rc::Rc,
     sync::Arc,
 };
@@ -53,10 +55,24 @@ pub struct WindowUi {
     refresh_mailbox: gio::SimpleAction,
     refresh_account: gio::SimpleAction,
     read_stored_mail: gio::SimpleAction,
+    /// The user's changes of messages' flags in the order made; the oldest
+    /// is being written and leaves when its write ends, so one is written
+    /// at a time and a later change lands last (specs/011-read-and-star
+    /// research §14).
+    flag_writes: RefCell<VecDeque<FlagWrite>>,
     /// The sidebar box that shows the spinner while a load runs.
     loading_spinner_box: gtk::Box,
     /// How many reads of an opened message's content are running.
     content_reads: Cell<u32>,
+}
+
+/// The user's wanted value of a flag of an account's message.
+#[derive(Clone)]
+struct FlagWrite {
+    account: AccountId,
+    identity: String,
+    flag: MessageFlag,
+    wanted: bool,
 }
 
 /// The shown accounts' folder lists as the window last read them. The
@@ -172,6 +188,7 @@ impl WindowUi {
             refresh_mailbox: gio::SimpleAction::new("refresh-mailbox", None),
             refresh_account: gio::SimpleAction::new("refresh-account", None),
             read_stored_mail: gio::SimpleAction::new("read-stored-mail", None),
+            flag_writes: RefCell::default(),
             loading_spinner_box,
             content_reads: Cell::new(0),
         });
@@ -202,6 +219,19 @@ impl WindowUi {
             .connect_content_request(move |account_id, identity| {
                 if let Some(window) = opening.upgrade() {
                     window.read_message_content(account_id.clone(), identity.to_owned());
+                }
+            });
+        let changing = Rc::downgrade(&window);
+        window
+            .mail
+            .connect_flag_change(move |account, identity, flag, wanted| {
+                if let Some(window) = changing.upgrade() {
+                    window.write_flag(FlagWrite {
+                        account: account.clone(),
+                        identity: identity.to_owned(),
+                        flag,
+                        wanted,
+                    });
                 }
             });
         let filtering = Rc::downgrade(&window);
@@ -249,6 +279,12 @@ impl WindowUi {
     /// Refresh Mailbox, for the application to publish under its menu item.
     pub fn refresh_mailbox_action(&self) -> &gio::SimpleAction {
         &self.refresh_mailbox
+    }
+
+    /// Mark as Read and Mark as Unread of the reader header's menu, for the
+    /// application to publish.
+    pub fn mark_actions(&self) -> [&gio::SimpleAction; 2] {
+        self.mail.mark_actions()
     }
 
     /// Refresh Account, for the application to publish under its menu item.
@@ -377,7 +413,7 @@ impl WindowUi {
                     return;
                 };
                 match event {
-                    LoadEvent::BatchStored => window.show_stored_batch(&loaded_account),
+                    LoadEvent::StoreChanged => window.show_changed_store(&loaded_account),
                     LoadEvent::Finished(result) => {
                         window.finish_load(&loaded_account, loaded_target.clone(), result)
                     }
@@ -405,11 +441,11 @@ impl WindowUi {
         self.render();
     }
 
-    /// A cycle stored a batch: the shown mailbox is read again when it
-    /// belongs to the loaded account, since a batch of one folder can change
+    /// A cycle changed the store: the shown mailbox is read again when it
+    /// belongs to the loaded account, since a change in one folder can change
     /// messages another folder of the account holds too (a Gmail label, a
     /// moved Microsoft 365 message).
-    fn show_stored_batch(self: &Rc<Self>, account_id: &AccountId) {
+    fn show_changed_store(self: &Rc<Self>, account_id: &AccountId) {
         if self
             .selected_mailbox()
             .is_some_and(|folder| folder.account == *account_id)
@@ -568,6 +604,70 @@ impl WindowUi {
                 window.read_shown_mailbox_again();
             }
             window.render();
+        });
+    }
+
+    /// Queues the user's change of a message's flag; changes are written one
+    /// at a time in the order made.
+    fn write_flag(self: &Rc<Self>, change: FlagWrite) {
+        let mut writes = self.flag_writes.borrow_mut();
+        writes.push_back(change);
+        let none_running = writes.len() == 1;
+        drop(writes);
+        if none_running {
+            self.write_oldest_flag();
+        }
+    }
+
+    /// Writes the oldest queued change on GIO's thread pool, then reads the
+    /// shown mailbox again, whose rows show the change, or shows the toast
+    /// of a change not saved and changes no row (specs/011-read-and-star
+    /// FR-001, FR-011); then takes it off the queue and writes the next. No
+    /// load starts: Refresh Mailbox sends the change.
+    fn write_oldest_flag(self: &Rc<Self>) {
+        let Some(change) = self.flag_writes.borrow().front().cloned() else {
+            return;
+        };
+        let store = self.store.clone();
+        let window = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let account = change.account.clone();
+            let (identity, flag, wanted) = (change.identity.clone(), change.flag, change.wanted);
+            let written = run_on_pool(FailureKind::MailNotSaved, move || {
+                store.write_pending_flag(
+                    &change.account,
+                    &change.identity,
+                    change.flag,
+                    change.wanted,
+                )
+            })
+            .await;
+            match &written {
+                Ok(()) => tracing::debug!(
+                    account = account.as_str(),
+                    identity,
+                    ?flag,
+                    wanted,
+                    "message change stored"
+                ),
+                Err(failure) => tracing::error!(
+                    account = account.as_str(),
+                    cause = ?failure.kind,
+                    "message change not saved"
+                ),
+            }
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            match written {
+                Ok(()) => window.read_shown_mailbox_again(),
+                Err(failure) => window
+                    .sidebar
+                    .borrow()
+                    .show_toast(message_not_changed(&failure.kind)),
+            }
+            window.flag_writes.borrow_mut().pop_front();
+            window.write_oldest_flag();
         });
     }
 
@@ -815,13 +915,14 @@ impl WindowUi {
         failure_dialog::present(&self.list_stack, &failure, retried);
     }
 
-    /// Whether a read of the stored mail is running, for the graphical test
-    /// to wait for.
+    /// Whether a read of the stored mail or a write of a message's flag is
+    /// running, for the graphical test to wait for.
     #[cfg(test)]
-    pub fn reads_stored_mail(&self) -> bool {
+    pub fn works_on_stored_mail(&self) -> bool {
         self.content_reads.get() > 0
             || self.folder_lists.borrow().reading
             || self.shown_mailbox.borrow().is_reading()
+            || !self.flag_writes.borrow().is_empty()
     }
 }
 

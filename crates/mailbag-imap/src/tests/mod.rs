@@ -3,9 +3,11 @@
 
 mod acquisition;
 mod compression;
+mod flags;
 mod gmail;
 mod listing;
 mod mailboxes;
+mod numbers;
 mod record;
 mod sections;
 mod secure_session;

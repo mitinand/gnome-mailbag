@@ -107,7 +107,7 @@ fn a_name_with_a_quote_and_a_backslash_opens_as_listed() {
             OpenOptions::default(),
             &listed.names[0].name,
         ))));
-        assert_eq!(fixture.log().examined_mailboxes, [name]);
+        assert_eq!(fixture.log().opened_mailboxes, [name]);
     }
 }
 
@@ -165,7 +165,7 @@ fn a_listed_mailbox_opens_and_gives_its_rows() {
     )));
     let listed = expect_success(run(fetch_all_rows(&mut reader)));
     assert_eq!(listed.rows.len(), 2);
-    assert_eq!(fixture.log().examined_mailboxes, ["Work"]);
+    assert_eq!(fixture.log().opened_mailboxes, ["Work"]);
 }
 
 #[test]
