@@ -2006,8 +2006,10 @@ fn an_opened_message_is_marked_read_after_a_second_for_good() {
 
 /// The envelope's star and the menus' Mark as Read and Mark as Unread store
 /// the open message's change, which its row and the star show once read
-/// again, without a load; a change the server refused comes back with the
-/// refresh's failure (011 FR-001 to FR-004, FR-010; SC-001's window side).
+/// again, without a load; the header's menu opens and its two actions act
+/// once a message is open; a change the server refused comes back with
+/// the refresh's failure (011 FR-001 to FR-004, FR-010; SC-001's window
+/// side).
 #[test]
 #[ignore = "requires a graphical GTK session"]
 fn the_star_and_the_mark_actions_change_the_open_message_in_the_store() {
@@ -2021,8 +2023,16 @@ fn the_star_and_the_mark_actions_change_the_open_message_in_the_store() {
     let inbox = folder_of(&account("synthetic-generic"), "INBOX");
     let pending = || loader.store.read_pending_changes(&inbox).unwrap();
     let star = star_button(&widgets);
+    let header_menu: gtk::MenuButton = widgets
+        .builder
+        .object("demo_button")
+        .expect("the reader header's menu");
+    assert!(header_menu.is_sensitive());
+    let [mark_read, mark_unread] = ui.mark_actions();
+    assert!(!mark_read.is_enabled() && !mark_unread.is_enabled());
     widgets.open_row(0);
     settle(&ui);
+    assert!(mark_read.is_enabled() && mark_unread.is_enabled());
     assert!(!star.is_active());
     star.emit_clicked();
     settle(&ui);
@@ -2067,7 +2077,6 @@ fn the_star_and_the_mark_actions_change_the_open_message_in_the_store() {
     assert!(shows_unread_dot(&widgets.rows()[1]));
     assert_eq!(seen_wanted(), Some(false));
     // Changes made at once are written in the order made.
-    let [mark_read, mark_unread] = ui.mark_actions();
     for (actions, wanted) in [
         ([mark_read, mark_unread, mark_read], true),
         ([mark_unread, mark_read, mark_unread], false),

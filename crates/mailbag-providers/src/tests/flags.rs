@@ -100,8 +100,10 @@ fn hundreds_of_changes_go_a_hundred_messages_per_command() {
     assert_eq!(pending_in(&store, &inbox), []);
 }
 
-/// Research §14 and SC-003: the user unstars while the star is on its way;
-/// the accepted star leaves the newer wish, which goes before the next batch.
+/// Research §14, §15 and SC-003: the user unstars while the star is on its
+/// way and marks the message unread, which the cycle's listing shows
+/// already; the accepted star leaves the newer wish, and both go before the
+/// next batch, the unread one too, since the listing is old by then.
 #[test]
 fn a_change_made_while_a_command_is_out_is_sent_before_the_next_batch() {
     let inbox = folder_of(IMAP_ACCOUNT, "INBOX");
@@ -128,6 +130,7 @@ fn a_change_made_while_a_command_is_out_is_sent_before_the_next_batch() {
         });
         wait_until(|| store_commands(&fixture).len() == 1).await;
         want(&store, IMAP_ACCOUNT, &starred, MessageFlag::Flagged, false);
+        want(&store, IMAP_ACCOUNT, &starred, MessageFlag::Seen, false);
         release.send(()).await.unwrap();
         load.await.unwrap()
     });
@@ -136,15 +139,16 @@ fn a_change_made_while_a_command_is_out_is_sent_before_the_next_batch() {
         store_commands(&fixture),
         [
             r"UID STORE 10 +FLAGS.SILENT (\Flagged)",
+            r"UID STORE 10 -FLAGS.SILENT (\Seen)",
             r"UID STORE 10 -FLAGS.SILENT (\Flagged)",
         ]
     );
-    // The unstar went after the first batch of rows and before the second.
+    // Both went after the first batch of rows and before the second.
     let log = fixture.log();
-    let unstar = (log.commands.iter())
+    let first_sent_back = (log.commands.iter())
         .position(|command| command.contains("-FLAGS"))
         .unwrap();
-    let fetches_before = (log.commands[..unstar].iter())
+    let fetches_before = (log.commands[..first_sent_back].iter())
         .filter(|command| *command == "UID FETCH")
         .count();
     let row_batches_before = (log.fetches[..fetches_before].iter())
@@ -153,7 +157,10 @@ fn a_change_made_while_a_command_is_out_is_sent_before_the_next_batch() {
     assert_eq!(row_batches_before, 1);
     assert_eq!(row_fetches(&fixture).len(), 3);
     assert_eq!(pending_in(&store, &inbox), []);
-    assert!(!store.read_folder_sync(&inbox).unwrap().stored[&starred].flagged);
+    assert_eq!(
+        store.read_folder_sync(&inbox).unwrap().stored[&starred],
+        MessageFlags::default()
+    );
 }
 
 /// SC-003's second half: a change made while the cycle fetches its last

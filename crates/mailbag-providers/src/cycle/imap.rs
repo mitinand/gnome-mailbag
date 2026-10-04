@@ -6,7 +6,7 @@
 
 use super::{
     CycleEnd, completed,
-    pending::{SentChanges, send_imap_changes, settle_sent_changes},
+    pending::{SentChanges, end_changes_the_listing_shows, send_imap_changes, settle_sent_changes},
 };
 use crate::{
     LoadResult,
@@ -50,9 +50,10 @@ pub(super) struct ListedMessage {
 /// The cycle of an IMAP folder, Generic IMAP or Gmail (spec FR-005, FR-006;
 /// research §2, §3): list every message, store what the listing proves,
 /// then fetch the missing messages newest first, a batch at a time. The
-/// user's pending changes are sent by the listing's UIDs after the listing
-/// and after each batch; when the cycle sent one, the folder is listed again
-/// to see which the server holds (specs/011-read-and-star FR-007).
+/// user's pending changes the listing shows the server holds end with it;
+/// the others are sent by the listing's UIDs after the listing and after
+/// each batch; when the cycle sent one, the folder is listed again to see
+/// which the server holds (specs/011-read-and-star FR-007).
 pub(super) async fn synchronize_imap_folder(
     access: ImapAccess,
     identity_rule: IdentityRule,
@@ -69,6 +70,7 @@ pub(super) async fn synchronize_imap_folder(
         .collect();
     let missing = missing_messages(&listed, &stored);
     batches.store(&listing_changes(&listed, &stored, &listing, &missing))?;
+    end_changes_the_listing_shows(&listed_by_identity, batches)?;
     let mut sent_changes = SentChanges::new();
     send_imap_changes(
         &mut server.reader,

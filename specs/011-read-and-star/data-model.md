@@ -61,7 +61,7 @@ existing store at start (007 FR-012), pending changes included.
 
 | Value | Owner | Lifetime |
 |---|---|---|
-| The listing's `identity → UID, flags` of the folder | The running IMAP cycle | One cycle; the addresses and the server values every sending step uses |
+| The listing's `identity → UID, flags` of the folder | The running IMAP cycle | One cycle; the addresses every sending step uses, and the server values only the first sending step compares with, since the listing is old by the later ones (research §15) |
 | The value last sent per `(identity, flag)` | The running IMAP cycle | One cycle; a wish equal to it is not sent again, and the listing after the commands ends what it shows |
 | The star action's state and the row object's `starred` and `unread` | The window | While the message is open or listed; set from the stored rows after each read, never by the window itself (research §15.4) |
 | The window's queued pending writes | The window | Until each is written, one at a time, in the order of the user's actions |

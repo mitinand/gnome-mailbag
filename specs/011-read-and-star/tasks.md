@@ -506,9 +506,24 @@ recorded limitation.
 - [x] T041 In crates/mailbag/resources/ui/message-row.ui the star loses
   its `accessible-role`; no test (two quick clicks stay a limitation,
   research §15.4).
-- [ ] T042 STOP (portion 7b): ./scripts/check.sh, the GTK tests one per
-  process, the size of the change, a suggested commit message; PR #17
-  updated by the maintainer.
+- [x] T043 From the second review of 2026-10-04 (spec Clarifications; in a
+  fresh session: the window, the behaviour, readability, size,
+  architecture, security): in crates/mailbag/src/mail_ui.rs the reader
+  header's menu button (`demo_button`) is no longer made insensitive, and
+  `app.mark-scope-read` / `app.mark-scope-unread` are enabled while a
+  message is open (spec FR-002); the GUI test asserts both;
+  specs/002-imap-integration/contracts/ui.md amended.
+- [x] T044 From the same review: in
+  crates/mailbag-providers/src/cycle/pending.rs
+  `end_changes_the_listing_shows`, called once after the listing is
+  stored, ends the wishes the listing shows; `send_imap_changes` no longer
+  compares with the listing, whose values are old by a later step (spec
+  FR-007, Edge Cases; research §15); the race test also marks the message
+  unread, a value the listing shows, and expects the command before the
+  next batch.
+- [ ] T042 STOP (portion 7b with T043 and T044): ./scripts/check.sh, the
+  GTK tests one per process, the size of the change, a suggested commit
+  message; PR #17 updated by the maintainer.
 
 ## Dependencies
 

@@ -74,7 +74,7 @@ See the limited protocol-support decision in [research](../research.md#6-ui-and-
 | reader_to | Received To recipients as plain text; hide when absent. |
 | reader_body | Inert plain text: at most the first 65,536 UTF-8 bytes, cut at a character boundary, without an explanation. No HTML conversion, markup or external requests. |
 | attachment_button / reader_location | Hidden; attachment and folder views are outside scope. |
-| star_button / message_menu / demo_button / mail-changing controls | Preserve placement; keep insensitive and without action handlers. |
+| star_button / message_menu / demo_button / mail-changing controls | Preserve placement; keep insensitive and without action handlers. *Amended 2026-10-04 by [Read and star](../../011-read-and-star/spec.md) (011 FR-002)*: `star_button`, the message menu's Mark as Unread and the header menu's (`demo_button`) Mark as Read and Mark as Unread act on the open message; the other mail-changing controls stay insensitive. |
 | reader_stack | Use unselected/message. Do not enter offline/body-loading prototype pages. |
 
 Opening selects the received UID and uses existing mail_split navigation.

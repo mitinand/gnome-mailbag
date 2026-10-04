@@ -405,18 +405,24 @@ compares any more.
    reporting the wished value, which ended it, before a later page
    replayed the older one.
 
-**Within one IMAP cycle**, the server's value of a message's flag is the
-value this cycle last sent for it, otherwise the listing's. A wish equal
-to the listing's value, with nothing sent for it in this cycle, ends
-without a command; a wish equal to the value last sent waits for the
-listing after the commands; any other wish is sent, so a user changing
-back while a command is in flight is still sent (§14.1). After its last
-sending step, a cycle that sent anything lists the folder again, stores
-what that listing proves, and ends the sent changes it shows with their
-value; a sent change it does not show, or shows otherwise, stays for the
-next cycle of a folder that lists the message. So a change whose answer
-was lost is still ended by the next cycle's listing without a second
-command (SC-004).
+**Within one IMAP cycle** (amended at the second review of 2026-10-04):
+the first sending step comes right after the listing, while it is
+current, and a wish equal to the listing's value ends there without a
+command: a star set and taken off before the cycle, a change another
+client made first, or a command whose answer an earlier cycle lost costs
+nothing (SC-004). The later steps come minutes later during a first fill,
+and another client may have changed the flag meanwhile; a wish ended
+there by the old listing would be lost without a notice (the second
+review found the case: another client flips the flag during the fill, the
+user then flips it back in the window). So a later step compares only
+with the value this cycle last sent: a wish equal to it waits for the
+listing after the commands; any other wish is sent, a command for a value
+the server already has being harmless, and a user changing back while a
+command is in flight is still sent (§14.1). After its last sending step,
+a cycle that sent anything lists the folder again, stores what that
+listing proves, and ends the sent changes it shows with their value; a
+sent change it does not show, or shows otherwise, stays for the next
+cycle of a folder that lists the message.
 
 **Left as a limitation**: a delta replay of an older value after an
 accepted request writes that value as the server's; with nothing pending

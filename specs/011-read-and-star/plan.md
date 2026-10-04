@@ -178,12 +178,15 @@ flowchart TD
 
 **`mailbag-providers::cycle::pending`** — the sending step, shared.
 
+- `end_changes_the_listing_shows(listed, batches)` (added at the second
+  review of 2026-10-04, §15): `batches.pending_changes()`; a wish the
+  listing shows → `batches.settle`, no command. Called once, right after
+  the listing is stored, while it is current.
 - `send_imap_changes(reader, listed, sent_changes, batches)` (amended
   2026-10-04, §15):
-  1. `batches.pending_changes()`; keep those the listing shows; the
-     server's value is the one in `sent_changes`, otherwise the
-     listing's; a wish equal to the listing's value with nothing sent →
-     `batches.settle`, no command; equal to the value sent → wait;
+  1. `batches.pending_changes()`; keep those the listing shows; a wish
+     equal to the value in `sent_changes` → wait; the listing's values are
+     not compared, since by a later step they may be minutes old;
   2. group the others by `(flag, wanted)`, a hundred UIDs per command;
   3. per command `store_flags`; `Ok(None)` → record each in
      `sent_changes`; `Ok(Some(reply))` → `batches.drop_pending(uids,
@@ -207,7 +210,8 @@ flowchart TD
   window reads again" (the challenge found the old name false for the
   drop).
 - `cycle::imap::synchronize_imap_folder`: open → read → list → identify →
-  missing → store the listing → send → `for` each chunk `{ fetch; store;
+  missing → store the listing → end the wishes it shows → send → `for`
+  each chunk `{ fetch; store;
   send }` → when a command was accepted, list once more and store the
   removals and flags it proves (amended 2026-10-04) → finish; the
   listing's `identity → uid` map lives in `listed_uids`. Amended again on
@@ -228,7 +232,10 @@ flowchart TD
   Archive and Move to Trash items staying greyed without actions. The
   mail pane also owns `app.mark-scope-read` / `app.mark-scope-unread`,
   which call `change_flag(Seen, true | false)`; `main.rs` publishes them
-  through the window. With no message open they do nothing.
+  through the window. They are enabled while a message is open, and the
+  header's menu button, insensitive since 002, is left sensitive (the
+  second review of 2026-10-04 found it still insensitive, so the two
+  actions were unreachable from the window).
 - `change_flag(flag, wanted)`: for `Seen = false` the pending read timer
   is dropped first of all, so Mark as Unread within the second leaves no
   timer to fire; then `change_listed_flag` for the open message, which
@@ -336,6 +343,13 @@ Taken on 2026-10-02 and 2026-10-03; recorded in the spec's Clarifications:
     listing after the commands ends the cycle incomplete; the row's star
     is no button for assistive technologies; two quick clicks on a star
     stay a recorded limitation. The maintainer's decision.
+11. From the second review of 2026-10-04 (spec Clarifications): the header
+    menu's button is sensitive and its two actions enabled with an open
+    message; a wish equal to the listing's value ends without a command
+    only at the first sending step, the later steps send what this cycle
+    has not sent with that value (§15). The cost of the listing after the
+    commands on large folders is not changed here; it goes to the probes
+    at the start of background synchronization. The maintainer's decision.
 
 ## Portions and review pauses
 

@@ -28,21 +28,18 @@ const UIDS_PER_COMMAND: usize = 100;
 /// the cycle's commands says it (research §15).
 pub(super) type SentChanges = HashMap<(String, MessageFlag), bool>;
 
-/// Sends the folder's pending changes to the IMAP server by the UIDs the
-/// listing gave: one `UID STORE` per flag, wanted value and hundred
-/// messages. The server's value is the one this cycle last sent, otherwise
-/// the listing's: a wish the listing shows ends without a command, one
-/// equal to the value sent waits for the listing after the commands, and
-/// the others are sent and recorded in `sent_changes`. A message the
-/// listing lacks keeps its change for a later cycle.
-pub(super) async fn send_imap_changes(
-    reader: &mut MailboxReader,
+/// Ends, without a command, the pending changes whose value the listing
+/// shows the server holds: a star set and taken off before the cycle,
+/// a change another client made first, or a command of an earlier cycle
+/// that was applied though its answer was lost (spec FR-007, FR-009).
+/// Called once, right after the listing, while it is current; a later
+/// sending step sends instead, since the listing is old by then
+/// (research §15).
+pub(super) fn end_changes_the_listing_shows(
     listed: &HashMap<&str, &ListedMessage>,
-    sent_changes: &mut SentChanges,
     batches: &mut BatchWriter<'_>,
 ) -> Result<(), CycleEnd> {
-    let mut listed_already = Vec::new();
-    let mut commands: BTreeMap<(MessageFlag, bool), Vec<(String, u32)>> = BTreeMap::new();
+    let mut shown = Vec::new();
     for change in batches.pending_changes()? {
         let Some(message) = listed.get(change.identity.as_str()) else {
             continue;
@@ -51,18 +48,38 @@ pub(super) async fn send_imap_changes(
             MessageFlag::Seen => message.flags.seen,
             MessageFlag::Flagged => message.flags.flagged,
         };
-        match sent_changes.get(&(change.identity.clone(), change.flag)) {
-            Some(sent) if *sent == change.wanted => {}
-            None if listed_value == change.wanted => {
-                listed_already.push((change.identity, change.flag, change.wanted));
-            }
-            _ => {
-                let messages = commands.entry((change.flag, change.wanted)).or_default();
-                messages.push((change.identity, message.uid));
-            }
+        if listed_value == change.wanted {
+            shown.push((change.identity, change.flag, change.wanted));
         }
     }
-    settle_seen_changes(listed_already, batches)?;
+    settle_changes_server_holds(shown, batches)
+}
+
+/// Sends the folder's pending changes to the IMAP server by the UIDs the
+/// listing gave: one `UID STORE` per flag, wanted value and hundred
+/// messages, each recorded in `sent_changes`. A wish equal to the value
+/// this cycle last sent waits for the listing after the commands. The
+/// listing's own values are not compared here: by a later sending step
+/// they may be minutes old and another client may have changed the flag,
+/// and a command for a value the server has is harmless (research §15).
+/// A message the listing lacks keeps its change for a later cycle.
+pub(super) async fn send_imap_changes(
+    reader: &mut MailboxReader,
+    listed: &HashMap<&str, &ListedMessage>,
+    sent_changes: &mut SentChanges,
+    batches: &mut BatchWriter<'_>,
+) -> Result<(), CycleEnd> {
+    let mut commands: BTreeMap<(MessageFlag, bool), Vec<(String, u32)>> = BTreeMap::new();
+    for change in batches.pending_changes()? {
+        let Some(message) = listed.get(change.identity.as_str()) else {
+            continue;
+        };
+        if sent_changes.get(&(change.identity.clone(), change.flag)) == Some(&change.wanted) {
+            continue;
+        }
+        let messages = commands.entry((change.flag, change.wanted)).or_default();
+        messages.push((change.identity, message.uid));
+    }
     for ((flag, wanted), mut messages) in commands {
         messages.sort_unstable_by_key(|(_, uid)| *uid);
         for command_messages in messages.chunks(UIDS_PER_COMMAND) {
@@ -102,12 +119,12 @@ pub(super) fn settle_sent_changes(
         .filter(|(flag, value)| sent_changes.get(&(message.identity.clone(), *flag)) == Some(value))
         .map(|(flag, value)| (message.identity.clone(), flag, value))
     });
-    settle_seen_changes(shown.collect(), batches)
+    settle_changes_server_holds(shown.collect(), batches)
 }
 
 /// Ends the changes whose value the cycle saw the server hold, one store
 /// write per flag and value.
-fn settle_seen_changes(
+fn settle_changes_server_holds(
     changes: Vec<(String, MessageFlag, bool)>,
     batches: &mut BatchWriter<'_>,
 ) -> Result<(), CycleEnd> {

@@ -15,7 +15,8 @@ mechanisms, in fresh sessions), analysed for consistency and reviewed
 once more from outside on 2026-10-03; the decisions are under
 Clarifications. FR-002 and FR-004 amended on 2026-10-03 at the review of
 the window: the row's star stands under the date and stars or unstars
-its message (Clarifications, the window's review).
+its message (Clarifications, the window's review). Reviewed once more in
+full on 2026-10-04 (Clarifications, the second review).
 **Input**: Marking a message read or unread and starring or unstarring it
 are the first changes the user makes that last: they survive a refresh and
 a restart, reach the server, and show up in every other client of the
@@ -234,6 +235,10 @@ the stored state, the banner and the server's record are compared.
 - Another client changes the flag the other way before the user's change
   is sent: the user's change is sent and wins; afterwards the server's
   state is the truth (FR-007, FR-009).
+- Another client changes the flag during a long first fill, and the user
+  then changes it in the window to the value the cycle's listing showed:
+  the wish is sent all the same, since only the first sending step trusts
+  the listing, and the listing after the commands ends it (FR-007).
 - The message leaves the server before its change is sent: on Generic
   IMAP the listing proves it gone and the message goes with its pending
   change; on Gmail it stays under its other labels and that label's cycle
@@ -472,6 +477,37 @@ the stored state, the banner and the server's record are compared.
   limitation of reading delta (Assumptions); it is 009's, not this
   feature's.
 
+### Session 2026-10-04 (second review of the implementation)
+
+A review of the whole branch in a fresh session: the window, the
+behaviour, readability, size, architecture and security.
+
+- Q: The reader header's menu button was still insensitive, as 002 left
+  it, so its Mark as Read and Mark as Unread were unreachable; the GUI
+  test activated the actions directly. → A: The button is sensitive; the
+  two actions are enabled while a message is open, so the menu never
+  offers an action that does nothing (FR-002; 002 contracts/ui.md
+  amended). The maintainer's decision.
+- Q: A wish equal to the listing's value ended without a command at every
+  sending step, but the listing is the cycle's first. During a first fill
+  of minutes another client may flip the flag; the user then flips it in
+  the window to the value the old listing shows, and the wish ends as
+  "the server has it" while the server has the opposite: the change is
+  lost without a notice, against this feature's promise. → A: Only the
+  first sending step, right after the listing, ends a wish by it; the
+  later steps send every wish this cycle has not sent with that value, a
+  repeated command being harmless, and the listing after the commands
+  ends them (FR-007, Edge Cases; research §15). The maintainer's
+  decision, taken as the cheaper of code and a recorded limitation.
+- Q: The listing after the commands lists the whole folder once more at
+  every refresh in which the user changed a message; on a large Gmail
+  folder that doubles the listing's cost. → A: Not changed here. The cost
+  is unmeasured on large folders, and the structure of a cycle (one
+  listing standing for a minutes-long fill) is the premise background
+  synchronization settles; the probes that decide it (full listing,
+  `CHANGEDSINCE` listing and a flags fetch of the sent UIDs, by folder
+  size and account) go with that feature's start.
+
 ## Requirements
 
 ### Functional Requirements
@@ -494,7 +530,7 @@ the stored state, the banner and the server's record are compared.
   and unstarred by the star toggle in the reader's envelope, which shows
   the effective state with the filled star icon while the message is
   starred, and marked unread by Mark as Unread in the message menu; the reader header's menu offers Mark as Read and Mark as Unread
-  for the open message. A row's star (FR-004) stars and unstars that
+  for the open message, enabled while one is open. A row's star (FR-004) stars and unstars that
   row's message, open or not, without opening it. Each action stores its change; the row and the
   reader then show it from the store (FR-001). Mark as Unread leaves the message open
   and unread; it is not counted read again until it is opened anew. A
@@ -549,8 +585,11 @@ the stored state, the banner and the server's record are compared.
   365, after its round of changes), before each batch of missing
   messages, and once before closing, a cycle MUST send the folder's
   pending changes the server does not hold as far as the cycle knows: on
-  IMAP, against the value this cycle last sent for that flag of the
-  message, otherwise the listing's; on Microsoft 365 every pending
+  IMAP, at the first sending step, right after the listing, a wish the
+  listing shows ends without a command; at the later steps the listing
+  may be minutes old and another client may have changed the flag, so
+  every wish not yet sent with its value is sent, a command for a value
+  the server has being harmless; on Microsoft 365 every pending
   change, since a delta report may come late or be replayed (research
   §15). Each message is addressed as the listing
   identifies it: on IMAP by the UID the listing shows for the message's
@@ -560,8 +599,8 @@ the stored state, the banner and the server's record are compared.
   most (servers bound a command line); on Microsoft 365 each message is
   one request. A pending change ends when the cycle sees the server hold
   its value: on IMAP when a listing of this cycle shows it (the listing
-  at the start, without a command, for a change the cycle has not sent;
-  the listing after its commands for one it sent), since a command's OK
+  at the start, without a command, for a change pending when it was
+  taken; the listing after its commands for one it sent), since a command's OK
   alone does not say the message changed (RFC 3501 §6.4.8: a UID the
   mailbox lacks is ignored); on Microsoft 365 when the service accepts
   the request. The server state then becomes that value and a pending

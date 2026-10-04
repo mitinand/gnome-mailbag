@@ -114,7 +114,8 @@ pub struct MailUi {
     /// envelope's star asks to change it.
     star_action: gio::SimpleAction,
     /// The reader header menu's Mark as Read and Mark as Unread, which the
-    /// application publishes, for the open message.
+    /// application publishes, for the open message; enabled while one is
+    /// open.
     mark_read: gio::SimpleAction,
     mark_unread: gio::SimpleAction,
     /// Which folder's stored rows the list shows, as the latest read found
@@ -590,6 +591,9 @@ impl MailUi {
             "message opened"
         );
         *self.open_message.borrow_mut() = Some(listed.identity.clone());
+        for action in self.mark_actions() {
+            action.set_enabled(true);
+        }
         self.mark_read_after_opening();
         self.selection.set_selected(position);
         // A neighbour opened after the trash may lie outside the visible area.
@@ -694,6 +698,9 @@ impl MailUi {
     fn close_reader(&self) {
         self.drop_pending_read();
         *self.open_message.borrow_mut() = None;
+        for action in self.mark_actions() {
+            action.set_enabled(false);
+        }
         self.selection.set_selected(gtk::INVALID_LIST_POSITION);
         self.singleton_slot.set_visible(false);
         self.reader_stack.set_visible_child_name("unselected");
@@ -941,8 +948,9 @@ struct ReaderWidgets {
 }
 
 /// Puts the approved message and envelope forms into the reader once, and
-/// leaves every control that would change mail unavailable but the star
-/// and the message menu (specs/011-read-and-star).
+/// leaves every control that would change mail unavailable but the star,
+/// the message menu and the header's menu, whose Mark as Read and Mark as
+/// Unread act (specs/011-read-and-star FR-002).
 fn build_reader(window: &gtk::Builder) -> ReaderWidgets {
     let content = gtk::Builder::from_string(include_str!("../resources/ui/message-content.ui"));
     let envelope = gtk::Builder::from_string(include_str!("../resources/ui/envelope.ui"));
@@ -973,7 +981,6 @@ fn build_reader(window: &gtk::Builder) -> ReaderWidgets {
             .set_visible(false);
     }
     for (builder, name) in [
-        (window, "demo_button"),
         (window, "reader_trash"),
         (window, "reader_folders"),
         (window, "reader_move"),
