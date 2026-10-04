@@ -626,7 +626,12 @@ the maintainer's word.
   Edge Cases, Assumptions, Clarifications; 011 research §6, §15; 011
   plan; quickstart. Done on 2026-10-05.
 - [x] T051 STOP: ./scripts/check.sh; the change ≈ +10 production lines
-  net and ≈ +20 test lines; reported with the commit.
+  net and ≈ +20 test lines; reported with the commit. The quickstart's
+  step 7 passed on Microsoft 365 on the installed build on 2026-10-05: a
+  star and an unread mark made in the web client came as a round of two
+  entries, both messages were read from the service (two readings, 0.6 s)
+  and shown after the refresh; the next round sent the window's own two
+  changes and settled them.
 
 ## Dependencies
 
