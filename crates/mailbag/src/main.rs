@@ -229,9 +229,10 @@ fn connect_account_updates(builder: &gtk::Builder, window: &adw::Window) {
         app.remove_action("refresh-account");
         app.remove_action("read-stored-mail");
         app.remove_action("retry-accounts");
-        app.remove_action("mark-scope-read");
-        app.remove_action("mark-scope-unread");
         if let Some(ui) = held_window.borrow_mut().take() {
+            for action in ui.mark_actions() {
+                app.remove_action(&action.name());
+            }
             // The worker closes its connection on its own thread.
             ui.cancel_loads();
         }

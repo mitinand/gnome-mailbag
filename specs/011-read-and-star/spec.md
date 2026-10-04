@@ -499,6 +499,17 @@ behaviour, readability, size, architecture and security.
   repeated command being harmless, and the listing after the commands
   ends them (FR-007, Edge Cases; research §15). The maintainer's
   decision, taken as the cheaper of code and a recorded limitation.
+- Q: The review's smaller points? → A: Applied on 2026-10-04 at the
+  maintainer's word: the row's star is decoration for assistive
+  technology (role `presentation`, no label; the row's description
+  carries the state, FR-004); the envelope's star advises to unstar while
+  starred (FR-002); FR-007 reads as labelled clauses; in the code the
+  settle after the commands is a loop, `settle_changes_server_holds` and
+  `toggle_row_star` say what they do, and the header's two actions are
+  removed by their names. Left as they were: the `expect` on a Microsoft
+  365 identity (chosen at the simplification review), the repeated
+  failure arms of the refused change, and the one GUI test of five
+  behaviours.
 - Q: The listing after the commands lists the whole folder once more at
   every refresh in which the user changed a message; on a large Gmail
   folder that doubles the listing's cost. → A: Not changed here. The cost
@@ -528,7 +539,8 @@ behaviour, readability, size, architecture and security.
   (009 FR-002, amended; research §15).
 - **FR-002 — Actions in the window**: The open message MUST be starred
   and unstarred by the star toggle in the reader's envelope, which shows
-  the effective state with the filled star icon while the message is
+  the effective state with the filled star icon, and the advice to
+  unstar, while the message is
   starred, and marked unread by Mark as Unread in the message menu; the reader header's menu offers Mark as Read and Mark as Unread
   for the open message, enabled while one is open. A row's star (FR-004) stars and unstars that
   row's message, open or not, without opening it. Each action stores its change; the row and the
@@ -557,7 +569,8 @@ behaviour, readability, size, architecture and security.
   whose message is not starred, an outline star shows in that place. A
   click on the star, outline or filled, asks for the opposite state of
   that row's message (FR-002) and does not open the message. The row's
-  accessible description says "Starred" with its read state. The row's
+  accessible description says "Starred" with its read state; the star
+  itself, like the dot, is decoration for assistive technology. The row's
   star serves the pointer and takes no keyboard focus; the keyboard stars
   through the envelope (FR-002). (Amends 010
   FR-002 and FR-011(b); the form change was approved on 2026-10-02 and
@@ -581,42 +594,44 @@ behaviour, readability, size, architecture and security.
   or before it closes (FR-007); any other change waits for the folder's
   next cycle. A failed refresh is not retried on its own for a pending
   change (006 keeps retries the user's).
-- **FR-007 — How a cycle sends**: After storing its listing (on Microsoft
-  365, after its round of changes), before each batch of missing
-  messages, and once before closing, a cycle MUST send the folder's
-  pending changes the server does not hold as far as the cycle knows: on
-  IMAP, at the first sending step, right after the listing, a wish the
-  listing shows ends without a command; at the later steps the listing
-  may be minutes old and another client may have changed the flag, so
-  every wish not yet sent with its value is sent, a command for a value
-  the server has being harmless; on Microsoft 365 every pending
-  change, since a delta report may come late or be replayed (research
-  §15). Each message is addressed as the listing
-  identifies it: on IMAP by the UID the listing shows for the message's
-  identity in this mailbox, under this opening's numbering version; on
-  Microsoft 365 by the message's identity. On IMAP equal changes to
-  several messages go in one command, a hundred messages per command at
-  most (servers bound a command line); on Microsoft 365 each message is
-  one request. A pending change ends when the cycle sees the server hold
-  its value: on IMAP when a listing of this cycle shows it (the listing
-  at the start, without a command, for a change pending when it was
-  taken; the listing after its commands for one it sent), since a command's OK
-  alone does not say the message changed (RFC 3501 §6.4.8: a UID the
-  mailbox lacks is ignored); on Microsoft 365 when the service accepts
-  the request. The server state then becomes that value and a pending
-  change equal to it ends, in one transaction, so the window shows no
-  difference; a wish made meanwhile for another value stays and goes
-  with the next sending step. On IMAP, a pending message the listing
-  does not show is left for the cycle of a folder that lists it. A
-  command may change the folder itself, as a star taken off a message
-  under Gmail's Starred label takes it out of the label: on IMAP a cycle
-  that sent a command lists the folder once more after its last sending
-  step, stores the removals and flags that listing proves and ends the
-  sent changes it shows; when the server refuses that listing, the cycle
-  ends incomplete with the reply, as with a refused listing at its start.
-  Messages it newly lists arrived during the cycle, which 009 FR-001
-  lets the next cycle bring, and wait for it. A cycle otherwise
-  changes nothing on the server (009 FR-001, amended).
+- **FR-007 — How a cycle sends**: (a) *When*: after storing its listing
+  (on Microsoft 365, after its round of changes), before each batch of
+  missing messages, and once before closing, a cycle MUST send the
+  folder's pending changes the server does not hold as far as the cycle
+  knows. (b) *What is sent*: on IMAP, at the first sending step, right
+  after the listing, a wish the listing shows ends without a command; at
+  the later steps the listing may be minutes old and another client may
+  have changed the flag, so every wish not yet sent with its value is
+  sent, a command for a value the server has being harmless. On
+  Microsoft 365 every pending change is sent, since a delta report may
+  come late or be replayed (research §15). (c) *How a message is
+  addressed*: as the listing identifies it: on IMAP by the UID the
+  listing shows for the message's identity in this mailbox, under this
+  opening's numbering version; on Microsoft 365 by the message's
+  identity. On IMAP equal changes to several messages go in one command,
+  a hundred messages per command at most (servers bound a command line);
+  on Microsoft 365 each message is one request. On IMAP, a pending
+  message the listing does not show is left for the cycle of a folder
+  that lists it. (d) *What ends a pending change*: the cycle seeing the
+  server hold its value: on IMAP a listing of this cycle that shows it
+  (the listing at the start, without a command, for a change pending
+  when it was taken; the listing after its commands for one it sent),
+  since a command's OK alone does not say the message changed (RFC 3501
+  §6.4.8: a UID the mailbox lacks is ignored); on Microsoft 365 the
+  service accepting the request. The server state then becomes that
+  value and a pending change equal to it ends, in one transaction, so
+  the window shows no difference; a wish made meanwhile for another
+  value stays and goes with the next sending step. (e) *After the
+  commands*: a command may change the folder itself, as a star taken off
+  a message under Gmail's Starred label takes it out of the label: on
+  IMAP a cycle that sent a command lists the folder once more after its
+  last sending step, stores the removals and flags that listing proves
+  and ends the sent changes it shows; when the server refuses that
+  listing, the cycle ends incomplete with the reply, as with a refused
+  listing at its start. Messages it newly lists arrived during the
+  cycle, which 009 FR-001 lets the next cycle bring, and wait for it.
+  (f) A cycle otherwise changes nothing on the server (009 FR-001,
+  amended).
 - **FR-008 — Mailboxes opened for writing**: An IMAP folder MUST be opened
   for writing (`SELECT`) wherever a cycle may send; a mailbox the server
   opens read-only refuses the command, and FR-010 applies. (Amends 002

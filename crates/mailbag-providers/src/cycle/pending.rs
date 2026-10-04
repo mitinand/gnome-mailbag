@@ -110,16 +110,19 @@ pub(super) fn settle_sent_changes(
     sent_changes: &SentChanges,
     batches: &mut BatchWriter<'_>,
 ) -> Result<(), CycleEnd> {
-    let shown = listed.iter().flat_map(|message| {
-        [
+    let mut shown = Vec::new();
+    for message in listed {
+        let listed_values = [
             (MessageFlag::Seen, message.flags.seen),
             (MessageFlag::Flagged, message.flags.flagged),
-        ]
-        .into_iter()
-        .filter(|(flag, value)| sent_changes.get(&(message.identity.clone(), *flag)) == Some(value))
-        .map(|(flag, value)| (message.identity.clone(), flag, value))
-    });
-    settle_changes_server_holds(shown.collect(), batches)
+        ];
+        for (flag, value) in listed_values {
+            if sent_changes.get(&(message.identity.clone(), flag)) == Some(&value) {
+                shown.push((message.identity.clone(), flag, value));
+            }
+        }
+    }
+    settle_changes_server_holds(shown, batches)
 }
 
 /// Ends the changes whose value the cycle saw the server hold, one store

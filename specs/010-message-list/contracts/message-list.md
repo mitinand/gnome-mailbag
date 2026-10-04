@@ -83,7 +83,7 @@ binding across crates; bodies and private helpers are the plan's.
   trash as their object), `trash_row` (with the list item as its object);
   since 011, `row_pointed`, `row_unpointed` (the row's motion controller,
   with the list item), `star_pressed` (the star's click, which claims the
-  press when a star shows) and `star_row` (with the list item).
+  press when a star shows) and `toggle_row_star` (with the list item).
 
 ## Forms (`crates/mailbag/resources/ui/`)
 

@@ -521,7 +521,16 @@ recorded limitation.
   FR-007, Edge Cases; research §15); the race test also marks the message
   unread, a value the listing shows, and expects the command before the
   next batch.
-- [ ] T042 STOP (portion 7b with T043 and T044): ./scripts/check.sh, the
+- [x] T045 The second review's smaller points, applied on 2026-10-04 at
+  the maintainer's word: `settle_sent_changes` as a loop and
+  `settle_changes_server_holds` (pending.rs); the row handler
+  `toggle_row_star` (mail_ui.rs, message-row.ui, 010 contract); the
+  header's two actions removed by their names in main.rs; the envelope's
+  star advises to unstar while starred (spec FR-002); the row's star is
+  decoration for assistive technology, role `presentation` without a
+  label (spec FR-004, message-row.ui); spec FR-007 split into labelled
+  clauses; the GUI tests assert the tooltip and the role.
+- [ ] T042 STOP (portion 7b with T043 to T045): ./scripts/check.sh, the
   GTK tests one per process, the size of the change, a suggested commit
   message; PR #17 updated by the maintainer.
 

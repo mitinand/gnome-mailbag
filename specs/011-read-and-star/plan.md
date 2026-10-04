@@ -249,8 +249,8 @@ flowchart TD
   animate the row away and back.
 - `show_envelope`: the star action's state and the toggle's icon
   (`starred-symbolic` while starred, `non-starred-symbolic` otherwise)
-  from the item's `starred`; it runs on opening and after every re-read
-  of the open message's row.
+  and tooltip (Unstar while starred) from the item's `starred`; it runs
+  on opening and after every re-read of the open message's row.
 
 **`mailbag::mail_ui::message_item`**: `starred` property bound by the row
 form; `read_state_text` says "Starred" too.
@@ -259,14 +259,16 @@ form; `read_state_text` says "Starred" too.
 in the second line, after the subject, always allocated; its icon and
 colour follow the item's `star-icon` and `star-style` (bound to
 `css-classes`), which follow `starred` and `pointed`, the latter set by
-the row's motion controller. For assistive technology it is a button
-named "Star", as the trash is. The unread dot's tooltip went with the
-form's review on 2026-10-03. Its
+the row's motion controller. For assistive technology it is decoration,
+as the dot is (role `presentation`, no label, since the second review of
+2026-10-04); the row's description carries the state. The unread dot's
+tooltip went with the form's review on 2026-10-03. Its
 click gesture claims the press, so the list's own click, which opens the
 message on release in the bubble phase (GTK 4.22
-`gtklistfactorywidget.c`), never sees it; on release
-`MailUi::change_row_flag(identity, Flagged, !starred)` asks the window as
-`change_flag` does for the open message.
+`gtklistfactorywidget.c`), never sees it; on release the `toggle_row_star`
+handler asks `MailUi::change_listed_flag(identity, Flagged, !starred)`,
+which hands the change to the window as `change_flag` does for the open
+message.
 
 **`mailbag::window_ui`**
 

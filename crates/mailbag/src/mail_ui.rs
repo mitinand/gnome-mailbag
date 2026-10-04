@@ -644,15 +644,18 @@ impl MailUi {
     }
 
     /// The open message's subject, sender, recipients, date and star; the
-    /// star's icon is filled while it is starred, since the pressed look
-    /// alone is faint (specs/011-read-and-star FR-002).
+    /// star's icon is filled and its tooltip offers to unstar while it is
+    /// starred, since the pressed look alone is faint
+    /// (specs/011-read-and-star FR-002).
     fn show_envelope(&self, item: &MessageItem) {
         let starred = item.starred();
         self.star_action.set_state(&starred.to_variant());
-        self.star_button.set_icon_name(match starred {
-            true => "starred-symbolic",
-            false => "non-starred-symbolic",
-        });
+        let (icon, tooltip) = match starred {
+            true => ("starred-symbolic", "Unstar this message"),
+            false => ("non-starred-symbolic", "Star this message"),
+        };
+        self.star_button.set_icon_name(icon);
+        self.star_button.set_tooltip_text(Some(tooltip));
         let listed = item.listed();
         show_inert_text(&self.reader_subject, &subject_text(&listed.fields));
         self.reader_sender.set_text(&sender_text(&listed.fields));
@@ -899,7 +902,7 @@ fn row_handlers(mail: Weak<MailUi>) -> gtk::BuilderRustScope {
         None
     });
     let starring = mail.clone();
-    scope.add_callback("star_row", move |values| {
+    scope.add_callback("toggle_row_star", move |values| {
         let item = row_item(values);
         // Where no star shows, the click asks for nothing.
         if let (Some(mail), Some(item)) = (starring.upgrade(), item)

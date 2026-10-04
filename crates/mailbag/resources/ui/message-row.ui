@@ -164,9 +164,7 @@
                         <property name="pixel-size">14</property>
                         <property name="valign">center</property>
                         <property name="width-request">20</property>
-                        <accessibility>
-                          <property name="label" translatable="yes">Star</property>
-                        </accessibility>
+                        <property name="accessible-role">presentation</property>
                         <binding name="css-classes">
                           <lookup name="star-style" type="MessageItem">
                             <lookup name="item">GtkListItem</lookup>
@@ -175,7 +173,7 @@
                         <child>
                           <object class="GtkGestureClick">
                             <signal name="pressed" handler="star_pressed"/>
-                            <signal name="released" handler="star_row" object="GtkListItem"/>
+                            <signal name="released" handler="toggle_row_star" object="GtkListItem"/>
                           </object>
                         </child>
                       </object>

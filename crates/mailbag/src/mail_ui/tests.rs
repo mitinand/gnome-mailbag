@@ -2034,12 +2034,14 @@ fn the_star_and_the_mark_actions_change_the_open_message_in_the_store() {
     settle(&ui);
     assert!(mark_read.is_enabled() && mark_unread.is_enabled());
     assert!(!star.is_active());
+    assert_eq!(star.tooltip_text().as_deref(), Some("Star this message"));
     star.emit_clicked();
     settle(&ui);
     assert_eq!(pending(), [pending_change("uid:20", Flagged, true)]);
     assert!(widgets.rows()[0].starred());
     assert!(star.is_active());
     assert_eq!(star.icon_name().as_deref(), Some("starred-symbolic"));
+    assert_eq!(star.tooltip_text().as_deref(), Some("Unstar this message"));
     assert_eq!(loader.running_loads(), 0);
     // Marked unread after it was marked read, the message stays open and
     // unread: no second after opening marks it read again.
@@ -2143,6 +2145,9 @@ fn the_row_star_changes_its_message_without_opening_it() {
     .width();
     let star = || row_star(&widgets, "uid:10");
     assert_eq!(star().icon_name(), None);
+    // Decoration for assistive technology, as the dot is; the row's
+    // description carries the state.
+    assert_eq!(star().accessible_role(), gtk::AccessibleRole::Presentation);
     point_at_row(&widgets, "uid:10", "enter");
     assert_eq!(star().icon_name().as_deref(), Some("non-starred-symbolic"));
     assert!(star().has_css_class("dim-label"));

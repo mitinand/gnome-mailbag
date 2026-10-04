@@ -449,8 +449,11 @@ of delta, not this feature's (spec Assumptions).
    shows only stored state. Taking the toggle from the window's queued
    writes closes only the write's part, not the read's; not taken.
 5. *The row's star claimed the role of a button* it is not: it takes no
-   focus and no key. The role goes; the keyboard reaches the star through
-   the open message's envelope (spec FR-002). A drag past GTK's drag
+   focus and no key. The role goes, and at the second review of
+   2026-10-04 the image became `presentation` without a label, like the
+   dot, so assistive technology hears the row's description alone; the
+   keyboard reaches the star through the open message's envelope (spec
+   FR-002). A drag past GTK's drag
    threshold cancels the click (checked in `gtkgestureclick.c`); a
    release closer than that, off the icon, still acts, which is kept. A
    `GtkButton` in the row was weighed: a tab stop in every row and a form
