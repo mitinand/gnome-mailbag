@@ -981,12 +981,11 @@ fn message_with_flags(identity: &str, seen: bool, flagged: bool) -> Message {
     }
 }
 
-fn pending(identity: &str, flag: MessageFlag, wanted: bool, server_value: bool) -> PendingChange {
+fn pending(identity: &str, flag: MessageFlag, wanted: bool) -> PendingChange {
     PendingChange {
         identity: identity.to_owned(),
         flag,
         wanted,
-        server_value,
     }
 }
 
@@ -1050,17 +1049,17 @@ fn rows_show_the_wanted_flags_and_a_cycle_reads_the_servers() {
     assert_eq!(
         pending_of(&store, &inbox),
         [
-            pending("both-cleared", Seen, false, true),
-            pending("both-cleared", Flagged, false, true),
-            pending("both-set", Seen, true, false),
-            pending("both-set", Flagged, true, false),
-            pending("replaced", Flagged, false, false),
+            pending("both-cleared", Seen, false),
+            pending("both-cleared", Flagged, false),
+            pending("both-set", Seen, true),
+            pending("both-set", Flagged, true),
+            pending("replaced", Flagged, false),
         ]
     );
 }
 
 #[test]
-fn a_server_value_written_ends_an_equal_pending_value_only() {
+fn a_server_value_written_leaves_the_pending_values() {
     use MessageFlag::{Flagged, Seen};
     let synced = account("synced");
     let (inbox, work) = (folder_of(&synced, "INBOX"), folder_of(&synced, "Work"));
@@ -1085,9 +1084,11 @@ fn a_server_value_written_ends_an_equal_pending_value_only() {
             .write_pending_flag(&synced, identity, flag, wanted)
             .unwrap();
     }
+    // Each write of the report reaches the server value, equal to the wish
+    // or not, and none ends the wish.
     let report = FolderBatch {
         flag_states: vec![
-            // The report names the read state only, so the star stays pending.
+            // The report names the read state only, so the star stays stored.
             ("named".to_owned(), read_report(true)),
             (
                 "differing".to_owned(),
@@ -1111,14 +1112,22 @@ fn a_server_value_written_ends_an_equal_pending_value_only() {
     assert_eq!(
         pending_of(&store, &inbox),
         [
-            pending("differing", Flagged, true, false),
-            pending("named", Flagged, true, false),
+            pending("arrived", Seen, true),
+            pending("differing", Flagged, true),
+            pending("named", Seen, true),
+            pending("named", Flagged, true),
+            pending("related", Flagged, true),
         ]
     );
-    assert_eq!(pending_of(&store, &work), []);
     assert_eq!(
-        store.read_folder_sync(&inbox).unwrap().stored["named"],
-        read_flags(true)
+        pending_of(&store, &work),
+        [pending("related", Flagged, true)]
+    );
+    let stored = store.read_folder_sync(&inbox).unwrap().stored;
+    let server_flags = |identity: &str| (stored[identity].seen, stored[identity].flagged);
+    assert_eq!(
+        ["named", "differing", "arrived", "related"].map(server_flags),
+        [(true, false), (false, false), (true, false), (false, true)]
     );
 }
 
@@ -1156,8 +1165,8 @@ fn a_command_ends_only_a_pending_value_equal_to_its_own() {
     assert_eq!(
         pending_of(&store, &inbox),
         [
-            pending("changed-meanwhile", Seen, false, false),
-            pending("unstarred-meanwhile", Flagged, false, true),
+            pending("changed-meanwhile", Seen, false),
+            pending("unstarred-meanwhile", Flagged, false),
         ]
     );
     assert_eq!(
@@ -1188,6 +1197,6 @@ fn a_store_opened_again_from_its_file_reads_the_pending_changes() {
     let reopened = Store::at(directory.store_path());
     assert_eq!(
         pending_of(&reopened, &inbox),
-        [pending("message", MessageFlag::Flagged, true, false)]
+        [pending("message", MessageFlag::Flagged, true)]
     );
 }

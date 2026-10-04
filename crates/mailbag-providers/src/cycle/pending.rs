@@ -2,16 +2,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The sending step of a cycle (specs/011-read-and-star FR-007 to FR-010;
-//! research §2, §7, §14): the folder's pending changes go to the server; an
-//! accepted change settles, a refused one is dropped and fails the cycle,
-//! and one whose outcome is unknown stays for the next cycle.
+//! research §2, §7, §14, §15): the folder's pending changes go to the
+//! server; a change ends when the cycle sees the server hold it, a refused
+//! one is dropped and fails the cycle, and one whose outcome is unknown
+//! stays for the next cycle.
 
 use super::{
     CycleEnd,
     graph::{GraphService, graph_id},
+    imap::ListedMessage,
 };
 use crate::{LoadFailure, store_load::BatchWriter};
-use mailbag_domain::{MessageFlag, PendingChange};
+use mailbag_domain::MessageFlag;
 use mailbag_graph::{FlagUpdate, GraphError, GraphFailure};
 use mailbag_imap::{MailboxReader, StoreFlag};
 use std::collections::{BTreeMap, HashMap};
@@ -20,23 +22,47 @@ use std::collections::{BTreeMap, HashMap};
 /// within a server's line limit, 64 KiB on Dovecot by default (research §14).
 const UIDS_PER_COMMAND: usize = 100;
 
+/// The value an IMAP cycle last sent for each message's flag, by identity.
+/// The server's `OK` does not say the message changed, since a UID the
+/// mailbox no longer has is ignored (RFC 3501 §6.4.8); the listing after
+/// the cycle's commands says it (research §15).
+pub(super) type SentChanges = HashMap<(String, MessageFlag), bool>;
+
 /// Sends the folder's pending changes to the IMAP server by the UIDs the
 /// listing gave: one `UID STORE` per flag, wanted value and hundred
-/// messages. A message the listing lacks keeps its change for a later cycle.
-/// Says whether the server accepted a command.
+/// messages. The server's value is the one this cycle last sent, otherwise
+/// the listing's: a wish the listing shows ends without a command, one
+/// equal to the value sent waits for the listing after the commands, and
+/// the others are sent and recorded in `sent_changes`. A message the
+/// listing lacks keeps its change for a later cycle.
 pub(super) async fn send_imap_changes(
     reader: &mut MailboxReader,
-    listed_uids: &HashMap<String, u32>,
+    listed: &HashMap<&str, &ListedMessage>,
+    sent_changes: &mut SentChanges,
     batches: &mut BatchWriter<'_>,
-) -> Result<bool, CycleEnd> {
-    let mut command_accepted = false;
+) -> Result<(), CycleEnd> {
+    let mut listed_already = Vec::new();
     let mut commands: BTreeMap<(MessageFlag, bool), Vec<(String, u32)>> = BTreeMap::new();
-    for change in changes_to_send(batches)? {
-        if let Some(uid) = listed_uids.get(&change.identity) {
-            let messages = commands.entry((change.flag, change.wanted)).or_default();
-            messages.push((change.identity, *uid));
+    for change in batches.pending_changes()? {
+        let Some(message) = listed.get(change.identity.as_str()) else {
+            continue;
+        };
+        let listed_value = match change.flag {
+            MessageFlag::Seen => message.flags.seen,
+            MessageFlag::Flagged => message.flags.flagged,
+        };
+        match sent_changes.get(&(change.identity.clone(), change.flag)) {
+            Some(sent) if *sent == change.wanted => {}
+            None if listed_value == change.wanted => {
+                listed_already.push((change.identity, change.flag, change.wanted));
+            }
+            _ => {
+                let messages = commands.entry((change.flag, change.wanted)).or_default();
+                messages.push((change.identity, message.uid));
+            }
         }
     }
+    settle_seen_changes(listed_already, batches)?;
     for ((flag, wanted), mut messages) in commands {
         messages.sort_unstable_by_key(|(_, uid)| *uid);
         for command_messages in messages.chunks(UIDS_PER_COMMAND) {
@@ -47,30 +73,64 @@ pub(super) async fn send_imap_changes(
                 MessageFlag::Seen => StoreFlag::Seen,
                 MessageFlag::Flagged => StoreFlag::Flagged,
             };
-            match reader.store_flags(&uids, store_flag, wanted).await? {
-                None => {
-                    batches.settle(&identities, flag, wanted)?;
-                    command_accepted = true;
-                }
-                Some(refusal) => {
-                    batches.drop_pending(&identities, flag, wanted)?;
-                    return Err(refusal.into());
-                }
+            if let Some(refusal) = reader.store_flags(&uids, store_flag, wanted).await? {
+                batches.drop_pending(&identities, flag, wanted)?;
+                return Err(refusal.into());
+            }
+            for identity in identities {
+                sent_changes.insert((identity, flag), wanted);
             }
         }
     }
-    Ok(command_accepted)
+    Ok(())
 }
 
-/// Sends the folder's pending changes to Microsoft 365, one request each.
-/// The service refusing a change drops it; a 5xx answer or a lost
-/// connection leaves it for the next cycle, which sends it again unless
-/// its round reports the value (spec FR-009).
+/// Ends each change the cycle sent whose value the listing after its
+/// commands shows; one it does not show, or shows otherwise, stays for the
+/// next cycle of a folder that lists the message (research §15).
+pub(super) fn settle_sent_changes(
+    listed: &[ListedMessage],
+    sent_changes: &SentChanges,
+    batches: &mut BatchWriter<'_>,
+) -> Result<(), CycleEnd> {
+    let shown = listed.iter().flat_map(|message| {
+        [
+            (MessageFlag::Seen, message.flags.seen),
+            (MessageFlag::Flagged, message.flags.flagged),
+        ]
+        .into_iter()
+        .filter(|(flag, value)| sent_changes.get(&(message.identity.clone(), *flag)) == Some(value))
+        .map(|(flag, value)| (message.identity.clone(), flag, value))
+    });
+    settle_seen_changes(shown.collect(), batches)
+}
+
+/// Ends the changes whose value the cycle saw the server hold, one store
+/// write per flag and value.
+fn settle_seen_changes(
+    changes: Vec<(String, MessageFlag, bool)>,
+    batches: &mut BatchWriter<'_>,
+) -> Result<(), CycleEnd> {
+    let mut groups: BTreeMap<(MessageFlag, bool), Vec<String>> = BTreeMap::new();
+    for (identity, flag, value) in changes {
+        groups.entry((flag, value)).or_default().push(identity);
+    }
+    for ((flag, value), identities) in groups {
+        batches.settle(&identities, flag, value)?;
+    }
+    Ok(())
+}
+
+/// Sends every pending change of the folder to Microsoft 365, one request
+/// each, whatever the delta reported, since a report may come late or be
+/// replayed (research §15). The service accepting a change ends it; its
+/// refusal drops it; a 5xx answer or a lost connection leaves it for the
+/// next cycle, which sends it again (spec FR-009).
 pub(super) async fn send_graph_changes(
     service: &mut GraphService,
     batches: &mut BatchWriter<'_>,
 ) -> Result<(), CycleEnd> {
-    for change in changes_to_send(batches)? {
+    for change in batches.pending_changes()? {
         // A Microsoft 365 folder's messages all have such an identity.
         let id = graph_id(&change.identity).expect("a Microsoft 365 identity");
         let update = match change.flag {
@@ -96,21 +156,6 @@ pub(super) async fn send_graph_changes(
         }
     }
     Ok(())
-}
-
-/// The folder's pending changes the server lacks. One whose wanted value
-/// the stored server value already has ends here, without a command: a
-/// command for it was accepted while the user changed it back (research
-/// §14).
-fn changes_to_send(batches: &mut BatchWriter<'_>) -> Result<Vec<PendingChange>, CycleEnd> {
-    let (agreed, to_send): (Vec<_>, Vec<_>) = batches
-        .pending_changes()?
-        .into_iter()
-        .partition(|change| change.wanted == change.server_value);
-    for change in agreed {
-        batches.settle(&[change.identity], change.flag, change.wanted)?;
-    }
-    Ok(to_send)
 }
 
 /// Whether the service refused the change itself: a 4xx answer other than

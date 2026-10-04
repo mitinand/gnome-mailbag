@@ -1638,12 +1638,10 @@ fn row_widget<T: IsA<gtk::Widget>>(
         .expect("the row's widget")
 }
 
-/// The star under the row's date: the image that acts as a button and is
-/// not the trash.
+/// The star under the row's date, by its id in the row's form.
 fn row_star(widgets: &WindowWidgets, identity: &str) -> gtk::Image {
     row_widget::<gtk::Image>(widgets, identity, |image| {
-        image.accessible_role() == gtk::AccessibleRole::Button
-            && image.icon_name().as_deref() != Some("user-trash-symbolic")
+        image.buildable_id().as_deref() == Some("star")
     })
 }
 
@@ -1683,17 +1681,11 @@ fn star_button(widgets: &WindowWidgets) -> gtk::ToggleButton {
         .expect("the envelope's star")
 }
 
-fn pending_change(
-    identity: &str,
-    flag: MessageFlag,
-    wanted: bool,
-    server_value: bool,
-) -> PendingChange {
+fn pending_change(identity: &str, flag: MessageFlag, wanted: bool) -> PendingChange {
     PendingChange {
         identity: identity.to_owned(),
         flag,
         wanted,
-        server_value,
     }
 }
 
@@ -1991,7 +1983,7 @@ fn an_opened_message_is_marked_read_after_a_second_for_good() {
     );
     assert_eq!(
         pending(),
-        [pending_change("uid:30", MessageFlag::Seen, true, false)]
+        [pending_change("uid:30", MessageFlag::Seen, true)]
     );
     settle(&ui);
     assert!(!shows_unread_dot(&widgets.rows()[0]));
@@ -2034,7 +2026,7 @@ fn the_star_and_the_mark_actions_change_the_open_message_in_the_store() {
     assert!(!star.is_active());
     star.emit_clicked();
     settle(&ui);
-    assert_eq!(pending(), [pending_change("uid:20", Flagged, true, false)]);
+    assert_eq!(pending(), [pending_change("uid:20", Flagged, true)]);
     assert!(widgets.rows()[0].starred());
     assert!(star.is_active());
     assert_eq!(star.icon_name().as_deref(), Some("starred-symbolic"));

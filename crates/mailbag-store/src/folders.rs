@@ -169,18 +169,17 @@ pub(crate) fn delete_memberships(
 }
 
 /// Writes the flags a server reported for the account's messages, leaving a
-/// flag it did not name as stored. A pending value equal to the value written
-/// ends; a differing one stays (specs/011-read-and-star/data-model.md).
+/// flag it did not name as stored. The pending values stay: a report alone
+/// does not say the server holds a wish (specs/011-read-and-star research
+/// §15).
 pub(crate) fn set_flag_states(
     transaction: &Transaction,
     account: &AccountId,
     flag_states: &[(String, FlagChanges)],
 ) -> rusqlite::Result<()> {
-    // `NULLIF` ends a pending value equal to the value written; a flag not
-    // reported is NULL, which neither writes nor ends anything.
+    // A flag not reported is NULL, which writes nothing.
     let mut update = transaction.prepare(
-        "UPDATE message SET seen = COALESCE(?3, seen), flagged = COALESCE(?4, flagged), \
-         seen_pending = NULLIF(seen_pending, ?3), flagged_pending = NULLIF(flagged_pending, ?4) \
+        "UPDATE message SET seen = COALESCE(?3, seen), flagged = COALESCE(?4, flagged) \
          WHERE account = ?1 AND identity = ?2",
     )?;
     for (identity, changes) in flag_states {
@@ -199,8 +198,8 @@ pub(crate) fn set_flag_states(
 /// downloaded never replaces a content another folder's cycle stored, and
 /// a text the server did not return never replaces a stored text
 /// (specs/009-synchronization/data-model.md). Its preview always replaces
-/// the stored one (specs/010-message-list/data-model.md). Its flags end an
-/// equal pending value, as `set_flag_states` does.
+/// the stored one (specs/010-message-list/data-model.md). Its flags leave the
+/// pending values, as `set_flag_states` does.
 pub(crate) fn store_arrived(
     transaction: &Transaction,
     folder_id: i64,
@@ -214,8 +213,6 @@ pub(crate) fn store_arrived(
          ON CONFLICT (account, identity) DO UPDATE SET subject = excluded.subject, \
          sender = excluded.sender, recipients = excluded.recipients, \
          received = excluded.received, seen = excluded.seen, flagged = excluded.flagged, \
-         seen_pending = NULLIF(seen_pending, excluded.seen), \
-         flagged_pending = NULLIF(flagged_pending, excluded.flagged), \
          preview = excluded.preview, \
          content_kind = iif(excluded.content_kind = 'not_downloaded' \
          OR (excluded.content_kind = 'text_not_returned' AND content_kind = 'text'), \
@@ -274,13 +271,13 @@ pub(crate) fn relate_known(
 }
 
 /// The changes of the folder's messages the user wants and the server may
-/// not have yet, each with the server's value as stored.
+/// not have yet.
 pub(crate) fn read_pending_changes(
     connection: &Connection,
     folder_id: i64,
 ) -> rusqlite::Result<Vec<PendingChange>> {
     let mut select = connection.prepare(
-        "SELECT identity, seen, seen_pending, flagged, flagged_pending \
+        "SELECT identity, seen_pending, flagged_pending \
          FROM membership JOIN message ON message.id = membership.message \
          WHERE membership.folder = ?1 \
          AND (seen_pending IS NOT NULL OR flagged_pending IS NOT NULL)",
@@ -290,24 +287,15 @@ pub(crate) fn read_pending_changes(
     while let Some(row) = rows.next()? {
         let identity: String = row.get("identity")?;
         let flags = [
-            (
-                MessageFlag::Seen,
-                row.get("seen")?,
-                row.get("seen_pending")?,
-            ),
-            (
-                MessageFlag::Flagged,
-                row.get("flagged")?,
-                row.get("flagged_pending")?,
-            ),
+            (MessageFlag::Seen, row.get("seen_pending")?),
+            (MessageFlag::Flagged, row.get("flagged_pending")?),
         ];
-        for (flag, server_value, wanted) in flags {
+        for (flag, wanted) in flags {
             if let Some(wanted) = wanted {
                 changes.push(PendingChange {
                     identity: identity.clone(),
                     flag,
                     wanted,
-                    server_value,
                 });
             }
         }

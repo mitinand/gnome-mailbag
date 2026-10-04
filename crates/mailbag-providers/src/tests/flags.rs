@@ -407,6 +407,75 @@ fn a_change_waits_until_a_listing_shows_its_message() {
     assert_eq!(pending_in(&store, &inbox), []);
 }
 
+/// Research §15: a server answers OK to a command on a UID the mailbox no
+/// longer has and changes nothing (RFC 3501 §6.4.8), as Gmail's Starred
+/// after the star was taken off; the change stays until a listing shows it.
+#[test]
+fn a_command_the_server_ignored_leaves_the_change_pending() {
+    let (store, inbox) = synchronized_imap_inbox(&imap_server(plain_messages(2)));
+    let read = imap_identity(20);
+    want(&store, IMAP_ACCOUNT, &read, MessageFlag::Seen, true);
+    let ignoring = ImapFixture::start(FixtureSetup {
+        vanishing_uid: Some(20),
+        ..plain_listing_setup(2)
+    });
+    let (outcome, _, _) = synchronize_again(&ignoring, &store);
+    assert_stored(&outcome);
+    assert_eq!(
+        store_commands(&ignoring),
+        [r"UID STORE 20 +FLAGS.SILENT (\Seen)"]
+    );
+    assert_eq!(pending_in(&store, &inbox).len(), 1);
+    assert!(!store.read_folder_sync(&inbox).unwrap().stored[&read].seen);
+    let applying = imap_server(plain_messages(2));
+    synchronize_again(&applying, &store);
+    assert_eq!(store_commands(&applying).len(), 1);
+    assert_eq!(pending_in(&store, &inbox), []);
+}
+
+/// A refused listing after the cycle's commands ends the cycle incomplete;
+/// what it shows ends the sent changes it shows, and the others stay.
+#[test]
+fn a_refused_listing_after_the_commands_ends_the_cycle_incomplete() {
+    let (store, inbox) = synchronized_imap_inbox(&imap_server(plain_messages(4)));
+    for uid in [10, 40] {
+        want(
+            &store,
+            IMAP_ACCOUNT,
+            &imap_identity(uid),
+            MessageFlag::Flagged,
+            true,
+        );
+    }
+    // The listing after the command answers for 10 and 20 only.
+    let fixture = ImapFixture::start(FixtureSetup {
+        listing_refused_after_store: true,
+        ..plain_listing_setup(4)
+    });
+    let (outcome, _, _) = synchronize_again(&fixture, &store);
+    assert!(
+        matches!(
+            outcome,
+            LoadResult::Stored {
+                incomplete: Some(IncompleteList::ServerRefused { .. })
+            }
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(
+        store_commands(&fixture),
+        [r"UID STORE 10,40 +FLAGS.SILENT (\Flagged)"]
+    );
+    assert_eq!(
+        pending_in(&store, &inbox),
+        [PendingChange {
+            identity: imap_identity(40),
+            flag: MessageFlag::Flagged,
+            wanted: true,
+        }]
+    );
+}
+
 /// A scripted mailbox of messages 1 to 3 whose first reading is followed by
 /// `rounds`, at most three, each leading to the next; then a round without
 /// changes that leads to itself, as a mailbox with no more changes.
@@ -667,4 +736,100 @@ fn a_message_reported_on_two_pages_of_a_round_keeps_both_changes() {
     assert_stored(&outcome);
     assert_eq!(stored[1].identity, graph_identity(2));
     assert!(stored[1].seen && stored[1].flagged, "{:?}", stored[1]);
+}
+
+/// Research §15: a request answered 504 may have been applied; the user
+/// takes the change back and the next round reports nothing yet, so the
+/// stored value equals the wish. The request still goes, since only the
+/// service's acceptance says it holds the value.
+#[test]
+fn a_change_taken_back_after_a_504_is_sent_again() {
+    let mut mailbox = graph_mailbox_with_rounds(Vec::new());
+    mailbox.patch_answer = Some(graph_service::ScriptedAnswer::error(
+        504,
+        "GatewayTimeout",
+        "The gateway timed out.",
+    ));
+    let service = graph_service::ScriptedService::start_with_changes(mailbox);
+    let (store, inbox) = microsoft365_inbox();
+    synchronize_kind_again(microsoft365_kind(&service), &store);
+    let message = graph_identity(2);
+    want(
+        &store,
+        MICROSOFT365_ACCOUNT,
+        &message,
+        MessageFlag::Flagged,
+        true,
+    );
+    let (outcome, _, _) = synchronize_kind_again(microsoft365_kind(&service), &store);
+    assert!(matches!(outcome, LoadResult::Failed(_)), "{outcome:?}");
+    want(
+        &store,
+        MICROSOFT365_ACCOUNT,
+        &message,
+        MessageFlag::Flagged,
+        false,
+    );
+    let (outcome, stored, _) = synchronize_kind_again(microsoft365_kind(&service), &store);
+    assert_stored(&outcome);
+    let bodies: Vec<String> = (patches(&service).into_iter())
+        .map(|(_, body)| body)
+        .collect();
+    assert_eq!(
+        bodies,
+        [
+            r#"{"flag":{"flagStatus":"flagged"}}"#,
+            r#"{"flag":{"flagStatus":"notFlagged"}}"#,
+        ]
+    );
+    assert_eq!(pending_in(&store, &inbox), []);
+    assert!(!stored[1].flagged);
+}
+
+/// Research §15: a page reporting the wished value does not end the wish,
+/// since a later page may replay the older one; the request after the
+/// round does.
+#[test]
+fn a_report_of_the_wished_value_does_not_end_the_change() {
+    use graph_service::{ScriptedNext::*, delta_entry};
+    let id = graph_service::fixture_immutable_id;
+    let star = |status: &str| serde_json::json!({ "id": id(2), "flag": { "flagStatus": status } });
+    let service = graph_service::ScriptedService::start_with_changes(graph_mailbox(
+        vec![
+            (
+                "first",
+                delta_page((1..=3).map(delta_entry).collect(), Done("round-1")),
+            ),
+            (
+                "round-1",
+                delta_page(vec![star("flagged")], More("round-1b")),
+            ),
+            (
+                "round-1b",
+                delta_page(vec![star("notFlagged")], Done("round-2")),
+            ),
+            ("round-2", delta_page(Vec::new(), Done("round-2"))),
+        ],
+        inbox_messages(&[1, 2, 3]),
+    ));
+    let (store, inbox) = microsoft365_inbox();
+    synchronize_kind_again(microsoft365_kind(&service), &store);
+    want(
+        &store,
+        MICROSOFT365_ACCOUNT,
+        &graph_identity(2),
+        MessageFlag::Flagged,
+        true,
+    );
+    let (outcome, stored, _) = synchronize_kind_again(microsoft365_kind(&service), &store);
+    assert_stored(&outcome);
+    assert_eq!(
+        patches(&service),
+        [(
+            format!("/me/messages/{}", id(2)),
+            r#"{"flag":{"flagStatus":"flagged"}}"#.to_owned()
+        )]
+    );
+    assert_eq!(pending_in(&store, &inbox), []);
+    assert!(stored[1].flagged);
 }

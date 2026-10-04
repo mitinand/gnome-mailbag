@@ -161,8 +161,8 @@ impl Store {
     /// Stores one batch of a cycle in one transaction, whole or not at all
     /// (specs/009-synchronization FR-008): removals, then the messages left
     /// in no folder, flags, full records, messages the account already
-    /// held, and the folder's state when the batch carries one. Each flag
-    /// written ends a pending value equal to it.
+    /// held, and the folder's state when the batch carries one. The pending
+    /// values stay (specs/011-read-and-star research §15).
     /// `load_cancelled` is asked under the store's lock, as for a folder list.
     pub fn store_batch(
         &self,
@@ -194,8 +194,7 @@ impl Store {
     }
 
     /// The changes of the folder's messages the user wants and the server
-    /// may not have yet, each with the server's value as stored
-    /// (specs/011-read-and-star FR-007).
+    /// may not have yet (specs/011-read-and-star FR-007).
     pub fn read_pending_changes(&self, folder: &FolderRef) -> Result<Vec<PendingChange>, Failure> {
         self.with_connection(StoreOperation::Read, |connection| {
             let folder_id = stored_folder_id(connection, folder)?;
@@ -225,9 +224,10 @@ impl Store {
         })
     }
 
-    /// The server accepted `value` of `flag` for the account's messages: it
-    /// becomes their server value and ends a pending value equal to it; a
-    /// newer wish for the other value stays (specs/011-read-and-star FR-007).
+    /// The cycle saw the server hold `value` of `flag` for the account's
+    /// messages: it becomes their server value and ends a pending value
+    /// equal to it; a newer wish for the other value stays
+    /// (specs/011-read-and-star FR-007).
     pub fn settle_flags(
         &self,
         account: &AccountId,

@@ -215,15 +215,13 @@ impl From<MessageFlags> for FlagChanges {
     }
 }
 
-/// A change of one flag the user wants and the server may not have yet,
-/// with the server's value as last stored.
+/// A change of one flag the user wants and the server may not have yet.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingChange {
     /// The message's `Message::identity`.
     pub identity: String,
     pub flag: MessageFlag,
     pub wanted: bool,
-    pub server_value: bool,
 }
 
 /// Subject, sender and recipients for the list and the reader.

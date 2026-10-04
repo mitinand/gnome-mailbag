@@ -31,8 +31,8 @@ client open beside the window.
   pending change for the next cycle; a message reported in two pages of
   one round keeps both flags; a wish the IMAP listing already shows ends
   without a command, while Microsoft 365 sends every pending change and
-  no report ends one; a read mark sent under Starred after the star was
-  taken off stays pending; a refused listing after the commands ends the
+  no report ends one; a command the server ignored, for a UID the
+  mailbox no longer has, leaves the change pending; a refused listing after the commands ends the
   cycle incomplete (research §15);
   a star during a first fill of 300 messages is received before the
   second batch's rows are read, and one after the last batch before the

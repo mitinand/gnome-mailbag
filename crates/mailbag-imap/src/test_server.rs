@@ -426,6 +426,9 @@ pub struct FixtureSetup {
     /// The listing answers for the first half of the messages, then
     /// completes with NO.
     pub listing_refused: bool,
+    /// As `listing_refused`, for the listings after an accepted `UID STORE`
+    /// only.
+    pub listing_refused_after_store: bool,
     /// Messages that disappear once their structure has been read: text
     /// commands leave them out, as when another client moves them meanwhile.
     pub vanishing_text_uids: Vec<u32>,
@@ -502,6 +505,7 @@ impl Default for FixtureSetup {
             vanishing_uid: None,
             expunged_during_listing: Vec::new(),
             listing_refused: false,
+            listing_refused_after_store: false,
             vanishing_text_uids: Vec::new(),
             interleave_flag_changes: false,
             flag_change_uids: Vec::new(),
@@ -598,6 +602,7 @@ impl ImapFixture {
                 .collect();
             let server = Rc::new(Server {
                 fault_pending: Cell::new(true),
+                store_accepted: Cell::new(false),
                 flags: RefCell::new(flags),
                 setup,
                 log: server_log,
@@ -654,6 +659,8 @@ struct Server {
     log: Arc<Mutex<FixtureLog>>,
     /// The configured fault happens once per server.
     fault_pending: Cell<bool>,
+    /// Whether the server accepted a `UID STORE`.
+    store_accepted: Cell<bool>,
     /// Each message's `\Seen` and `\Flagged` by UID, seeded from the
     /// setup and changed by `UID STORE`, for every connection.
     flags: RefCell<BTreeMap<u32, (bool, bool)>>,
@@ -1025,7 +1032,9 @@ impl Server {
         if !listing {
             messages.retain(|(_, message)| !self.setup.unfetchable_uids.contains(&message.uid));
         }
-        let listing_refused = listing && self.setup.listing_refused;
+        let listing_refused = listing
+            && (self.setup.listing_refused
+                || (self.setup.listing_refused_after_store && self.store_accepted.get()));
         if listing_refused {
             messages.truncate(messages.len() / 2);
         }
@@ -1117,7 +1126,8 @@ impl Server {
     }
 
     /// Answers `UID STORE <UIDs> ±FLAGS[.SILENT] (<flags>)`: sets or clears
-    /// `\Seen` and `\Flagged` of the named messages, unless the setup
+    /// `\Seen` and `\Flagged` of the named messages the mailbox lists now,
+    /// ignoring the others as RFC 3501 §6.4.8 allows, unless the setup
     /// scripts a completion or a fault. Returns false when a fault ended the
     /// session.
     async fn store(&self, io: &mut Io, tag: &str, arguments: &str) -> Result<bool, Box<dyn Error>> {
@@ -1137,6 +1147,12 @@ impl Server {
             .split(',')
             .map(|uid| uid.parse::<u32>().expect("a UID"))
         {
+            if self
+                .select_messages(&uid.to_string(), true, false)
+                .is_empty()
+            {
+                continue;
+            }
             let mut flags = self.flags.borrow_mut();
             let Some((seen, flagged)) = flags.get_mut(&uid) else {
                 continue;
@@ -1170,6 +1186,7 @@ impl Server {
         if self.setup.store_echoes_fetch {
             io.send(echoes).await?;
         }
+        self.store_accepted.set(true);
         io.send(format!("{tag} OK STORE completed\r\n")).await?;
         Ok(true)
     }

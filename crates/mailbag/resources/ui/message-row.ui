@@ -155,7 +155,6 @@
                     </child>
                     <child>
                       <object class="GtkImage" id="star">
-                        <property name="accessible-role">button</property>
                         <binding name="icon-name">
                           <lookup name="star-icon" type="MessageItem">
                             <lookup name="item">GtkListItem</lookup>
