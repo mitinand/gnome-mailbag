@@ -401,8 +401,10 @@ window shows and what the record says.
   delta queries), with the folder state they need (the last UID, the highest
   modification sequence, the delta link); a list that shows a whole folder.
   Until then a load delivers the newest 100 and replaces the stored folder.
-  *Built by [009](../009-synchronization/spec.md)*, except CONDSTORE and
-  QRESYNC (009 FR-015(e)).
+  *Built by [009](../009-synchronization/spec.md)*, except QRESYNC; CONDSTORE
+  built on 2026-10-04 by 009's state pass (009 FR-005), whose folder state
+  keeps the highest modification sequence beside the count and the next
+  number.
   (b) *Folders and labels*: built by [008](../008-folders/spec.md) except
   what its FR-013 defers, among them counts, the combined Inbox, and for
   Gmail All Mail plus Trash and Spam as the synchronized folders with labels

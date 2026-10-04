@@ -119,6 +119,21 @@ pub enum ImapStep {
     StoreFlags,
 }
 
+/// The numbers a mailbox's opening returns, which a state pass compares
+/// with the ones the folder stored (specs/009-synchronization FR-005).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MailboxNumbers {
+    /// UIDVALIDITY, the mailbox's numbering version; a server may give none.
+    pub uid_validity: Option<u32>,
+    /// EXISTS, how many messages the mailbox holds.
+    pub message_count: u32,
+    /// UIDNEXT, the next UID the server predicts; a server may give none.
+    pub uid_next: Option<u32>,
+    /// HIGHESTMODSEQ, when the mailbox was opened with CONDSTORE and keeps
+    /// mod-sequences (RFC 7162); `None` otherwise, NOMODSEQ included.
+    pub highest_modseq: Option<u64>,
+}
+
 /// A flag `MailboxReader::store_flags` sets or clears.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StoreFlag {

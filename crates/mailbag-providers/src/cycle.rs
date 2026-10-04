@@ -79,6 +79,7 @@ fn completed(server_position: Option<String>) -> FolderState {
         server_position,
         fill_place: None,
         synchronized: true,
+        numbers: None,
     }
 }
 

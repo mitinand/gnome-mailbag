@@ -33,6 +33,12 @@ CREATE TABLE folder (
     server_position TEXT,
     fill_place TEXT,
     synchronized INTEGER NOT NULL CHECK (synchronized IN (0, 1)),
+    -- The numbers of the folder's latest state pass, IMAP only
+    -- (specs/009-synchronization/data-model.md): null before a pass.
+    uid_validity INTEGER,
+    message_count INTEGER,
+    uid_next INTEGER,
+    highest_modseq INTEGER,
     UNIQUE (account, identity)
 ) STRICT;
 

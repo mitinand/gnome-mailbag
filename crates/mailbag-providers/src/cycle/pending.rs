@@ -13,7 +13,7 @@ use super::{
     imap::ListedMessage,
 };
 use crate::{LoadFailure, store_load::BatchWriter};
-use mailbag_domain::MessageFlag;
+use mailbag_domain::{MessageFlag, PendingChange};
 use mailbag_graph::{FlagUpdate, GraphError, GraphFailure};
 use mailbag_imap::{MailboxReader, StoreFlag};
 use std::collections::{BTreeMap, HashMap};
@@ -32,15 +32,16 @@ pub(super) type SentChanges = HashMap<(String, MessageFlag), bool>;
 /// shows the server holds: a star set and taken off before the cycle,
 /// a change another client made first, or a command of an earlier cycle
 /// that was applied though its answer was lost (spec FR-007, FR-009).
-/// Called once, right after the listing, while it is current; a later
-/// sending step sends instead, since the listing is old by then
-/// (research §15).
+/// Called once, right after the listing, while it is current, with the
+/// folder's pending changes read for the pass's plan; a later sending step
+/// sends instead, since the listing is old by then (research §15).
 pub(super) fn end_changes_the_listing_shows(
     listed: &HashMap<&str, &ListedMessage>,
+    pending: &[PendingChange],
     batches: &mut BatchWriter<'_>,
 ) -> Result<(), CycleEnd> {
     let mut shown = Vec::new();
-    for change in batches.pending_changes()? {
+    for change in pending {
         let Some(message) = listed.get(change.identity.as_str()) else {
             continue;
         };
@@ -49,7 +50,7 @@ pub(super) fn end_changes_the_listing_shows(
             MessageFlag::Flagged => message.flags.flagged,
         };
         if listed_value == change.wanted {
-            shown.push((change.identity, change.flag, change.wanted));
+            shown.push((change.identity.clone(), change.flag, change.wanted));
         }
     }
     settle_changes_server_holds(shown, batches)

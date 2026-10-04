@@ -142,6 +142,25 @@ pub struct FolderState {
     pub fill_place: Option<String>,
     /// Whether the folder's latest cycle completed.
     pub synchronized: bool,
+    /// IMAP only: the numbers of the folder's latest state pass, which the
+    /// next pass compares with the opening's (specs/009-synchronization
+    /// FR-005); `None` before a pass and on Microsoft 365.
+    pub numbers: Option<FolderNumbers>,
+}
+
+/// The numbers an IMAP folder's opening returns, as the folder's latest
+/// state pass saw them (specs/009-synchronization/data-model.md).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FolderNumbers {
+    /// UIDVALIDITY, the folder's numbering version; a server may give none.
+    pub uid_validity: Option<u32>,
+    /// EXISTS, how many messages the folder held.
+    pub message_count: u32,
+    /// UIDNEXT, the next UID the server predicted; a server may give none.
+    pub uid_next: Option<u32>,
+    /// HIGHESTMODSEQ, on a server that announces CONDSTORE for a mailbox
+    /// that keeps mod-sequences; `None` otherwise.
+    pub highest_modseq: Option<u64>,
 }
 
 /// One whole part of a cycle's result, which the store writes in one
@@ -437,6 +456,7 @@ impl fmt::Debug for FolderState {
             .field("server_position", &self.server_position.is_some())
             .field("fill_place", &self.fill_place.is_some())
             .field("synchronized", &self.synchronized)
+            .field("numbers", &self.numbers)
             .finish()
     }
 }

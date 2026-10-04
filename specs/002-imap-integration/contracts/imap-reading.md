@@ -58,7 +58,7 @@ Quit cancels work without blocking GTK on a thread join. No command queue.
 | Sign-in | Prefer AUTHENTICATE PLAIN if advertised; otherwise LOGIN only without LOGINDISABLED. A rejected attempt does not trigger another authentication method. |
 | After sign-in | 002 uses no capability after sign-in, so none is requested. When a later feature needs one (a server may advertise IDLE only after authentication), read capabilities again then; never reuse the pre-login set. |
 | Compression | *Added 2026-10-02 by 009 (research §14)*: when the signed-in capabilities include `COMPRESS=DEFLATE`, send `COMPRESS DEFLATE`; on OK put raw deflate between the session and the TLS stream (GIO `ZlibCompressor` and `ZlibDecompressor` as converter streams, swapped inside the stream handle the library holds); NO or BAD continues uncompressed. Never on the plaintext leg of STARTTLS. |
-| Inbox | SELECT the folder (EXAMINE until 2026-10-03; 011 FR-008); obtain UIDVALIDITY and EXISTS. |
+| Inbox | SELECT the folder (EXAMINE until 2026-10-03; 011 FR-008), with the `(CONDSTORE)` parameter when the signed-in capabilities include CONDSTORE (*since 2026-10-04, 009 FR-005*); obtain UIDVALIDITY, EXISTS, UIDNEXT and, where given, HIGHESTMODSEQ. |
 | Finish | Close the connection after the batch. No retained idle connection and no mail-changing CLOSE/EXPUNGE/COPY/MOVE commands; the only STORE commands are the flag changes of 011 FR-007. |
 
 A missing/rejected STARTTLS command, handshake error or invalid certificate ends
@@ -98,6 +98,15 @@ first, so both describe the same messages even if the Inbox changes in between.
 FLAGS)` (Gmail adds `X-GM-MSGID`), read as a stream, and N = 0 lists nothing
 without a command. The listing is complete only when the command ended with
 OK; a NO or BAD leaves it incomplete and a lost connection fails the step.
+*Since 2026-10-04 (009 FR-005)*: the listing runs when the opening's
+numbers differ from those of the listing the store reflects, when the
+folder's fill did not complete or when it holds pending changes; with
+EXISTS and UIDNEXT unchanged and a HIGHESTMODSEQ on both sides, `UID FETCH
+1:* (UID FLAGS [X-GM-MSGID]) (CHANGEDSINCE <stored>)` lists the changed
+flags instead, and with all four unchanged nothing is listed. A cycle
+that fetched messages or sent flag commands opens the folder again (a
+second SELECT in the same session, or in a fresh one when the session was
+closed) and repeats the comparison before it closes.
 The missing messages' rows are then read by UID, a hundred at a time,
 `UID FETCH <uids> (UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO
 SUBJECT)] BODYSTRUCTURE)`, highest UID first (*the structures joined this

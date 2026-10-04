@@ -2531,6 +2531,7 @@ fn store_completed_cycle(
             server_position: None,
             fill_place: None,
             synchronized: true,
+            numbers: None,
         }),
         ..FolderBatch::default()
     };

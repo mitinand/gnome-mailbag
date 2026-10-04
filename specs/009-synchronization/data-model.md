@@ -4,7 +4,9 @@ The persisted form of the store after this feature (spec FR-001, FR-008,
 FR-009), changing 008's three tables. *Amended 2026-10-03 by
 [Read and star](../011-read-and-star/spec.md)* ([its data model](../011-read-and-star/data-model.md)):
 the message carries its star and two pending wanted values; the rules
-below name both flags, the equal-value rule and the effective values. Before the first release a change to
+below name both flags, the equal-value rule and the effective values.
+*Amended 2026-10-04 (the state pass, spec FR-005)*: the folder keeps the
+four numbers of its latest state pass. Before the first release a change to
 this model discards the store at start (007 FR-012), so every folder fills
 again once. The schema stays one SQL text in `mailbag-store` whose hash is
 the store's version; all tables are `STRICT`.
@@ -18,10 +20,25 @@ the store's version; all tables are `STRICT`.
 | `server_position` | TEXT, null | Microsoft 365 only: the `@odata.deltaLink` the next round of changes starts from, once a first reading completed; null otherwise |
 | `fill_place` | TEXT, null | Microsoft 365 only: the `@odata.nextLink` an unfinished first fill continues from; null otherwise. Kept apart from `server_position` so that neither link's meaning depends on `synchronized` (external review, 2026-09-29) |
 | `synchronized` | INTEGER, 0 or 1 | Whether the folder's latest cycle completed; replaces 008's `loaded`. The first batch of an IMAP cycle that has messages to fetch, and each Microsoft 365 page that is not a reading's last, and a continued first fill's last page, set it to 0; the completing batch sets it to 1 |
+| `uid_validity` | INTEGER, null | *Since 2026-10-04 (spec FR-005)*: the numbering version the folder's latest state pass saw; IMAP only, null while the folder is not completed |
+| `message_count` | INTEGER, null | The message count the latest state pass saw (EXISTS); the numbers are written together, and a server gives this one with every opening, so it says whether a pass stored them |
+| `uid_next` | INTEGER, null | The next UID the server predicted at the latest pass (UIDNEXT); null when the server gave none |
+| `highest_modseq` | INTEGER, null | HIGHESTMODSEQ at the latest pass, on a server that announces CONDSTORE for a mailbox that keeps mod-sequences; null otherwise |
 
 The other columns are 008's. Replacing a folder list (008 FR-001) keeps
-these three columns of a folder it keeps. No numbering version is stored:
-it is part of a Generic IMAP message's identity (below).
+these seven columns of a folder it keeps. The four numbers are written
+with the completed state by a pass whose listing completed and left no
+listed message missing, and cleared with the not-completed state, since
+a folder not completed is listed whole at its next pass; a refused
+listing with nothing missing writes nothing, and a pass that lists nothing
+writes the completed state only when the folder is not yet marked so with
+these numbers, otherwise nothing. They serve the comparison of spec FR-005 only: a pass may
+list nothing, or the changed flags alone, only when the folder holds no
+pending change and the numbers it compares with are present: the stored
+ones of a folder with `synchronized = 1`, or, at a cycle's second pass,
+the first pass's. No numbering version is stored for identities:
+it is part of a Generic IMAP message's identity (below), and
+`uid_validity` here only tells a pass that the numbering changed.
 
 ### `message` — changed identity and content codes
 
@@ -43,9 +60,10 @@ memberships (the primary key's prefix) and sorts them.
 ## Rules
 
 - **Reading a folder for a cycle**: the folder's `server_position`,
-  `fill_place` and `synchronized`, and the identity, `seen` and `flagged`
-  (the server's values) of every message it holds; one read at the
-  cycle's start.
+  `fill_place` and `synchronized`, since 2026-10-04 its four numbers, and
+  the identity, `seen` and `flagged` (the server's values) of every
+  message it holds; one read at the cycle's start, and one more before
+  the second state pass (spec FR-005).
 - **Storing a batch** (spec FR-008), in one transaction, after the load's
   cancellation check under the store's lock:
   1. delete the folder's memberships of the removed identities;
@@ -66,7 +84,9 @@ memberships (the primary key's prefix) and sorts them.
      setting their `seen` and `flagged` as listed, leaving the pending
      values;
   6. when the batch carries a folder state, write the three state
-     columns.
+     columns and, since 2026-10-04, the four numbers (null for Microsoft
+     365; a pass whose listing the server did not complete writes them as
+     they were stored).
   A folder the store does not hold fails the write, as 008's loads do.
 - **Reading a folder's rows**: `None` when `synchronized = 0` and the folder
   holds no membership ("no mail loaded", 007 FR-006); otherwise the
@@ -84,14 +104,17 @@ memberships (the primary key's prefix) and sorts them.
 - **Not stored**: IMAP UIDs (a Generic IMAP identity holds its UID, Gmail
   matches by `X-GM-MSGID`; 011 addresses a message by the UID its own
   listing shows, so none is stored), the listed identities of a Microsoft
-  365 re-reading (held in memory for one cycle), counts. Pending changes
-  are stored since 011 as the message's wanted values.
+  365 re-reading (held in memory for one cycle), per-message
+  mod-sequences (only the folder's HIGHESTMODSEQ is kept, since
+  2026-10-04). Pending changes are stored since 011 as the message's
+  wanted values.
 
 ## In memory only
 
 | Value | Owner | Lifetime |
 |---|---|---|
 | The folder's stored identities with `seen`, and the server's listing | The running cycle | One cycle |
+| The opening's four numbers, and the second pass's | The running IMAP cycle | One cycle; stored with the pass's batch (spec FR-005) |
 | The identities a Microsoft 365 full reading listed | The running cycle | One cycle; a stopped re-reading starts over |
 | The shown folder's rows, the number of the latest read, and whether another read is due | The window | As 008's shown mailbox; a batch of the shown folder marks a read due |
 | The list model's items and the open message's identity | The message list | While the folder is shown |

@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The cycle of an IMAP folder, Generic IMAP or Gmail (spec FR-005, FR-006;
-//! research §2, §3, §4).
+//! research §2, §3, §4, §15).
 
 use super::{
-    CycleEnd, completed,
+    CycleEnd,
     pending::{SentChanges, end_changes_the_listing_shows, send_imap_changes, settle_sent_changes},
 };
 use crate::{
@@ -16,10 +16,12 @@ use crate::{
 };
 use goa_adapter::ImapAccess;
 use mailbag_content::decode_display_fields;
-use mailbag_domain::{FolderBatch, FolderState, IncompleteList, Message, MessageFlags};
+use mailbag_domain::{
+    FolderBatch, FolderNumbers, FolderState, IncompleteList, Message, MessageFlags,
+};
 use mailbag_imap::{
-    FolderListing, ImapError, ImapFailure, ImapStep, MailboxReader, OpenOptions, RowItems,
-    ServerReply,
+    FolderListing, ImapError, ImapFailure, ImapStep, MailboxNumbers, MailboxReader, OpenOptions,
+    RowItems, ServerReply,
 };
 use mailbag_store::FolderSync;
 use std::{
@@ -48,12 +50,13 @@ pub(super) struct ListedMessage {
 }
 
 /// The cycle of an IMAP folder, Generic IMAP or Gmail (spec FR-005, FR-006;
-/// research §2, §3): list every message, store what the listing proves,
-/// then fetch the missing messages newest first, a batch at a time. The
-/// user's pending changes the listing shows the server holds end with it;
-/// the others are sent by the listing's UIDs after the listing and after
-/// each batch; when the cycle sent one, the folder is listed again to see
-/// which the server holds (specs/011-read-and-star FR-007).
+/// research §2, §3, §15): a state pass learns the folder's state from the
+/// numbers its opening returns and lists what they call for; the missing
+/// messages are fetched newest first, a batch at a time; the user's pending
+/// changes are sent by the listing's UIDs after the listing and after each
+/// batch (specs/011-read-and-star FR-007); a cycle that fetched messages or
+/// sent commands ends with a second pass, so that the folder is as the
+/// server has it now.
 pub(super) async fn synchronize_imap_folder(
     access: ImapAccess,
     identity_rule: IdentityRule,
@@ -62,15 +65,23 @@ pub(super) async fn synchronize_imap_folder(
     let recent_limit = super::recent_limit(SystemTime::now());
     let mut server = ImapFolder::open(access, identity_rule, &batches.folder.identity).await?;
     let stored = batches.read_folder_sync()?;
-    let listing = server.list_messages().await?;
-    let listed = server.identify(&listing, &batches.folder.identity)?;
-    let listed_by_identity: HashMap<&str, &ListedMessage> = listed
+    let pending = batches.pending_changes()?;
+    // The reference is a synchronized folder's stored numbers (spec
+    // FR-005(b)); a folder not completed holds none.
+    let reference = stored
+        .state
+        .synchronized
+        .then_some(stored.state.numbers)
+        .flatten();
+    let numbers = folder_numbers(server.reader.numbers());
+    let plan = pass_plan(numbers, reference, !pending.is_empty());
+    let first = run_state_pass(&mut server, &stored, numbers, batches, plan).await?;
+    let listed_by_identity: HashMap<&str, &ListedMessage> = first
+        .listed
         .iter()
         .map(|message| (message.identity.as_str(), message))
         .collect();
-    let missing = missing_messages(&listed, &stored);
-    batches.store(&listing_changes(&listed, &stored, &listing, &missing))?;
-    end_changes_the_listing_shows(&listed_by_identity, batches)?;
+    end_changes_the_listing_shows(&listed_by_identity, &pending, batches)?;
     let mut sent_changes = SentChanges::new();
     send_imap_changes(
         &mut server.reader,
@@ -79,6 +90,7 @@ pub(super) async fn synchronize_imap_folder(
         batches,
     )
     .await?;
+    let missing = missing_messages(&first.listed, &stored);
     for batch_messages in missing.chunks(BATCH_SIZE) {
         let (batch, refusal) = server
             .fetch_arrivals(batch_messages, recent_limit, batches)
@@ -94,48 +106,154 @@ pub(super) async fn synchronize_imap_folder(
         // The rows the server withheld are missing, so the folder stays
         // not completed; the listing's proof is stored.
         if let Some(refusal) = refusal {
-            return Ok(batches.finish(listed.len(), Some(short_list(refusal))));
+            return Ok(batches.finish(first.listed.len(), Some(short_list(refusal))));
         }
     }
-    if !sent_changes.is_empty()
-        && let Some(refusal) = confirm_sent_changes(&mut server, &sent_changes, batches).await?
-    {
-        return Ok(batches.finish(listed.len(), Some(short_list(refusal))));
+    let first_listing_complete = first.refusal.is_none();
+    let mut refusal = first.refusal;
+    if !missing.is_empty() || !sent_changes.is_empty() {
+        // The second pass: the folder as the server has it after the fill
+        // and the cycle's own commands. Its reference is the first pass's
+        // numbers, whose listing the store reflects once every missing
+        // message is stored; a refused first listing gives none.
+        server.reader.reopen().await?;
+        let stored_now = batches.read_folder_sync()?;
+        let numbers_now = folder_numbers(server.reader.numbers());
+        let reference = first_listing_complete.then_some(numbers);
+        let plan = pass_plan(numbers_now, reference, false);
+        let second = run_state_pass(&mut server, &stored_now, numbers_now, batches, plan).await?;
+        settle_sent_changes(&second.listed, &sent_changes, batches)?;
+        refusal = refusal.or(second.refusal);
     }
-    if let Some(refusal) = listing.refusal {
-        return Ok(batches.finish(listed.len(), Some(short_list(refusal))));
-    }
-    if !missing.is_empty() {
-        batches.store(&FolderBatch {
-            state: Some(completed(None)),
-            ..FolderBatch::default()
-        })?;
-    }
-    Ok(batches.finish(listed.len(), None))
+    Ok(batches.finish(first.listed.len(), refusal.map(short_list)))
 }
 
-/// Lists the folder again after the cycle's own commands, which may have
-/// changed it, as a star taken off a message under Gmail's Starred label
-/// takes it out of the label; stores the removals and flags the listing
-/// proves and ends the sent changes it shows. Messages it newly lists wait
-/// for the next cycle, and the folder's state stays the cycle's. Returns the
-/// server's refusal to finish the listing (specs/011-read-and-star FR-007,
-/// research §15; 009 FR-001).
-async fn confirm_sent_changes(
-    server: &mut ImapFolder,
-    sent_changes: &SentChanges,
-    batches: &mut BatchWriter<'_>,
-) -> Result<Option<ServerReply>, CycleEnd> {
-    let stored = batches.read_folder_sync()?;
-    let listing = server.list_messages().await?;
-    let listed = server.identify(&listing, &batches.folder.identity)?;
-    let proven = FolderBatch {
-        state: None,
-        ..listing_changes(&listed, &stored, &listing, &[])
+/// What a state pass lists, told by the opening's numbers against the
+/// numbers of the listing the store reflects (spec FR-005(b)).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PassPlan {
+    /// Every number equal under the same numbering: the folder is as stored.
+    Nothing,
+    /// The count and the next UID equal, the highest mod-sequence not: only
+    /// flags changed, listed with `CHANGEDSINCE` the earlier one.
+    ChangedFlags { since: u64 },
+    /// Every message with its number and flags, as the base method lists.
+    Everything,
+}
+
+/// Chooses what the pass lists. Without a reference, under another
+/// numbering, with a number missing on either side (a server without
+/// CONDSTORE gives no mod-sequence) or with pending changes, which the
+/// listing's UIDs address (specs/011-read-and-star FR-007), every message
+/// is listed.
+fn pass_plan(
+    numbers: FolderNumbers,
+    reference: Option<FolderNumbers>,
+    pending_changes: bool,
+) -> PassPlan {
+    let Some(reference) = reference else {
+        return PassPlan::Everything;
     };
-    batches.store(&proven)?;
-    settle_sent_changes(&listed, sent_changes, batches)?;
-    Ok(listing.refusal)
+    let same_messages = numbers.uid_validity.is_some()
+        && numbers.uid_validity == reference.uid_validity
+        && numbers.message_count == reference.message_count
+        && numbers.uid_next.is_some()
+        && numbers.uid_next == reference.uid_next;
+    match (reference.highest_modseq, numbers.highest_modseq) {
+        (Some(since), Some(highest_modseq)) if same_messages && !pending_changes => {
+            match highest_modseq == since {
+                true => PassPlan::Nothing,
+                false => PassPlan::ChangedFlags { since },
+            }
+        }
+        _ => PassPlan::Everything,
+    }
+}
+
+/// What a state pass found: the messages its listing showed (none when
+/// nothing changed) and the server's refusal to finish the listing.
+struct StatePass {
+    listed: Vec<ListedMessage>,
+    refusal: Option<ServerReply>,
+}
+
+/// Runs the pass's listing and stores what it proves with the opening's
+/// `numbers`, in one batch (spec FR-005(c)): removals only from a complete
+/// listing of every message (FR-004), the changed flags, and the folder's
+/// state (`pass_state`). A pass that lists nothing writes the completed
+/// state when the folder is not yet marked so, and otherwise nothing: an
+/// empty batch is not stored.
+async fn run_state_pass(
+    server: &mut ImapFolder,
+    stored: &FolderSync,
+    numbers: FolderNumbers,
+    batches: &mut BatchWriter<'_>,
+    plan: PassPlan,
+) -> Result<StatePass, CycleEnd> {
+    let listing = match plan {
+        PassPlan::Nothing => FolderListing {
+            messages: Vec::new(),
+            refusal: None,
+        },
+        PassPlan::ChangedFlags { since } => server.list_changed_flags(since).await?,
+        PassPlan::Everything => server.list_messages().await?,
+    };
+    let listed = server.identify(&listing, &batches.folder.identity)?;
+    let missing = missing_messages(&listed, stored);
+    let complete = listing.refusal.is_none();
+    let removals_proven = complete && plan == PassPlan::Everything;
+    let mut batch = listing_changes(&listed, stored, removals_proven);
+    batch.state = pass_state(&stored.state, numbers, complete, !missing.is_empty());
+    tracing::info!(
+        outcome = match plan {
+            PassPlan::Nothing => "nothing changed",
+            PassPlan::ChangedFlags { .. } => "changed flags listed",
+            PassPlan::Everything => "folder listed",
+        },
+        messages = numbers.message_count,
+        listed = listed.len(),
+        missing = missing.len(),
+        removed = batch.removed.len(),
+        flag_changes = batch.flag_states.len(),
+        "state pass"
+    );
+    batches.store(&batch)?;
+    Ok(StatePass {
+        listed,
+        refusal: listing.refusal,
+    })
+}
+
+/// The folder's state after a pass (spec FR-005(c), FR-008): not completed,
+/// without numbers, while messages are missing, since the next pass lists
+/// every message anyway; completed with the pass's numbers when none are
+/// missing and the listing completed, unless the folder is marked so with
+/// these numbers already; nothing to write otherwise.
+fn pass_state(
+    stored: &FolderState,
+    numbers: FolderNumbers,
+    complete: bool,
+    missing: bool,
+) -> Option<FolderState> {
+    if missing {
+        return Some(FolderState::default());
+    }
+    let marked_so = stored.synchronized && stored.numbers == Some(numbers);
+    (complete && !marked_so).then(|| FolderState {
+        synchronized: true,
+        numbers: Some(numbers),
+        ..FolderState::default()
+    })
+}
+
+/// The opening's numbers as the folder stores them.
+fn folder_numbers(numbers: MailboxNumbers) -> FolderNumbers {
+    FolderNumbers {
+        uid_validity: numbers.uid_validity,
+        message_count: numbers.message_count,
+        uid_next: numbers.uid_next,
+        highest_modseq: numbers.highest_modseq,
+    }
 }
 
 /// The listed messages the folder does not hold, highest UID first, so the
@@ -152,22 +270,18 @@ fn missing_messages<'a>(
     missing
 }
 
-/// What the listing proves before anything is fetched: removals when it
-/// completed (spec FR-004), changed flags, and the folder's state: not
-/// completed while messages are missing, refused listing or not; completed
-/// when none are and the listing completed; otherwise as it was.
+/// What the listing proves: removals, when it completed and listed every
+/// message (spec FR-004), and the flags that differ from the stored ones.
 fn listing_changes(
     listed: &[ListedMessage],
     stored: &FolderSync,
-    listing: &FolderListing,
-    missing: &[&ListedMessage],
+    removals_proven: bool,
 ) -> FolderBatch {
-    let complete = listing.refusal.is_none();
     let listed_identities: HashSet<&str> = listed
         .iter()
         .map(|message| message.identity.as_str())
         .collect();
-    let removed = match complete {
+    let removed = match removals_proven {
         true => stored
             .stored
             .keys()
@@ -186,17 +300,9 @@ fn listing_changes(
         })
         .map(|message| (message.identity.clone(), message.flags.into()))
         .collect();
-    let state = if !missing.is_empty() {
-        Some(FolderState::default())
-    } else if complete && !stored.state.synchronized {
-        Some(completed(None))
-    } else {
-        None
-    };
     FolderBatch {
         removed,
         flag_states,
-        state,
         ..FolderBatch::default()
     }
 }
@@ -231,6 +337,11 @@ impl ImapFolder {
     async fn list_messages(&mut self) -> Result<FolderListing, ImapError> {
         let items = self.row_items();
         self.reader.list_messages(items).await
+    }
+
+    async fn list_changed_flags(&mut self, since: u64) -> Result<FolderListing, ImapError> {
+        let items = self.row_items();
+        self.reader.list_changed_flags(since, items).await
     }
 
     /// What the listing and the rows ask for beyond RFC 3501.
@@ -357,5 +468,66 @@ fn options(identity_rule: IdentityRule) -> OpenOptions {
     match identity_rule {
         IdentityRule::Generic => OpenOptions::default(),
         IdentityRule::Gmail => gmail_options(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn opening(
+        uid_validity: u32,
+        message_count: u32,
+        uid_next: u32,
+        highest_modseq: Option<u64>,
+    ) -> FolderNumbers {
+        FolderNumbers {
+            uid_validity: Some(uid_validity),
+            message_count,
+            uid_next: Some(uid_next),
+            highest_modseq,
+        }
+    }
+
+    /// Spec FR-005(b): the opening's numbers against the listing the store
+    /// reflects decide what the pass lists.
+    #[test]
+    fn the_pass_lists_what_the_numbers_call_for() {
+        let stored = opening(1, 5, 20, Some(40));
+        let plan = |numbers, pending| pass_plan(numbers, Some(stored), pending);
+        assert_eq!(plan(opening(1, 5, 20, Some(40)), false), PassPlan::Nothing);
+        assert_eq!(
+            plan(opening(1, 5, 20, Some(44)), false),
+            PassPlan::ChangedFlags { since: 40 }
+        );
+        // An arrival, a removal, a renumbered folder with the same count and
+        // next UID, a server without mod-sequences, pending changes, and no
+        // listing to compare with: every message.
+        assert_eq!(
+            plan(opening(1, 5, 21, Some(44)), false),
+            PassPlan::Everything
+        );
+        assert_eq!(
+            plan(opening(1, 4, 20, Some(44)), false),
+            PassPlan::Everything
+        );
+        assert_eq!(
+            plan(opening(2, 5, 20, Some(40)), false),
+            PassPlan::Everything
+        );
+        assert_eq!(plan(opening(1, 5, 20, None), false), PassPlan::Everything);
+        assert_eq!(
+            plan(opening(1, 5, 20, Some(40)), true),
+            PassPlan::Everything
+        );
+        assert_eq!(
+            pass_plan(opening(1, 5, 20, Some(40)), None, false),
+            PassPlan::Everything
+        );
+        let without_mod_sequence = opening(1, 5, 20, None);
+        assert_eq!(
+            pass_plan(opening(1, 5, 20, None), Some(without_mod_sequence), false),
+            PassPlan::Everything
+        );
     }
 }

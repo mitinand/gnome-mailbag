@@ -148,7 +148,7 @@ fn select_alerts_explain_a_later_text_failure() {
 fn a_mailbox_emptied_after_select_lists_no_message() {
     let fixture = ImapFixture::start(FixtureSetup::default());
     let mut reader = open_reader(&fixture);
-    reader.mailbox.message_count = 3;
+    reader.mailbox.numbers.message_count = 3;
     let listing = expect_success(run(reader.list_messages(RowItems::Standard)));
     assert!(listing.messages.is_empty());
     assert_eq!(listing.refusal, None);

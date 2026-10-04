@@ -218,7 +218,10 @@ flowchart TD
   2026-10-04 (§15): the cycle keeps `sent_changes`, and when it is not
   empty `confirm_sent_changes` lists again, stores what the listing
   proves, settles the sent changes it shows and returns its refusal, with
-  which the cycle ends incomplete.
+  which the cycle ends incomplete. *Later on 2026-10-04*:
+  `confirm_sent_changes` becomes 009's second state pass, which lists
+  only what the folder's numbers call for (009 plan, "Amendment
+  2026-10-04"; 009 FR-005).
 - `cycle::graph::synchronize_graph_folder`: after the round's last page
   is stored, and after each stored page of a first fill or a full
   reading, `send_graph_changes`, which sends every pending change (§15).

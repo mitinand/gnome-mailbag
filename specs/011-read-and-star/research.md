@@ -53,7 +53,10 @@ command then leaves the store out of agreement. A cycle whose command was
 accepted lists the folder once more at its end and stores its removals
 and flags (spec FR-007). Sending before the listing stays rejected for
 now: a search per message costs ≈ 0.2 s each, and a stored number per
-label is a schema change that moving and deleting will decide.
+label is a schema change that moving and deleting will decide. *Later
+the same day*: the listing once more became 009's second state pass,
+which lists only what the folder's numbers say changed (009 research
+§15, spec FR-005).
 
 **Checked**: Gmail's listing carries `X-GM-MSGID` per UID (009); the
 fork's `uid_store` exists and the stream reports a `NO`/`BAD` completion

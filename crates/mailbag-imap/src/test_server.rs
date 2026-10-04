@@ -416,8 +416,10 @@ pub struct FixtureSetup {
     pub select_completion: String,
     /// Closes TLS after FLAGS, before the SELECT count and completion.
     pub close_during_select: bool,
-    /// UIDVALIDITY for every connection after the first.
-    pub uid_validity_after_reconnect: Option<u32>,
+    /// UIDVALIDITY from the mailbox's second opening (SELECT) on, over the
+    /// server's life: a reconnection or a cycle's second state pass meets
+    /// another numbering.
+    pub uid_validity_from_second_opening: Option<u32>,
     /// Listed by the listing, gone from later FETCH commands.
     pub vanishing_uid: Option<u32>,
     /// Expunged while the listing runs: the listing reports EXPUNGE for them
@@ -473,6 +475,22 @@ pub struct FixtureSetup {
     /// The mailbox lists only flagged messages, as Gmail's Starred label:
     /// a message whose `\Flagged` is cleared leaves it.
     pub flagged_view: bool,
+    /// Announces CONDSTORE: a SELECT with the parameter is answered with
+    /// HIGHESTMODSEQ; each message keeps a mod-sequence, seeded in setup
+    /// order and raised by `UID STORE`, by `seen_from_opening` and by an
+    /// arrival; `CHANGEDSINCE` is answered from them (RFC 7162).
+    pub condstore: bool,
+    /// With `condstore`: the mailbox keeps no mod-sequences, so the opening
+    /// answers NOMODSEQ instead of HIGHESTMODSEQ (RFC 7162 §3.1.2.2).
+    pub nomodseq: bool,
+    /// UIDs of setup messages absent until the n-th opening of the mailbox
+    /// over the server's life, as mail that arrives meanwhile.
+    pub arriving_from_opening: Vec<(usize, u32)>,
+    /// UIDs absent from the n-th opening on, as mail deleted meanwhile.
+    pub gone_from_opening: Vec<(usize, u32)>,
+    /// UIDs marked `\Seen` at the n-th opening, as mail read in another
+    /// client meanwhile.
+    pub seen_from_opening: Vec<(usize, u32)>,
 }
 
 impl Default for FixtureSetup {
@@ -501,7 +519,7 @@ impl Default for FixtureSetup {
             uid_validity: 1,
             select_completion: "{tag} OK [READ-WRITE] done\r\n".to_owned(),
             close_during_select: false,
-            uid_validity_after_reconnect: None,
+            uid_validity_from_second_opening: None,
             vanishing_uid: None,
             expunged_during_listing: Vec::new(),
             listing_refused: false,
@@ -522,6 +540,11 @@ impl Default for FixtureSetup {
             store_completion: None,
             store_fault: None,
             flagged_view: false,
+            condstore: false,
+            nomodseq: false,
+            arriving_from_opening: Vec::new(),
+            gone_from_opening: Vec::new(),
+            seen_from_opening: Vec::new(),
         }
     }
 }
@@ -600,10 +623,17 @@ impl ImapFixture {
                 .iter()
                 .map(|message| (message.uid, (message.seen, message.flagged)))
                 .collect();
+            let modseq: BTreeMap<u32, u64> = (setup.messages.iter())
+                .zip(1..)
+                .map(|(message, modseq)| (message.uid, modseq))
+                .collect();
             let server = Rc::new(Server {
                 fault_pending: Cell::new(true),
                 store_accepted: Cell::new(false),
                 flags: RefCell::new(flags),
+                openings: Cell::new(0),
+                highest_modseq: Cell::new(modseq.len() as u64),
+                modseq: RefCell::new(modseq),
                 setup,
                 log: server_log,
             });
@@ -664,11 +694,34 @@ struct Server {
     /// Each message's `\Seen` and `\Flagged` by UID, seeded from the
     /// setup and changed by `UID STORE`, for every connection.
     flags: RefCell<BTreeMap<u32, (bool, bool)>>,
+    /// How many times the mailbox was opened over the server's life.
+    openings: Cell<usize>,
+    /// Each message's mod-sequence by UID and the mailbox's highest, for
+    /// `condstore`: raised by every flag change and arrival.
+    modseq: RefCell<BTreeMap<u32, u64>>,
+    highest_modseq: Cell<u64>,
 }
 
 impl Server {
     fn record(&self, change: impl FnOnce(&mut FixtureLog)) {
         change(&mut self.log.lock().unwrap());
+    }
+
+    /// Whether the message is in the mailbox at the current opening.
+    fn is_present(&self, uid: u32) -> bool {
+        let opening = self.openings.get();
+        let arrived = (self.setup.arriving_from_opening.iter())
+            .all(|(from, arriving)| *arriving != uid || opening >= *from);
+        let gone = (self.setup.gone_from_opening.iter())
+            .any(|(from, gone)| *gone == uid && opening >= *from);
+        arrived && !gone
+    }
+
+    /// Gives the message the mailbox's next mod-sequence.
+    fn raise_modseq(&self, uid: u32) {
+        let next = self.highest_modseq.get() + 1;
+        self.highest_modseq.set(next);
+        self.modseq.borrow_mut().insert(uid, next);
     }
 
     async fn serve(self: Rc<Self>, connection: gio::SocketConnection) {
@@ -767,6 +820,9 @@ impl Server {
             let (tag, name, arguments) = split_command(&command);
             let recorded = match name.as_str() {
                 "UID STORE" => format!("{name} {arguments}"),
+                "SELECT" | "EXAMINE" if arguments.trim_end().ends_with("(CONDSTORE)") => {
+                    format!("{name} (CONDSTORE)")
+                }
                 _ => name.clone(),
             };
             self.record(|log| log.commands.push(recorded));
@@ -798,9 +854,13 @@ impl Server {
                         (true, true) => " logindisabled",
                         (true, false) => " LOGINDISABLED",
                     };
+                    let condstore = match self.setup.condstore {
+                        true => " CONDSTORE",
+                        false => "",
+                    };
                     io.send(format!(
-                        "* CAPABILITY IMAP4rev1{plain}{xoauth2}{disabled}{announced_later}\r\n\
-                         {tag} OK done\r\n"
+                        "* CAPABILITY IMAP4rev1{plain}{xoauth2}{disabled}{announced_later}\
+                         {condstore}\r\n{tag} OK done\r\n"
                     ))
                     .await?;
                 }
@@ -905,16 +965,52 @@ impl Server {
                         io.stream.close().await?;
                         return Ok(());
                     }
-                    let uid_validity = match self.setup.uid_validity_after_reconnect {
-                        Some(uid_validity) if connection_number > 1 => uid_validity,
+                    let opening = self.openings.get() + 1;
+                    self.openings.set(opening);
+                    // Mail read or arrived meanwhile carries a new mod-sequence.
+                    for (from, uid) in &self.setup.seen_from_opening {
+                        if *from == opening {
+                            self.flags
+                                .borrow_mut()
+                                .get_mut(uid)
+                                .expect("a scripted message")
+                                .0 = true;
+                            self.raise_modseq(*uid);
+                        }
+                    }
+                    for (from, uid) in &self.setup.arriving_from_opening {
+                        if *from == opening {
+                            self.raise_modseq(*uid);
+                        }
+                    }
+                    let uid_validity = match self.setup.uid_validity_from_second_opening {
+                        Some(uid_validity) if opening > 1 => uid_validity,
                         _ => self.setup.uid_validity,
                     };
-                    let count = self.setup.messages.len();
+                    let present: Vec<u32> = (self.setup.messages.iter())
+                        .map(|message| message.uid)
+                        .filter(|uid| self.is_present(*uid))
+                        .collect();
+                    let uid_next = present.iter().max().map_or(1, |uid| uid + 1);
                     io.send(format!(
-                        "* {count} EXISTS\r\n* 0 RECENT\r\n* FLAGS (\\Seen)\r\n\
-                         * OK [UIDVALIDITY {uid_validity}] UIDs valid\r\n"
+                        "* {} EXISTS\r\n* 0 RECENT\r\n* FLAGS (\\Seen)\r\n\
+                         * OK [UIDVALIDITY {uid_validity}] UIDs valid\r\n\
+                         * OK [UIDNEXT {uid_next}] Predicted next UID\r\n",
+                        present.len()
                     ))
                     .await?;
+                    if self.setup.condstore && arguments.trim_end().ends_with("(CONDSTORE)") {
+                        let mod_sequence = match self.setup.nomodseq {
+                            true => {
+                                "* OK [NOMODSEQ] No mod-sequences in this mailbox\r\n".to_owned()
+                            }
+                            false => format!(
+                                "* OK [HIGHESTMODSEQ {}] Highest\r\n",
+                                self.highest_modseq.get()
+                            ),
+                        };
+                        io.send(mod_sequence).await?;
+                    }
                     io.send(self.setup.select_completion.replace("{tag}", &tag))
                         .await?;
                 }
@@ -1000,13 +1096,23 @@ impl Server {
         by_uid: bool,
     ) -> Result<bool, Box<dyn Error>> {
         let (message_set, items) = arguments.split_once(' ').unwrap_or((arguments, "()"));
+        // The CONDSTORE modifier follows the items: `(UID FLAGS) (CHANGEDSINCE 5)`.
+        let (items, changed_since) = match items.rsplit_once(" (CHANGEDSINCE ") {
+            Some((items, since)) => {
+                let since = since.trim_end_matches(')').parse().expect("a mod-sequence");
+                (items, Some(since))
+            }
+            None => (items, None),
+        };
         let mut items = split_items(items);
         self.record(|log| {
+            let mut recorded = items.clone();
+            recorded.extend(changed_since.map(|since: u64| format!("CHANGEDSINCE {since}")));
             log.fetches.push(RecordedFetch {
                 connection,
                 by_uid,
                 message_set: message_set.to_owned(),
-                items: items.clone(),
+                items: recorded,
             });
         });
         let listing = by_uid && message_set == "1:*";
@@ -1025,6 +1131,10 @@ impl Server {
             None
         };
         let mut messages = self.select_messages(message_set, by_uid, listing);
+        if let Some(since) = changed_since {
+            let modseq = self.modseq.borrow();
+            messages.retain(|(_, message)| modseq[&message.uid] > since);
+        }
         if faulty_command == Some(FaultyCommand::Text) {
             messages.retain(|(_, message)| !self.setup.vanishing_text_uids.contains(&message.uid));
         }
@@ -1164,6 +1274,7 @@ impl Server {
                 *flagged = set;
             }
             drop(flags);
+            self.raise_modseq(uid);
             let sequence_number = 1
                 + (self.setup.messages.iter())
                     .position(|message| message.uid == uid)
@@ -1244,6 +1355,7 @@ impl Server {
                     && (listing || self.setup.vanishing_uid != Some(message.uid))
                     && !self.setup.expunged_during_listing.contains(&message.uid)
                     && (!self.setup.flagged_view || self.flags.borrow()[&message.uid].1)
+                    && self.is_present(message.uid)
             })
             .collect()
     }

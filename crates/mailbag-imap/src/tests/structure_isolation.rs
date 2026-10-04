@@ -156,7 +156,7 @@ fn a_row_answered_before_its_unreadable_structure_is_asked_for_again_apart() {
 fn a_changed_uidvalidity_on_reconnection_stops_the_load() {
     let fixture = ImapFixture::start(FixtureSetup {
         messages: messages(2, &[10]),
-        uid_validity_after_reconnect: Some(2),
+        uid_validity_from_second_opening: Some(2),
         ..FixtureSetup::default()
     });
     let mut reader = open_reader(&fixture);
