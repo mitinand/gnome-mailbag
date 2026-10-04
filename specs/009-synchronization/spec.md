@@ -494,6 +494,17 @@ facts and the alternatives.
   only how much is read, and an equal HIGHESTMODSEQ meaning no flag
   changed is what RFC 7162 requires. The measurement covered folders
   under 800 messages; Gmail at scale stays unknown (research §15).
+- Q: A round naming thousands of stored messages, as a folder marked read
+  in another client does, would take minutes of readings, meet the
+  service's limits and fail, and the next refresh would start the same
+  round again, so the folder would never catch up. → A: Above a hundred
+  named stored messages the cycle reads the whole folder instead, as after
+  a rejected position (FR-007): pages of 500, seven for 3 500 messages
+  (research §5), within the limits whatever the number of changes. The
+  hundred is the same bound the cycles use elsewhere; below it one reading
+  per message is quicker and more exact. `$batch` and one session per
+  cycle stay optional (plan), since they shorten readings but bound
+  nothing. The maintainer's decision.
 
 - Q: A Microsoft 365 round reported a flag older than a change the
   application had made and the service accepted; the store took it and
@@ -703,10 +714,15 @@ facts and the alternatives.
   the store; the reading's answer that the message is elsewhere or gone
   removes it from the folder (FR-004); a reading the service refuses or
   that fails fails the cycle, the page unstored and the saved position
-    kept, so the next cycle reads the round again. A full entry about a
-  message the account does not hold, and the full entries of a first fill
-  or of a whole reading, are stored as reported; a partial entry is read
-  again in any reading. A first fill continued from a saved
+      kept, so the next cycle reads the round again. A round that names more
+  than a hundred messages the folder holds, as a folder marked read in
+  another client does, is not read message by message: the cycle reads
+  the whole folder instead, as after a rejected position, so a round's
+  cost is bounded by the folder's pages, never by the number of changes,
+  and stays within the service's limits (*amended 2026-10-05, later*). A
+  full entry about a message the account does not hold, and the full
+  entries of a first fill or of a whole reading, are stored as reported; a
+  partial entry is read again in any reading. A first fill continued from a saved
   place reads one more round of changes before it completes, so changes
   made during the pause are included as far as the service reports them.
   Messages keep their immutable identifier (005 FR-004).

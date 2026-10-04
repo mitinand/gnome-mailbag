@@ -125,8 +125,10 @@ sequenceDiagram
      first reading.
   3. for each page of `read_message_changes`: `merge_per_message`, then
           `GraphService::batch_from_changes` (removed entries; read states of
-     messages only this folder holds (*until 2026-10-05*: since then every
-     entry about a stored message in a round reads the message, spec
+          messages only this folder holds (*until 2026-10-05*: since then every
+     entry about a stored message in a round reads the message, and a
+     round naming more than `ROUND_READINGS_LIMIT` (100) stored messages
+     turns into a whole reading as after a rejected position, spec
      FR-007); listed messages; unknown ones, and
      any message another folder holds (`batches.identities_in_other_folders`),
      read with `read_message` and kept only if it is in this folder now,
@@ -203,7 +205,7 @@ it and its cost are named.
 | Renewing access before it expires, from the lifetime Online Accounts returns | Refusals mid-cycle prove frequent enough to be visible in time | ≈ 20 lines |
 | Larger batches for rows without text | The first fill of a very large folder takes too long because each hundred rows is one round trip | ≈ 10 lines |
 | A Refresh that stops the running cycle | Waiting for a long first fill to refresh another folder proves a problem (spec Clarifications) | ≈ 30 lines and tests; amends 008 FR-012 |
-| Reading a round's named messages in one `$batch` of 20 (Microsoft 365) | A round names dozens of stored messages, each read in its own request of about 0.35 s, so a refresh after a day of reading on another client takes many seconds; the record `changed messages read again` shows it. Not a priority: the gain is time only, the request count and the service's limits are the same | ≈ 80 lines (the batch body, the answers by id, a status and a 429 per part) and the scripted service's `$batch` |
+| Reading a round's named messages in one `$batch` of 20 (Microsoft 365) | A round names dozens of stored messages, each read in its own request of about 0.35 s, so a refresh after a day of reading on another client takes many seconds; the record `changed messages read again` shows it. Not a priority: the gain is time only, the request count and the service's limits are the same, and above a hundred named messages the cycle reads the whole folder instead (FR-007, 2026-10-05) | ≈ 80 lines (the batch body, the answers by id, a status and a 429 per part) and the scripted service's `$batch` |
 | CONDSTORE | Background synchronization, or a real folder whose listing makes Refresh slow (spec FR-015(e)). *Built on 2026-10-04 as part of the state pass (below)* | Estimated before the amendment at ≈ 80 lines and one state column with the fork parsing `[NOMODSEQ]`; built with four columns and no fork change, since the fork passes `[NOMODSEQ]` through as text (the amendment's table) |
 
 ## Decisions for the maintainer

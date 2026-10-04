@@ -719,8 +719,15 @@ now, instead of taking the entry's values (spec FR-007); one request of
 list fields per named message, within the service's limits (005 research
 §5: 10 000 per 10 minutes and 4 at a time per application identity and
 mailbox, the identity GOA shares with other GNOME applications; a `$batch`
-of 20 counts each part).
-Alternatives: taking the entry (the replaced rule; a late entry undoes an
+of 20 counts each part). A round that names more than a hundred stored
+messages reads the whole folder instead (decided later the same day): a
+folder marked read in another client names every stored message, one
+reading each would take minutes and meet the limits, and the next refresh
+would start the same round again, so the folder would never catch up;
+the whole reading costs the folder's pages of 500, seven for 3 500
+messages, whatever the number of changes, and its freshness is the one a
+first fill and a rejected position already rely on. Alternatives: taking
+the entry (the replaced rule; a late entry undoes an
 accepted change); a filter on `lastModifiedDateTime` for every message
 changed since the last round (one request, but a second way of learning
 changes beside delta and a time rule, with removals still from delta;

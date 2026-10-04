@@ -1124,6 +1124,69 @@ fn a_microsoft_365_round_applies_removals_partial_entries_and_arrivals() {
     assert_eq!(text_of(&stored[2].content), "Text 4");
 }
 
+/// 009 FR-007 (2026-10-05): a round that names more than a hundred stored
+/// messages, as a folder marked read in another client does, is not read
+/// message by message: the cycle reads the whole folder, as after a rejected
+/// position, so its cost is the folder's pages whatever the number of changes.
+#[test]
+fn a_round_naming_many_stored_messages_reads_the_whole_folder_instead() {
+    use graph_service::{ScriptedNext::*, delta_entry};
+    let id = graph_service::fixture_immutable_id;
+    let numbers: Vec<u32> = (1..=120).collect();
+    let service = graph_service::ScriptedService::start_with_changes(graph_mailbox(
+        vec![
+            (
+                "first",
+                delta_page(
+                    numbers.iter().map(|n| delta_entry(*n)).collect(),
+                    Done("round-1"),
+                ),
+            ),
+            (
+                "round-1",
+                delta_page(
+                    (1..=101)
+                        .map(|n| serde_json::json!({"id": id(n), "isRead": true}))
+                        .collect(),
+                    Done("round-2"),
+                ),
+            ),
+            ("round-2", delta_page(Vec::new(), Done("round-2"))),
+        ],
+        inbox_messages(&numbers),
+    ));
+    let store = Arc::new(Store::in_memory());
+    let inbox = folder_of("synthetic-microsoft365", "inbox");
+    store_inbox(&store, &inbox);
+    synchronize_kind_again(microsoft365_kind(&service), &store);
+    let asked_before = service.received_requests().len();
+    let (outcome, stored, _) = synchronize_kind_again(microsoft365_kind(&service), &store);
+    assert!(matches!(outcome, LoadResult::Stored { .. }), "{outcome:?}");
+    assert_eq!(stored.len(), 120);
+    let later = &service.received_requests()[asked_before..];
+    // No message was read on its own; the folder was read whole, from its
+    // first page, and the folder is synchronized at the round's position.
+    assert!(
+        !later
+            .iter()
+            .any(|request| request.path.starts_with("/me/messages/")),
+        "{later:?}"
+    );
+    let whole_readings = (later.iter())
+        .filter(|request| {
+            request.path.ends_with("/messages/delta") && !request.query.contains("token")
+        })
+        .count();
+    assert_eq!(whole_readings, 1);
+    let state = store.read_folder_sync(&inbox).unwrap().state;
+    assert!(state.synchronized);
+    assert!(
+        state
+            .server_position
+            .is_some_and(|link| link.ends_with("$deltatoken=round-1"))
+    );
+}
+
 /// 009 FR-007 (2026-10-05): a round's entry older than the service, here a
 /// star the service no longer holds, writes nothing of its own; the store
 /// gets the message as the service holds it.

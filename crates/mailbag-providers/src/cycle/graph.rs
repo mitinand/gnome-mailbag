@@ -25,6 +25,13 @@ use std::{
 
 /// What the cycle is reading, which decides how texts are fetched, whether
 /// each page saves its place and what completes the cycle.
+/// How many messages the folder holds a round may name before the cycle
+/// reads the whole folder instead of each named message: a folder marked
+/// read in another client names them all, and one reading per message
+/// would take minutes and meet the service's limits, the next refresh
+/// starting the same round again (specs/009-synchronization FR-007).
+const ROUND_READINGS_LIMIT: usize = 100;
+
 enum Reading {
     /// A first reading of a folder never synchronized. `continued` when it
     /// goes on from a place an earlier cycle saved: it then reads one more
@@ -59,6 +66,8 @@ pub(super) async fn synchronize_graph_folder(
     let mut round_start = stored.state.server_position.clone();
     // Messages the service reported, for the record.
     let mut reported = 0;
+    // Stored messages the round's entries named so far (FR-007's limit).
+    let mut stored_named_in_round = 0;
     loop {
         let page = match service.read_changes(&from).await {
             // Only a saved link can be rejected into a full reading, once; a
@@ -82,6 +91,25 @@ pub(super) async fn synchronize_graph_folder(
         };
         let changes = merge_per_message(page.changes);
         reported += changes.len();
+        if matches!(reading, Reading::Round) {
+            stored_named_in_round += (changes.keys())
+                .filter(|id| stored.stored.contains_key(&identity(id)))
+                .count();
+            // Too many stored messages to read one by one: the whole folder
+            // is read instead, as after a rejected position (FR-007).
+            if stored_named_in_round > ROUND_READINGS_LIMIT {
+                tracing::info!(
+                    named = stored_named_in_round,
+                    "the round names too many stored messages; reading the whole folder"
+                );
+                stored = batches.read_folder_sync()?;
+                from = ChangesFrom::FirstReading(folder_id.clone());
+                reading = Reading::FullRereading {
+                    listed: HashSet::new(),
+                };
+                continue;
+            }
+        }
         if let Reading::FullRereading { listed } = &mut reading {
             listed.extend(changes.keys().map(|id| identity(id)));
         }

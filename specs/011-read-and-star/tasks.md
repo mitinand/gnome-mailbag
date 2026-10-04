@@ -647,6 +647,14 @@ the maintainer's word.
   `MessageFlags`. Contract, plan, data-model, research and spec FR-001,
   Edge Cases and Clarifications say so.
 
+- [x] T053 In crates/mailbag-providers/src/cycle/graph.rs
+  `ROUND_READINGS_LIMIT` (100): a round naming more stored messages reads
+  the whole folder as after a rejected position (009 FR-007, amended
+  2026-10-05 later; Clarifications); test
+  `a_round_naming_many_stored_messages_reads_the_whole_folder_instead`;
+  009 plan and research §15 record it. Done on 2026-10-05 at the
+  maintainer's word.
+
 Done tasks whose mechanisms were later replaced, kept as history: T004's
 `CASE` ending an equal pending value (T039; both flags in every report,
 T052); T007's `FlagChanges` and partial reports (T050, T052); T020's settle
