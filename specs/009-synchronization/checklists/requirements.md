@@ -39,3 +39,10 @@
   spec's Clarifications: progress is the spinner and the growing list; an
   unfinished first fill shows no notice after a restart, and continuing it
   after the start belongs to background synchronization.
+- Re-checked on 2026-10-04 for the amendment "the state pass" (FR-001,
+  FR-004, FR-005, FR-008, FR-011, FR-012, SC-011, SC-012, Edge Cases,
+  Assumptions): every item still holds. The names of the opening's
+  numbers and of `CHANGEDSINCE` are the standard's terms, as the first
+  note allows; the two new success criteria are measured by the openings
+  and listings a server sees; the open questions of the amendment were
+  answered the same day under Clarifications 2026-10-04.

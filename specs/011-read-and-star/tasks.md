@@ -530,9 +530,12 @@ recorded limitation.
   decoration for assistive technology, role `presentation` without a
   label (spec FR-004, message-row.ui); spec FR-007 split into labelled
   clauses; the GUI tests assert the tooltip and the role.
-- [ ] T042 STOP (portion 7b with T043 to T045): ./scripts/check.sh, the
+- [x] T042 STOP (portion 7b with T043 to T045): ./scripts/check.sh, the
   GTK tests one per process, the size of the change, a suggested commit
-  message; PR #17 updated by the maintainer.
+  message; PR #17 updated by the maintainer. Done on 2026-10-04: the
+  portion was committed by the maintainer in two commits after review;
+  `scripts/check.sh` and the thirteen GTK tests, one per process, passed
+  on the branch with the state pass of 009 on top (its Phase 8).
 
 ## Dependencies
 
