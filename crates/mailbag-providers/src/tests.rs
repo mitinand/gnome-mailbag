@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 mod flags;
+mod state_pass;
 
 use super::*;
 use crate::renewal::AccessRenewal;
@@ -1811,7 +1812,8 @@ fn a_mailbox_load_stores_the_messages_of_the_folder_it_names() {
         read_stored_messages(&store, &folder_of("synthetic-account", "INBOX")),
         Ok(None)
     );
-    assert_eq!(fixture.log().opened_mailboxes, ["Work"]);
+    // Opened once for the listing and once more for the pass at the end.
+    assert_eq!(fixture.log().opened_mailboxes, ["Work", "Work"]);
 }
 
 #[test]
@@ -1907,7 +1909,8 @@ fn only_messages_of_the_last_30_days_get_their_text() {
         ["Recent", "Old"]
     );
     // The structures come with the rows; then the recent text whole, which
-    // also gives its preview, and only the old message's piece.
+    // also gives its preview, and only the old message's piece; the pass at
+    // the end lists the folder again, since this server has no CONDSTORE.
     let asked: Vec<String> = fixture
         .log()
         .fetches
@@ -1915,7 +1918,7 @@ fn only_messages_of_the_last_30_days_get_their_text() {
         .filter(|fetch| !fetch.items.contains(&"INTERNALDATE".to_owned()))
         .map(|fetch| fetch.message_set)
         .collect();
-    assert_eq!(asked, ["1:*", "20", "10"]);
+    assert_eq!(asked, ["1:*", "20", "10", "1:*"]);
 }
 
 #[test]

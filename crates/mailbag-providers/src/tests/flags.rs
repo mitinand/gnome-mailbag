@@ -9,37 +9,37 @@ use super::*;
 use mailbag_domain::{MessageFlag, PendingChange, RemoteSource, ServerStep};
 use mailbag_imap::test_server::StoreFault;
 
-const IMAP_ACCOUNT: &str = "synthetic-account";
+pub(super) const IMAP_ACCOUNT: &str = "synthetic-account";
 const MICROSOFT365_ACCOUNT: &str = "synthetic-microsoft365";
 
 /// Stores the user's wish for the message, as the window does.
-fn want(store: &Store, account: &str, identity: &str, flag: MessageFlag, wanted: bool) {
+pub(super) fn want(store: &Store, account: &str, identity: &str, flag: MessageFlag, wanted: bool) {
     let account = AccountId::try_from(account).unwrap();
     store
         .write_pending_flag(&account, identity, flag, wanted)
         .unwrap();
 }
 
-fn pending_in(store: &Store, folder: &FolderRef) -> Vec<PendingChange> {
+pub(super) fn pending_in(store: &Store, folder: &FolderRef) -> Vec<PendingChange> {
     store.read_pending_changes(folder).unwrap()
 }
 
 /// The `UID STORE` commands the server received, in order.
-fn store_commands(fixture: &ImapFixture) -> Vec<String> {
+pub(super) fn store_commands(fixture: &ImapFixture) -> Vec<String> {
     (fixture.log().commands.into_iter())
         .filter(|command| command.starts_with("UID STORE"))
         .collect()
 }
 
 /// The Inbox of the IMAP test account with `messages`, after a first cycle.
-fn synchronized_imap_inbox(fixture: &ImapFixture) -> (Arc<Store>, FolderRef) {
+pub(super) fn synchronized_imap_inbox(fixture: &ImapFixture) -> (Arc<Store>, FolderRef) {
     let inbox = folder_of(IMAP_ACCOUNT, "INBOX");
     let store = Arc::new(store_with_inbox(&inbox));
     synchronize_again(fixture, &store);
     (store, inbox)
 }
 
-fn assert_stored(outcome: &LoadResult) {
+pub(super) fn assert_stored(outcome: &LoadResult) {
     assert!(matches!(outcome, LoadResult::Stored { .. }), "{outcome:?}");
 }
 

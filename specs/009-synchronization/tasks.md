@@ -561,7 +561,7 @@ STOP for the maintainer's review.
   a NOMODSEQ opening leaves the mod-sequence empty; `reopen` refreshes
   the numbers after an arrival, a removal and a read elsewhere, and fails
   as `MailboxChanged` on another numbering version.
-- [ ] T044 In crates/mailbag-providers/src/cycle/imap.rs `pass_plan`
+- [x] T044 In crates/mailbag-providers/src/cycle/imap.rs `pass_plan`
   (nothing, the changed flags, every message; every message also when
   there is no reference, the numbering version differs, a number is
   missing or pending changes exist, as the plan's function map says),
@@ -578,8 +578,13 @@ STOP for the maintainer's review.
   `settle_sent_changes` on what it listed, the folder left not completed
   when it listed messages it did not fetch → finish;
   `confirm_sent_changes` goes. Record lines: the pass's outcome at info
-  with counts, the numbers at debug.
-- [ ] T045 [P] Cycle tests against the scripted server, SC-011's
+  with counts, the numbers at debug. Built as planned, with `pass_state`
+  owning the folder's state after a pass (not completed while messages
+  are missing, completed with the numbers when none are and the listing
+  completed, unless marked so already) and `folder_numbers` converting
+  the opening's numbers; `end_changes_the_listing_shows` takes the
+  pending changes the plan read.
+- [x] T045 [P] Cycle tests against the scripted server (src/tests/state_pass.rs), SC-011's
   outcomes as successive cycles on one CONDSTORE fixture: nothing changed
   → one SELECT, no listing; a flag changed → one `CHANGEDSINCE` holding
   that message alone, the flag stored, nothing removed; an arrival, then
@@ -595,7 +600,12 @@ STOP for the maintainer's review.
   next cycle fetches it. The 011 tests of the listing after commands
   rewritten for the second pass (Gmail Starred, the ignored UID, the
   refused second listing, the lost answer); the record names the pass's
-  outcome.
+  outcome. Built with two deviations: the changed-numbering case is a unit
+  test of `pass_plan` in cycle/imap.rs, since the scripted server
+  renumbers from the second opening on, which is the first fill's second
+  pass; the four 011 tests held without change, their fixtures having no
+  CONDSTORE; two older cycle tests now count the second pass's opening
+  and listing.
 - [ ] T046 STOP: ./scripts/check.sh, the size against the budget (≤ 250
   production, ≤ 400 test lines), the quickstart's steps 11 and 12 on the
   installed build with the maintainer, the record checked for privacy
