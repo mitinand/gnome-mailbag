@@ -234,6 +234,10 @@ flowchart TD
 - `cycle::graph::synchronize_graph_folder`: after the round's last page
   is stored, and after each stored page of a first fill or a full
   reading, `send_graph_changes`, which sends every pending change (§15).
+  *Since 2026-10-05*: in `batch_from_changes` a round's entry about a
+  stored message reads the message (`read_in_folder`), the flags-only
+  branch is gone, and the record `changed messages read again` counts the
+  readings of a page (009 FR-007; §6).
 
 **`mailbag::mail_ui`** — the actions.
 
@@ -315,6 +319,7 @@ Not in the minimal version; each with the situation that would call for it.
 | Re-read one row instead of the folder after a write | A folder of 100 000 rows costs about 100 ms per re-read on the pool, so the dot goes out that long after the second; a second path to update a row | ≈ 30 |
 | Re-read the text only when list fields differ | On Microsoft 365 a star on a recent message comes back as a full entry and 009 re-reads its text once (research §6); many stars on recent mail cost one GET each | ≈ 20 |
 | Smaller PATCH answers | The service returns the whole message (≈ 85 KB) to every change; on a slow link ten changes cost nearly a megabyte | unknown: a `Prefer: return=minimal` the service may not honour |
+| Reading a round's named Microsoft 365 messages in one `$batch` of 20 | A round names dozens of stored messages and the readings take seconds (the record `changed messages read again`); the gain is time only, not requests, so not a priority | ≈ 80 lines and the scripted service's `$batch` (009 plan) |
 | Keep a pending change through a refusal the server marks temporary | Throttling or `UNAVAILABLE` drops the user's star with a truthful banner; the maintainer chose to treat every server error alike | ≈ 10 |
 
 ## Decisions for the maintainer

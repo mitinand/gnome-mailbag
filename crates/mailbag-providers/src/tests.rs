@@ -1009,7 +1009,12 @@ fn a_continued_microsoft_365_first_fill_reads_one_more_round() {
                 ),
             ),
         ],
-        inbox_messages(&[1, 2]),
+        {
+            // Read during the pause: the round names it, the reading finds it.
+            let mut messages = inbox_messages(&[1, 2]);
+            messages[1]["isRead"] = true.into();
+            messages
+        },
     );
     // The token runs out after the first page and its texts.
     mailbox.token_accepted_requests = Some(2);
@@ -1087,6 +1092,8 @@ fn a_microsoft_365_round_applies_removals_partial_entries_and_arrivals() {
     let mut renamed = graph_service::stored_message(3, "inbox");
     renamed["subject"] = "Renamed".into();
     let mut messages = inbox_messages(&[1, 2, 4]);
+    // Read at the round's end, as its later entry says.
+    messages[1]["isRead"] = true.into();
     messages.push(renamed);
     let store = Arc::new(Store::in_memory());
     let (_, outcome, stored) = graph_round(
@@ -1108,7 +1115,7 @@ fn a_microsoft_365_round_applies_removals_partial_entries_and_arrivals() {
         [graph_identity(2), graph_identity(3), graph_identity(4)]
     );
     assert!(stored[0].seen);
-    // A read-state entry leaves the preview of the first reading.
+    // The reading of the named message keeps the preview of the first one.
     assert_eq!(stored[0].preview, "Preview of message 2");
     assert_eq!(stored[1].fields.subject.as_deref(), Some("Renamed"));
     // The stored content stays with the renamed message: the service had
@@ -1118,26 +1125,28 @@ fn a_microsoft_365_round_applies_removals_partial_entries_and_arrivals() {
 }
 
 /// A star set elsewhere comes as a partial entry with the follow-up flag
-/// alone: it changes the stored star, keeps the read state and reads
-/// nothing again (specs/011-read-and-star/research.md §6).
+/// alone: the entry names the message, whose star and read state the cycle
+/// reads from the message itself, since the entry may be older than the
+/// store (009 FR-007, amended 2026-10-05); nothing else is read again.
 #[test]
-fn a_microsoft_365_star_alone_changes_the_star_and_keeps_the_read_state() {
+fn a_microsoft_365_star_alone_is_read_from_the_message_and_keeps_the_read_state() {
     let id = graph_service::fixture_immutable_id;
     let store = Arc::new(Store::in_memory());
+    let mut messages = inbox_messages(&[1, 2, 3]);
+    messages[0]["flag"]["flagStatus"] = "flagged".into();
     let (service, outcome, stored) = graph_round(
         vec![serde_json::json!({"id": id(1), "flag": {"flagStatus": "flagged"}})],
-        inbox_messages(&[1, 2, 3]),
+        messages,
         &store,
     );
     assert!(matches!(outcome, LoadResult::Stored { .. }), "{outcome:?}");
     assert_eq!(identities(&stored)[0], graph_identity(1));
     assert!(stored[0].flagged && stored[0].seen, "{:?}", stored[0]);
     assert!(!stored[1].flagged);
-    assert!(
-        !graph_paths(&service).contains(&format!("/me/messages/{}", id(1))),
-        "{:?}",
-        graph_paths(&service)
-    );
+    let readings: Vec<String> = (graph_paths(&service).into_iter())
+        .filter(|path| path.starts_with("/me/messages/"))
+        .collect();
+    assert_eq!(readings, [format!("/me/messages/{}", id(1))]);
 }
 
 /// Research §5: a message moved from the Inbox to Archive and marked unread

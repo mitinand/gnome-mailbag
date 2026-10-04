@@ -11,7 +11,7 @@ use crate::{
 };
 use goa_adapter::GraphAccess;
 use mailbag_content::preview_of_text;
-use mailbag_domain::{FlagChanges, FolderBatch, FolderState, Message, ReceivedContent};
+use mailbag_domain::{FolderBatch, FolderState, Message, ReceivedContent};
 use mailbag_graph::{
     ChangePage, ChangesFrom, FlagUpdate, GraphError, GraphFailure, GraphMessage, MessageChange,
     NextPage, read_message, read_message_changes, read_message_text, read_texts_received_between,
@@ -20,7 +20,7 @@ use mailbag_graph::{
 use mailbag_store::FolderSync;
 use std::{
     collections::{HashMap, HashSet},
-    time::SystemTime,
+    time::{Instant, SystemTime},
 };
 
 /// What the cycle is reading, which decides how texts are fetched, whether
@@ -310,6 +310,8 @@ impl GraphService {
         let held_by_account = batches.stored_identities(&identities)?;
         let mut batch = FolderBatch::default();
         let mut arrivals = Vec::new();
+        let mut read_again_count = 0;
+        let reading_started = Instant::now();
         for (id, change) in changes {
             let stored_identity = identity(&id);
             let known = held_by_account.contains(&stored_identity);
@@ -336,10 +338,17 @@ impl GraphService {
                     continue;
                 }
                 _ if held_elsewhere.contains(&stored_identity) => true,
-                MessageChange::Listed(_) => false,
-                MessageChange::Changed { other_fields, .. } => *other_fields || !known,
+                // A round's entry about a message the account holds names it
+                // and no more: the message is read as the service holds it
+                // now, since the entry may be older than a change the
+                // application made and the service accepted (009 FR-007,
+                // amended 2026-10-05); a whole reading's pages are stored as
+                // reported.
+                MessageChange::Listed(_) => known && matches!(reading, Reading::Round),
+                MessageChange::Changed { .. } => true,
             };
             if read_again {
+                read_again_count += 1;
                 match self.read_in_folder(&id, &batches.folder.identity).await? {
                     Some(message) => arrivals.push(Arrival {
                         wants_text: wants_text(&message),
@@ -351,25 +360,19 @@ impl GraphService {
                 }
                 continue;
             }
-            match change {
-                MessageChange::Listed(message) => arrivals.push(Arrival {
+            if let MessageChange::Listed(message) = change {
+                arrivals.push(Arrival {
                     wants_text: wants_text(&message),
                     message,
-                }),
-                // Only the flags the entry names: one the entry leaves out
-                // keeps what the store holds, which an earlier page of this
-                // round may have written (specs/011-read-and-star/research.md §14).
-                MessageChange::Changed {
-                    is_read, flagged, ..
-                } if is_read.is_some() || flagged.is_some() => {
-                    let changes = FlagChanges {
-                        seen: is_read,
-                        flagged,
-                    };
-                    batch.flag_states.push((stored_identity, changes));
-                }
-                _ => {}
+                });
             }
+        }
+        if read_again_count > 0 {
+            tracing::debug!(
+                messages = read_again_count,
+                ms = reading_started.elapsed().as_millis() as u64,
+                "changed messages read again"
+            );
         }
         let texts = self
             .read_texts(&arrivals, reading, &batches.folder.identity)

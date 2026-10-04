@@ -606,6 +606,28 @@ type, thread or timer; no change to the forks.
   (spec Assumptions). The spec gained the state diagram "The life of a
   change".
 
+## Phase 9: a round's report names, the reading proves (2026-10-05)
+
+From the fourth review and the delta probe (spec Clarifications
+2026-10-05; research §6; 009 FR-007 amended): a Microsoft 365 round's
+entry about a stored message makes the cycle read the message instead of
+taking the entry's values. One portion, documents and code together at
+the maintainer's word.
+
+- [x] T050 In crates/mailbag-providers/src/cycle/graph.rs
+  `batch_from_changes`: `read_again` for every `Changed` entry and for a
+  `Listed` entry of a known message in a round; the flags-only branch
+  gone; the record `changed messages read again` (count, ms) per page.
+  Tests: the three 009 round tests and 011's two-pages test now give the
+  scripted mailbox the values their rounds name, and the star-alone test
+  asserts the one reading. Documents: 009 spec FR-007 and Clarifications
+  2026-10-05, 009 plan (the `$batch` option), 009 research §15 (the
+  decision, alternatives, `Retry-After` left to 020); 011 spec FR-009,
+  Edge Cases, Assumptions, Clarifications; 011 research §6, §15; 011
+  plan; quickstart. Done on 2026-10-05.
+- [x] T051 STOP: ./scripts/check.sh; the change ≈ +10 production lines
+  net and ≈ +20 test lines; reported with the commit.
+
 ## Dependencies
 
 - T001 before everything; T002 after approval; each STOP (T002, T010,

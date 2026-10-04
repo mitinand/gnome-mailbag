@@ -181,6 +181,26 @@ per flag and message, the latest wish, so it never changes one flag twice
 within a cycle, and the pace that showed it is faster than the
 application produces. Recorded, no code.
 
+**Decided on 2026-10-05, after the probe**: the maintainer chose not to
+rely on the probe, since the documentation promises no order or
+timeliness and a loaded service may lag more. A round's entry about a
+message the store holds now names the message, and the cycle reads it as
+the service holds it (009 FR-007, amended; `read_in_folder`, which the
+cycle already used for entries with other fields and for messages held in
+another folder, now serves every entry about a stored message in a
+round); the entry's own values are not written. A reading that fails
+fails the cycle: the page is not stored and the saved position stays, so
+the next refresh reads the round again; a message the reading does not
+find, or finds in another folder, leaves this folder; no value is taken
+from the entry when the reading fails, since the service is then under
+strain and a late entry is likeliest. Cost: one request of list fields
+(about a kilobyte, 0.35 s) per stored message a round names, within the
+service's limits of 10 000 requests per 10 minutes and 4 at a time per
+mailbox (checked on 2026-10-05; a `$batch` counts each of its up to 20
+parts and runs 4 at a time). The record `changed messages read again`
+(debug) carries the count and the time per page. Alternatives and what
+remains: 009 research §5.
+
 **Unknown**: whether a `Prefer: return=minimal` header shrinks the
 answer; not tried, listed as optional.
 
@@ -503,11 +523,11 @@ taken. Ending at a later step a wish equal to the stored server value
 without a command: the second review's case (another client flips the
 flag during the fill) loses the user's change; not taken.
 
-**Left as a limitation**: a delta replay of an older value after an
-accepted request writes that value as the server's; with nothing pending
-the row shows it until the message changes again. Any change from
-another client meets the same replay, so the limitation is 009's reading
-of delta, not this feature's (spec Assumptions).
+**Left as a limitation** (narrowed on 2026-10-05, §6): a delta replay of
+an older value after an accepted request wrote that value as the
+server's; since 2026-10-05 a round's report about a stored message makes
+the cycle read the message instead (009 FR-007), and what remains is a
+service whose reading itself has not settled (spec Assumptions).
 
 **The other points**:
 

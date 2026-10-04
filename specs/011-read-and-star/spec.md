@@ -261,8 +261,11 @@ the stored state, the banner and the server's record are compared.
   its read state, the second with its star alone: each writes only what
   it reports; the read state stays (FR-001).
 - A Microsoft 365 page reports the wished value, or a later page or round
-  replays an older one: no report ends the pending change; the request
-  is sent after the round, and its acceptance ends it (FR-007, FR-009).
+  replays an older one: no report ends the pending change; the request is
+  sent after the round, and its acceptance ends it (FR-007, FR-009); since
+  2026-10-05 a round's report about a stored message makes the cycle read
+  the message, so what the store gets is the message as the service holds
+  it, not the report's values (009 FR-007).
 - Two quick clicks on a star, the second before the first is stored and
   read again: both ask for the same state, and the star stays as the
   first click left it (Assumptions).
@@ -597,6 +600,18 @@ command; each point verified against the code.
   as RFC 3501 §2.3.1.1 requires of a server (constitution VIII); the
   state pass never depended on it, since a changed UIDNEXT lists every
   message either way.
+- Q: A Microsoft 365 report older than an accepted request undoes the
+  change in the store (the recorded limitation); the service's
+  documentation promises no order or timeliness, and a loaded service may
+  lag more than the probe showed. → A: Not ignored: a round's report
+  about a stored message now names the message and the cycle reads it
+  from the service, one small request each (009 FR-007, amended
+  2026-10-05; research §6); the limitation narrows to a service whose
+  reading itself has not settled. Reading the named messages in one
+  `$batch` is an optional refinement in 009's plan, not a priority. A
+  reading that fails fails the cycle with the page unstored, so the next
+  refresh reads the round again; a message the reading does not find
+  leaves the folder. The maintainer's decision.
 
 ## Requirements
 
@@ -745,8 +760,10 @@ command; each point verified against the code.
   change is never sent again without the listing's evidence. On
   Microsoft 365 the service may report a change with a delay or replay an
   older one, so the pending change is sent again whatever the next round
-  reports; the request sets a value, so a repeated request is
-  harmless.
+  reports; the request sets a value, so a repeated request is harmless;
+  since 2026-10-05 a round's report about a stored message makes the
+  cycle read the message itself, so an older report writes nothing of its
+  own (009 FR-007).
 - **FR-010 — A refused change**: When the server refuses a command (an
   IMAP `NO` or `BAD`; a Microsoft 365 4xx other than the rejected token
   009 FR-011 handles, a temporary refusal included; a 5xx is FR-009's
@@ -944,16 +961,16 @@ cycle whose pass listed nothing waits for the next cycle (FR-006).
   (tens of milliseconds; about 100 ms on a folder of 100 000 messages,
   estimated) asks for the same state as the first; the star then stays
   as the first click left it, and a further click changes it.
-- *Known limitation, Microsoft 365 (research §15)*: the service may
-  replay an older change in a later delta response; after an accepted
-  request such a replay writes the older value as the server's, and with
-  nothing pending the row shows it until the message changes again. Any
-  change from another client meets the same replay; ordering delta
-  reports belongs to 009's reading of the service. Probed on 2026-10-05
-  (research §6): ten requests, each followed at once by a delta round,
-  showed no replay of an older value; the service did answer two rapid
-  requests with a completed follow-up, which reads as not starred, at a
-  pace the application does not produce.
+- *Known limitation, Microsoft 365 (research §6, §15; narrowed on
+  2026-10-05)*: the service may report a change late or again, without
+  order. Since 2026-10-05 a round's report about a stored message makes
+  the cycle read the message as the service holds it (009 FR-007), so a
+  replayed older report writes nothing of its own. What remains is a
+  service whose reading itself has not settled: in the probe of
+  2026-10-05 (research §6) two rapid requests were answered with a
+  completed follow-up, which reads as not starred, at a pace the
+  application does not produce; no reading tells such a state from the
+  truth.
 - *Known limitation, every IMAP server (observed 2026-10-04)*: a cycle
   learns the server's flags and removals of the messages it already holds
   from its state pass at the start and, after batches or its own commands,

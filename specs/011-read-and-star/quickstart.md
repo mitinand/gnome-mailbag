@@ -30,7 +30,7 @@ client open beside the window.
   sent next; 250 pending changes go in three commands; a 504 keeps the
   pending change for the next cycle; a message reported in two pages of
   one round keeps both flags; a wish the IMAP listing already shows ends
-  without a command, while Microsoft 365 sends every pending change and
+  without a command, while Microsoft 365 sends every pending change, reads a message a round names from the service instead of taking the entry (009 FR-007, since 2026-10-05) and
   no report ends one; a command the server ignored, for a UID the
   mailbox no longer has, leaves the change pending; a command for a value the server already holds
   ends the change by the flags read right after it, the scripted server's mod-sequence unchanged;

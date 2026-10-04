@@ -478,6 +478,22 @@ facts and the alternatives.
   listing leaves the stored numbers as they were; RFC 3501 §6.3.1
   requires UIDNEXT with every opening.
 
+### Session 2026-10-05 (011's fourth review)
+
+- Q: A Microsoft 365 round reported a flag older than a change the
+  application had made and the service accepted; the store took it and
+  the star went. → A: The service's documentation allows late and
+  repeated reports without order; a probe of ten changes showed none,
+  but a loaded service may. A round's entry about a message the account
+  holds now names the message and the cycle reads it as the service holds
+  it (FR-007), one small request per named message, far below the
+  service's limits (10 000 requests per 10 minutes and 4 at a time per
+  mailbox, checked); a first fill and a whole reading are stored as
+  reported, since nothing older than them is in the store. Reading the
+  named messages in one `$batch` of 20 is an optional refinement (plan),
+  to take when the record `changed messages read again` shows rounds of
+  dozens of messages taking seconds. The maintainer's decision.
+
 ### Session 2026-09-28 (specification challenge)
 
 - Q: What is the feature's goal, against which every rule is checked? → A:
@@ -660,7 +676,18 @@ facts and the alternatives.
   entry, which may be older than that folder's state: the message is read
   as the service holds it now, with the folder it is in; it is related to
   this folder only if it is there, and leaves this folder when it is not
-  (FR-004). A first fill continued from a saved
+  (FR-004). *Amended 2026-10-05 (011's fourth review; 011 research §6)*:
+  in a round of changes no entry about a message the account holds is
+  taken from the entry, flags included: the message is read as the
+  service holds it now, since the service may report a change late or
+  again (its documentation) and an entry older than a change the
+  application made and the service accepted would otherwise undo it in
+  the store; the reading's answer that the message is elsewhere or gone
+  removes it from the folder (FR-004); a reading the service refuses or
+  that fails fails the cycle, the page unstored and the saved position
+  kept, so the next cycle reads the round again. An entry about a message
+  the account does not hold, and the pages of a first fill or of a whole
+  reading, are stored as reported. A first fill continued from a saved
   place reads one more round of changes before it completes, so changes
   made during the pause are included as far as the service reports them.
   Messages keep their immutable identifier (005 FR-004).

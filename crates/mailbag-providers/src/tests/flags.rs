@@ -802,7 +802,14 @@ fn a_message_reported_on_two_pages_of_a_round_keeps_both_changes() {
                 ),
             ),
         ],
-        inbox_messages(&[1, 2, 3]),
+        {
+            // The mailbox holds the message as read and starred; the round's
+            // two pages name it twice, and each reading finds both.
+            let mut messages = inbox_messages(&[1, 2, 3]);
+            messages[1]["isRead"] = true.into();
+            messages[1]["flag"]["flagStatus"] = "flagged".into();
+            messages
+        },
     ));
     let (store, _) = microsoft365_inbox();
     synchronize_kind_again(microsoft365_kind(&service), &store);

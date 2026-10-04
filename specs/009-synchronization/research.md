@@ -709,7 +709,23 @@ research), so a quiet refresh there may read the changed flags instead
 of nothing. The store was discarded once for its changed structure
 (007 FR-014).
 
-**Left to 020**: how often a pass runs during a fill; slicing a fill into
+**Decided on 2026-10-05 (011's fourth review; 011 research §6 has the
+probe)**: in a Microsoft 365 round, an entry about a message the account
+holds names it and the cycle reads the message as the service holds it
+now, instead of taking the entry's values (spec FR-007); one request of
+list fields per named message, within the service's limits (10 000 per
+10 minutes, 4 at a time per mailbox; a `$batch` of 20 counts each part).
+Alternatives: taking the entry (the replaced rule; a late entry undoes an
+accepted change); a filter on `lastModifiedDateTime` for every message
+changed since the last round (one request, but a second way of learning
+changes beside delta and a time rule, with removals still from delta;
+unknown whether a flag change moves that time); a marker on an accepted
+change that blocks older reports until the service shows the change (needs
+an expiry, a crutch). What remains is a service whose reading itself lags
+or has not settled, which no reading tells (011 research §6).
+
+**Left to 020**: how often a pass runs during a fill; honouring
+`Retry-After` on a 429, which a Refresh today leaves to the user; slicing a fill into
 short cycles, each with its own pass (the newest-first order means
 everything above a UID is stored, so a continued fill could list only the
 rest); fetching, within the cycle, the arrivals a second pass finds (they
