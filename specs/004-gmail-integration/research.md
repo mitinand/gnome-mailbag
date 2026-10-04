@@ -1,8 +1,8 @@
 # Gmail Integration: Research
 
 **Date**: 2026-09-22–23. Facts checked in documentation, in source or by the
-read-only probe against a Google account in GOA
-(`~/Projects/mailbag-imap-prototypes/gmail-probe`, outside the repository).
+read-only probe against a Google account in GOA (a throwaway program
+outside the repository).
 Each section ends with the decision it supports.
 
 ## 1. What GOA gives for a Google account
