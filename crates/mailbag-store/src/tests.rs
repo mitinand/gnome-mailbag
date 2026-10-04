@@ -9,8 +9,8 @@
 use super::*;
 use crate::{test_directory::TestDirectory, test_record::CapturedRecord};
 use mailbag_domain::{
-    ContentExplanation, DisplayFields, FailureKind, FlagChanges, FolderBatch, FolderRole,
-    FolderState, Message, MessageFlag, MessageFlags, PendingChange, ReceivedContent,
+    ContentExplanation, DisplayFields, FailureKind, FlagChanges, FolderBatch, FolderNumbers,
+    FolderRole, FolderState, Message, MessageFlag, MessageFlags, PendingChange, ReceivedContent,
 };
 use std::{fs, os::unix::fs::PermissionsExt, path::Path};
 
@@ -594,6 +594,7 @@ fn completed(server_position: Option<&str>) -> Option<FolderState> {
         server_position: server_position.map(str::to_owned),
         fill_place: None,
         synchronized: true,
+        numbers: None,
     })
 }
 
@@ -944,6 +945,57 @@ fn identities_in_other_folders_are_those_another_folder_of_the_account_holds() {
     );
 }
 
+/// The numbers of a folder's latest state pass are kept with its state,
+/// survive a folder list replacement, and are absent until a pass stored
+/// them (specs/009-synchronization FR-005, data model).
+#[test]
+fn a_folders_pass_numbers_are_kept_with_its_state() {
+    let synced = account("synced");
+    let inbox = folder_of(&synced, "INBOX");
+    let store = store_listing(&synced, &["INBOX"]);
+    let stored_numbers = || store.read_folder_sync(&inbox).unwrap().state.numbers;
+    assert_eq!(stored_numbers(), None);
+    let numbers = FolderNumbers {
+        uid_validity: Some(7),
+        message_count: 3,
+        uid_next: Some(41),
+        highest_modseq: Some(1 << 40),
+    };
+    let state_with = |numbers| FolderBatch {
+        state: Some(FolderState {
+            synchronized: true,
+            numbers,
+            ..FolderState::default()
+        }),
+        ..FolderBatch::default()
+    };
+    store
+        .store_batch(&inbox, &state_with(Some(numbers)), || false)
+        .unwrap();
+    assert_eq!(stored_numbers(), Some(numbers));
+    // A new folder list keeps the folder's state, the numbers included.
+    store
+        .replace_folders(&synced, &[folder("INBOX"), folder("Work")], || false)
+        .unwrap();
+    assert_eq!(stored_numbers(), Some(numbers));
+    // A server without CONDSTORE, UIDVALIDITY or UIDNEXT leaves those empty.
+    let count_only = FolderNumbers {
+        uid_validity: None,
+        uid_next: None,
+        highest_modseq: None,
+        ..numbers
+    };
+    store
+        .store_batch(&inbox, &state_with(Some(count_only)), || false)
+        .unwrap();
+    assert_eq!(stored_numbers(), Some(count_only));
+    // A state without numbers, as Microsoft 365 writes, clears them.
+    store
+        .store_batch(&inbox, &state_with(None), || false)
+        .unwrap();
+    assert_eq!(stored_numbers(), None);
+}
+
 /// Stores `messages` as the folder's whole content, as a completed cycle
 /// leaves it: stored messages not among them leave.
 fn store_completed_cycle(
@@ -966,6 +1018,7 @@ fn store_completed_cycle(
             server_position: None,
             fill_place: None,
             synchronized: true,
+            numbers: None,
         }),
         ..FolderBatch::default()
     };

@@ -21,7 +21,7 @@ the store's version; all tables are `STRICT`.
 | `fill_place` | TEXT, null | Microsoft 365 only: the `@odata.nextLink` an unfinished first fill continues from; null otherwise. Kept apart from `server_position` so that neither link's meaning depends on `synchronized` (external review, 2026-09-29) |
 | `synchronized` | INTEGER, 0 or 1 | Whether the folder's latest cycle completed; replaces 008's `loaded`. The first batch of an IMAP cycle that has messages to fetch, and each Microsoft 365 page that is not a reading's last, and a continued first fill's last page, set it to 0; the completing batch sets it to 1 |
 | `uid_validity` | INTEGER, null | *Since 2026-10-04 (spec FR-005)*: the numbering version the folder's latest state pass saw; IMAP only, null before a pass |
-| `exists` | INTEGER, null | The message count the latest state pass saw (EXISTS) |
+| `message_count` | INTEGER, null | The message count the latest state pass saw (EXISTS); the numbers are written together, and a server gives this one with every opening, so it says whether a pass stored them |
 | `uid_next` | INTEGER, null | The next UID the server predicted at the latest pass (UIDNEXT); null when the server gave none |
 | `highest_modseq` | INTEGER, null | HIGHESTMODSEQ at the latest pass, on a server that announces CONDSTORE for a mailbox that keeps mod-sequences; null otherwise |
 

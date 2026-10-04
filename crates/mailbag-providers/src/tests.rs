@@ -1292,6 +1292,7 @@ fn a_rejected_position_rereads_the_folder_and_removes_what_it_did_not_list() {
             )),
             fill_place: None,
             synchronized: true,
+            numbers: None,
         }),
         ..FolderBatch::default()
     };
@@ -2377,6 +2378,7 @@ fn store_completed_cycle(
             server_position: None,
             fill_place: None,
             synchronized: true,
+            numbers: None,
         }),
         ..FolderBatch::default()
     };
@@ -2487,6 +2489,7 @@ fn a_stopped_full_reading_after_a_rejected_place_starts_again_in_full() {
                 stopping.url()
             )),
             synchronized: false,
+            numbers: None,
         }),
         ..FolderBatch::default()
     };
@@ -2578,6 +2581,7 @@ fn an_interrupted_round_after_a_continued_fill_is_continued_as_a_round() {
             )),
             fill_place: None,
             synchronized: false,
+            numbers: None,
         }),
         ..FolderBatch::default()
     };
@@ -2632,6 +2636,7 @@ fn an_edited_recent_message_gets_its_text_again() {
             )),
             fill_place: None,
             synchronized: true,
+            numbers: None,
         }),
         ..FolderBatch::default()
     };

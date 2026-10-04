@@ -7,8 +7,9 @@
 
 use crate::content::{content_columns, content_from_columns};
 use mailbag_domain::{
-    AccountId, DisplayFields, FlagChanges, Folder, FolderRef, FolderRole, FolderState, Message,
-    MessageFlag, MessageFlags, MessageListRow, PendingChange, ReceivedContent,
+    AccountId, DisplayFields, FlagChanges, Folder, FolderNumbers, FolderRef, FolderRole,
+    FolderState, Message, MessageFlag, MessageFlags, MessageListRow, PendingChange,
+    ReceivedContent,
 };
 use rusqlite::{Connection, Row, Transaction, params, types::Type};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -81,13 +82,29 @@ pub(crate) fn read_folder_state(
     folder_id: i64,
 ) -> rusqlite::Result<FolderState> {
     connection.query_row(
-        "SELECT server_position, fill_place, synchronized FROM folder WHERE id = ?1",
+        "SELECT server_position, fill_place, synchronized, uid_validity, message_count, \
+         uid_next, highest_modseq FROM folder WHERE id = ?1",
         [folder_id],
         |row| {
+            // The numbers are written together, and a server gives the
+            // count with every opening, so the count says whether a pass
+            // stored them.
+            let numbers = match row.get::<_, Option<u32>>(4)? {
+                Some(message_count) => Some(FolderNumbers {
+                    uid_validity: row.get(3)?,
+                    message_count,
+                    uid_next: row.get(5)?,
+                    // Kept as SQLite's signed integer: a mod-sequence has
+                    // 63 bits (RFC 7162 §3.1.2.1).
+                    highest_modseq: row.get::<_, Option<i64>>(6)?.map(|modseq| modseq as u64),
+                }),
+                None => None,
+            };
             Ok(FolderState {
                 server_position: row.get(0)?,
                 fill_place: row.get(1)?,
                 synchronized: row.get(2)?,
+                numbers,
             })
         },
     )
@@ -309,14 +326,26 @@ pub(crate) fn write_folder_state(
     folder_id: i64,
     state: &FolderState,
 ) -> rusqlite::Result<()> {
+    let numbers = state.numbers;
+    let highest_modseq = match numbers.and_then(|numbers| numbers.highest_modseq) {
+        Some(modseq) => Some(i64::try_from(modseq).map_err(|_| {
+            rusqlite::Error::ToSqlConversionFailure("a mod-sequence above 63 bits".into())
+        })?),
+        None => None,
+    };
     transaction.execute(
-        "UPDATE folder SET server_position = ?2, fill_place = ?3, synchronized = ?4 \
+        "UPDATE folder SET server_position = ?2, fill_place = ?3, synchronized = ?4, \
+         uid_validity = ?5, message_count = ?6, uid_next = ?7, highest_modseq = ?8 \
          WHERE id = ?1",
         params![
             folder_id,
             state.server_position,
             state.fill_place,
-            state.synchronized
+            state.synchronized,
+            numbers.and_then(|numbers| numbers.uid_validity),
+            numbers.map(|numbers| numbers.message_count),
+            numbers.and_then(|numbers| numbers.uid_next),
+            highest_modseq,
         ],
     )?;
     Ok(())

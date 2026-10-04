@@ -96,11 +96,13 @@ pub(super) async fn synchronize_graph_folder(
                         server_position: None,
                         fill_place: Some(next_link.clone()),
                         synchronized: false,
+                        numbers: None,
                     },
                     Reading::Round | Reading::FullRereading { .. } => FolderState {
                         server_position: round_start.clone(),
                         fill_place: None,
                         synchronized: false,
+                        numbers: None,
                     },
                 });
                 batches.store(&batch)?;
@@ -116,6 +118,7 @@ pub(super) async fn synchronize_graph_folder(
                     server_position: Some(delta_link.clone()),
                     fill_place: None,
                     synchronized: false,
+                    numbers: None,
                 });
                 batches.store(&batch)?;
                 send_graph_changes(&mut service, batches).await?;

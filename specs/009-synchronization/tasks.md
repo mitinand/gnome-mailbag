@@ -504,7 +504,7 @@ STOP for the maintainer's review.
 | 8d. The cycle | T044–T045 | feat(sync): learn a folder's state in a pass, twice per cycle |
 | 8e. Final passes | T046–T047 | (per review) |
 
-- [ ] T039 STOP: present the amended spec.md (status, Scope, US1,
+- [x] T039 STOP (approved on 2026-10-04 after the two challenges): present the amended spec.md (status, Scope, US1,
   Edge Cases, Clarifications 2026-10-04, FR-001, FR-004, FR-005, FR-008,
   FR-012, FR-015(c) and (e), Key Entities, the flowchart, SC-011, SC-012,
   Assumptions, Amendments), plan.md ("Amendment 2026-10-04" and the
@@ -517,15 +517,16 @@ STOP for the maintainer's review.
   the announced capability (plan, decision 1). Then `spec-challenge` in
   fresh sessions, the spec's requirements and the plan's mechanisms; wait
   for approval before any code.
-- [ ] T040 In crates/mailbag-domain/src/lib.rs `FolderNumbers {
-  uid_validity: Option<u32>, exists: u32, uid_next: Option<u32>,
-  highest_modseq: Option<u64> }` and `FolderState.numbers:
+- [x] T040 In crates/mailbag-domain/src/lib.rs `FolderNumbers {
+  uid_validity: Option<u32>, message_count: u32, uid_next: Option<u32>,
+  highest_modseq: Option<u64> }` (the count named as the IMAP session's
+  `message_count` is, since `exists` is an SQL keyword) and `FolderState.numbers:
   Option<FolderNumbers>` (every `FolderState { .. }` site of the workspace
   gains the field); in crates/mailbag-store/src/schema.sql the four
   nullable columns on `folder`; `read_folder_state` and
   `write_folder_state` carry them; replacing a folder list keeps them
   (`upsert_folders` leaves unnamed columns alone).
-- [ ] T041 [P] Store tests: the numbers round-trip with a batch's state,
+- [x] T041 [P] Store tests: the numbers round-trip with a batch's state,
   stay through a folder list replacement, and are absent for a folder
   that never had a complete pass.
 - [ ] T042 In crates/mailbag-imap: `MailboxNumbers` (the crate's own
