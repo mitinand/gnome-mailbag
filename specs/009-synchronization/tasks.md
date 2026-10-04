@@ -10,7 +10,8 @@ connection, faster) was built without tasks, by the feature-start's path
 for internal changes: three reviewed portions, the installed-build check,
 then the documents (plan "Amendment 2026-10-02", research §14). The
 amendment of 2026-10-04 (the state pass) has its tasks in Phase 8, on
-branch `claude/state-pass`; its documents await approval (T039).
+branch `claude/state-pass`; its documents were approved and portions
+8b–8d built the same day; T046–T047 are its final passes.
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -460,7 +461,8 @@ Sending pending changes before learning changes, and the other rules for
 read and star and for moving and deleting (spec FR-015(a), (b));
 background synchronization, cycles in parallel and continuing a first fill
 after the start (FR-015(c)); HTML, previews, download on opening and
-retention (FR-015(d)); CONDSTORE (FR-015(e)); a Refresh that stops the
+retention (FR-015(d)); CONDSTORE (FR-015(e); built in Phase 8 on
+2026-10-04); a Refresh that stops the
 running cycle, larger rows-only batches and renewal before expiry (plan,
 Optional mechanisms); upgrading a populated store (FR-015(f)).
 
@@ -583,7 +585,11 @@ STOP for the maintainer's review.
   are missing, completed with the numbers when none are and the listing
   completed, unless marked so already) and `folder_numbers` converting
   the opening's numbers; `end_changes_the_listing_shows` takes the
-  pending changes the plan read.
+  pending changes the plan read. After the simplify-review (T047):
+  `StatePass` carries `listed` and `refusal` only, the caller converts
+  the opening's numbers once and hands them to `pass_plan` and the pass,
+  and a `Nothing` pass goes through the one listing path with an empty
+  listing, since an empty batch is not stored.
 - [x] T045 [P] Cycle tests against the scripted server (src/tests/state_pass.rs), SC-011's
   outcomes as successive cycles on one CONDSTORE fixture: nothing changed
   → one SELECT, no listing; a flag changed → one `CHANGEDSINCE` holding
@@ -594,8 +600,8 @@ STOP for the maintainer's review.
   whose fill did not complete → the listing; a changed numbering with the
   same count and next number → the folder refills. SC-012 apart: a first
   fill of 300 during which the scripted server changes a flag and removes
-  a message → both stored at the fill's end, the second pass a
-  `CHANGEDSINCE` and a listing; an undisturbed fill → a second pass of
+  a message → both stored at the fill's end, the second pass a listing
+  of every message, since a message left; an undisturbed fill → a second pass of
   one SELECT; an arrival during the fill → the folder not completed, the
   next cycle fetches it. The 011 tests of the listing after commands
   rewritten for the second pass (Gmail Starred, the ignored UID, the
@@ -610,6 +616,16 @@ STOP for the maintainer's review.
   production, ≤ 400 test lines), the quickstart's steps 11 and 12 on the
   installed build with the maintainer, the record checked for privacy
   (counts and the pass's outcome; folder names at debug).
-- [ ] T047 Final passes: one consistency analysis and `simplify-review` on
+- [x] T047 Final passes: one consistency analysis and `simplify-review` on
   the branch diff, each in a fresh session; findings reported, scope-adding
   ones brought to the maintainer; the measured facts stay in research §15.
+  Done on 2026-10-04: no defect found; applied the behaviour-keeping
+  simplifications (`pass_plan` over one type, one listing path in
+  `run_state_pass`, the mod-sequence written as the same 64 bits, the
+  finish record's `listed` as the listing's length), two test assertions
+  (a refused listing keeps the stored state; a not-completed folder is
+  listed whole) and the document alignment recorded in the plan's
+  function map and here; decided by the maintainer the same day: a
+  not-completed state carries no numbers (FR-005(c), `pass_state` with
+  two cases), and FR-011 names the complete second pass after a refused
+  first listing, which still reports the incomplete list.

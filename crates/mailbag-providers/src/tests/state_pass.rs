@@ -151,10 +151,14 @@ fn a_first_fill_ends_with_the_folder_as_the_server_has_it_now() {
     assert!(!store.read_folder_sync(&inbox).unwrap().state.synchronized);
     assert_eq!(stored_messages(&store, &inbox).len(), 3);
     assert_eq!(listings_and_openings(&late), (2, 2));
+    // The next cycle lists every message, fetches the arrival and ends
+    // with a second pass of the opening alone.
     let (outcome, stored, _) = synchronize_again(&late, &store);
     assert_stored(&outcome);
     assert!(identities(&stored).contains(&imap_identity(40).as_str()));
     assert!(store.read_folder_sync(&inbox).unwrap().state.synchronized);
+    assert_eq!(listings_and_openings(&late), (3, 4));
+    assert!(!latest_listing_asked_changed_flags(&late));
 }
 
 /// Without CONDSTORE the opening gives no mod-sequence, so every pass

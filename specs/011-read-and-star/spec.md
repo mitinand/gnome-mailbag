@@ -805,7 +805,8 @@ behaviour, readability, size, architecture and security.
   reports belongs to 009's reading of the service.
 - *Known limitation, every IMAP server (observed 2026-10-04)*: a cycle
   learns the server's flags and removals of the messages it already holds
-  from its listing at the start and, after its own commands, at the end;
+  from its state pass at the start and, after batches or its own commands,
+  at the end (009 FR-005);
   during a long first fill (minutes on a large mailbox) a change made
   in another client to an already stored message shows at the fill's end,
   as 009 FR-001 allows for a change made during a cycle. Changes the user

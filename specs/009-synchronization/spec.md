@@ -23,7 +23,8 @@ ends with a second pass; sized the same day (budget: at most 250
 production lines and 400 test lines; no thread, timer or queue of its own,
 no new dependency, no change to the IMAP library forks; four columns on
 the folder); challenged the same day in fresh sessions (Clarifications
-2026-10-04) and awaiting the maintainer's approval (tasks T039).
+2026-10-04), approved and built the same day on branch `claude/state-pass`
+(tasks T039–T045); its final passes are tasks T046–T047.
 Approved on 2026-09-29 (tasks T001). Sized at the feature-start on
 2026-09-28 (budget: at most 1 500 production lines, raised to 1 600 at
 planning and to 2 000 during the implementation, and 1 500 test lines,
@@ -286,7 +287,8 @@ documentation does not say how, and FR-007's rule covers either form.
   position (FR-007). CONDSTORE (RFC 7162) is supported later, as a quicker
   check and flag reading on servers that announce it; its condition is in
   FR-015(e). On Gmail only the base method, since Google's documentation
-  does not describe CONDSTORE. QRESYNC was considered and is not supported:
+  does not describe CONDSTORE (superseded on 2026-10-04: the announced
+  capability decides, Clarifications 2026-10-04). QRESYNC was considered and is not supported:
   with CONDSTORE it would only save the listing needed after a removal, at
   the cost of changing how the server reports removals for the whole
   session. Push notifications of Microsoft Graph need a publicly reachable
@@ -297,7 +299,8 @@ documentation does not say how, and FR-007's rule covers either form.
   of batch (messages removed with proof, read-state changes, arrived
   messages, texts, the folder's new state), and one step
   stores batches without knowing which way produced them (plan). Adding
-  CONDSTORE later adds one way and one field of folder state.
+  CONDSTORE later adds one way and one field of folder state (superseded
+  on 2026-10-04: the state pass, with four columns, FR-005).
 - Q: Does the base method scale? → A: The folder's listing costs a few
   dozen bytes per message, so a folder of 100 000 messages is a listing of
   a few megabytes; the details of a message are fetched only once. A server
@@ -613,13 +616,16 @@ facts and the alternatives.
   message, since a change is addressed by the UID the listing shows; the
   second pass needs no such rule, since the cycle's own commands raise
   the mod-sequences of the messages they changed. (c) It stores what its
-  listing proves together with the four numbers it started from, in the
-  batch that carries the folder's state (FR-008), so the next pass may
-  see a change twice but never misses one; a listing the server did not
-  complete leaves the stored numbers as they were; a pass that lists
-  messages the store lacks without fetching them leaves the folder not
-  completed, so the next cycle's pass lists every message and fetches
-  them. The pass runs at the cycle's start and, when the cycle fetched
+  listing proves and, when its listing completed and the store lacks
+  none of the listed messages, the four numbers it started from with the
+  completed state (FR-008), so the next pass may see a change twice but
+  never misses one; a folder not completed holds no numbers, since its
+  next pass lists every message anyway; a refused listing with nothing
+  missing writes nothing; a pass that lists messages the store lacks
+  without fetching them leaves the folder not completed, so the next
+  cycle's pass lists every message and fetches them (maintainer's
+  decision at the final review, 2026-10-04: the numbers travel only with
+  the completed state). The pass runs at the cycle's start and, when the cycle fetched
   messages or sent commands, once more before it closes; how often passes
   run between belongs to background synchronization (FR-015(c)). The
   cycle fetches list fields only for messages the store lacks, and
@@ -670,8 +676,14 @@ facts and the alternatives.
   fill, saves the next round's position before the one more round. *Amended 2026-09-29 after an external
   review*: a Microsoft 365 round whose first page removed every row and
   whose next page failed left the folder shown as empty. *Amended
-  2026-10-04*: a cycle whose second state pass listed messages the store
-  lacks ends with the folder marked not completed (FR-005(c)).
+  2026-10-04*: on IMAP, each state pass carries the state: completed with
+  the pass's numbers when its listing completed and the store lacks none
+  of the listed messages, so a first pass that found nothing missing may
+  complete the folder before the cycle's commands and second pass; not
+  completed, without numbers, when messages are missing, whether the
+  listing completed or not; a cycle whose second state pass listed
+  messages the store lacks ends with the folder marked not completed
+  (FR-005(c)).
 
 **Content**
 
@@ -723,6 +735,11 @@ facts and the alternatives.
   or cancelled load under 006 and 007 FR-005: the stored rows stay with the
   banner that names the failure. A listing the server cut short or refused
   is an incomplete list (006 User Story 3) and removes nothing (FR-004); a
+  cycle whose first listing was refused but whose second state pass listed
+  every message completes the folder by that listing (FR-005(c)) and still
+  reports the incomplete list, which the next refresh clears, with one
+  opening when nothing changed (maintainer's decision at the final review,
+  2026-10-04); a
   refusal the server marks temporary of a batch's structures or texts is a
   failed cycle (FR-009). After a restart, a folder whose first fill did not complete shows its
   stored rows with no notice until the next refresh, as 007 accepts for an

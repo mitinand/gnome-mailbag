@@ -199,7 +199,7 @@ it and its cost are named.
 | Renewing access before it expires, from the lifetime Online Accounts returns | Refusals mid-cycle prove frequent enough to be visible in time | ≈ 20 lines |
 | Larger batches for rows without text | The first fill of a very large folder takes too long because each hundred rows is one round trip | ≈ 10 lines |
 | A Refresh that stops the running cycle | Waiting for a long first fill to refresh another folder proves a problem (spec Clarifications) | ≈ 30 lines and tests; amends 008 FR-012 |
-| CONDSTORE | Background synchronization, or a real folder whose listing makes Refresh slow (spec FR-015(e)). *Built on 2026-10-04 as part of the state pass (below)* | ≈ 80 lines, one state column; the fork parses `[NOMODSEQ]` |
+| CONDSTORE | Background synchronization, or a real folder whose listing makes Refresh slow (spec FR-015(e)). *Built on 2026-10-04 as part of the state pass (below)* | Estimated before the amendment at ≈ 80 lines and one state column with the fork parsing `[NOMODSEQ]`; built with four columns and no fork change, since the fork passes `[NOMODSEQ]` through as text (the amendment's table) |
 
 ## Decisions for the maintainer
 
@@ -454,6 +454,8 @@ Decided at a feature-start on 2026-10-04 after the live check of
 Clarifications 2026-10-04), for branch `claude/state-pass`, from
 `claude/read-star`, whose full listing after a cycle's commands this
 amendment replaces. Documents first (tasks T039), then four portions.
+Built on 2026-10-04 (tasks T040–T045, four commits); the final passes are
+tasks T046–T047, whose findings this section records as "built as".
 
 ### Size
 
@@ -486,7 +488,8 @@ columns on `folder`; the window and Microsoft 365 untouched.
 
 ### Function map changes
 
-- `session::open_mailbox`: `select_condstore` when `capabilities` include
+- `session::select_mailbox` (built as `open_selected`, which the opening
+  and `reopen` share, tasks T042): `select_condstore` when `capabilities` include
   CONDSTORE, else `select`; `MailboxSession` keeps the opening's numbers.
 - `MailboxReader::numbers() -> MailboxNumbers`; `reopen() -> Result<(),
   ImapError>`: when the session was closed after an unreadable structure
@@ -499,7 +502,9 @@ columns on `folder`; the window and Microsoft 365 untouched.
   differs by the `CHANGEDSINCE` modifier) and the EXISTS = 0 shortcut; its
   `messages` are the changed ones only.
 - `cycle::imap::pass_plan(numbers: &MailboxNumbers, reference:
-  Option<&FolderNumbers>, pending: &[PendingChange]) -> PassPlan`:
+  Option<&FolderNumbers>, pending: &[PendingChange]) -> PassPlan` (built
+  as `pass_plan(FolderNumbers, Option<FolderNumbers>, bool)`, the
+  opening's numbers converted once by the caller):
   `Everything` when there is no reference, the numbering version differs,
   a number is missing on either side, or `pending` is not empty (011
   addresses a change by the UID the listing shows); `Nothing` when all
@@ -513,7 +518,11 @@ columns on `folder`; the window and Microsoft 365 untouched.
   `end_changes_the_listing_shows` compares with the listing, read once.
 - `cycle::imap::run_state_pass(server, reference, batches, plan) ->
   StatePass { listed: Vec<ListedMessage>, missing: Vec<&ListedMessage>,
-  refusal }`: `Nothing` lists nothing and stores nothing; `ChangedFlags`
+  refusal }` (built as `run_state_pass(server, stored, numbers, batches,
+  plan) -> StatePass { listed, refusal }`; the missing messages borrow
+  from `listed`, so the caller computes them again from it): `Nothing`
+  lists nothing and writes the completed state only when the folder is
+  not yet marked so with these numbers, otherwise nothing; `ChangedFlags`
   calls `list_changed_flags` and stores flag states with the numbers,
   removing nothing; `Everything` calls `list_messages` and stores what
   `listing_changes` proves, removals only when the listing completed. A
@@ -521,14 +530,17 @@ columns on `folder`; the window and Microsoft 365 untouched.
   synchronized when nothing is missing, not completed otherwise (today's
   helper writes none for a synchronized folder with nothing missing, so
   the numbers would never advance); a refused listing writes the state as
-  today and leaves the numbers as stored.
+  today and leaves the numbers as stored (built as: the numbers travel
+  only with the completed state, and a not-completed state carries none,
+  since nothing reads the numbers of a folder not completed; maintainer's
+  decision at the final review, 2026-10-04).
 - `cycle::imap::synchronize_imap_folder`: the order above;
   `confirm_sent_changes` goes, its settle of the sent changes
   (`settle_sent_changes`) runs on the second pass's listed messages; a
   second pass that listed messages it did not fetch ends the cycle with
   the folder not completed, so the next cycle lists and fetches them.
-- Record lines: the pass's outcome at info ("nothing changed", "flags
-  listed", "folder listed") with counts; the numbers at debug.
+- Record lines: the pass's outcome at info ("nothing changed", "changed
+  flags listed", "folder listed") with counts; the numbers at debug.
 
 ### Decisions for the maintainer
 

@@ -24,7 +24,7 @@ user's word, *mailbox*, where it names the refreshed folder
   2026-10-04 `numbers` holds the four numbers of the folder's latest state
   pass, `FolderNumbers { uid_validity: Option<u32>, message_count: u32,
   uid_next: Option<u32>, highest_modseq: Option<u64> }`, `None` for
-  Microsoft 365 and before a pass (spec FR-005); the IMAP crate's
+  Microsoft 365 and while the folder is not completed (spec FR-005); the IMAP crate's
   `MailboxNumbers` has the same shape, and the cycle converts, since
   `mailbag-imap` does not depend on `mailbag-domain`. A
   Generic IMAP message's identity is `imap:<folder>/<UIDVALIDITY>/<UID>`.

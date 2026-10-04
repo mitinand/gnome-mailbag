@@ -327,12 +327,11 @@ pub(crate) fn write_folder_state(
     state: &FolderState,
 ) -> rusqlite::Result<()> {
     let numbers = state.numbers;
-    let highest_modseq = match numbers.and_then(|numbers| numbers.highest_modseq) {
-        Some(modseq) => Some(i64::try_from(modseq).map_err(|_| {
-            rusqlite::Error::ToSqlConversionFailure("a mod-sequence above 63 bits".into())
-        })?),
-        None => None,
-    };
+    // Kept as SQLite's signed integer: a mod-sequence has 63 bits (RFC 7162
+    // §3.1.2.1), and the cast keeps all 64 either way.
+    let highest_modseq = numbers
+        .and_then(|numbers| numbers.highest_modseq)
+        .map(|modseq| modseq as i64);
     transaction.execute(
         "UPDATE folder SET server_position = ?2, fill_place = ?3, synchronized = ?4, \
          uid_validity = ?5, message_count = ?6, uid_next = ?7, highest_modseq = ?8 \

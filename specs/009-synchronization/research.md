@@ -589,9 +589,11 @@ Gmail allows 15.
 
 **Decision**: an IMAP cycle learns the folder's state in a *state pass*
 (spec FR-005): the four numbers the opening returns (UIDVALIDITY, EXISTS,
-UIDNEXT, HIGHESTMODSEQ), compared with the folder's stored ones, decide
-what to list: nothing, the changed flags (`CHANGEDSINCE` where CONDSTORE
-serves, every message's flags otherwise) or every message. The pass runs
+UIDNEXT, HIGHESTMODSEQ), compared with the numbers of the listing the
+store reflects (the stored ones of a synchronized folder, or the first
+pass's at the cycle's second pass), decide what to list: nothing, the
+changed flags with `CHANGEDSINCE` where a mod-sequence serves on both
+sides, or every message, also wherever a number is missing. The pass runs
 at the cycle's start and, after batches or commands, once more before the
 cycle closes; it stores the numbers it started from with what its listing
 proved. How often passes run during a fill belongs to background

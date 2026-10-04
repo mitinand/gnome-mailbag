@@ -98,13 +98,15 @@ first, so both describe the same messages even if the Inbox changes in between.
 FLAGS)` (Gmail adds `X-GM-MSGID`), read as a stream, and N = 0 lists nothing
 without a command. The listing is complete only when the command ended with
 OK; a NO or BAD leaves it incomplete and a lost connection fails the step.
-*Since 2026-10-04 (009 FR-005)*: the listing runs only when the opening's
-numbers differ from the folder's stored ones; with EXISTS and UIDNEXT
-unchanged and a HIGHESTMODSEQ on both sides, `UID FETCH 1:* (UID FLAGS
-[X-GM-MSGID]) (CHANGEDSINCE <stored>)` lists the changed flags instead,
-and with all four unchanged nothing is listed. A cycle that fetched
-messages or sent flag commands opens the folder again (a second SELECT in
-the same session) and repeats the comparison before it closes.
+*Since 2026-10-04 (009 FR-005)*: the listing runs when the opening's
+numbers differ from those of the listing the store reflects, when the
+folder's fill did not complete or when it holds pending changes; with
+EXISTS and UIDNEXT unchanged and a HIGHESTMODSEQ on both sides, `UID FETCH
+1:* (UID FLAGS [X-GM-MSGID]) (CHANGEDSINCE <stored>)` lists the changed
+flags instead, and with all four unchanged nothing is listed. A cycle
+that fetched messages or sent flag commands opens the folder again (a
+second SELECT in the same session, or in a fresh one when the session was
+closed) and repeats the comparison before it closes.
 The missing messages' rows are then read by UID, a hundred at a time,
 `UID FETCH <uids> (UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO
 SUBJECT)] BODYSTRUCTURE)`, highest UID first (*the structures joined this

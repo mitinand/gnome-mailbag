@@ -459,7 +459,10 @@ fn a_refused_listing_after_the_commands_ends_the_cycle_incomplete() {
         listing_refused_after_store: true,
         ..plain_listing_setup(4)
     });
+    let state_before = store.read_folder_sync(&inbox).unwrap().state;
     let (outcome, _, _) = synchronize_again(&fixture, &store);
+    // The refused listing leaves the folder's state and numbers as stored.
+    assert_eq!(store.read_folder_sync(&inbox).unwrap().state, state_before);
     assert!(
         matches!(
             outcome,

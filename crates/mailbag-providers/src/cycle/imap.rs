@@ -66,15 +66,16 @@ pub(super) async fn synchronize_imap_folder(
     let mut server = ImapFolder::open(access, identity_rule, &batches.folder.identity).await?;
     let stored = batches.read_folder_sync()?;
     let pending = batches.pending_changes()?;
-    // A synchronized folder's stored numbers describe the listing the store
-    // reflects; an unfinished fill's do not.
+    // The reference is a synchronized folder's stored numbers (spec
+    // FR-005(b)); a folder not completed holds none.
     let reference = stored
         .state
         .synchronized
         .then_some(stored.state.numbers)
         .flatten();
-    let plan = pass_plan(server.reader.numbers(), reference, !pending.is_empty());
-    let first = run_state_pass(&mut server, &stored, batches, plan).await?;
+    let numbers = folder_numbers(server.reader.numbers());
+    let plan = pass_plan(numbers, reference, !pending.is_empty());
+    let first = run_state_pass(&mut server, &stored, numbers, batches, plan).await?;
     let listed_by_identity: HashMap<&str, &ListedMessage> = first
         .listed
         .iter()
@@ -117,17 +118,14 @@ pub(super) async fn synchronize_imap_folder(
         // message is stored; a refused first listing gives none.
         server.reader.reopen().await?;
         let stored_now = batches.read_folder_sync()?;
-        let reference = first_listing_complete.then_some(first.numbers);
-        let plan = pass_plan(server.reader.numbers(), reference, false);
-        let second = run_state_pass(&mut server, &stored_now, batches, plan).await?;
+        let numbers_now = folder_numbers(server.reader.numbers());
+        let reference = first_listing_complete.then_some(numbers);
+        let plan = pass_plan(numbers_now, reference, false);
+        let second = run_state_pass(&mut server, &stored_now, numbers_now, batches, plan).await?;
         settle_sent_changes(&second.listed, &sent_changes, batches)?;
         refusal = refusal.or(second.refusal);
     }
-    let listed = match first.listed.is_empty() {
-        true => first.numbers.message_count as usize,
-        false => first.listed.len(),
-    };
-    Ok(batches.finish(listed, refusal.map(short_list)))
+    Ok(batches.finish(first.listed.len(), refusal.map(short_list)))
 }
 
 /// What a state pass lists, told by the opening's numbers against the
@@ -149,79 +147,54 @@ enum PassPlan {
 /// listing's UIDs address (specs/011-read-and-star FR-007), every message
 /// is listed.
 fn pass_plan(
-    numbers: MailboxNumbers,
+    numbers: FolderNumbers,
     reference: Option<FolderNumbers>,
     pending_changes: bool,
 ) -> PassPlan {
     let Some(reference) = reference else {
         return PassPlan::Everything;
     };
-    let (Some(uid_validity), Some(uid_next), Some(highest_modseq)) = (
-        numbers.uid_validity,
-        numbers.uid_next,
-        numbers.highest_modseq,
-    ) else {
-        return PassPlan::Everything;
-    };
-    let (Some(reference_uid_next), Some(reference_modseq)) =
-        (reference.uid_next, reference.highest_modseq)
-    else {
-        return PassPlan::Everything;
-    };
-    if pending_changes
-        || Some(uid_validity) != reference.uid_validity
-        || numbers.message_count != reference.message_count
-        || uid_next != reference_uid_next
-    {
-        return PassPlan::Everything;
-    }
-    match highest_modseq == reference_modseq {
-        true => PassPlan::Nothing,
-        false => PassPlan::ChangedFlags {
-            since: reference_modseq,
-        },
+    let same_messages = numbers.uid_validity.is_some()
+        && numbers.uid_validity == reference.uid_validity
+        && numbers.message_count == reference.message_count
+        && numbers.uid_next.is_some()
+        && numbers.uid_next == reference.uid_next;
+    match (reference.highest_modseq, numbers.highest_modseq) {
+        (Some(since), Some(highest_modseq)) if same_messages && !pending_changes => {
+            match highest_modseq == since {
+                true => PassPlan::Nothing,
+                false => PassPlan::ChangedFlags { since },
+            }
+        }
+        _ => PassPlan::Everything,
     }
 }
 
 /// What a state pass found: the messages its listing showed (none when
-/// nothing changed), the numbers it started from and the server's refusal
-/// to finish the listing.
+/// nothing changed) and the server's refusal to finish the listing.
 struct StatePass {
     listed: Vec<ListedMessage>,
-    numbers: FolderNumbers,
     refusal: Option<ServerReply>,
 }
 
 /// Runs the pass's listing and stores what it proves with the opening's
-/// numbers, in one batch (spec FR-005(c)): removals only from a complete
+/// `numbers`, in one batch (spec FR-005(c)): removals only from a complete
 /// listing of every message (FR-004), the changed flags, and the folder's
 /// state (`pass_state`). A pass that lists nothing writes the completed
-/// state when the folder is not yet marked so.
+/// state when the folder is not yet marked so, and otherwise nothing: an
+/// empty batch is not stored.
 async fn run_state_pass(
     server: &mut ImapFolder,
     stored: &FolderSync,
+    numbers: FolderNumbers,
     batches: &mut BatchWriter<'_>,
     plan: PassPlan,
 ) -> Result<StatePass, CycleEnd> {
-    let numbers = folder_numbers(server.reader.numbers());
     let listing = match plan {
-        PassPlan::Nothing => {
-            tracing::info!(
-                messages = numbers.message_count,
-                "state pass: nothing changed"
-            );
-            if let Some(state) = pass_state(&stored.state, numbers, true, false) {
-                batches.store(&FolderBatch {
-                    state: Some(state),
-                    ..FolderBatch::default()
-                })?;
-            }
-            return Ok(StatePass {
-                listed: Vec::new(),
-                numbers,
-                refusal: None,
-            });
-        }
+        PassPlan::Nothing => FolderListing {
+            messages: Vec::new(),
+            refusal: None,
+        },
         PassPlan::ChangedFlags { since } => server.list_changed_flags(since).await?,
         PassPlan::Everything => server.list_messages().await?,
     };
@@ -233,9 +206,11 @@ async fn run_state_pass(
     batch.state = pass_state(&stored.state, numbers, complete, !missing.is_empty());
     tracing::info!(
         outcome = match plan {
+            PassPlan::Nothing => "nothing changed",
+            PassPlan::ChangedFlags { .. } => "changed flags listed",
             PassPlan::Everything => "folder listed",
-            _ => "changed flags listed",
         },
+        messages = numbers.message_count,
         listed = listed.len(),
         missing = missing.len(),
         removed = batch.removed.len(),
@@ -245,35 +220,30 @@ async fn run_state_pass(
     batches.store(&batch)?;
     Ok(StatePass {
         listed,
-        numbers,
         refusal: listing.refusal,
     })
 }
 
-/// The folder's state after a pass (spec FR-005(c), FR-008): not completed
-/// while messages are missing, with the pass's numbers when its listing
-/// completed and the stored ones otherwise; completed with the numbers when
-/// none are missing and the listing completed, unless the folder is marked
-/// so with these numbers already; nothing to write otherwise.
+/// The folder's state after a pass (spec FR-005(c), FR-008): not completed,
+/// without numbers, while messages are missing, since the next pass lists
+/// every message anyway; completed with the pass's numbers when none are
+/// missing and the listing completed, unless the folder is marked so with
+/// these numbers already; nothing to write otherwise.
 fn pass_state(
     stored: &FolderState,
     numbers: FolderNumbers,
     complete: bool,
     missing: bool,
 ) -> Option<FolderState> {
-    let state = |synchronized, numbers| FolderState {
-        synchronized,
-        numbers,
-        ..FolderState::default()
-    };
-    match (missing, complete) {
-        (true, true) => Some(state(false, Some(numbers))),
-        (true, false) => Some(state(false, stored.numbers)),
-        (false, true) if !stored.synchronized || stored.numbers != Some(numbers) => {
-            Some(state(true, Some(numbers)))
-        }
-        _ => None,
+    if missing {
+        return Some(FolderState::default());
     }
+    let marked_so = stored.synchronized && stored.numbers == Some(numbers);
+    (complete && !marked_so).then(|| FolderState {
+        synchronized: true,
+        numbers: Some(numbers),
+        ..FolderState::default()
+    })
 }
 
 /// The opening's numbers as the folder stores them.
@@ -510,8 +480,8 @@ mod tests {
         message_count: u32,
         uid_next: u32,
         highest_modseq: Option<u64>,
-    ) -> MailboxNumbers {
-        MailboxNumbers {
+    ) -> FolderNumbers {
+        FolderNumbers {
             uid_validity: Some(uid_validity),
             message_count,
             uid_next: Some(uid_next),
@@ -523,7 +493,7 @@ mod tests {
     /// reflects decide what the pass lists.
     #[test]
     fn the_pass_lists_what_the_numbers_call_for() {
-        let stored = folder_numbers(opening(1, 5, 20, Some(40)));
+        let stored = opening(1, 5, 20, Some(40));
         let plan = |numbers, pending| pass_plan(numbers, Some(stored), pending);
         assert_eq!(plan(opening(1, 5, 20, Some(40)), false), PassPlan::Nothing);
         assert_eq!(
@@ -554,7 +524,7 @@ mod tests {
             pass_plan(opening(1, 5, 20, Some(40)), None, false),
             PassPlan::Everything
         );
-        let without_mod_sequence = folder_numbers(opening(1, 5, 20, None));
+        let without_mod_sequence = opening(1, 5, 20, None);
         assert_eq!(
             pass_plan(opening(1, 5, 20, None), Some(without_mod_sequence), false),
             PassPlan::Everything

@@ -20,16 +20,19 @@ the store's version; all tables are `STRICT`.
 | `server_position` | TEXT, null | Microsoft 365 only: the `@odata.deltaLink` the next round of changes starts from, once a first reading completed; null otherwise |
 | `fill_place` | TEXT, null | Microsoft 365 only: the `@odata.nextLink` an unfinished first fill continues from; null otherwise. Kept apart from `server_position` so that neither link's meaning depends on `synchronized` (external review, 2026-09-29) |
 | `synchronized` | INTEGER, 0 or 1 | Whether the folder's latest cycle completed; replaces 008's `loaded`. The first batch of an IMAP cycle that has messages to fetch, and each Microsoft 365 page that is not a reading's last, and a continued first fill's last page, set it to 0; the completing batch sets it to 1 |
-| `uid_validity` | INTEGER, null | *Since 2026-10-04 (spec FR-005)*: the numbering version the folder's latest state pass saw; IMAP only, null before a pass |
+| `uid_validity` | INTEGER, null | *Since 2026-10-04 (spec FR-005)*: the numbering version the folder's latest state pass saw; IMAP only, null while the folder is not completed |
 | `message_count` | INTEGER, null | The message count the latest state pass saw (EXISTS); the numbers are written together, and a server gives this one with every opening, so it says whether a pass stored them |
 | `uid_next` | INTEGER, null | The next UID the server predicted at the latest pass (UIDNEXT); null when the server gave none |
 | `highest_modseq` | INTEGER, null | HIGHESTMODSEQ at the latest pass, on a server that announces CONDSTORE for a mailbox that keeps mod-sequences; null otherwise |
 
 The other columns are 008's. Replacing a folder list (008 FR-001) keeps
 these seven columns of a folder it keeps. The four numbers are written
-with the batch that stores what their pass proved; a listing the server
-did not complete leaves them as they were, and a pass that lists nothing
-writes nothing. They serve the comparison of spec FR-005 only: a pass may
+with the completed state by a pass whose listing completed and left no
+listed message missing, and cleared with the not-completed state, since
+a folder not completed is listed whole at its next pass; a refused
+listing with nothing missing writes nothing, and a pass that lists nothing
+writes the completed state only when the folder is not yet marked so with
+these numbers, otherwise nothing. They serve the comparison of spec FR-005 only: a pass may
 list nothing, or the changed flags alone, only when the folder holds no
 pending change and the numbers it compares with are present: the stored
 ones of a folder with `synchronized = 1`, or, at a cycle's second pass,
