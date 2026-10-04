@@ -56,7 +56,7 @@ Quit cancels work without blocking GTK on a thread join. No command queue.
 | STARTTLS | Read the greeting, reject PREAUTH, get capabilities, require STARTTLS and wait for tagged OK. Discard the plaintext client's parser buffers and capabilities, then wrap the same socket in TLS. |
 | After STARTTLS | Create a fresh async-imap client over the verified TLS stream. Do not expect a second greeting. Read capabilities again through TLS. |
 | Sign-in | Prefer AUTHENTICATE PLAIN if advertised; otherwise LOGIN only without LOGINDISABLED. A rejected attempt does not trigger another authentication method. |
-| After sign-in | 002 uses no capability after sign-in, so none is requested. When a later feature needs one (iCloud advertised IDLE only after authentication), read capabilities again then; never reuse the pre-login set. |
+| After sign-in | 002 uses no capability after sign-in, so none is requested. When a later feature needs one (a server may advertise IDLE only after authentication), read capabilities again then; never reuse the pre-login set. |
 | Compression | *Added 2026-10-02 by 009 (research §14)*: when the signed-in capabilities include `COMPRESS=DEFLATE`, send `COMPRESS DEFLATE`; on OK put raw deflate between the session and the TLS stream (GIO `ZlibCompressor` and `ZlibDecompressor` as converter streams, swapped inside the stream handle the library holds); NO or BAD continues uncompressed. Never on the plaintext leg of STARTTLS. |
 | Inbox | SELECT the folder (EXAMINE until 2026-10-03; 011 FR-008); obtain UIDVALIDITY and EXISTS. |
 | Finish | Close the connection after the batch. No retained idle connection and no mail-changing CLOSE/EXPUNGE/COPY/MOVE commands; the only STORE commands are the flag changes of 011 FR-007. |

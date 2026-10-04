@@ -60,12 +60,12 @@ costs no second round trip (added at the challenge); a recent message's
 plain text is fetched whole anyway, and its page is read whole in the same
 request as its text (added at the live check).
 
-**Measured at the live check** (2026-10-01, the maintainer's iCloud,
-Gmail accounts, throwaway scripts): the 16 KiB piece of the plan left 21%
+**Measured at the live check** (2026-10-01, a Generic IMAP and a
+Gmail account, throwaway scripts): the 16 KiB piece of the plan left 21%
 of a 5 958-message Inbox's pages without words and cut about half short,
 since newsletters open with tens of kilobytes of styles; on 200 of them
 64 KiB gave 194 previews long enough for the row's two lines, the whole
-part 195, 16 KiB 137. iCloud spends about 75 ms per message whatever is
+part 195, 16 KiB 137. The Generic IMAP server spends about 75 ms per message whatever is
 read of it (200 pieces: 16 KiB 15–16 s, 64 KiB 15.5–16 s, whole parts
 15 s), and one request for two parts of a message costs half of two
 requests (80 messages: 3.0–3.3 s against 6.0–7.3 s); Gmail's time grows
@@ -90,7 +90,7 @@ about 92 messages per second on the slowest of the probed servers
 
 **Alternatives considered**: the server's own preview (RFC 8970
 `PREVIEW`): none of the three probed servers announces it
-(`CAPABILITY` before sign-in on Gmail, Yandex and iCloud; Gmail after
+(`CAPABILITY` before sign-in on Gmail and two Generic IMAP servers; Gmail after
 sign-in as well) — not relied on; the full part: a page of a newsletter
 is often 50 to 200 kilobytes, the piece is enough for 400 characters.
 
@@ -172,7 +172,7 @@ today.
 255 characters of the message body. It is in text format" (Microsoft
 Graph v1.0 reference). The delta query returns it under `$select`:
 checked on 2026-10-01 with one live request of the cycle's `$select` and
-order to a personal account's Inbox, whose first page of 10 entries all
+order to an account's Inbox, whose first page of 10 entries all
 carried a non-empty `bodyPreview` of at most 255 characters. The
 scripted service returns it in tests.
 

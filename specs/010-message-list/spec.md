@@ -639,8 +639,8 @@ compared with the rule in the user's locale.
   accepted this for previews on every row. Measured on the installed build
   at the live check (2026-10-02), each Inbox filled from nothing: 763
   Gmail messages in 56 s, 3 486 Microsoft 365 messages in 81 s and
-  5 976 iCloud messages in 12 min 27 s, the first batch listed after
-  about 10 s on Gmail and iCloud. iCloud spends about 75 ms opening each
+  5 976 Generic IMAP messages in 12 min 27 s, the first batch listed after
+  about 10 s on Gmail and that server, which spends about 75 ms opening each
   message whatever is read of it; making a fill faster belongs to
   synchronization (009). The batch
   stores its rows only with their previews, so an interrupted fill leaves

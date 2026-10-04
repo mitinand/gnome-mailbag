@@ -106,8 +106,8 @@ struct MessageReading {
 /// its preview is made from, with the plain part as well for an old
 /// message whose page may yield no words. A recent message's plain text is
 /// read whole anyway, so its preview needs no piece of it, and its page is
-/// read whole with it in the same request: a server such as iCloud spends
-/// most of a read on opening the message, not on its size
+/// read whole with it in the same request: some servers spend most of a
+/// read on opening the message, not on its size
 /// (specs/010-message-list/research.md §3).
 fn plan_reading(structure: Option<&MessagePart>, is_recent: bool) -> MessageReading {
     let mut reading = MessageReading {

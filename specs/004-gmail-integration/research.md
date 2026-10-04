@@ -1,7 +1,7 @@
 # Gmail Integration: Research
 
 **Date**: 2026-09-22–23. Facts checked in documentation, in source or by the
-read-only probe against the maintainer's Google account in GOA
+read-only probe against a Google account in GOA
 (`~/Projects/mailbag-imap-prototypes/gmail-probe`, outside the repository).
 Each section ends with the decision it supports.
 
@@ -257,4 +257,4 @@ capability decides. Synchronization asks for it on any server that
 announces it (009 research §14). Measured on the installed build: a fill
 of an Inbox of 763 messages took 31.5 s instead of 54.5 s, the text step
 27.8 s instead of 48.3 s, since Gmail's time grows with the bytes carried
-(010 research §3). iCloud and Yandex do not announce it.
+(010 research §3). Some Generic IMAP servers do not announce it.

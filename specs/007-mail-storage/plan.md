@@ -376,7 +376,7 @@ Cargo.toml, Cargo.lock, cargo-sources.json
 
 ## Post-implementation
 
-Acceptance on 2026-09-26 by the maintainer, with the maintainer's accounts
+Acceptance on 2026-09-26 by the maintainer, with live accounts
 and the Flatpak built from the branch and installed
 (`scripts/build-flatpak.sh --install`), following
 [quickstart.md](quickstart.md). Every step gave the expected result.

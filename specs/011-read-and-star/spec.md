@@ -748,7 +748,7 @@ the stored state, the banner and the server's record are compared.
 - *Known limitation, every IMAP server (observed 2026-10-04)*: a cycle
   learns the server's flags and removals of the messages it already holds
   from its listing at the start and, after its own commands, at the end;
-  during a long first fill (minutes on iCloud and Yandex) a change made
+  during a long first fill (minutes on a large mailbox) a change made
   in another client to an already stored message shows at the fill's end,
   as 009 FR-001 allows for a change made during a cycle. Changes the user
   makes in the window still leave at every batch. Splitting a short,

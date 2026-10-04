@@ -12,8 +12,8 @@ example; Mailbag integration still needs its own checks.
 mail access on its own `glib::MainContext`. GIO owns sockets and TLS. GTK and
 existing GOA observation stay on the application's main context.
 
-**Evidence:** The prototypes completed synthetic-server scenarios and real iCloud
-access with this combination. Inside Flatpak, p11-kit exposed 395 host trust
+**Evidence:** The prototypes completed synthetic-server scenarios and real Generic
+IMAP access with this combination. Inside Flatpak, p11-kit exposed 395 host trust
 entries, while the runtime's file certificate set contained 146 certificates.
 The tested file-based rustls/OpenSSL paths did not see host additions. Async GIO
 operations require a running GLib context; a Tokio executor does not drive it.
@@ -55,8 +55,8 @@ this baseline. Record any proposed departure before changing it; this revision
 does not claim a newly resolved Cargo.lock.
 
 **Evidence and reason for changing the earlier recommendation:** async-imap has
-production use in Delta Chat, and its parser accepted real iCloud replies that
-imap-codec rejected. In particular, iCloud sent `* BYE` without human-readable
+production use in Delta Chat, and its parser accepted real server replies that
+imap-codec rejected. In particular, a server sent `* BYE` without human-readable
 text. The earlier plan's strict parser was a compatibility cost on a real account.
 Both candidates needed fixes; the async-imap forks now address the relevant
 earlier objections, including lost ALERTs and runtime coupling.
@@ -245,7 +245,7 @@ does this. `text/plain` with a name parameter and no explicit inline disposition
 is treated as an attachment, including the RFC 2231 forms `name*` and `name*0*`
 that a server may leave unfolded. There is no signature verification or decryption.
 
-**Evidence:** The prototype includes 14 MIME samples. On the maintainer's real
+**Evidence:** The prototype includes 14 MIME samples. On a real
 mailbox, 42% of messages had only HTML. This is expected unsupported content in
 002, not a load failure or a reason to introduce HTML conversion.
 
@@ -288,7 +288,7 @@ to config.toml. The [packaging contract](contracts/packaging.md) is authoritativ
 for generation, checks, build inputs and license installation.
 
 **Evidence:** The maintainer built the prototype offline in 28 seconds and ran
-all 19 scenarios and real GOA/iCloud access inside the sandbox. This establishes
+all 19 scenarios and real GOA/Generic IMAP access inside the sandbox. This establishes
 the chosen packaging path; it does not mark the revised Mailbag package as tested.
 
 **Decision:** The manifest owns CARGO_HOME and CARGO_NET_OFFLINE. Meson inherits
@@ -408,7 +408,7 @@ Do not add a Graph backend or libsoup dependency in 002.
 
 IDLE can legitimately remain silent for up to 29 minutes. The prototype needed
 the socket timeout disabled during IDLE, with `Handle::wait_until` and a GLib
-timer, then restored for active I/O. iCloud advertised IDLE only after login;
+timer, then restored for active I/O. A server may advertise IDLE only after login;
 always refresh capabilities after authentication. IDLE watches one selected
 mailbox and does not replace later polling/synchronization design. No IDLE,
 polling, network monitor or background refresh is implemented in 002.
