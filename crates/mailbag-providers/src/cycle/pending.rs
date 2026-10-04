@@ -23,11 +23,13 @@ const UIDS_PER_COMMAND: usize = 100;
 /// Sends the folder's pending changes to the IMAP server by the UIDs the
 /// listing gave: one `UID STORE` per flag, wanted value and hundred
 /// messages. A message the listing lacks keeps its change for a later cycle.
+/// Says whether the server accepted a command.
 pub(super) async fn send_imap_changes(
     reader: &mut MailboxReader,
     listed_uids: &HashMap<String, u32>,
     batches: &mut BatchWriter<'_>,
-) -> Result<(), CycleEnd> {
+) -> Result<bool, CycleEnd> {
+    let mut command_accepted = false;
     let mut commands: BTreeMap<(MessageFlag, bool), Vec<(String, u32)>> = BTreeMap::new();
     for change in changes_to_send(batches)? {
         if let Some(uid) = listed_uids.get(&change.identity) {
@@ -46,7 +48,10 @@ pub(super) async fn send_imap_changes(
                 MessageFlag::Flagged => StoreFlag::Flagged,
             };
             match reader.store_flags(&uids, store_flag, wanted).await? {
-                None => batches.settle(&identities, flag, wanted)?,
+                None => {
+                    batches.settle(&identities, flag, wanted)?;
+                    command_accepted = true;
+                }
                 Some(refusal) => {
                     batches.drop_pending(&identities, flag, wanted)?;
                     return Err(refusal.into());
@@ -54,7 +59,7 @@ pub(super) async fn send_imap_changes(
             }
         }
     }
-    Ok(())
+    Ok(command_accepted)
 }
 
 /// Sends the folder's pending changes to Microsoft 365, one request each.

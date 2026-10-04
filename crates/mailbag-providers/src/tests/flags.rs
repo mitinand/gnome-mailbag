@@ -206,6 +206,48 @@ fn a_change_made_during_the_last_batch_is_sent_before_the_cycle_ends() {
     assert_eq!(pending_in(&store, &inbox), []);
 }
 
+/// 009 FR-001 as amended by 011 FR-007: a star taken off under a label that
+/// lists only starred messages, as Gmail's Starred, takes the message out of
+/// the label, and the same cycle lists the folder again to store that; a
+/// cycle that sends nothing lists once.
+#[test]
+fn a_folder_its_own_command_changed_is_in_agreement_after_the_cycle() {
+    let mut messages = plain_messages(2);
+    messages
+        .iter_mut()
+        .for_each(|message| message.flagged = true);
+    let fixture = ImapFixture::start(FixtureSetup {
+        messages,
+        flagged_view: true,
+        ..FixtureSetup::default()
+    });
+    let listings = || {
+        (fixture.log().fetches.iter())
+            .filter(|fetch| fetch.message_set == "1:*")
+            .count()
+    };
+    let (store, inbox) = synchronized_imap_inbox(&fixture);
+    want(
+        &store,
+        IMAP_ACCOUNT,
+        &imap_identity(20),
+        MessageFlag::Flagged,
+        false,
+    );
+    let before = listings();
+    let (outcome, stored, _) = synchronize_again(&fixture, &store);
+    assert_stored(&outcome);
+    assert_eq!(
+        store_commands(&fixture),
+        [r"UID STORE 20 -FLAGS.SILENT (\Flagged)"]
+    );
+    assert_eq!(identities(&stored), [imap_identity(10)]);
+    assert_eq!(pending_in(&store, &inbox), []);
+    assert_eq!(listings() - before, 2);
+    synchronize_again(&fixture, &store);
+    assert_eq!(listings() - before, 3);
+}
+
 /// SC-004: whether a change reached the server before the connection broke
 /// is settled by the next listing, never by sending it blindly.
 #[test]

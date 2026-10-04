@@ -467,6 +467,9 @@ pub struct FixtureSetup {
     /// The fault of the first `UID STORE`; `fault` and it share the one
     /// fault a server has.
     pub store_fault: Option<StoreFault>,
+    /// The mailbox lists only flagged messages, as Gmail's Starred label:
+    /// a message whose `\Flagged` is cleared leaves it.
+    pub flagged_view: bool,
 }
 
 impl Default for FixtureSetup {
@@ -514,6 +517,7 @@ impl Default for FixtureSetup {
             store_echoes_fetch: false,
             store_completion: None,
             store_fault: None,
+            flagged_view: false,
         }
     }
 }
@@ -1222,6 +1226,7 @@ impl Server {
                     .any(|(low, high)| (*low..=*high).contains(&key))
                     && (listing || self.setup.vanishing_uid != Some(message.uid))
                     && !self.setup.expunged_during_listing.contains(&message.uid)
+                    && (!self.setup.flagged_view || self.flags.borrow()[&message.uid].1)
             })
             .collect()
     }

@@ -46,6 +46,15 @@ FR-003 forbids addressing by a UID of another numbering) or `UID SEARCH
 X-GM-MSGID` per message (checked: works, ≈ 0.2 s each). Both rejected:
 the listing already holds the answer.
 
+**Amended 2026-10-04** (the installed build's check): a command may
+change the folder being listed, as unstarring under Gmail's Starred
+label removes the message from that label; the listing taken before the
+command then leaves the store out of agreement. A cycle whose command was
+accepted lists the folder once more at its end and stores its removals
+and flags (spec FR-007). Sending before the listing stays rejected for
+now: a search per message costs ≈ 0.2 s each, and a stored number per
+label is a schema change that moving and deleting will decide.
+
 **Checked**: Gmail's listing carries `X-GM-MSGID` per UID (009); the
 fork's `uid_store` exists and the stream reports a `NO`/`BAD` completion
 as its last error item (fork `fix/fetch-completion-status`).
@@ -103,6 +112,25 @@ none; the fork's stream takes both. A store on a UID the mailbox lacks
 answers `OK` and changes nothing (all three servers), so a vanished
 message produces no refusal. The special mailboxes have modified-UTF-7
 names; they are found by attribute, as 008 does.
+
+**Observed 2026-10-04** (the installed build's check, on a live account):
+a star set in Gmail's web interface and taken off by a cycle's
+`UID STORE -FLAGS.SILENT (\Flagged)` (answered `OK`) stayed shown in the
+web interface, in a private browser window and in the mobile app for
+over an hour, while IMAP reported `FLAGS (\Seen)` and no `\Starred` in
+every mailbox, the message was alone in its thread, and Gmail's own
+search (`is:starred`, `in:starred`, over IMAP's `X-GM-RAW` and on the
+web) and the Starred label left it out. Neither `-X-GM-LABELS (\Starred)`
+nor setting and then clearing `\Flagged` changed what the apps showed.
+A star set and taken off over IMAP left the apps and IMAP agreeing; a
+star taken off on the web reached IMAP within about a minute. Other
+IMAP clients report the same asymmetry for Gmail (eM Client forum,
+"Syncing of flagged (= starred) Gmail emails"); Google documents no
+star state beyond `\Flagged`/`\Starred` over IMAP, and the Gmail REST
+API, which would show the message's labels, is not enabled for the
+Online Accounts client (`403 PERMISSION_DENIED`). Recorded as a known
+limitation (spec Assumptions); to be looked at again later, since the
+apps may catch up after hours.
 
 ## §6 Microsoft 365: PATCH and what the next round reports
 

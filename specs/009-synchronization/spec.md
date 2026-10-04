@@ -437,7 +437,11 @@ documentation does not say how, and FR-007's rule covers either form.
   is whole (FR-008). A cycle reads only: it never changes anything on the
   server. *Amended 2026-10-03 by [Read and star](../011-read-and-star/spec.md)*: a cycle sends
   the folder's pending flag changes under 011 FR-007, after its listing,
-  before each batch and before closing, and otherwise reads.
+  before each batch and before closing, and otherwise reads. The
+  agreement covers what the cycle's own commands change: an IMAP cycle
+  whose command was accepted lists the folder once more at its end
+  (*amended 2026-10-04*, 011 FR-007); a message that listing shows for
+  the first time arrived during the cycle and comes with the next one.
 
 **Rules for every feature**
 

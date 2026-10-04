@@ -202,9 +202,11 @@ flowchart TD
   window reads again" (the challenge found the old name false for the
   drop).
 - `cycle::imap::synchronize_imap_folder`: open → read → list → identify →
-  missing → store the listing → `loop { send; next chunk or break;
-  fetch; store }` → finish; the listing's `identity → uid` map lives in
-  `listed`.
+  missing → store the listing → send → `for` each chunk `{ fetch; store;
+  send }` → when a command was accepted, list once more and store the
+  removals and flags it proves (amended 2026-10-04) → finish; the
+  listing's `identity → uid` map lives in `listed_uids`;
+  `send_imap_changes` says whether the server accepted a command.
 - `cycle::graph::synchronize_graph_folder`: after the round's last page
   is stored, and after each stored page of a first fill or a full
   reading, `send_graph_changes`.

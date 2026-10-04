@@ -48,7 +48,8 @@ struct ListedMessage {
 /// research §2, §3): list every message, store what the listing proves,
 /// then fetch the missing messages newest first, a batch at a time. The
 /// user's pending changes are sent by the listing's UIDs before each batch
-/// and once before the cycle ends (specs/011-read-and-star FR-007).
+/// and once before the cycle ends; when the server accepted one, the folder
+/// is listed again (specs/011-read-and-star FR-007).
 pub(super) async fn synchronize_imap_folder(
     access: ImapAccess,
     identity_rule: IdentityRule,
@@ -65,18 +66,21 @@ pub(super) async fn synchronize_imap_folder(
         .collect();
     let missing = missing_messages(&listed, &stored);
     batches.store(&listing_changes(&listed, &stored, &listing, &missing))?;
-    send_imap_changes(&mut server.reader, &listed_uids, batches).await?;
+    let mut command_accepted = send_imap_changes(&mut server.reader, &listed_uids, batches).await?;
     for batch_messages in missing.chunks(BATCH_SIZE) {
         let (batch, refusal) = server
             .fetch_arrivals(batch_messages, recent_limit, batches)
             .await?;
         batches.store(&batch)?;
-        send_imap_changes(&mut server.reader, &listed_uids, batches).await?;
+        command_accepted |= send_imap_changes(&mut server.reader, &listed_uids, batches).await?;
         // The rows the server withheld are missing, so the folder stays
         // not completed; the listing's proof is stored.
         if let Some(refusal) = refusal {
             return Ok(batches.finish(listed.len(), Some(short_list(refusal))));
         }
+    }
+    if command_accepted {
+        store_listing_after_commands(&mut server, batches).await?;
     }
     if let Some(refusal) = listing.refusal {
         return Ok(batches.finish(listed.len(), Some(short_list(refusal))));
@@ -88,6 +92,26 @@ pub(super) async fn synchronize_imap_folder(
         })?;
     }
     Ok(batches.finish(listed.len(), None))
+}
+
+/// Lists the folder again after the cycle's own commands, which may have
+/// changed it, as a star taken off a message under Gmail's Starred label
+/// takes it out of the label, and stores the removals and flags the listing
+/// proves. Messages it newly lists wait for the next cycle, and the folder's
+/// state stays the cycle's (specs/011-read-and-star FR-007; 009 FR-001).
+async fn store_listing_after_commands(
+    server: &mut ImapFolder,
+    batches: &mut BatchWriter<'_>,
+) -> Result<(), CycleEnd> {
+    let stored = batches.read_folder_sync()?;
+    let listing = server.list_messages().await?;
+    let listed = server.identify(&listing, &batches.folder.identity)?;
+    let proven = FolderBatch {
+        state: None,
+        ..listing_changes(&listed, &stored, &listing, &[])
+    };
+    batches.store(&proven)?;
+    Ok(())
 }
 
 /// The listed messages the folder does not hold, highest UID first, so the

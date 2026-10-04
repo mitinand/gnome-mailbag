@@ -453,11 +453,19 @@ date and becomes a control.
   simplification review of the branch diff in a fresh session; findings
   reported, not applied, until the maintainer decides; the accepted ones
   applied with ./scripts/check.sh.
-- [ ] T032 The quickstart's installed-build checks with the maintainer
+- [x] T032 The quickstart's installed-build checks with the maintainer
   (SC-008 with an account of each provider; the record checked for
   privacy: identities and flags, no subject); findings fixed within this
   portion; the amendments of T002 checked against the built behaviour.
-- [ ] T033 STOP: final report with the size against the budget (≤ 600
+- [x] T037 From T032 (spec FR-007 and 009 FR-001, amended 2026-10-04):
+  in crates/mailbag-providers/src/cycle/imap.rs a cycle whose command
+  was accepted lists the folder once more after its last sending step and
+  stores the removals and flag states it proves (no arrivals, no state);
+  `send_imap_changes` returns whether a command was accepted; the scripted
+  IMAP server gains a mailbox that lists only flagged messages, as Gmail's
+  Starred label; a test: unstarring there takes the message out of the
+  stored folder in the same cycle.
+- [x] T033 STOP: final report with the size against the budget (≤ 600
   production, ≤ 850 test lines), what was verified and how, and the open
   items.
 

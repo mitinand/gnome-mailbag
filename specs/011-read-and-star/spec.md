@@ -410,6 +410,20 @@ the stored state, the banner and the server's record are compared.
   seeing the first line's star in the live window, with the place kept
   rather than the star sliding in.
 
+### Session 2026-10-04 (the installed build)
+
+- Q: In Gmail's Starred label, a star taken off and refreshed left the
+  message in the folder; is the folder in agreement after the cycle? →
+  A: It was not: the cycle's listing came before its own command, and
+  Gmail took the message out of the label only with the command. 009
+  FR-001's promise covers what a cycle's own commands change, so a cycle
+  whose command the server accepted lists the folder once more at its
+  end and stores what that listing proves (FR-007). Sending before the
+  listing was weighed: Gmail would need each message's number in each
+  label, found by a search per message or stored per label; deferred to
+  moving and deleting (FR-013(b)), whose commands raise the same
+  question. The maintainer's choice, the cheapest.
+
 ## Requirements
 
 ### Functional Requirements
@@ -498,8 +512,14 @@ the stored state, the banner and the server's record are compared.
   transaction, so the window shows no difference; a wish made meanwhile
   for another value stays and goes with the next sending step. On IMAP,
   a pending message the listing
-  does not show is left for the cycle of a folder that lists it. A cycle
-  otherwise changes nothing on the server (009 FR-001, amended).
+  does not show is left for the cycle of a folder that lists it. A
+  command may change the folder itself, as a star taken off a message
+  under Gmail's Starred label takes it out of the label: on IMAP a cycle
+  that had a command accepted lists the folder once more after its last
+  sending step and stores the removals and flags that listing proves;
+  messages it newly lists arrived during the cycle, which 009 FR-001
+  lets the next cycle bring, and wait for it. A cycle otherwise
+  changes nothing on the server (009 FR-001, amended).
 - **FR-008 — Mailboxes opened for writing**: An IMAP folder MUST be opened
   for writing (`SELECT`) wherever a cycle may send; a mailbox the server
   opens read-only refuses the command, and FR-010 applies. (Amends 002
@@ -645,6 +665,22 @@ the stored state, the banner and the server's record are compared.
   the open message.
 - IMAP servers bound a command line (Dovecot's default is 64 KiB); a
   hundred UIDs per command stays far below any such bound.
+- *Known limitation, Gmail (observed 2026-10-04, research §5)*: a star
+  set in Gmail's own apps may stay shown there after a cycle takes it
+  off over IMAP, although IMAP, Gmail's search and the Starred label all
+  report the message unstarred; a star set and taken off over IMAP
+  leaves both views agreeing. Nothing over IMAP reaches that state, so
+  the application shows the server's IMAP state, the truth it can read.
+- *Known limitation, every IMAP server (observed 2026-10-04)*: a cycle
+  learns the server's flags and removals of the messages it already holds
+  from its listing at the start and, after its own commands, at the end;
+  during a long first fill (minutes on iCloud and Yandex) a change made
+  in another client to an already stored message shows at the fill's end,
+  as 009 FR-001 allows for a change made during a cycle. Changes the user
+  makes in the window still leave at every batch. Splitting a short,
+  repeated state pass from the content backfill is the premise background
+  synchronization (020) settles; no re-listing every few batches is added
+  here.
 
 ## Amendments to earlier specifications
 
