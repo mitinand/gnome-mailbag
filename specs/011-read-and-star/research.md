@@ -56,7 +56,8 @@ now: a search per message costs ≈ 0.2 s each, and a stored number per
 label is a schema change that moving and deleting will decide. *Later
 the same day*: the listing once more became 009's second state pass,
 which lists only what the folder's numbers say changed (009 research
-§15, spec FR-005).
+§15, spec FR-005). *Later still*: the pass confirms no command; a command
+is confirmed by the flags read right after it (§15, amended).
 
 **Checked**: Gmail's listing carries `X-GM-MSGID` per UID (009); the
 fork's `uid_store` exists and the stream reports a `NO`/`BAD` completion
@@ -368,11 +369,12 @@ a recorded limitation.
 hold the wanted value, when the server refuses it (§7), or with the
 message (spec FR-001, FR-007, FR-009):
 
-- *IMAP*: a listing of this cycle shows the wanted value. The listing at
-  the cycle's start ends a change no command of this cycle carried, with
-  no command; a change the cycle sent ends by the listing after the
-  cycle's commands (§2, amended 2026-10-04). A command's `OK` ends
-  nothing.
+- *IMAP*: a report of this cycle shows the message with the wanted value.
+  The listing at the cycle's start ends a change no command of this cycle
+  carried, with no command; a change the cycle sent ends by the flags
+  read for the command's messages right after it (*amended 2026-10-04,
+  later*, below; until then by the listing after the cycle's commands,
+  §2). A command's `OK` ends nothing.
 - *Microsoft 365*: the service accepts the request (2xx). A delta report
   never ends a pending change, so every pending change is sent; a
   request sets a value, so sending one the service already holds is
@@ -421,11 +423,62 @@ user then flips it back in the window). So a later step compares only
 with the value this cycle last sent: a wish equal to it waits for the
 listing after the commands; any other wish is sent, a command for a value
 the server already has being harmless, and a user changing back while a
-command is in flight is still sent (§14.1). After its last sending step,
-a cycle that sent anything lists the folder again, stores what that
-listing proves, and ends the sent changes it shows with their value; a
-sent change it does not show, or shows otherwise, stays for the next
-cycle of a folder that lists the message.
+command is in flight is still sent (§14.1). *Until 2026-10-04 (later)*:
+after its last sending step, a cycle that sent anything listed the folder
+again, stored what that listing proved, and ended the sent changes it
+showed with their value; a sent change it did not show, or showed
+otherwise, stayed for the next cycle of a folder that lists the message.
+
+**Amended 2026-10-04 (later): the reading after the command.** An automated
+review of the pull request found, and the scripted server reproduced once
+it kept its mod-sequence for a command that changes nothing, that a wish
+equal to the server's value (made and taken back before the command went
+out) was sent at a later step and confirmed by nothing: 009's state pass
+lists only what the folder's numbers call for, and RFC 7162 §3.1.11 says
+such a command SHOULD NOT change the mod-sequence (a client MUST NOT rely
+on either behaviour); the wish stayed pending and the next refresh sent it
+again, over a change another client had made. The cause was the premise:
+a command confirmed by a later snapshot of the whole folder, which the
+state pass then made conditional (since then constitution principle VIII:
+a fact about a message comes from the server's report of it). **Decision**: a sent change ends by the
+server's report of its own message, read right after the command with
+`UID FETCH <uids> (UID FLAGS)` for the UIDs the command named (one round
+trip, up to a hundred messages, 4–6 KB; 009 research §15): a message
+reported with the wanted value is settled; one not reported has left the
+folder (RFC 3501 §6.4.8) and waits for a folder that lists it; one
+reported with another value was changed meanwhile and keeps its wish for the next cycle; a reading the server refuses confirms
+nothing and the cycle goes on, since no message is missing and the
+incomplete-list notice would say so falsely (the challenge's finding); the
+wishes wait for the next cycle's listing. The state pass after the commands stays
+for the folder's own change (Gmail's Starred) and confirms nothing;
+`settle_sent_changes` goes, and `sent_changes` keeps a cycle from sending
+an unconfirmed wish again at each batch and tells it that commands went
+out, which calls the second pass. A star taken off under Gmail's Starred
+leaves the label with the command, so the reading does not report it and
+the unstar stays pending until another label's cycle lists the message
+(spec Assumptions, a known limitation; the challenge's finding).
+
+**Probed on 2026-10-04** (a Gmail account, Generic IMAP servers A and B;
+one old message flagged and restored):
+
+| `UID STORE` without `.SILENT` | Gmail | Server A | Server B |
+|---|---|---|---|
+| A flag that changes | reports the message's new flags (twice: an unsolicited update and the echo) | reports them | reports them |
+| A flag already as wanted | **no report; the mod-sequence unchanged** | reports; the mod-sequence raised even so | reports |
+| With `.SILENT`, no change | nothing | nothing; the mod-sequence raised | nothing |
+| A UID the mailbox lacks | no report, `OK` | the same | the same |
+| Unstarring under Starred | the report, then `EXPUNGE` and `EXISTS` | — | — |
+
+**Alternatives**: the command's own echo (no `.SILENT`): one round trip
+fewer, but Gmail's silence for a command that changes nothing cannot be
+told from a UID the mailbox lacks, so a reading would be needed anyway
+for every message without an echo, two paths for one answer; not taken.
+Listing the whole folder after every cycle that sent commands, as this
+feature did before the state pass: one condition, but the full listing's
+cost on every refresh that carries a change, and the premise kept; not
+taken. Ending at a later step a wish equal to the stored server value
+without a command: the second review's case (another client flips the
+flag during the fill) loses the user's change; not taken.
 
 **Left as a limitation**: a delta replay of an older value after an
 accepted request writes that value as the server's; with nothing pending
@@ -439,7 +492,8 @@ of delta, not this feature's (spec Assumptions).
    `NO`): the refusal was dropped and the cycle reported success. Now the
    cycle ends incomplete with the server's reply, as after a refused first
    listing; what the partial listing shows is stored and ends what it
-   shows.
+   shows. A refused reading of the flags after a command, by contrast,
+   confirms nothing and ends nothing (amendment of 2026-10-04, later).
 4. *Two quick clicks on a star* both ask for the same value, since the
    star takes its state only from the rows read after each write (§9,
    §12). Kept, as a limitation (spec Assumptions): the second click must

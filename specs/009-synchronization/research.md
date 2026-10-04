@@ -678,8 +678,11 @@ nothing did; server A's is one round trip either way.
   Not taken; the listing stays where the numbers say something changed.
 - QRESYNC: announced by server A only, not by Gmail. Not taken.
 - A flags fetch of the sent UIDs alone to confirm commands: one round
-  trip everywhere; optional (plan), since the second pass covers it and
-  costs the same on CONDSTORE servers.
+  trip everywhere; optional at first, since the second pass seemed to
+  cover it; taken later the same day as the way a command is confirmed
+  (011 FR-007(d), 011 research §15): the second pass does not list a
+  message whose command changed nothing, since a server need not raise
+  its mod-sequence for it (RFC 7162 §3.1.11).
 - Arrivals alone by `UID FETCH <stored UIDNEXT>:*`, with removals ruled
   out when EXISTS grew by exactly the arrivals: optional (plan); new mail,
   the most common change, would cost a round trip instead of the listing.

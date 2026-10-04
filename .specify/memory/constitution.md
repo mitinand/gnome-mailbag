@@ -1,15 +1,23 @@
 <!-- Sync Impact Report
-Version: 2.2.0 -> 2.3.0 (new principle).
+Version: 2.3.0 -> 2.4.0 (new principle).
 Modified principles: none.
 Added principles:
-- VII. Gmail first, each provider on its own terms: Gmail is the first-priority
-  provider, and each provider is designed for by its own documentation and
-  measured behaviour; provider-specific logic is expected when either shows a
-  better path, with Principle I still requiring that reason.
-Rationale: the 010 live check tuned preview reading on one IMAP server's
-measurements and applied it to every IMAP server, while Gmail measured
-differently; treating Gmail as a case of generic IMAP made the most common
-provider's path a compromise.
+- VIII. A fact about a message comes from the server's report of it: the
+  outcome of the application's own change is never inferred from an OK, from
+  the absence of a report or from a folder's numbers; a folder's numbers
+  stand for its messages only where a standard requires the implication, and
+  then decide how much is read, never what counts as proof; code relies on
+  what a standard requires, handles what it recommends or allows both ways,
+  and the scripted servers show the required behaviour by default.
+Rationale: the reviews of read-and-star and of synchronization's state pass
+on 2026-10-04 found holes with one cause: a flag command was confirmed by
+inference (an OK, then a later listing, then unchanged folder numbers)
+instead of by the server's report of the message; a server following the
+standard's recommendation for a command that changes nothing escaped all
+three, and the scripted server, built on the same inference, hid it.
+Previous report (2.2.0 -> 2.3.0): added principle VII, Gmail first, each
+provider on its own terms, after the 010 live check tuned preview reading on
+one IMAP server's measurements and applied it to every server.
 Added sections: none. Removed sections: none.
 Templates: unchanged; Spec Kit reads the constitution at runtime.
 Deferred items: none.
@@ -98,6 +106,26 @@ Provider-specific logic is the expected design when the provider's documentation
 or a measurement shows a better path for that provider; Principle I still
 requires that reason.
 
+### VIII. A fact about a message comes from the server's report of it
+
+A fact about a message on the server, its flags, its presence in a folder, the
+outcome of a change the application made, is established by the server's
+report of that message: a listing or a fetch that names it with the values in
+question, or the answer to the request about it on a service that answers per
+message. The outcome of the application's own change is never inferred from
+an `OK` that does not name the message, from the absence of a report or from
+a folder's numbers. A folder's numbers stand for the state of its messages
+only where a standard requires the implication, as RFC 3501 requires of
+UIDNEXT when messages arrive and RFC 7162 of a message's mod-sequence when
+its flags change; they then decide how much is read, never what counts as
+proof of a change.
+
+Code relies only on what a standard requires. A behaviour a standard
+recommends or allows is handled both ways, and the scripted servers used in
+tests show the required behaviour by default, with the recommended one behind
+an explicit setting, so that a test cannot pass on an assumption. Extensions
+decide how much is read, never what counts as proof.
+
 ## Public Repository Language
 
 All repository content and maintainer-authored issues, PRs and release notes must
@@ -117,4 +145,4 @@ an implementation. Review design and code changes against these principles. Use
 semantic versioning for amendments; constitution versions are independent of
 application releases.
 
-**Version**: 2.3.0 | **Ratified**: 2026-09-08 | **Last Amended**: 2026-10-01
+**Version**: 2.4.0 | **Ratified**: 2026-09-08 | **Last Amended**: 2026-10-04

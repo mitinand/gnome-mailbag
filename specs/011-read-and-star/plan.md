@@ -54,8 +54,8 @@ opened with `SELECT` (§2, §4); on Microsoft 365 it sends one `PATCH` per
 message after its round of changes (§6). A pending change ends only when
 the cycle sees the server hold it (§15): on IMAP a listing of the cycle
 shows the value (the first listing, without a command, for a change not
-yet sent; a second listing after the cycle's commands for one it sent;
-an OK ends nothing); on Microsoft 365 the service accepts the request,
+yet sent; the flags read right after the command for one it sent, since
+2026-10-04 (later); an OK ends nothing); on Microsoft 365 the service accepts the request,
 and every pending change is sent. The settle writes server value := that
 value and ends a pending value equal to it, in one transaction; a newer
 wish for another value stays for the next sending step (§14). A server
@@ -72,7 +72,7 @@ connection, or a 5xx answer, leaves the pending change for the next cycle
 | Stored flags and pending values | three columns; effective values in the row read; the batch write of the reported flags, leaving the pending values (§15); `read_pending_changes`; `write_pending_flag`; `settle_flags` and `drop_pending_flags`, ending only a pending value equal to the command's | ≈ 135 (domain + store) |
 | Mailboxes opened for writing | `session::select_mailbox` replaces `examine_mailbox`; the reconnect path uses it too | ≈ 8 |
 | The flags on the wire | `\Flagged` parsed with `\Seen`; `MailboxReader::store_flags(uids, flag, set)`; `flag` among the Microsoft 365 fields, `flagStatus` read and merged; `update_message_flags` | ≈ 110 (imap + graph) |
-| The cycle sends | the cycles' read side of the star; `cycle/pending.rs`: `send_imap_changes` (a hundred UIDs per command), `send_graph_changes` (a 5xx keeps the pending change), an IMAP wish equal to the listing's value ended without a command, the sent values and the listing after the commands that settles them (§15); the batch writer's `pending_changes`, `settle`, `drop_pending` and the `StoreChanged` event; both loops restructured | ≈ 170 |
+| The cycle sends | the cycles' read side of the star; `cycle/pending.rs`: `send_imap_changes` (a hundred UIDs per command), `send_graph_changes` (a 5xx keeps the pending change), an IMAP wish equal to the listing's value ended without a command, the sent values and, since 2026-10-04 (later), the flags read right after each command that settle them (§15; until then the listing after the commands); the batch writer's `pending_changes`, `settle`, `drop_pending` and the `StoreChanged` event; both loops restructured | ≈ 170 |
 | The window | the `message` action group; the writes one at a time on the pool, the re-read and the failed write's toast; the star in the difference update and the envelope's icon; read on opening writes the change; the star in the row; the header menu's two actions; the failure wording | ≈ 130 |
 
 ## How a change travels
@@ -97,11 +97,12 @@ sequenceDiagram
     K->>S: SELECT, UID FETCH 1:* (UID FLAGS [X-GM-MSGID])
     K->>D: store the listing (server values; pending values untouched)
     K->>D: read_pending_changes(folder)
-    K->>S: UID STORE 4711,4720 +FLAGS.SILENT (\Flagged)
+        K->>S: UID STORE 4711,4720 +FLAGS.SILENT (\Flagged)
     S-->>K: OK (the cycle records what it sent)
+    K->>S: UID FETCH 4711,4720 (UID FLAGS), the reading after the command (since 2026-10-04, later)
+    K->>D: settle_flags: flagged := 1, flagged_pending := NULL where it equals 1, for the messages the reading shows starred
     K->>S: fetch the missing messages, a batch at a time (sending again before each)
-    K->>S: UID FETCH 1:* (UID FLAGS …) once more
-    K->>D: settle_flags: flagged := 1, flagged_pending := NULL where it equals 1
+    K->>S: SELECT once more: 009's state pass after batches or commands, which confirms nothing
 ```
 
 ## The cycle's loop
@@ -110,7 +111,7 @@ sequenceDiagram
 flowchart TD
     open([SELECT the folder]) --> list[List every message:<br/>identity → UID, flags]
     list --> storelist[Store what the listing proves<br/>removals, flag states, folder state]
-    storelist --> send[Send the folder's pending changes<br/>by the listing's UIDs; a wish the listing<br/>already shows ends without a command]
+    storelist --> send[Send the folder's pending changes<br/>by the listing's UIDs; a wish the listing<br/>already shows ends without a command;<br/>the flags read right after each command<br/>settle what they show]
     send --> ok{Accepted?}
     ok -->|OK| settle[Record what was sent]
     ok -->|NO or BAD| drop[Drop that command's pending changes,<br/>tell the window the store changed,<br/>fail the cycle with the reply]
@@ -118,7 +119,7 @@ flowchart TD
     settle --> more{Missing messages left?}
     more -->|yes| batch[Fetch one batch, store it]
     batch --> send
-    more -->|no| relist[When anything was sent: list again,<br/>store what it proves, settle the sent<br/>changes it shows; a refusal ends incomplete]
+    more -->|no| relist[After batches or commands: 009's state pass,<br/>store what it proves; it confirms nothing<br/>since 2026-10-04, later; a refusal ends incomplete]
     relist --> done([Close])
 ```
 
@@ -189,7 +190,12 @@ flowchart TD
      not compared, since by a later step they may be minutes old;
   2. group the others by `(flag, wanted)`, a hundred UIDs per command;
   3. per command `store_flags`; `Ok(None)` → record each in
-     `sent_changes`; `Ok(Some(reply))` → `batches.drop_pending(uids,
+     `sent_changes`, then `fetch_flags(uids)` (amended 2026-10-04, later,
+     §15): each message it reports with the wanted value →
+     `batches.settle`, grouped by flag and value; one it does not report,
+     or reports otherwise, stays pending; a reading the server refuses
+     settles nothing; `Ok(Some(reply))` →
+     `batches.drop_pending(uids,
      flag, wanted)` and `Err(CycleEnd::Failed(refused(reply)))`; `Err` →
      `Err` (pending stays).
 - `send_graph_changes(service, batches)`: the same per message with
@@ -221,7 +227,9 @@ flowchart TD
   which the cycle ends incomplete. *Later on 2026-10-04*:
   `confirm_sent_changes` becomes 009's second state pass, which lists
   only what the folder's numbers call for (009 plan, "Amendment
-  2026-10-04"; 009 FR-005).
+  2026-10-04"; 009 FR-005). *Later still on 2026-10-04*: the second pass
+  confirms nothing; `settle_sent_changes` goes, and the sending step
+  settles by `fetch_flags` (above, "Amendment 2026-10-04 (later)").
 - `cycle::graph::synchronize_graph_folder`: after the round's last page
   is stored, and after each stored page of a first fill or a full
   reading, `send_graph_changes`, which sends every pending change (§15).
@@ -355,6 +363,12 @@ Taken on 2026-10-02 and 2026-10-03; recorded in the spec's Clarifications:
     has not sent with that value (§15). The cost of the listing after the
     commands on large folders is not changed here; it goes to the probes
     at the start of background synchronization. The maintainer's decision.
+12. From the third review of 2026-10-04 (spec Clarifications; research
+    §15, amended): a sent change ends by the flags read right after its
+    command, and the state pass after the commands confirms nothing; the
+    command's own echo was weighed and not taken, since Gmail sends none
+    for a command that changes nothing. The maintainer's decision, after
+    the probe; the rule is constitution principle VIII.
 
 ## Portions and review pauses
 
@@ -384,6 +398,53 @@ above. The maintainer commits.
 6. **Final passes** — consistency analysis, the GUI tests one by one, the
    simplification review, the quickstart's installed-build checks with
    the maintainer (SC-008); the amendments checked.
+
+## Amendment 2026-10-04 (later): the reading after the command
+
+Decided after the third review and a probe of three servers (spec
+Clarifications, research §15), on branch `claude/read-star`, for one
+portion (tasks Phase 8).
+
+### Size
+
+| Item | Budget | Estimate |
+|---|---|---|
+| Production lines | ≤ 60 net | ≈ 20: `mailbag-imap` ≈ 15 (`fetch_flags` through `list` taking the UID set, with its own record line); `mailbag-providers` ≈ 5 net (the settle after each command ≈ +25 in `send_imap_changes`, `settle_sent_changes` −20) |
+| Files touched | — | imap `reader.rs`, `lib.rs`, `test_server.rs`; providers `cycle/pending.rs`, `cycle/imap.rs` |
+| New threads, timers, queues, types, dependencies | 0 | 0 |
+| Changes to other features' documents | 009, 002 | 009 spec FR-005(b) and SC-012, plan, research §15, contract; 002 contracts/imap-reading.md |
+| Tests | ≤ 120 net | ≈ 60: imap ≈ 20 (the named UIDs alone, a UID the mailbox lacks left out); providers ≈ 40 (SC-004's command that changes nothing, confirmed in the same cycle with the scripted server's mod-sequence unchanged; the lacking UID; the tests of the listing after the commands rewritten for the reading) |
+
+### Decision
+
+A sent change ends by the server's report of its own message, read right
+after the command; the state pass after the commands learns the folder's
+own change and confirms nothing (spec FR-007(d), (e); research §15,
+amended). The command's own echo, a `UID STORE` without `.SILENT`, was
+weighed and not taken: Gmail reports nothing for a command that changes
+nothing (the probe), so the echo cannot tell that from a UID the mailbox
+lacks, and a reading would be needed for every message without an echo.
+
+### Function map changes
+
+- `MailboxReader::fetch_flags(uids: &[u32]) -> Result<FolderListing,
+  ImapError>`: `UID FETCH <set> (UID FLAGS)` by the listing's code
+  (`list` takes the set; the Gmail items are not needed, since the
+  command's own `(identity, uid)` pairs name the messages); the server's
+  refusal in `FolderListing.refusal`; its own record line at debug with
+  the count it reports, not the listing's "mailbox listed".
+- `send_imap_changes(...)`, its signature unchanged: after each accepted
+  `store_flags`, `fetch_flags(uids)`; a message reported with the wanted
+  value → `batches.settle` (grouped, one write per flag and value); not
+  reported, or reported otherwise → stays pending, and `sent_changes`
+  keeps it from being sent again this cycle; a reading the server refuses
+  settles nothing (the reader records the refusal at debug).
+- `synchronize_imap_folder`: the second pass stays (after batches or
+  commands, `sent_changes` telling that commands went out) and
+  `settle_sent_changes` goes.
+- The scripted server: `raise_modseq` only when the `UID STORE` changed a
+  flag, as Gmail does (server A raises it even so; the stricter server is
+  the one to model, constitution VIII).
 
 ## Technical Context
 
@@ -417,7 +478,7 @@ message under many labels.
   must not undo my change" (spec US1), sending between batches answers
   the minutes-long first fill (US3), ending a wish the IMAP listing
   already shows answers "star, then unstar" and "another client did it
-  first" (Edge Cases, FR-009), the listing after the commands answers a
+  first" (Edge Cases, FR-009), the flags read after a command answer a
   command whose OK changed nothing (§15), the settle write answers the
   flicker between sending and the next listing.
   Optional mechanisms are listed apart with their situations. No

@@ -6,6 +6,8 @@ Documents written on 2026-10-02, challenged the same day (the spec's
 requirements and the plan's mechanisms, in fresh sessions) and analysed
 for consistency on 2026-10-03; approved on 2026-10-03 (T001) with the
 toast for a change the store cannot write; T002 applied the same day.
+Amended on 2026-10-04 (later): Phase 8, the reading after the command
+(T046–T049), approved the same day (T046).
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -38,6 +40,7 @@ invariants.
 | 4. The cycle sends | T018–T023 | feat(sync): send pending flag changes with the cycle | Read and star |
 | 5. The window | T024–T029 | feat(ui): star, mark unread and durable read on opening | Read and star |
 | 6. Final passes | T030–T033 | (per review) | Read and star |
+| 8. The reading after the command | T046–T049 | fix(sync): confirm a flag command by the flags read after it | Read and star |
 
 ## Phase 1: documents and review (portion 1)
 
@@ -536,6 +539,45 @@ recorded limitation.
   portion was committed by the maintainer in two commits after review;
   `scripts/check.sh` and the thirteen GTK tests, one per process, passed
   on the branch with the state pass of 009 on top (its Phase 8).
+
+## Phase 8: the reading after the command (amendment of 2026-10-04, later)
+
+From the third review (spec Clarifications; research §15, amended): a
+sent change ends by the flags read right after its command, not by the
+listing or the state pass after the commands. Budget (plan, "Amendment
+2026-10-04 (later)"): ≤ 60 production and ≤ 120 test lines net; no new
+type, thread or timer; no change to the forks.
+
+- [x] T046 STOP (approved on 2026-10-04 after the challenge, its four
+  findings applied, the Starred unstar recorded as a limitation): present the amended spec.md (status, Edge Cases,
+  FR-007(b), (d), (e), SC-004, Clarifications of the third review,
+  Amendments), plan.md (the amendment's section, the function map,
+  decision 12), research.md (§2, §15 amended with the probe table),
+  data-model.md, quickstart.md, this tasks.md, and 009 spec FR-005(b) and
+  SC-012, 009 plan, 009 research §15, 009 contracts/synchronization.md,
+  002 contracts/imap-reading.md, and constitution principle VIII (version
+  2.4.0); then `spec-challenge` in a fresh session; wait for approval
+  before any code.
+- [ ] T047 In crates/mailbag-imap/src/reader.rs `fetch_flags(uids) ->
+  Result<FolderListing, ImapError>`: `UID FETCH <set> (UID FLAGS)` by the
+  listing's code (`list` takes the set), its refusal in `FolderListing`,
+  its own record line at debug; the scripted server (test_server.rs)
+  raises a message's mod-sequence only when a `UID STORE` changes a flag,
+  as Gmail does (constitution VIII); tests in src/tests/: the flags of
+  the named UIDs alone, a UID the mailbox lacks left out.
+- [ ] T048 In crates/mailbag-providers/src/cycle/pending.rs
+  `send_imap_changes` settles each command by `fetch_flags` right after
+  `store_flags` (plan, function map); a refused reading settles nothing;
+  `settle_sent_changes` goes; `sent_changes` keeps its two uses, no
+  second command for a wish this cycle sent and the second pass after
+  commands; in cycle/imap.rs the second pass settles nothing; tests in
+  src/tests/flags.rs: a command for a value the server holds is settled
+  in the same cycle with the mod-sequence unchanged (SC-004), a UID the
+  mailbox lacks stays pending, the tests of the listing after the
+  commands rewritten for the reading; the record names the settled
+  count.
+- [ ] T049 STOP: ./scripts/check.sh, the size against the budget, a
+  suggested commit message; the documents aligned with what was built.
 
 ## Dependencies
 

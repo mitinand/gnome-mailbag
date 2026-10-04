@@ -7,7 +7,8 @@ reads and settles them in the store, the window's event is
 (the state pass, spec FR-005)*: the folder state carries the numbers of
 its latest state pass, and the reader opens with CONDSTORE where announced,
 reports the opening's numbers, opens the folder again and lists changed
-flags.
+flags. *Amended 2026-10-04 (later, 011 FR-007(d))*: the reader reads the
+flags of the messages a command named.
 
 The definitions the crates share for a cycle, kept in `mailbag-domain`, and
 the operations the window, the providers and the store agree on. Names are
@@ -137,7 +138,11 @@ user's word, *mailbox*, where it names the refreshed folder
   Option<ServerReply> }` and `ListedUid { uid, seen, flagged,
   gmail_message_id: Option<u64> }` (research §2; `flagged` since 011);
   `store_flags(uids, flag: StoreFlag, set) -> Result<Option<ImapError>,
-  ImapError>` (a refusal with the server's reply and alerts) since 011 (its FR-005, FR-008); `fetch_rows_by_uid(&[u32], row_items) ->
+  ImapError>` (a refusal with the server's reply and alerts) since 011 (its FR-005, FR-008);
+  `fetch_flags(uids) -> Result<FolderListing, ImapError>` (since
+  2026-10-04, later: the flags of the named UIDs, read right after a
+  command to confirm it, a UID the mailbox lacks not reported; 011
+  FR-007(d)); `fetch_rows_by_uid(&[u32], row_items) ->
   MessageList` replaces the sequence-number `fetch_rows` and keeps its
   refusal and, since 2026-10-02, carries each row's structure
   (`MessageRow.structure`, read in the same command; `fetch_structures` is

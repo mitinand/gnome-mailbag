@@ -16,7 +16,11 @@ once more from outside on 2026-10-03; the decisions are under
 Clarifications. FR-002 and FR-004 amended on 2026-10-03 at the review of
 the window: the row's star stands under the date and stars or unstars
 its message (Clarifications, the window's review). Reviewed once more in
-full on 2026-10-04 (Clarifications, the second review).
+full on 2026-10-04 (Clarifications, the second review). Amended on
+2026-10-04 (later), after a third review and a probe of three servers: a
+sent change ends by the server's report of its own message, read right
+after the command, not by the listing after the commands (FR-007(b), (d),
+(e), SC-004, Edge Cases; Clarifications, the third review; research §15).
 **Input**: Marking a message read or unread and starring or unstarring it
 are the first changes the user makes that last: they survive a refresh and
 a restart, reach the server, and show up in every other client of the
@@ -238,7 +242,13 @@ the stored state, the banner and the server's record are compared.
 - Another client changes the flag during a long first fill, and the user
   then changes it in the window to the value the cycle's listing showed:
   the wish is sent all the same, since only the first sending step trusts
-  the listing, and the listing after the commands ends it (FR-007).
+  the listing, and the flags read right after the command end it (FR-007).
+- A wish made and taken back between two sending steps of a fill, or Mark
+  as Unread after reading there (at the first step the listing ends such
+  a wish): the command asks for the value the server already holds, so the server changes nothing and may leave its
+  mod-sequence as it was (RFC 7162 §3.1.11), and no listing by the
+  folder's numbers would show the message; the flags read right after
+  the command show the value and end the change (FR-007(d)).
 - The message leaves the server before its change is sent: on Generic
   IMAP the listing proves it gone and the message goes with its pending
   change; on Gmail it stays under its other labels and that label's cycle
@@ -265,16 +275,21 @@ the stored state, the banner and the server's record are compared.
   changes not yet sent are lost with it (007 FR-012, accepted).
 - A command for a message the mailbox no longer has: on IMAP the server
   answers OK and does nothing (RFC 3501 §6.4.8). The change stays: the
-  listing after the cycle's commands does not show the message, so a
+  flags read right after the command do not report the message, so a
   folder that lists it sends the change. On Gmail a star taken off under
-  Starred takes the message out of that label, and a read mark made next
-  goes with the cycle of another label; on Generic IMAP that listing
+  Starred takes the message out of that label, so the reading right after
+  the command does not report it and the unstar itself stays pending
+  until a cycle of another label lists the message (Assumptions), and a
+  read mark made next goes with the cycle of another label; on Generic IMAP that listing
   proves the message gone and it goes with its change. On Microsoft 365
   the refusal is FR-010's: the change ends, the refresh fails with the
   service's words, and the next round removes the message.
-- The listing after the cycle's commands is refused: the cycle ends
+- The state pass after the cycle's commands is refused: the cycle ends
   incomplete with the server's reply, as with a refused listing at its
-  start; a sent change that listing does not show stays (FR-007).
+  start. The reading of the flags right after a command is refused: it
+  confirms nothing, the sent changes stay pending and shown as the user
+  left them, and the next cycle's listing settles them; no notice, since
+  no message is missing (FR-007).
 
 ## Clarifications
 
@@ -522,6 +537,41 @@ behaviour, readability, size, architecture and security.
   2026-10-04) replaces the full listing after commands; the probes'
   results are in 009 research §15.
 
+### Session 2026-10-04 (third review of the implementation)
+
+An automated review of the pull request, verified against the code and
+the standards, and a probe of three servers (research §15).
+
+- Q: A wish equal to the server's value (made and taken back before the
+  command went out, or Mark as Unread after reading within a fill) is
+  sent at a later step as a command that changes nothing; the state pass
+  by the folder's numbers does not list the message, since a server need
+  not raise its mod-sequence for such a command (RFC 7162 §3.1.11), so
+  the change stayed pending and the next refresh sent it again, over a
+  change another client had made meanwhile. → A: The hole came from
+  confirming a command by a later listing of the whole folder, which
+  009's state pass then made conditional; the two rules met at a command
+  that changes nothing visible. A sent change now ends by the server's
+  report of its own message, read right after the command (FR-007(d));
+  the state pass after the commands learns the folder's own change and
+  confirms nothing (FR-007(e)). The probe (research §15): a `UID STORE`
+  without `.SILENT` reports the new flags of each message on all three
+  servers for a real change and of none for a UID the mailbox lacks, but
+  Gmail reports nothing for a command that changes nothing, so the
+  command's own echo cannot tell "nothing changed" from "message gone";
+  one `UID FETCH` of the named UIDs answers both alike everywhere, in one
+  round trip. Listing the whole folder after every cycle with commands,
+  the cost of this feature before the state pass, was the other option;
+  not taken. The maintainer's decision. The rule behind it, a fact about
+  a message comes from the server's report of that message and code
+  relies on what a standard requires, handling what it recommends both
+  ways, is constitution principle VIII (2026-10-04).
+- Q: A Microsoft 365 delta report older than an accepted request writes
+  the older value over it. → A: The limitation recorded on 2026-10-04
+  (Assumptions; research §15) stands; whether the live service replays a
+  value older than an accepted request between rounds is not known, and
+  the review showed it on the scripted service only.
+
 ## Requirements
 
 ### Functional Requirements
@@ -609,8 +659,9 @@ behaviour, readability, size, architecture and security.
   knows. (b) *What is sent*: on IMAP, at the first sending step, right
   after the listing, a wish the listing shows ends without a command; at
   the later steps the listing may be minutes old and another client may
-  have changed the flag, so every wish not yet sent with its value is
-  sent, a command for a value the server has being harmless. On
+  have changed the flag, so every wish this cycle has not sent with its
+  value is sent, a command for a value the server has being harmless; a
+  wish sent and not confirmed (d) waits for the next cycle. On
   Microsoft 365 every pending change is sent, since a delta report may
   come late or be replayed (research §15). (c) *How a message is
   addressed*: as the listing identifies it: on IMAP by the UID the
@@ -621,11 +672,20 @@ behaviour, readability, size, architecture and security.
   on Microsoft 365 each message is one request. On IMAP, a pending
   message the listing does not show is left for the cycle of a folder
   that lists it. (d) *What ends a pending change*: the cycle seeing the
-  server hold its value: on IMAP a listing of this cycle that shows it
-  (the listing at the start, without a command, for a change pending
-  when it was taken; the listing after its commands for one it sent),
-  since a command's OK alone does not say the message changed (RFC 3501
-  §6.4.8: a UID the mailbox lacks is ignored); on Microsoft 365 the
+  server hold its value: on IMAP the server's report of the message with
+  that value, in the listing at the start, without a command, for a
+  change pending when it was taken, or, for a change the cycle sent, in
+  the flags the cycle reads for the messages the command named right
+  after it (`UID FETCH <uids> (UID FLAGS)`, one round trip for up to a
+  hundred messages; *since 2026-10-04, later; until then the listing
+  after the commands*), since a command's OK alone does not say the
+  message changed (RFC 3501 §6.4.8: a UID the mailbox lacks is ignored)
+  and a server may report nothing at all for a command that changes
+  nothing (research §15); a message that reading does not report has left
+  the folder and its change waits for a folder that lists it; one it
+  reports with another value was changed meanwhile and keeps its change
+  for the next cycle; a reading the server refuses confirms nothing, and
+  the cycle goes on with those changes pending; on Microsoft 365 the
   service accepting the request. The server state then becomes that
   value and a pending change equal to it ends, in one transaction, so
   the window shows no difference; a wish made meanwhile for another
@@ -635,8 +695,9 @@ behaviour, readability, size, architecture and security.
   IMAP a cycle that sent a command runs 009's state pass once more after
   its last sending step (*since 2026-10-04, 009 FR-005; until then it
   listed the folder in full*): the pass lists what the folder's numbers
-  say changed, the cycle stores what it proves and ends the sent changes
-  it shows; when the server refuses that listing, the cycle ends
+  say changed and the cycle stores what it proves; the pass confirms no
+  command, (d) does (*since 2026-10-04, later*); when the server refuses
+  that listing, the cycle ends
   incomplete with the reply, as with a refused listing at its start. Messages it newly lists arrived during the
   cycle, which 009 FR-001 lets the next cycle bring, and wait for it.
   (f) A cycle otherwise changes nothing on the server (009 FR-001,
@@ -742,8 +803,9 @@ behaviour, readability, size, architecture and security.
   acceptance and is sent by the next sending step. A star answered 504,
   then taken back by the user, is sent again although the next round
   reports nothing; a read mark sent by a UID the mailbox no longer has
-  stays pending; a refused listing after the commands ends the cycle
-  incomplete with the reply.
+  stays pending; a command for a value the server already holds, on a
+  scripted server that leaves its mod-sequence unchanged for it, ends the change in the same cycle; a refused state pass after the
+  commands ends the cycle incomplete with the reply.
 - **SC-005**: With a scripted server that refuses the command, the row
   shows the server's state within the cycle, a notice carries the
   server's reply, and the next cycle sends nothing for that message.
@@ -797,6 +859,16 @@ behaviour, readability, size, architecture and security.
   report the message unstarred; a star set and taken off over IMAP
   leaves both views agreeing. Nothing over IMAP reaches that state, so
   the application shows the server's IMAP state, the truth it can read.
+- *Known limitation, Gmail's Starred (2026-10-04, later)*: a star taken
+  off under the Starred label takes the message out of that label with
+  the command, so the reading right after it does not report the message
+  and the unstar stays pending on the message's other labels until a
+  cycle of one of them lists it; a star set in another client before
+  that cycle is then undone by the pending unstar, as a pending change
+  wins over an older listing (FR-007(b)). Settling an unstar the reading
+  does not report under the folder with the `\Flagged` attribute would
+  close it (about ten lines, and the folder's role reaching the cycle);
+  deferred to moving and deleting (FR-013(b)), which bring the role.
 - *Known limitation, the window (research §15.4)*: a second click on a
   star that comes before the first is stored and the folder read again
   (tens of milliseconds; about 100 ms on a folder of 100 000 messages,
@@ -862,3 +934,8 @@ To be applied with this feature, in the owning documents:
   rule for moves and deletes there stands.
 - 006 FR-006: the toast row also carries a change to stored mail that
   could not be written (FR-011).
+- *2026-10-04 (later)*: 009 FR-005(b) and SC-012 (the second pass
+  confirms no command), 009 plan (function map) and research §15 (the
+  flags fetch of the sent UIDs, taken), 009 contracts/synchronization.md
+  (`fetch_flags`), 002 contracts/imap-reading.md (the reading after a
+  command).

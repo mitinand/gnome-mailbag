@@ -106,7 +106,10 @@ EXISTS and UIDNEXT unchanged and a HIGHESTMODSEQ on both sides, `UID FETCH
 flags instead, and with all four unchanged nothing is listed. A cycle
 that fetched messages or sent flag commands opens the folder again (a
 second SELECT in the same session, or in a fresh one when the session was
-closed) and repeats the comparison before it closes.
+closed) and repeats the comparison before it closes. *Since 2026-10-04
+(later, 011 FR-007(d))*: right after each flag command the reader reads
+the flags of the messages it named (`UID FETCH <uids> (UID FLAGS)`),
+which confirms the command; a UID the mailbox lacks is not reported.
 The missing messages' rows are then read by UID, a hundred at a time,
 `UID FETCH <uids> (UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO
 SUBJECT)] BODYSTRUCTURE)`, highest UID first (*the structures joined this

@@ -513,9 +513,11 @@ columns on `folder`; the window and Microsoft 365 untouched.
   are equal and both HIGHESTMODSEQ are present. The reference is the
   stored numbers of a synchronized folder, or, at the second pass, the
   first pass's numbers when its listing completed and every message it
-  showed missing was stored; the second pass gets no pending changes,
-  since the cycle's own commands raised the mod-sequences of the messages
-  they changed. The pending changes read for the plan are the ones
+  showed missing was stored; the second pass gets no pending changes:
+  since 2026-10-04 (later) a command is confirmed by the flags read right after it (011
+  FR-007(d)), and the pass learns the folder's own change (until then
+  the pass confirmed the commands, which one that changes nothing
+  escaped). The pending changes read for the plan are the ones
   `end_changes_the_listing_shows` compares with the listing, read once.
 - `cycle::imap::run_state_pass(server, reference, batches, plan) ->
   StatePass { listed: Vec<ListedMessage>, missing: Vec<&ListedMessage>,
@@ -537,7 +539,10 @@ columns on `folder`; the window and Microsoft 365 untouched.
   decision at the final review, 2026-10-04).
 - `cycle::imap::synchronize_imap_folder`: the order above;
   `confirm_sent_changes` goes, its settle of the sent changes
-  (`settle_sent_changes`) runs on the second pass's listed messages; a
+  (`settle_sent_changes`) runs on the second pass's listed messages
+  (superseded later the same day: `settle_sent_changes` goes too and the
+  sending step settles by the flags it reads, 011 plan "Amendment
+  2026-10-04 (later)"); a
   second pass that listed messages it did not fetch ends the cycle with
   the folder not completed, so the next cycle lists and fetches them.
 - Record lines: the pass's outcome at info ("nothing changed", "changed

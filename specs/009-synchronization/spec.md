@@ -614,8 +614,11 @@ facts and the alternatives.
   star), from which arrivals, flag changes and removals follow as before.
   A first pass of a folder that holds pending changes (011) lists every
   message, since a change is addressed by the UID the listing shows; the
-  second pass needs no such rule, since the cycle's own commands raise
-  the mod-sequences of the messages they changed. (c) It stores what its
+  second pass needs no such rule: the cycle's commands are confirmed by
+  the flags read right after them (011 FR-007(d), *since 2026-10-04, later*; until then
+  the pass confirmed them, which a command that changes nothing escaped),
+  and the pass learns what the folder's numbers say changed, the folder's
+  own change included (011 FR-007(e)). (c) It stores what its
   listing proves and, when its listing completed and the store lacks
   none of the listed messages, the four numbers it started from with the
   completed state (FR-008), so the next pass may see a change twice but
@@ -948,8 +951,10 @@ rows is shown as an empty folder.
 - **SC-012** (*2026-10-04*): During a scripted first fill of 300 messages,
   a flag the server changes and a message it removes after the first
   batch are stored when the fill ends, with no further refresh; a flag
-  command the cycle sent is confirmed by the same second pass, and a
-  message its command took out of the folder leaves it in the same cycle.
+  command the cycle sent is confirmed by the flags read right after it
+  (011 FR-007(d), since 2026-10-04, later), and a
+  message its command took out of the folder leaves it in the same cycle
+  by the second pass.
   A first fill that nothing disturbed ends with a second pass that opens
   the folder and lists nothing; a message that arrives during the fill
   leaves the folder not completed and is fetched by the next cycle.

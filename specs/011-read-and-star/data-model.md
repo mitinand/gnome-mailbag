@@ -45,8 +45,10 @@ existing store at start (007 FR-012), pending changes included.
   `membership.folder`, as `(identity, flag, wanted)`; read before each
   sending step.
 - **Settling** (`settle_flags`, spec FR-007): for the identities whose
-  value the cycle saw the server hold (an IMAP listing of the cycle, a
-  Microsoft 365 request accepted), server column := that value and
+  value the cycle saw the server hold (the IMAP listing at the cycle's
+  start for a change not yet sent, the flags read right after the
+  command for one it sent, a Microsoft 365 request accepted), server
+  column := that value and
   pending column := `NULL` where it equals it, in one transaction; a
   newer wish for another value stays (research §14, §15). The effective
   state does not change, so no row read is due.
@@ -62,6 +64,6 @@ existing store at start (007 FR-012), pending changes included.
 | Value | Owner | Lifetime |
 |---|---|---|
 | The listing's `identity → UID, flags` of the folder | The running IMAP cycle | One cycle; the addresses every sending step uses, and the server values only the first sending step compares with, since the listing is old by the later ones (research §15) |
-| The value last sent per `(identity, flag)` | The running IMAP cycle | One cycle; a wish equal to it is not sent again, and the listing after the commands ends what it shows |
+| The value last sent per `(identity, flag)` | The running IMAP cycle | One cycle; a wish equal to it is not sent again; since 2026-10-04 (later) the flags read right after the command end what they show, and this value keeps an unconfirmed wish from being sent again within the cycle and tells the cycle that commands went out, so 009's state pass runs once more (research §15) |
 | The star action's state and the row object's `starred` and `unread` | The window | While the message is open or listed; set from the stored rows after each read, never by the window itself (research §15.4) |
 | The window's queued pending writes | The window | Until each is written, one at a time, in the order of the user's actions |
