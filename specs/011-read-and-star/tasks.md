@@ -110,8 +110,11 @@ and the window changes nothing yet.
   crates/mailbag/src/failure_declarations.rs the three wording arms for
   `ServerStep::ChangeFlags` ("Message not changed on the server"; "The
   mail server refused to change this message."; "The mail server stopped
-  responding while changing this message."); every constructor in the
-  workspace's tests updated.
+  responding while changing this message."; the first two reworded on
+  2026-10-05 as "Message change not confirmed" and "The mail server did
+  not confirm the change to this message.", since the kind covers a
+  broken connection too); every constructor in the workspace's tests
+  updated.
 - [x] T004 [US1] In crates/mailbag-store/src/schema.sql the columns
   `message.flagged INTEGER NOT NULL CHECK (flagged IN (0, 1))`,
   `message.seen_pending INTEGER CHECK (seen_pending IN (0, 1))` and
@@ -595,7 +598,13 @@ type, thread or timer; no change to the forks.
   suggested commit message; the documents aligned with what was built.
   Done on 2026-10-04: the check passed; ≈ +6 production and ≈ +93 test
   lines net against ≤ 60 and ≤ 120; the plan and this list record what
-  was built.
+  was built. The quickstart's installed-build steps (SC-008) passed the
+  same day on an account of each provider with the reading after the
+  command: every command was followed by a reading that reported each
+  message it named, and the settled counts matched; one Generic IMAP
+  provider's web client kept showing a star the server's `FLAGS` lacked
+  (spec Assumptions). The spec gained the state diagram "The life of a
+  change".
 
 ## Dependencies
 

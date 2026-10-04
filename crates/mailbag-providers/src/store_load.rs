@@ -137,6 +137,14 @@ impl<'a> BatchWriter<'a> {
             .store_batch(&self.folder, batch, || self.cancelled.is_closed());
         match written {
             Ok(StoreWrite::Stored) => {
+                tracing::debug!(
+                    arrived = batch.arrived.len(),
+                    related = batch.known_arrived.len(),
+                    removed = batch.removed.len(),
+                    flag_states = batch.flag_states.len(),
+                    completed = batch.state.as_ref().map(|state| state.synchronized),
+                    "batch stored"
+                );
                 self.counts.add(batch);
                 self.events.try_send(LoadEvent::StoreChanged).ok();
                 Ok(())

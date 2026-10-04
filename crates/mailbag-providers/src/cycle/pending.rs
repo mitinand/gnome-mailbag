@@ -71,7 +71,8 @@ pub(super) fn end_changes_the_listing_shows(
 /// read right after it (spec FR-007(d)): a message the reading shows with
 /// the wanted value is settled; one it does not report has left the
 /// folder, one it shows otherwise was changed meanwhile, and a reading the
-/// server refuses confirms nothing, so those stay pending for the next
+/// server refuses confirms only the messages it reported before the
+/// refusal (constitution VIII), so the others stay pending for the next
 /// cycle. A wish equal to the value this cycle sent is not sent again. The
 /// listing's own values are not compared here: by a later sending step
 /// they may be minutes old and another client may have changed the flag,
@@ -119,6 +120,13 @@ pub(super) async fn send_imap_changes(
                     named.map(|(identity, _)| identity.clone())
                 })
                 .collect();
+            tracing::debug!(
+                ?flag,
+                wanted,
+                confirmed = confirmed.len(),
+                unconfirmed = uids.len() - confirmed.len(),
+                "changes confirmed"
+            );
             if !confirmed.is_empty() {
                 batches.settle(&confirmed, flag, wanted)?;
             }

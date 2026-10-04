@@ -194,7 +194,7 @@ flowchart TD
      §15): each message it reports with the wanted value →
      `batches.settle`, grouped by flag and value; one it does not report,
      or reports otherwise, stays pending; a reading the server refuses
-     settles nothing; `Ok(Some(reply))` →
+     settles only what it reported before the refusal; `Ok(Some(reply))` →
      `batches.drop_pending(uids,
      flag, wanted)` and `Err(CycleEnd::Failed(refused(reply)))`; `Err` →
      `Err` (pending stays).
@@ -203,7 +203,8 @@ flowchart TD
   `update_message_flags` through `request` (the renewal applies once as
   for any request); a 4xx other than the refused token drops and fails
   with `LoadFailure::MicrosoftGraphChangeRefused`, worded as IMAP's
-  refused change ("Message not changed on the server");
+  refused change ("Message change not confirmed" since 2026-10-05, the
+  fourth review; "Message not changed on the server" before);
   a 5xx fails the cycle with the pending change untouched, an unknown
   outcome (§14).
 - `BatchWriter::pending_changes`, `settle`, `drop_pending`: the store
@@ -438,7 +439,8 @@ lacks, and a reading would be needed for every message without an echo.
   value → `batches.settle` (grouped, one write per flag and value); not
   reported, or reported otherwise → stays pending, and `sent_changes`
   keeps it from being sent again this cycle; a reading the server refuses
-  settles nothing (the reader records the refusal at debug).
+  settles only the messages it reported before the refusal (the reader
+  records the refusal at debug).
 - `synchronize_imap_folder`: the second pass stays (after batches or
   commands, `sent_changes` telling that commands went out) and
   `settle_sent_changes` goes.
@@ -448,7 +450,13 @@ lacks, and a reading would be needed for every message without an echo.
 - Built as planned on 2026-10-04 (tasks T047, T048): the listing's body
   is `fetch_listing(set, items)`, shared by `list` and `fetch_flags`;
   `flag_of` names a flag's value in `pending.rs`;
-  `settle_changes_server_holds` went with `settle_sent_changes`.
+  `settle_changes_server_holds` went with `settle_sent_changes`. After
+  the installed-build check (2026-10-05), three records at debug, since
+  the check could not tell a click that was not stored from one stored
+  with another value: the window's `message change stored` (identity,
+  flag, value), the batch writer's `batch stored` (counts and whether the
+  folder is completed) and the sending step's `changes confirmed`
+  (confirmed and unconfirmed per command).
 
 ## Technical Context
 

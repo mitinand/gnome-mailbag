@@ -710,11 +710,17 @@ impl Server {
     /// Whether the message is in the mailbox at the current opening.
     fn is_present(&self, uid: u32) -> bool {
         let opening = self.openings.get();
-        let arrived = (self.setup.arriving_from_opening.iter())
-            .all(|(from, arriving)| *arriving != uid || opening >= *from);
         let gone = (self.setup.gone_from_opening.iter())
             .any(|(from, gone)| *gone == uid && opening >= *from);
-        arrived && !gone
+        self.has_arrived(uid) && !gone
+    }
+
+    /// Whether the message has been in the mailbox at all so far: UIDNEXT
+    /// counts it from then on, gone or not (RFC 3501 §2.3.1.1).
+    fn has_arrived(&self, uid: u32) -> bool {
+        let opening = self.openings.get();
+        (self.setup.arriving_from_opening.iter())
+            .all(|(from, arriving)| *arriving != uid || opening >= *from)
     }
 
     /// Gives the message the mailbox's next mod-sequence.
@@ -991,7 +997,11 @@ impl Server {
                         .map(|message| message.uid)
                         .filter(|uid| self.is_present(*uid))
                         .collect();
-                    let uid_next = present.iter().max().map_or(1, |uid| uid + 1);
+                    let uid_next = (self.setup.messages.iter())
+                        .map(|message| message.uid)
+                        .filter(|uid| self.has_arrived(*uid))
+                        .max()
+                        .map_or(1, |uid| uid + 1);
                     io.send(format!(
                         "* {} EXISTS\r\n* 0 RECENT\r\n* FLAGS (\\Seen)\r\n\
                          * OK [UIDVALIDITY {uid_validity}] UIDs valid\r\n\

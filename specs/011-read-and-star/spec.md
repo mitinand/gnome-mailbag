@@ -287,9 +287,10 @@ the stored state, the banner and the server's record are compared.
 - The state pass after the cycle's commands is refused: the cycle ends
   incomplete with the server's reply, as with a refused listing at its
   start. The reading of the flags right after a command is refused: it
-  confirms nothing, the sent changes stay pending and shown as the user
-  left them, and the next cycle's listing settles them; no notice, since
-  no message is missing (FR-007).
+  confirms only the messages it reported before the refusal; the other
+  sent changes stay pending and shown as the user left them, and the next
+  cycle's listing settles them; no notice, since no message is missing
+  (FR-007).
 
 ## Clarifications
 
@@ -572,6 +573,31 @@ the standards, and a probe of three servers (research §15).
   value older than an accepted request between rounds is not known, and
   the review showed it on the scripted service only.
 
+### Session 2026-10-05 (fourth review of the implementation)
+
+An automated review of the pull request after the reading after the
+command; each point verified against the code.
+
+- Q: An IMAP command whose answer was lost, the connection breaking after
+  the server applied it, was shown as "the server refused to change this
+  message". → A: One failure kind covers a refusal and a broken
+  connection, so the wording is neutral now: "Message change not
+  confirmed", "The mail server did not confirm the change to this
+  message", with the server's reply beside it when there is one; the
+  change stays pending and the next cycle's listing settles it (FR-009,
+  FR-010).
+- Q: A reading that reported one message's flags and was then refused
+  confirmed that message, while FR-007(d) said a refused reading confirms
+  nothing. → A: The code is right by constitution principle VIII, since
+  the server reported that message; FR-007(d) and the Edge Case now say
+  the reading confirms the messages it reported before the refusal and no
+  other.
+- Q: The scripted server's UIDNEXT fell when the highest message left the
+  mailbox. → A: It now counts every message that has been in the mailbox,
+  as RFC 3501 §2.3.1.1 requires of a server (constitution VIII); the
+  state pass never depended on it, since a changed UIDNEXT lists every
+  message either way.
+
 ## Requirements
 
 ### Functional Requirements
@@ -684,8 +710,9 @@ the standards, and a probe of three servers (research §15).
   nothing (research §15); a message that reading does not report has left
   the folder and its change waits for a folder that lists it; one it
   reports with another value was changed meanwhile and keeps its change
-  for the next cycle; a reading the server refuses confirms nothing, and
-  the cycle goes on with those changes pending; on Microsoft 365 the
+  for the next cycle; a reading the server refuses confirms the messages
+  it reported before the refusal and no other, and the cycle goes on with
+  the rest pending; on Microsoft 365 the
   service accepting the request. The server state then becomes that
   value and a pending change equal to it ends, in one transaction, so
   the window shows no difference; a wish made meanwhile for another
@@ -777,7 +804,44 @@ the standards, and a probe of three servers (research §15).
 - **Command**: one request to the server carrying one change for one or
   several messages of a folder.
 
+### The life of a change
+
+One flag of one message is in one of these states; the events that move
+it are the user's actions, the cycle's steps and the server's reports
+(FR-001, FR-006, FR-007, FR-009, FR-010; constitution principle VIII).
+*Added 2026-10-04 (later), after the reading after the command.*
+
+```mermaid
+stateDiagram-v2
+    state "Agreed: the row shows the server's value" as agreed
+    state "Wanted: the row shows the wish, nothing sent yet" as wanted
+    state "Sent: the command is out, the wish still shown" as sent
+    state "Dropped: the server refused, the row shows the server's value" as dropped
+    [*] --> agreed: a cycle stores the message with the server's flags
+    agreed --> wanted: the user changes the flag in the window
+    wanted --> wanted: the user changes it again, the newer wish replaces the older
+    wanted --> agreed: IMAP, the listing at the cycle's start shows the wanted value, no command
+    wanted --> sent: a sending step of the folder's cycle sends the command (IMAP UID STORE, Microsoft 365 PATCH)
+    sent --> agreed: IMAP, the flags read right after the command show the wanted value, Microsoft 365, the request accepted (2xx)
+    sent --> wanted: IMAP, the reading does not report the message (it left the folder), shows another value or is refused, Microsoft 365, a 5xx or a lost connection. Not sent again this cycle, the next cycle of a folder that lists it sends
+    sent --> dropped: the server refuses the command (NO or BAD, a 4xx other than the token's 401). The cycle fails with the server's reply
+    dropped --> agreed
+    agreed --> [*]: the message leaves every folder
+```
+
+What the server reports meanwhile writes the server's value and never
+ends a wish by itself: in *Wanted* and *Sent* the row keeps showing the
+wish, so a report older than the user's action changes nothing on screen
+(FR-001, FR-009). A wish equal to the server's value ends only as the
+diagram says, by the listing's or the reading's report of the message,
+never by comparison with the stored value (research §15). A cycle sends
+at its sending steps only: after the listing at its start, before each
+batch of missing messages and once before it closes (FR-007(a)); a wish
+made between two steps waits for the next one, and a wish made during a
+cycle whose pass listed nothing waits for the next cycle (FR-006).
+
 ## Success Criteria
+
 
 ### Measurable Outcomes
 
@@ -869,6 +933,12 @@ the standards, and a probe of three servers (research §15).
   does not report under the folder with the `\Flagged` attribute would
   close it (about ten lines, and the folder's role reaching the cycle);
   deferred to moving and deleting (FR-013(b)), which bring the role.
+- *Known limitation, a Generic IMAP provider's web client (observed
+  2026-10-04 at the installed-build check)*: a star taken off over IMAP,
+  confirmed by the flags the server reported for the message right after
+  the command and absent from its `FLAGS` when read again, may stay shown
+  in that provider's web client, as Gmail's own apps do (above). The
+  application shows the server's IMAP state, the truth it can read.
 - *Known limitation, the window (research §15.4)*: a second click on a
   star that comes before the first is stored and the folder read again
   (tens of milliseconds; about 100 ms on a folder of 100 000 messages,

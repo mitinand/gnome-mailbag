@@ -447,9 +447,11 @@ trip, up to a hundred messages, 4–6 KB; 009 research §15): a message
 reported with the wanted value is settled; one not reported has left the
 folder (RFC 3501 §6.4.8) and waits for a folder that lists it; one
 reported with another value was changed meanwhile and keeps its wish for the next cycle; a reading the server refuses confirms
-nothing and the cycle goes on, since no message is missing and the
-incomplete-list notice would say so falsely (the challenge's finding); the
-wishes wait for the next cycle's listing. The state pass after the commands stays
+only the messages it reported before the refusal (constitution VIII; the
+fourth review's finding) and the cycle goes on, since no message is
+missing and the incomplete-list notice would say so falsely (the
+challenge's finding); the other wishes wait for the next cycle's listing.
+The state pass after the commands stays
 for the folder's own change (Gmail's Starred) and confirms nothing;
 `settle_sent_changes` goes, and `sent_changes` keeps a cycle from sending
 an unconfirmed wish again at each batch and tells it that commands went
@@ -492,8 +494,9 @@ of delta, not this feature's (spec Assumptions).
    `NO`): the refusal was dropped and the cycle reported success. Now the
    cycle ends incomplete with the server's reply, as after a refused first
    listing; what the partial listing shows is stored and ends what it
-   shows. A refused reading of the flags after a command, by contrast,
-   confirms nothing and ends nothing (amendment of 2026-10-04, later).
+   shows. A refused reading of the flags after a command ends what it
+   reported before the refusal and nothing else, and the cycle goes on
+   (amendment of 2026-10-04, later; the fourth review).
 4. *Two quick clicks on a star* both ask for the same value, since the
    star takes its state only from the rows read after each write (§9,
    §12). Kept, as a limitation (spec Assumptions): the second click must

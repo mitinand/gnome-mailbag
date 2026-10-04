@@ -632,6 +632,7 @@ impl WindowUi {
         let window = Rc::downgrade(self);
         glib::spawn_future_local(async move {
             let account = change.account.clone();
+            let (identity, flag, wanted) = (change.identity.clone(), change.flag, change.wanted);
             let written = run_on_pool(FailureKind::MailNotSaved, move || {
                 store.write_pending_flag(
                     &change.account,
@@ -641,12 +642,19 @@ impl WindowUi {
                 )
             })
             .await;
-            if let Err(failure) = &written {
-                tracing::error!(
+            match &written {
+                Ok(()) => tracing::debug!(
+                    account = account.as_str(),
+                    identity,
+                    ?flag,
+                    wanted,
+                    "message change stored"
+                ),
+                Err(failure) => tracing::error!(
                     account = account.as_str(),
                     cause = ?failure.kind,
                     "message change not saved"
-                );
+                ),
             }
             let Some(window) = window.upgrade() else {
                 return;
