@@ -726,6 +726,8 @@ rest as `Other`, which the session's notice collector alone reads; UIDNEXT
 and HIGHESTMODSEQ never arrive unsolicited, so a second SELECT is the way
 to fresh numbers; a session closed after an unreadable structure must
 reconnect before it (the reader does so for every command);
-mod-sequences are 63-bit values, which SQLite's INTEGER holds; the
-NOMODSEQ case needs no server knob, since the scripted opening's
-completion text takes an untagged line.
+mod-sequences are 63-bit values, which SQLite's INTEGER holds (kept as
+its signed integer, since the SQLite binding here has no unsigned 64-bit
+value); the NOMODSEQ case became a two-line knob of the scripted server
+in portion 8c, since with the completion text alone the server would
+still send HIGHESTMODSEQ.

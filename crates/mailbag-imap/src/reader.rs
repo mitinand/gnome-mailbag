@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::{
-    FolderListing, ImapAccount, ImapError, ImapFailure, ImapStep, MessageList, MessageRow,
-    MessageText, OpenOptions, RowItems, ServerReply, StoreFlag, TextParts, TextRequest,
+    FolderListing, ImapAccount, ImapError, ImapFailure, ImapStep, MailboxNumbers, MessageList,
+    MessageRow, MessageText, OpenOptions, RowItems, ServerReply, StoreFlag, TextParts, TextRequest,
     fetch_responses::{
         FetchEnd, FetchResponses, collect_fetches, collect_rows, keep_listed, message_text,
         section_paths, structure_of, uid_set,
@@ -95,18 +95,79 @@ impl MailboxReader {
 
     /// The mailbox version the read UIDs belong to.
     pub fn uid_validity(&self) -> Option<u32> {
-        self.mailbox.uid_validity
+        self.mailbox.numbers.uid_validity
     }
 
-    /// Lists every message of the mailbox by UID with its read state, in
-    /// one `UID FETCH 1:*` read as it arrives, so a large mailbox costs a
-    /// few bytes per message. A NO or BAD leaves the listing incomplete with
+    /// The numbers the latest opening of the mailbox returned
+    /// (specs/009-synchronization FR-005).
+    pub fn numbers(&self) -> MailboxNumbers {
+        self.mailbox.numbers
+    }
+
+    /// Opens the mailbox again, so that its numbers are the server's now,
+    /// for a cycle's second state pass (specs/009-synchronization FR-005):
+    /// a SELECT on the open session, or a fresh session when the earlier one
+    /// was closed after an unreadable structure. Another UIDVALIDITY fails
+    /// as `MailboxChanged`, as a reconnection does.
+    pub async fn reopen(&mut self) -> Result<(), ImapError> {
+        if self.needs_reconnect {
+            return self.reconnect().await;
+        }
+        let opened = session::open_selected(
+            &mut self.mailbox.session,
+            &self.mailbox_name,
+            self.mailbox.condstore,
+            &self.account.login,
+            &mut self.notices,
+        )
+        .await;
+        let numbers = match opened {
+            Ok(numbers) => numbers,
+            Err(failure) => return Err(self.error(failure)),
+        };
+        self.require_same_numbering(numbers)?;
+        self.mailbox.numbers = numbers;
+        Ok(())
+    }
+
+    /// Another UIDVALIDITY means the UIDs now name other messages.
+    fn require_same_numbering(&mut self, numbers: MailboxNumbers) -> Result<(), ImapError> {
+        match numbers.uid_validity == self.mailbox.numbers.uid_validity {
+            true => Ok(()),
+            false => Err(self.error(ImapFailure::MailboxChanged.into())),
+        }
+    }
+
+    /// Lists every message of the mailbox by UID with its flags, in one
+    /// `UID FETCH 1:*` read as it arrives, so a large mailbox costs a few
+    /// bytes per message. A NO or BAD leaves the listing incomplete with
     /// the server's reason, which then proves nothing about the messages it
     /// did not report; a lost connection fails. An empty mailbox is listed
     /// without a command, since servers answer `1:*` there differently.
     pub async fn list_messages(&mut self, row_items: RowItems) -> Result<FolderListing, ImapError> {
+        self.list(row_items, None).await
+    }
+
+    /// Lists only the messages whose mod-sequence rose above `since`, with
+    /// the `CHANGEDSINCE` modifier of CONDSTORE (RFC 7162 §3.1.4.1): the
+    /// flags changed and the messages arrived since a state pass saw
+    /// `since` as HIGHESTMODSEQ (specs/009-synchronization FR-005). Read
+    /// and completed as `list_messages` is.
+    pub async fn list_changed_flags(
+        &mut self,
+        since: u64,
+        row_items: RowItems,
+    ) -> Result<FolderListing, ImapError> {
+        self.list(row_items, Some(since)).await
+    }
+
+    async fn list(
+        &mut self,
+        row_items: RowItems,
+        changed_since: Option<u64>,
+    ) -> Result<FolderListing, ImapError> {
         let mut listed = BTreeMap::new();
-        if self.mailbox.message_count == 0 {
+        if self.mailbox.numbers.message_count == 0 {
             return Ok(FolderListing {
                 messages: Vec::new(),
                 refusal: None,
@@ -119,7 +180,11 @@ impl MailboxReader {
             RowItems::Standard => LISTING_ITEMS,
             RowItems::WithGmailAttributes => GMAIL_LISTING_ITEMS,
         };
-        let end = match self.mailbox.session.uid_fetch("1:*", items).await {
+        let items = match changed_since {
+            Some(since) => format!("{items} (CHANGEDSINCE {since})"),
+            None => items.to_owned(),
+        };
+        let end = match self.mailbox.session.uid_fetch("1:*", &items).await {
             Ok(mut responses) => loop {
                 match responses.try_next().await {
                     Ok(Some(fetch)) => keep_listed(&fetch, &mut listed),
@@ -318,10 +383,7 @@ impl MailboxReader {
             Ok(mailbox) => mailbox,
             Err(failure) => return Err(self.error(failure)),
         };
-        // Another UIDVALIDITY means the UIDs now name other messages.
-        if mailbox.uid_validity != self.mailbox.uid_validity {
-            return Err(self.error(ImapFailure::MailboxChanged.into()));
-        }
+        self.require_same_numbering(mailbox.numbers)?;
         self.mailbox = mailbox;
         self.needs_reconnect = false;
         Ok(())

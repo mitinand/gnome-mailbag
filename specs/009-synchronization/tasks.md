@@ -529,31 +529,38 @@ STOP for the maintainer's review.
 - [x] T041 [P] Store tests: the numbers round-trip with a batch's state,
   stay through a folder list replacement, and are absent for a folder
   that never had a complete pass.
-- [ ] T042 In crates/mailbag-imap: `MailboxNumbers` (the crate's own
-  type, as `StoreFlag` is); `session::open_mailbox` selects with
+- [x] T042 In crates/mailbag-imap: `MailboxNumbers` (the crate's own
+  type, as `StoreFlag` is); `session::select_mailbox` selects with
   `select_condstore` when the signed-in capabilities announce CONDSTORE,
-  else `select`, and `MailboxSession` keeps the opening's numbers;
-  `MailboxReader::numbers()`; `reopen()` (reconnect first when the
-  session was closed after an unreadable structure, else the same SELECT
-  again in the open session; the numbers and the message count replaced;
-  another numbering version is `ImapFailure::MailboxChanged` as in
-  `reconnect`); `list_changed_flags(since, row_items)` sharing
-  `list_messages`' body, the query gaining `(CHANGEDSINCE since)`. The
-  scripted server: UIDNEXT in every opening's answer; a `condstore` knob
-  (the capability; HIGHESTMODSEQ in the answer to a SELECT with the
-  parameter; a mod-sequence per message raised by `UID STORE` and by a
-  scripted flag change; `CHANGEDSINCE` cut off the items before
-  `split_items` and answered from the mod-sequences); a message gone
-  after the first listing of a connection (for SC-012's removal, since
-  `vanishing_uid` stays in every listing); a flag changed from the second
-  connection on (for SC-011's "a flag changed" between two cycles).
-  NOMODSEQ needs no knob: the test sets `select_completion` with an
-  untagged `* OK [NOMODSEQ]` line.
-- [ ] T043 [P] IMAP tests: the opening's numbers; SELECT with the
-  parameter only when announced; `CHANGEDSINCE` lists only the changed
-  messages, with `X-GM-MSGID` when asked; a `[NOMODSEQ]` opening leaves
-  the mod-sequence empty; `reopen` refreshes the numbers after a scripted
-  change and fails as `MailboxChanged` on another numbering version.
+  else `select`, through `open_selected`, which a `MailboxSession` keeps
+  the numbers and the CONDSTORE choice of; `MailboxReader::numbers()`;
+  `reopen()` (reconnect first when the session was closed after an
+  unreadable structure, else `open_selected` again on the open session;
+  the numbers replaced; another numbering version is
+  `ImapFailure::MailboxChanged` through `require_same_numbering`, which
+  `reconnect` shares); `list_changed_flags(since, row_items)` sharing
+  `list_messages`' body (`list`), the query gaining `(CHANGEDSINCE
+  since)`. The scripted server: UIDNEXT in every opening's answer; a
+  `condstore` knob (the capability; HIGHESTMODSEQ in the answer to a
+  SELECT with the parameter, which the command log records as `SELECT
+  (CONDSTORE)`; a mod-sequence per message, seeded in setup order and
+  raised by `UID STORE`, by `seen_from_opening` and by an arrival;
+  `CHANGEDSINCE` cut off the items before `split_items`, answered from
+  the mod-sequences and recorded among the fetch's items); a `nomodseq`
+  knob (two lines: with the completion text alone the server would still
+  send HIGHESTMODSEQ); three knobs keyed by the mailbox's opening count
+  over the server's life, `arriving_from_opening`, `gone_from_opening` and
+  `seen_from_opening`, for SC-011's and SC-012's changes between two
+  passes; `uid_validity_after_reconnect` renamed
+  `uid_validity_from_second_opening`, keyed the same way (a reconnection
+  is a second opening).
+- [x] T043 [P] IMAP tests (src/tests/numbers.rs): the opening's numbers;
+  SELECT with the parameter only when announced; `CHANGEDSINCE` lists
+  only the changed messages and the full listing still lists every one
+  (the Gmail items share the listing's code, tested in the Gmail tests);
+  a NOMODSEQ opening leaves the mod-sequence empty; `reopen` refreshes
+  the numbers after an arrival, a removal and a read elsewhere, and fails
+  as `MailboxChanged` on another numbering version.
 - [ ] T044 In crates/mailbag-providers/src/cycle/imap.rs `pass_plan`
   (nothing, the changed flags, every message; every message also when
   there is no reference, the numbering version differs, a number is

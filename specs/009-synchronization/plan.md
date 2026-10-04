@@ -556,8 +556,9 @@ version joins every comparison; the second pass compares with the first
 pass's numbers, so an undisturbed fill ends with one round trip; `reopen`
 reconnects first when the session was closed; the opening's numbers are
 the IMAP crate's own type, converted by the cycle; a completed listing
-always writes the state with the numbers; the NOMODSEQ test uses the
-scripted opening's completion, no knob; the providers' tests are
+always writes the state with the numbers; the NOMODSEQ case is a two-line
+knob of the scripted server (with the completion text alone it would
+still send HIGHESTMODSEQ, found in portion 8c); the providers' tests are
 estimated at the measured 30–60 lines each.
 
 ### Optional mechanisms
