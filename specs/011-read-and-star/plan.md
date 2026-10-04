@@ -445,6 +445,10 @@ lacks, and a reading would be needed for every message without an echo.
 - The scripted server: `raise_modseq` only when the `UID STORE` changed a
   flag, as Gmail does (server A raises it even so; the stricter server is
   the one to model, constitution VIII).
+- Built as planned on 2026-10-04 (tasks T047, T048): the listing's body
+  is `fetch_listing(set, items)`, shared by `list` and `fetch_flags`;
+  `flag_of` names a flag's value in `pending.rs`;
+  `settle_changes_server_holds` went with `settle_sent_changes`.
 
 ## Technical Context
 

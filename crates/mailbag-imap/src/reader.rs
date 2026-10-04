@@ -166,15 +166,11 @@ impl MailboxReader {
         row_items: RowItems,
         changed_since: Option<u64>,
     ) -> Result<FolderListing, ImapError> {
-        let mut listed = BTreeMap::new();
         if self.mailbox.numbers.message_count == 0 {
             return Ok(FolderListing {
                 messages: Vec::new(),
                 refusal: None,
             });
-        }
-        if self.needs_reconnect {
-            self.reconnect().await?;
         }
         let items = match row_items {
             RowItems::Standard => LISTING_ITEMS,
@@ -184,7 +180,33 @@ impl MailboxReader {
             Some(since) => format!("{items} (CHANGEDSINCE {since})"),
             None => items.to_owned(),
         };
-        let end = match self.mailbox.session.uid_fetch("1:*", &items).await {
+        let listing = self.fetch_listing("1:*", &items).await?;
+        tracing::info!(messages = listing.messages.len(), "mailbox listed");
+        Ok(listing)
+    }
+
+    /// Reads the flags of the given messages, right after a command changed
+    /// them, which confirms the command (specs/011-read-and-star FR-007(d)):
+    /// a message the server does not report is no longer in the mailbox.
+    /// Read and completed as `list_messages` is.
+    pub async fn fetch_flags(&mut self, uids: &[u32]) -> Result<FolderListing, ImapError> {
+        let listing = self.fetch_listing(&uid_set(uids), LISTING_ITEMS).await?;
+        tracing::debug!(
+            asked = uids.len(),
+            reported = listing.messages.len(),
+            "flags read after the command"
+        );
+        Ok(listing)
+    }
+
+    /// One `UID FETCH` of `items` for the messages `set` names, read as it
+    /// arrives, so a large mailbox costs a few bytes per message.
+    async fn fetch_listing(&mut self, set: &str, items: &str) -> Result<FolderListing, ImapError> {
+        let mut listed = BTreeMap::new();
+        if self.needs_reconnect {
+            self.reconnect().await?;
+        }
+        let end = match self.mailbox.session.uid_fetch(set, items).await {
             Ok(mut responses) => loop {
                 match responses.try_next().await {
                     Ok(Some(fetch)) => keep_listed(&fetch, &mut listed),
@@ -213,7 +235,6 @@ impl MailboxReader {
                 return Err(self.error(command_failure(ImapStep::FetchMessages, &error)));
             }
         };
-        tracing::info!(messages = listed.len(), "mailbox listed");
         Ok(FolderListing {
             messages: listed.into_values().collect(),
             refusal,

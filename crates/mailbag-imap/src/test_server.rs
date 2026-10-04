@@ -1267,14 +1267,21 @@ impl Server {
             let Some((seen, flagged)) = flags.get_mut(&uid) else {
                 continue;
             };
-            if change.contains("\\Seen") {
+            let mut changed = false;
+            if change.contains("\\Seen") && *seen != set {
                 *seen = set;
+                changed = true;
             }
-            if change.contains("\\Flagged") {
+            if change.contains("\\Flagged") && *flagged != set {
                 *flagged = set;
+                changed = true;
             }
             drop(flags);
-            self.raise_modseq(uid);
+            // As Gmail does, and RFC 7162 §3.1.11 recommends: a command that
+            // changes nothing leaves the mod-sequence.
+            if changed {
+                self.raise_modseq(uid);
+            }
             let sequence_number = 1
                 + (self.setup.messages.iter())
                     .position(|message| message.uid == uid)

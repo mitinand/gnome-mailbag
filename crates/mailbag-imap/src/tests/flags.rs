@@ -62,6 +62,28 @@ fn each_flag_and_direction_is_one_silent_command_on_a_uid_set() {
     }
 }
 
+/// The reading right after a command (specs/011-read-and-star FR-007(d)):
+/// the flags of the named messages alone, one the mailbox lacks left out.
+#[test]
+fn the_flags_of_the_named_messages_are_read_after_a_command() {
+    let mut messages = plain_messages(3);
+    messages[2].flagged = true;
+    let fixture = ImapFixture::start(FixtureSetup {
+        messages,
+        ..FixtureSetup::default()
+    });
+    let mut reader = open_reader(&fixture);
+    let reading = expect_success(run(reader.fetch_flags(&[10, 30, 40])));
+    assert!(reading.refusal.is_none());
+    let flags: Vec<(u32, bool, bool)> = (reading.messages.iter())
+        .map(|message| (message.uid, message.seen, message.flagged))
+        .collect();
+    assert_eq!(flags, [(10, false, false), (30, false, true)]);
+    let fetch = fixture.log().fetches.pop().expect("the reading");
+    assert_eq!(fetch.message_set, "10,30,40");
+    assert_eq!(fetch.items, ["UID", "FLAGS"]);
+}
+
 #[test]
 fn a_no_or_a_bad_is_a_refusal_with_the_servers_reply() {
     let completions = [("NO [CANNOT]", "CANNOT"), ("BAD [CLIENTBUG]", "CLIENTBUG")];

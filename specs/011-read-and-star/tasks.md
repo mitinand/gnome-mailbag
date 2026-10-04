@@ -558,14 +558,19 @@ type, thread or timer; no change to the forks.
   002 contracts/imap-reading.md, and constitution principle VIII (version
   2.4.0); then `spec-challenge` in a fresh session; wait for approval
   before any code.
-- [ ] T047 In crates/mailbag-imap/src/reader.rs `fetch_flags(uids) ->
+- [x] T047 In crates/mailbag-imap/src/reader.rs `fetch_flags(uids) ->
   Result<FolderListing, ImapError>`: `UID FETCH <set> (UID FLAGS)` by the
   listing's code (`list` takes the set), its refusal in `FolderListing`,
   its own record line at debug; the scripted server (test_server.rs)
   raises a message's mod-sequence only when a `UID STORE` changes a flag,
   as Gmail does (constitution VIII); tests in src/tests/: the flags of
-  the named UIDs alone, a UID the mailbox lacks left out.
-- [ ] T048 In crates/mailbag-providers/src/cycle/pending.rs
+  the named UIDs alone, a UID the mailbox lacks left out. Done on
+  2026-10-04: `fetch_flags` and `list` share `fetch_listing(set, items)`;
+  the listing keeps its record line and the reading has its own at debug
+  (asked, reported); the scripted server raises the mod-sequence only for
+  a flag that changed; test
+  `the_flags_of_the_named_messages_are_read_after_a_command`.
+- [x] T048 In crates/mailbag-providers/src/cycle/pending.rs
   `send_imap_changes` settles each command by `fetch_flags` right after
   `store_flags` (plan, function map); a refused reading settles nothing;
   `settle_sent_changes` goes; `sent_changes` keeps its two uses, no
@@ -575,9 +580,22 @@ type, thread or timer; no change to the forks.
   in the same cycle with the mod-sequence unchanged (SC-004), a UID the
   mailbox lacks stays pending, the tests of the listing after the
   commands rewritten for the reading; the record names the settled
-  count.
-- [ ] T049 STOP: ./scripts/check.sh, the size against the budget, a
+  count. Done on 2026-10-04: the reading and its settle follow each
+  accepted command, grouped per command; `settle_sent_changes` and
+  `settle_changes_server_holds` went, `end_changes_the_listing_shows`
+  groups its own settles and `flag_of` names a flag's value; the second
+  pass settles nothing; the settled count was already the finish
+  record's; tests
+  `a_command_for_a_value_the_server_holds_is_confirmed_by_the_reading_after_it`
+  (SC-004, the second pass asking the changed flags while the unread
+  mark's message has none) and the refused-second-pass test expecting
+  both commands confirmed before the refusal; the ignored-UID and
+  lost-answer tests held without change.
+- [x] T049 STOP: ./scripts/check.sh, the size against the budget, a
   suggested commit message; the documents aligned with what was built.
+  Done on 2026-10-04: the check passed; ≈ +6 production and ≈ +93 test
+  lines net against ≤ 60 and ≤ 120; the plan and this list record what
+  was built.
 
 ## Dependencies
 

@@ -6,7 +6,7 @@
 
 use super::{
     CycleEnd,
-    pending::{SentChanges, end_changes_the_listing_shows, send_imap_changes, settle_sent_changes},
+    pending::{SentChanges, end_changes_the_listing_shows, send_imap_changes},
 };
 use crate::{
     LoadResult,
@@ -113,7 +113,8 @@ pub(super) async fn synchronize_imap_folder(
     let mut refusal = first.refusal;
     if !missing.is_empty() || !sent_changes.is_empty() {
         // The second pass: the folder as the server has it after the fill
-        // and the cycle's own commands. Its reference is the first pass's
+        // and the cycle's own commands, which the flags read after each
+        // command confirmed already. Its reference is the first pass's
         // numbers, whose listing the store reflects once every missing
         // message is stored; a refused first listing gives none.
         server.reader.reopen().await?;
@@ -122,7 +123,6 @@ pub(super) async fn synchronize_imap_folder(
         let reference = first_listing_complete.then_some(numbers);
         let plan = pass_plan(numbers_now, reference, false);
         let second = run_state_pass(&mut server, &stored_now, numbers_now, batches, plan).await?;
-        settle_sent_changes(&second.listed, &sent_changes, batches)?;
         refusal = refusal.or(second.refusal);
     }
     Ok(batches.finish(first.listed.len(), refusal.map(short_list)))

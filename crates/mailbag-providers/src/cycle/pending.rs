@@ -3,9 +3,10 @@
 
 //! The sending step of a cycle (specs/011-read-and-star FR-007 to FR-010;
 //! research §2, §7, §14, §15): the folder's pending changes go to the
-//! server; a change ends when the cycle sees the server hold it, a refused
-//! one is dropped and fails the cycle, and one whose outcome is unknown
-//! stays for the next cycle.
+//! server; a change ends when the server reports the message holding it,
+//! in the listing at the cycle's start or in the flags read right after
+//! the command; a refused one is dropped and fails the cycle, and one whose
+//! outcome is unknown stays for the next cycle.
 
 use super::{
     CycleEnd,
@@ -22,11 +23,19 @@ use std::collections::{BTreeMap, HashMap};
 /// within a server's line limit, 64 KiB on Dovecot by default (research §14).
 const UIDS_PER_COMMAND: usize = 100;
 
-/// The value an IMAP cycle last sent for each message's flag, by identity.
-/// The server's `OK` does not say the message changed, since a UID the
-/// mailbox no longer has is ignored (RFC 3501 §6.4.8); the listing after
-/// the cycle's commands says it (research §15).
+/// The value an IMAP cycle sent for each message's flag, by identity: a
+/// wish equal to it is not sent again this cycle, whether the reading after
+/// the command confirmed it or not, and a cycle that sent anything runs the
+/// state pass once more (research §15; 009 FR-005).
 pub(super) type SentChanges = HashMap<(String, MessageFlag), bool>;
+
+/// The value of `flag` among a message's flags.
+fn flag_of(flag: MessageFlag, seen: bool, flagged: bool) -> bool {
+    match flag {
+        MessageFlag::Seen => seen,
+        MessageFlag::Flagged => flagged,
+    }
+}
 
 /// Ends, without a command, the pending changes whose value the listing
 /// shows the server holds: a star set and taken off before the cycle,
@@ -40,26 +49,30 @@ pub(super) fn end_changes_the_listing_shows(
     pending: &[PendingChange],
     batches: &mut BatchWriter<'_>,
 ) -> Result<(), CycleEnd> {
-    let mut shown = Vec::new();
+    let mut shown: BTreeMap<(MessageFlag, bool), Vec<String>> = BTreeMap::new();
     for change in pending {
         let Some(message) = listed.get(change.identity.as_str()) else {
             continue;
         };
-        let listed_value = match change.flag {
-            MessageFlag::Seen => message.flags.seen,
-            MessageFlag::Flagged => message.flags.flagged,
-        };
-        if listed_value == change.wanted {
-            shown.push((change.identity.clone(), change.flag, change.wanted));
+        if flag_of(change.flag, message.flags.seen, message.flags.flagged) == change.wanted {
+            let identities = shown.entry((change.flag, change.wanted)).or_default();
+            identities.push(change.identity.clone());
         }
     }
-    settle_changes_server_holds(shown, batches)
+    for ((flag, value), identities) in shown {
+        batches.settle(&identities, flag, value)?;
+    }
+    Ok(())
 }
 
 /// Sends the folder's pending changes to the IMAP server by the UIDs the
 /// listing gave: one `UID STORE` per flag, wanted value and hundred
-/// messages, each recorded in `sent_changes`. A wish equal to the value
-/// this cycle last sent waits for the listing after the commands. The
+/// messages, each recorded in `sent_changes` and confirmed by the flags
+/// read right after it (spec FR-007(d)): a message the reading shows with
+/// the wanted value is settled; one it does not report has left the
+/// folder, one it shows otherwise was changed meanwhile, and a reading the
+/// server refuses confirms nothing, so those stay pending for the next
+/// cycle. A wish equal to the value this cycle sent is not sent again. The
 /// listing's own values are not compared here: by a later sending step
 /// they may be minutes old and another client may have changed the flag,
 /// and a command for a value the server has is harmless (research §15).
@@ -95,49 +108,21 @@ pub(super) async fn send_imap_changes(
                 batches.drop_pending(&identities, flag, wanted)?;
                 return Err(refusal.into());
             }
-            for identity in identities {
-                sent_changes.insert((identity, flag), wanted);
+            for identity in &identities {
+                sent_changes.insert((identity.clone(), flag), wanted);
+            }
+            let reading = reader.fetch_flags(&uids).await?;
+            let confirmed: Vec<String> = (reading.messages.iter())
+                .filter(|message| flag_of(flag, message.seen, message.flagged) == wanted)
+                .filter_map(|message| {
+                    let named = command_messages.iter().find(|(_, uid)| *uid == message.uid);
+                    named.map(|(identity, _)| identity.clone())
+                })
+                .collect();
+            if !confirmed.is_empty() {
+                batches.settle(&confirmed, flag, wanted)?;
             }
         }
-    }
-    Ok(())
-}
-
-/// Ends each change the cycle sent whose value the listing after its
-/// commands shows; one it does not show, or shows otherwise, stays for the
-/// next cycle of a folder that lists the message (research §15).
-pub(super) fn settle_sent_changes(
-    listed: &[ListedMessage],
-    sent_changes: &SentChanges,
-    batches: &mut BatchWriter<'_>,
-) -> Result<(), CycleEnd> {
-    let mut shown = Vec::new();
-    for message in listed {
-        let listed_values = [
-            (MessageFlag::Seen, message.flags.seen),
-            (MessageFlag::Flagged, message.flags.flagged),
-        ];
-        for (flag, value) in listed_values {
-            if sent_changes.get(&(message.identity.clone(), flag)) == Some(&value) {
-                shown.push((message.identity.clone(), flag, value));
-            }
-        }
-    }
-    settle_changes_server_holds(shown, batches)
-}
-
-/// Ends the changes whose value the cycle saw the server hold, one store
-/// write per flag and value.
-fn settle_changes_server_holds(
-    changes: Vec<(String, MessageFlag, bool)>,
-    batches: &mut BatchWriter<'_>,
-) -> Result<(), CycleEnd> {
-    let mut groups: BTreeMap<(MessageFlag, bool), Vec<String>> = BTreeMap::new();
-    for (identity, flag, value) in changes {
-        groups.entry((flag, value)).or_default().push(identity);
-    }
-    for ((flag, value), identities) in groups {
-        batches.settle(&identities, flag, value)?;
     }
     Ok(())
 }

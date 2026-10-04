@@ -440,8 +440,79 @@ fn a_command_the_server_ignored_leaves_the_change_pending() {
     assert_eq!(pending_in(&store, &inbox), []);
 }
 
-/// A refused listing after the cycle's commands ends the cycle incomplete;
-/// what it shows ends the sent changes it shows, and the others stay.
+/// SC-004 and constitution VIII: a command for a value the server already
+/// holds changes nothing, so the server need not raise its mod-sequence
+/// (RFC 7162 §3.1.11) and the state pass would never show the message; the
+/// flags read right after the command confirm it all the same.
+#[test]
+fn a_command_for_a_value_the_server_holds_is_confirmed_by_the_reading_after_it() {
+    let inbox = folder_of(IMAP_ACCOUNT, "INBOX");
+    let store = Arc::new(store_with_inbox(&inbox));
+    synchronize_again(&imap_server(plain_messages(2)), &store);
+    let (release, held) = async_channel::bounded(1);
+    // Messages 10 and 20 are stored; 98 are missing, one batch.
+    let fixture = ImapFixture::start(FixtureSetup {
+        messages: plain_messages(100),
+        condstore: true,
+        store_fault: Some(StoreFault::HoldCompletion(held)),
+        ..FixtureSetup::default()
+    });
+    want(
+        &store,
+        IMAP_ACCOUNT,
+        &imap_identity(10),
+        MessageFlag::Flagged,
+        true,
+    );
+    let worker = MailWorker::new(store.clone());
+    let kind = LoadKind::GenericImap(account_access(&fixture));
+    let (outcome, _) = run_on_context(async {
+        let load = glib::spawn_future_local(async move {
+            finish_load(
+                &worker,
+                kind,
+                LoadTarget::Mailbox(folder_of(IMAP_ACCOUNT, "INBOX")),
+            )
+            .await
+        });
+        // While the star is out, the user marks message 20 unread, which it
+        // is on the server already; the step after the batch sends it anyway.
+        wait_until(|| store_commands(&fixture).len() == 1).await;
+        want(
+            &store,
+            IMAP_ACCOUNT,
+            &imap_identity(20),
+            MessageFlag::Seen,
+            false,
+        );
+        release.send(()).await.unwrap();
+        load.await.unwrap()
+    });
+    assert_stored(&outcome);
+    assert_eq!(
+        store_commands(&fixture),
+        [
+            r"UID STORE 10 +FLAGS.SILENT (\Flagged)",
+            r"UID STORE 20 -FLAGS.SILENT (\Seen)",
+        ]
+    );
+    let log = fixture.log();
+    let readings: Vec<&str> = (log.fetches.iter())
+        .filter(|fetch| fetch.items == ["UID", "FLAGS"] && fetch.message_set != "1:*")
+        .map(|fetch| fetch.message_set.as_str())
+        .collect();
+    assert_eq!(readings, ["10", "20"]);
+    // The second pass asked for the changed flags, which the starred
+    // message alone has; the unread mark was confirmed by its reading.
+    let second_pass = (log.fetches.iter().rev())
+        .find(|fetch| fetch.message_set == "1:*")
+        .expect("the second pass");
+    assert!((second_pass.items.iter()).any(|item| item.starts_with("CHANGEDSINCE")));
+    assert_eq!(pending_in(&store, &inbox), []);
+}
+
+/// A refused state pass after the cycle's commands ends the cycle
+/// incomplete; the commands were confirmed by the reading after each.
 #[test]
 fn a_refused_listing_after_the_commands_ends_the_cycle_incomplete() {
     let (store, inbox) = synchronized_imap_inbox(&imap_server(plain_messages(4)));
@@ -454,7 +525,7 @@ fn a_refused_listing_after_the_commands_ends_the_cycle_incomplete() {
             true,
         );
     }
-    // The listing after the command answers for 10 and 20 only.
+    // The state pass after the command answers for 10 and 20 only.
     let fixture = ImapFixture::start(FixtureSetup {
         listing_refused_after_store: true,
         ..plain_listing_setup(4)
@@ -476,14 +547,7 @@ fn a_refused_listing_after_the_commands_ends_the_cycle_incomplete() {
         store_commands(&fixture),
         [r"UID STORE 10,40 +FLAGS.SILENT (\Flagged)"]
     );
-    assert_eq!(
-        pending_in(&store, &inbox),
-        [PendingChange {
-            identity: imap_identity(40),
-            flag: MessageFlag::Flagged,
-            wanted: true,
-        }]
-    );
+    assert_eq!(pending_in(&store, &inbox), []);
 }
 
 /// A scripted mailbox of messages 1 to 3 whose first reading is followed by
