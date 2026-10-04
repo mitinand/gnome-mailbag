@@ -3,7 +3,9 @@
 **Feature**: `006-error-handling`
 **Created**: 2026-09-24
 **Status**: Implemented on `claude/errors` and accepted live by the
-maintainer 2026-09-25 (plan.md, "Post-implementation"); where the wording
+maintainer 2026-09-25 (plan.md, "Post-implementation"); FR-006 amended on
+2026-10-03 by [Read and star](../011-read-and-star/spec.md): the toast also carries a change to
+stored mail that could not be written; where the wording
 is written in code corrected 2026-09-26, and failures handed to the
 application as domain values decided the same day and built in portion 6
 (research §1). The decisions taken
@@ -385,7 +387,7 @@ from the approved forms, and decided:
   | The list: fewer messages arrived than the Inbox offered | The banner above the list; the rows that arrived stay | Title; one button opening the failure dialog | While that list is on screen |
   | The account: its load failed, nothing to show | The status page in place of the list | Warning icon, title, explanation, advice; the action button when declared, and a Details button opening the failure dialog | Until the account's next load replaces it |
   | The account: a problem Online Accounts reports | The account row's problem icon, as [001](../001-goa-account-observation/spec.md) defines it | As 001 | As 001 |
-  | The application: an operation outside any account's mail | A toast | Title and advice in one line, nothing else; a failed Settings launch writes no record line (003 FR-004) | The platform's default |
+  | The application: an operation outside any account's mail, or a change to stored mail that could not be written (011 FR-011, *amended 2026-10-03*) | A toast | Title and advice in one line, nothing else; a failed Settings launch writes no record line (003 FR-004) | The platform's default |
 
   A banner is one line and one button: the title, and a button that opens
   the failure dialog, which carries everything else, the action included.

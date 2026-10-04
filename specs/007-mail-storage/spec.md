@@ -3,7 +3,11 @@
 **Feature**: `007-mail-storage`
 **Created**: 2026-09-25
 **Status**: Implemented and accepted on the installed build on 2026-09-26
-([plan](plan.md), Post-implementation). Challenged 2026-09-25; FR-013
+([plan](plan.md), Post-implementation). FR-002, FR-003 and FR-014(c)
+amended on 2026-10-03 by [Read and star](../011-read-and-star/spec.md): the stored message
+carries its star and the user's pending wanted values, a message is
+addressed on its server by what the cycle's own listing shows for its
+identity, and FR-014(c) is built. Challenged 2026-09-25; FR-013
 aligned on 2026-09-26 with 006 as corrected that day. FR-002, FR-003 and
 FR-014(b) amended on 2026-09-27 by [008](../008-folders/spec.md), which
 builds the target model of FR-003 except the IMAP UID and the folder state
@@ -273,8 +277,10 @@ window shows and what the record says.
   them ([009](../009-synchronization/spec.md) FR-001, FR-008; amended by
   009, which replaces "as its latest completed load left them").
   For each message: its provider identity (FR-003), the list fields (subject,
-  sender, recipients, received date), its read state as the server last
-  reported it, and its reader content, which is the received text in full,
+  sender, recipients, received date), its read state and, since 011, its
+  star as the server last reported them and, when one is pending, the
+  read state and star the user wants (011 FR-001), and its reader
+  content, which is the received text in full,
   the reason the reader shows none (002 FR-004, 006 FR-006), or that the
   text was not downloaded (009 FR-009). The store
   holds no password, token or other credential, no server reply, no failure,
@@ -304,7 +310,10 @@ window shows and what the record says.
   cycle completed; UIDVALIDITY is part of a Generic IMAP
   message's identity, `imap:<folder>/<UIDVALIDITY>/<UID>`, instead of a
   folder field; the UID on each membership stays deferred to read and star
-  (FR-014(c)), since no cycle needs it.
+  (FR-014(c)), since no cycle needs it. *Amended 2026-10-03 by
+  [Read and star](../011-read-and-star/spec.md)*: no UID is stored on a membership at all; a
+  message is addressed on its server by the number the cycle's own listing
+  shows for its identity (011 FR-007).
 
 **Loads and the window**
 
@@ -406,6 +415,10 @@ window shows and what the record says.
   something other than a load, which the window then learns of without a
   load's completion. Until the first release a discarded store may still
   lose unsent changes (FR-012); consent comes with release readiness (g).
+  *Built by [Read and star](../011-read-and-star/spec.md) (011 FR-001, FR-007, FR-011)*: the
+  user's change is a pending wanted value on the stored message, written
+  before the window shows it, and the window learns of it by reading the
+  rows again.
   (d) *Conversations*: Message-ID, References, In-Reply-To, Gmail's thread
   identifier and Microsoft 365's conversation identifier.
   (e) *Content cache*: HTML, inline resources, attachments, previews, and

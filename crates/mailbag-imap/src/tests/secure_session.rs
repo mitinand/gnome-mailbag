@@ -16,8 +16,10 @@ fn starttls(behavior: StartTlsBehavior) -> FixtureSetup {
     }
 }
 
+/// SELECT, never the read-only EXAMINE: the flag commands need a writable
+/// mailbox (specs/011-read-and-star/research.md §4).
 #[test]
-fn both_encryption_modes_sign_in_and_examine_a_mailbox() {
+fn both_encryption_modes_sign_in_and_select_a_mailbox() {
     for encryption in [Encryption::ImplicitTls, Encryption::StartTls] {
         let fixture = ImapFixture::start(FixtureSetup {
             encryption,
@@ -27,14 +29,14 @@ fn both_encryption_modes_sign_in_and_examine_a_mailbox() {
         drop(open_reader(&fixture));
         let log = fixture.log();
         let expected: &[&str] = match encryption {
-            Encryption::ImplicitTls => &["CAPABILITY", "AUTHENTICATE", "CAPABILITY", "EXAMINE"],
+            Encryption::ImplicitTls => &["CAPABILITY", "AUTHENTICATE", "CAPABILITY", "SELECT"],
             Encryption::StartTls => &[
                 "plaintext CAPABILITY",
                 "plaintext STARTTLS",
                 "CAPABILITY",
                 "AUTHENTICATE",
                 "CAPABILITY",
-                "EXAMINE",
+                "SELECT",
             ],
         };
         assert_eq!(log.commands, expected);
@@ -43,10 +45,10 @@ fn both_encryption_modes_sign_in_and_examine_a_mailbox() {
 }
 
 #[test]
-fn an_interrupted_examine_does_not_confirm_an_empty_mailbox() {
+fn an_interrupted_select_does_not_confirm_an_empty_mailbox() {
     let fixture = ImapFixture::start(FixtureSetup {
         messages: plain_messages(1),
-        close_during_examine: true,
+        close_during_select: true,
         ..FixtureSetup::default()
     });
     let error = expect_failure(run(MailboxReader::open(

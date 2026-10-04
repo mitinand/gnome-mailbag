@@ -443,7 +443,7 @@ the service delivers display fields and text as ready values in one answer.
 - **SC-009**: Refresh Inbox is available for a selected Microsoft 365 account,
   and accessibility established by F01 and the IMAP integration does not
   regress (FR-010).
-- **SC-010**: A refresh of the maintainer's account, whose Inbox holds more
+- **SC-010**: A refresh of an account whose Inbox holds more
   than 100 messages, completes with text within the wait limit of the IMAP
   integration (FR-003).
 - **SC-011**: Against a scripted service that answers with fewer than 100
@@ -485,7 +485,7 @@ of them gets requirements, plan decisions or code in this feature.
   wait; no separate secure-connection failure kind; no request identifier;
   no attachment indication; nothing for a body that arrives in another form
   than asked for, which the service documents as not happening.
-- The read-only probe of 2026-09-23 against the maintainer's personal
+- The read-only probe of 2026-09-23 against a
   Microsoft 365 account in GOA is accepted evidence for the plan: GOA exports
   the account's authorization through its OAuth interface and a Mail interface
   that carries the address but no server settings; the token GOA returns is
@@ -529,7 +529,7 @@ of them gets requirements, plan decisions or code in this feature.
   web library, which the README's setup list gains; the installed
   application's runtime already contains the library.
 - Acceptance uses the existing Fedora/GNOME environment, the installed
-  application and the maintainer's personal Microsoft 365 account in GOA, with
+  application and a Microsoft 365 account in GOA, with
   an HTML-only message, a message with attachments and a message the user
   moves to another folder and back during acceptance.
 - Automatic polling, server push, reconnection, older history, persistent

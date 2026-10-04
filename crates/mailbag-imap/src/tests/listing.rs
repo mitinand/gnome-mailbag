@@ -15,21 +15,39 @@ fn listed_uids(listed: &[ListedUid]) -> Vec<u32> {
 }
 
 #[test]
-fn the_listing_carries_each_messages_read_state() {
-    let mut messages = plain_messages(2);
+fn the_listing_and_the_rows_carry_each_messages_read_state_and_star() {
+    let mut messages = plain_messages(3);
     messages[1].seen = true;
+    messages[2].seen = true;
+    messages[2].flagged = true;
     let fixture = ImapFixture::start(FixtureSetup {
         messages,
         ..FixtureSetup::default()
     });
     let mut reader = open_reader(&fixture);
     let listing = expect_success(run(reader.list_messages(RowItems::Standard)));
-    let read_states: Vec<(u32, bool)> = listing
+    let listed_flags: Vec<(u32, bool, bool)> = listing
         .messages
         .iter()
-        .map(|message| (message.uid, message.seen))
+        .map(|message| (message.uid, message.seen, message.flagged))
         .collect();
-    assert_eq!(read_states, [(10, false), (20, true)]);
+    assert_eq!(
+        listed_flags,
+        [(10, false, false), (20, true, false), (30, true, true)]
+    );
+    let rows = expect_success(run(
+        reader.fetch_rows_by_uid(&[10, 20, 30], RowItems::Standard)
+    ));
+    let row_flags: Vec<(u32, bool, bool)> = rows
+        .rows
+        .iter()
+        .map(|row| (row.uid, row.seen, row.flagged))
+        .collect();
+    // Rows come highest UID first.
+    assert_eq!(
+        row_flags,
+        [(30, true, true), (20, true, false), (10, false, false)]
+    );
 }
 
 /// RFC 3501 §7.4.1 lets a server expunge during a UID command and leave the

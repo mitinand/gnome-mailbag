@@ -3,7 +3,11 @@
 **Feature**: `009-synchronization`
 **Created**: 2026-09-28
 **Status**: Implemented on `claude/sync` on 2026-09-29, portion by portion
-with the maintainer's review; the manual checks of the quickstart
+with the maintainer's review; FR-001, FR-002(a), FR-005 and FR-015(a)
+amended on 2026-10-03 by [Read and star](../011-read-and-star/spec.md): a cycle also sends
+the user's pending flag changes after its listing, the star is learned
+beside the read state, and the user's pending change is the one other
+way stored mail changes; the manual checks of the quickstart
 passed on the installed build on 2026-09-30 (plan, Post-implementation).
 FR-003, FR-009, FR-013 and FR-015(d) amended on 2026-09-30 by
 [Message list](../010-message-list/spec.md): a batch carries each
@@ -419,7 +423,8 @@ documentation does not say how, and FR-007's rule covers either form.
   cycle's start**: Refresh Mailbox MUST run one cycle of the selected
   folder. When the cycle completes, the folder's stored messages (which
   messages it holds, their list fields: subject, sender, recipients,
-  received date, and their read state) MUST be as the server had them when
+  received date, their read state and, since 011, their star) MUST be as
+  the server had them when
   the cycle started, or later, within the service's guarantee: every change
   made on the server before the cycle started is in the store, as far as
   the server reports it; a change made during the cycle may or may not be.
@@ -430,14 +435,23 @@ documentation does not say how, and FR-007's rule covers either form.
   agreement. A cycle that stops before completing guarantees only that
   nothing was removed without proof (FR-004) and that every stored batch
   is whole (FR-008). A cycle reads only: it never changes anything on the
-  server.
+  server. *Amended 2026-10-03 by [Read and star](../011-read-and-star/spec.md)*: a cycle sends
+  the folder's pending flag changes under 011 FR-007, after its listing,
+  before each batch and before closing, and otherwise reads. The
+  agreement covers what the cycle's own commands change: an IMAP cycle
+  whose command was accepted lists the folder once more at its end
+  (*amended 2026-10-04*, 011 FR-007); a message that listing shows for
+  the first time arrived during the cycle and comes with the next one.
 
 **Rules for every feature**
 
 - **FR-002 — Rules for everything that starts cycles or changes messages**:
   These rules hold for every later feature. (a) Stored mail changes only by
   a cycle of a folder that lists the message, by the folder list (008
-  FR-007) and by the deletion of an account's mail (007 FR-008). (b)
+  FR-007) and by the deletion of an account's mail (007 FR-008); *amended
+  2026-10-03 by [Read and star](../011-read-and-star/spec.md)*: and by the user's pending
+  change, kept apart from the server state (011 FR-001), of which the
+  window learns from its own action. (b)
   Whatever wakes synchronization up (today the user; later timers, IMAP
   IDLE, a network change) only starts a cycle; nothing it reports is stored
   by itself. (c) At most one cycle of a folder runs at a time. (d) Cycles of
@@ -477,7 +491,8 @@ documentation does not say how, and FR-007's rule covers either form.
 - **FR-005 — IMAP: the base method**: On every IMAP server, Generic and
   Gmail, a cycle MUST learn arrivals, read-state changes and removals from
   one listing of every message of the folder with its number and read
-  state; it fetches list fields only for messages the store lacks, and
+  state (and, since 011, its star); it fetches list fields only for
+  messages the store lacks, and
   text as FR-009 selects. A Generic IMAP message's identity is its place:
   the folder, the folder's numbering version (UIDVALIDITY) and its number,
   so after the server renumbers a folder no stored message matches a new
@@ -614,14 +629,23 @@ documentation does not say how, and FR-007's rule covers either form.
 - **FR-015 — Deferred, with the layer each waits for**:
   (a) *Read and star*: a change the user makes is kept apart from what the
   server reported, and the window shows the server's state with the
-  pending changes applied over it; a cycle never overwrites or drops a
-  pending change. Before learning changes, a cycle sends the folder's
-  pending changes. A pending change wins until the server has it; after
-  that the server's state is the truth. A change whose outcome is unknown
-  (the connection dropped after sending) is settled by the next cycle's
-  reading, never by sending it blindly again. Messages are addressed on the
-  server by their identity and, on IMAP, by their number with the folder's
-  numbering version (007 FR-014(c)).
+  pending changes applied over it; a cycle never overwrites a pending
+  change the server does not have yet, and drops one only when the server
+  refuses it (011 FR-010). A pending change wins
+  until the server has it; after that the server's state is the truth. A
+  change whose outcome is unknown (the connection dropped after sending)
+  is settled by the next cycle's reading, never by sending it blindly
+  again on IMAP; on Microsoft 365 one the next round does not report is
+  sent again (011 FR-009). Messages are addressed on the server by their identity and, on
+  IMAP, by the number the cycle's own listing shows for it (007
+  FR-014(c)). *Built by [Read and star](../011-read-and-star/spec.md) (011 FR-001, FR-006
+  to FR-010), amended 2026-10-03*: a cycle sends after storing its
+  listing, before each batch of missing messages and once before closing,
+  not before learning changes, since the listing gives the address and
+  settles unknown outcomes; a pending change ends when the cycle sees
+  the server hold it: on IMAP a listing of the cycle shows it, on
+  Microsoft 365 the service accepts the request (amended 2026-10-04,
+  011 research §15).
   (b) *Moving and deleting*: a message the user moved is not taken for a
   message someone else removed: its place in the destination is recorded
   from the server's answer (the new number where the server offers UIDPLUS,
@@ -664,23 +688,25 @@ batches, and a cycle that stops keeps what it stored (FR-010).
 ```mermaid
 flowchart TD
     start([Refresh Mailbox]) --> open[Open the folder on its server]
-    open --> pending[/"Send the folder's pending changes<br/>(deferred: read and star)"/]
-    pending --> provider{Provider}
+    open --> provider{Provider}
 
-    provider -->|IMAP| listing[List every message: number and read state;<br/>Generic IMAP identities carry the numbering version]
+    provider -->|IMAP| listing[List every message: number, read state and star;<br/>Generic IMAP identities carry the numbering version]
     listing --> proof{Listing completed<br/>by the server?}
     proof -->|yes| remove[Removed: stored messages<br/>not listed]
     proof -->|no| keep([Remove nothing;<br/>the cycle ends incomplete, FR-011])
-    remove --> states[Read-state changes]
-    states --> arrive[Arrived: list fields of messages the<br/>store lacks, highest numbers first,<br/>with texts of the last 30 days]
+    remove --> states[Flag changes]
+    states --> pending[/"Send the folder's pending changes the server<br/>lacks (011 FR-007), again before each batch<br/>of arrivals and once before the end"/]
+    pending --> arrive[Arrived: list fields of messages the<br/>store lacks, highest numbers first,<br/>with texts of the last 30 days]
 
     provider -->|Microsoft 365| position{Saved position<br/>accepted?}
     position -->|yes| changes[Changes since the position,<br/>page by page, with texts<br/>of the last 30 days]
     position -->|no| full[Whole folder, latest first,<br/>page by page, with texts of the<br/>last 30 days; at its end, removed:<br/>stored messages it did not list]
+    changes --> pending365[/"Send the folder's pending changes<br/>after the round's last page, and after<br/>each page of a whole reading (011 FR-007)"/]
+    full --> pending365
 
-    arrive --> done([Cycle complete:<br/>state saved, folder in agreement])
-    changes --> done
-    full --> done
+    arrive --> relist[When a change was sent: list again,<br/>store removals and flag changes,<br/>end the sent changes it shows (011 FR-007)]
+    relist --> done([Cycle complete:<br/>state saved, folder in agreement])
+    pending365 --> done
 ```
 
 A text is stored in the batch that stores its message's row, and a

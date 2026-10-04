@@ -364,7 +364,7 @@ them gets requirements, plan decisions or code in this feature.
   deferred; the two providers' load logic moves out of the window code into a
   provider layer of its own. The size budget agreed on 2026-09-22 is the limit
   on what this feature builds.
-- The maintainer's read-only probe of 2026-09-22 against a Google account in
+- The read-only probe of 2026-09-22 against a Google account in
   GOA is accepted evidence for the plan: sign-in with the documented OAuth
   mechanism works without an initial response; a refused token yields Google's
   documented error exchange; Gmail announces modification sequences, readable
@@ -397,7 +397,7 @@ them gets requirements, plan decisions or code in this feature.
   *Amended 2026-09-23 by [Microsoft 365 integration](../005-microsoft-graph-integration/spec.md):
   that feature makes Microsoft 365 accounts eligible.*
 - Acceptance uses the existing Fedora/GNOME environment, the installed
-  application and the maintainer's Google account in GOA, with a user label
+  application and a Google account in GOA, with a user label
   whose name uses non-Latin letters on at least one Inbox message.
 - Automatic polling, server push, reconnection, older history, persistent
   storage, previews, HTML, attachments, conversations, search, sending and

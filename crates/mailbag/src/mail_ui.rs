@@ -6,8 +6,9 @@
 //! The list builds only its visible rows and follows each new read of the
 //! stored rows by their difference, so the open message stays open while it
 //! is listed (specs/009-synchronization FR-013). Opening a message asks the
-//! window for its stored content; it sends no request and changes nothing
-//! on the server.
+//! window for its stored content; it sends no request. A change of the open
+//! message's read state or star is handed to the window, which stores it;
+//! the rows show it once read again (specs/011-read-and-star FR-001).
 
 mod message_item;
 #[cfg(test)]
@@ -17,7 +18,7 @@ use crate::failure_declarations::{DeclaredFailure, declare_content, declare_fail
 use crate::failure_dialog::{RetriedOperation, show_action_button, status_description};
 use adw::{gio, glib, gtk, prelude::*};
 use mailbag_domain::{
-    AccountId, DisplayFields, Failure, FolderRef, MessageListRow, ReceivedContent,
+    AccountId, DisplayFields, Failure, FolderRef, MessageFlag, MessageListRow, ReceivedContent,
 };
 use message_item::MessageItem;
 use std::{
@@ -52,8 +53,8 @@ const ROW_TRANSITION_MS: u32 = 220;
 /// closes has no widget to report the end of its transition.
 const AFTER_CLOSING: Duration = Duration::from_millis(280);
 
-/// How long a message stays open before the window counts it read
-/// (specs/010-message-list FR-009).
+/// How long a message stays open before it is marked read
+/// (specs/010-message-list FR-009; specs/011-read-and-star FR-003).
 const READ_AFTER_OPENING: Duration = Duration::from_secs(1);
 
 /// How a change of the rows shown reaches the screen: at once, as for a
@@ -66,17 +67,19 @@ enum ListChange {
 }
 
 /// What the window alone remembers of the shown folder since the latest
-/// read of its stored rows: messages counted read after opening, and
-/// messages taken out with their trash button
-/// (specs/010-message-list FR-009, FR-010).
+/// read of its stored rows: messages taken out with their trash button
+/// (specs/010-message-list FR-010).
 #[derive(Default)]
 struct InWindow {
-    read: HashSet<String>,
     removed: HashSet<String>,
 }
 
 /// Asks the window for the content of an account's message.
 type ContentRequest = Box<dyn Fn(&AccountId, &str)>;
+
+/// Asks the window to store the user's wanted value of a flag of an
+/// account's message.
+type FlagChange = Box<dyn Fn(&AccountId, &str, MessageFlag, bool)>;
 
 pub struct MailUi {
     /// The window's handle on itself, for the timers and the row handlers.
@@ -104,6 +107,16 @@ pub struct MailUi {
     content_status: adw::StatusPage,
     content_action: gtk::Button,
     sender_avatar: adw::Avatar,
+    /// The envelope's star, which shows the open message's star by its icon
+    /// (specs/011-read-and-star FR-002).
+    star_button: gtk::ToggleButton,
+    /// The open message's star as the latest read of its row found it; the
+    /// envelope's star asks to change it.
+    star_action: gio::SimpleAction,
+    /// The reader header menu's Mark as Read and Mark as Unread, which the
+    /// application publishes, for the open message.
+    mark_read: gio::SimpleAction,
+    mark_unread: gio::SimpleAction,
     /// Which folder's stored rows the list shows, as the latest read found
     /// them, to update the list only when a new read answered.
     listed_rows: RefCell<Option<(FolderRef, Rc<[MessageListRow]>)>>,
@@ -115,9 +128,10 @@ pub struct MailUi {
     pending_change: RefCell<Option<glib::SourceId>>,
     /// The identity of the message the reader shows.
     open_message: RefCell<Option<String>>,
-    /// Counts the open message read when it fires.
+    /// Marks the open message read when it fires.
     pending_read: RefCell<Option<glib::SourceId>>,
     content_request: RefCell<Option<ContentRequest>>,
+    flag_change: RefCell<Option<FlagChange>>,
     /// Tells the window that the user took a row out of the list.
     row_removed: RefCell<Option<Box<dyn Fn()>>>,
 }
@@ -164,6 +178,10 @@ impl MailUi {
             content_status: reader.content_status,
             content_action: reader.content_action,
             sender_avatar: reader.avatar,
+            star_button: reader.star_button,
+            star_action: gio::SimpleAction::new_stateful("star", None, &false.to_variant()),
+            mark_read: gio::SimpleAction::new("mark-scope-read", None),
+            mark_unread: gio::SimpleAction::new("mark-scope-unread", None),
             listed_rows: RefCell::new(None),
             unread_only: Cell::new(false),
             in_window: RefCell::default(),
@@ -171,8 +189,10 @@ impl MailUi {
             open_message: RefCell::new(None),
             pending_read: RefCell::new(None),
             content_request: RefCell::new(None),
+            flag_change: RefCell::new(None),
             row_removed: RefCell::new(None),
         });
+        mail.add_message_actions();
         let factory = gtk::BuilderListItemFactory::from_bytes(
             Some(&row_handlers(Rc::downgrade(&mail))),
             &glib::Bytes::from_static(include_bytes!("../resources/ui/message-row.ui")),
@@ -197,6 +217,83 @@ impl MailUi {
     /// answer comes back through `show_content`.
     pub fn connect_content_request(&self, request: impl Fn(&AccountId, &str) + 'static) {
         *self.content_request.borrow_mut() = Some(Box::new(request));
+    }
+
+    /// Sets how the window stores the user's change of the open message's
+    /// read state or star; the rows show it once read again.
+    pub fn connect_flag_change(
+        &self,
+        change: impl Fn(&AccountId, &str, MessageFlag, bool) + 'static,
+    ) {
+        *self.flag_change.borrow_mut() = Some(Box::new(change));
+    }
+
+    /// Mark as Read and Mark as Unread of the reader header's menu, for the
+    /// application to publish.
+    pub fn mark_actions(&self) -> [&gio::SimpleAction; 2] {
+        [&self.mark_read, &self.mark_unread]
+    }
+
+    /// The actions on the open message: the reader's `message` actions,
+    /// which the envelope's star and menu name (`star` asks for the
+    /// opposite of its star, `mark-unread` marks it unread), and the header
+    /// menu's two. The star's state is set only from the stored rows
+    /// (specs/011-read-and-star research §9).
+    fn add_message_actions(&self) {
+        let mail = self.myself.clone();
+        self.star_action.connect_change_state(move |_, wanted| {
+            if let (Some(mail), Some(starred)) =
+                (mail.upgrade(), wanted.and_then(bool::from_variant))
+            {
+                mail.change_flag(MessageFlag::Flagged, starred);
+            }
+        });
+        let mark_unread = gio::SimpleAction::new("mark-unread", None);
+        let mail = self.myself.clone();
+        mark_unread.connect_activate(move |_, _| {
+            if let Some(mail) = mail.upgrade() {
+                mail.change_flag(MessageFlag::Seen, false);
+            }
+        });
+        let actions = gio::SimpleActionGroup::new();
+        actions.add_action(&self.star_action);
+        actions.add_action(&mark_unread);
+        self.reader_stack
+            .insert_action_group("message", Some(&actions));
+        for (action, wanted) in [(&self.mark_read, true), (&self.mark_unread, false)] {
+            let mail = self.myself.clone();
+            action.connect_activate(move |_, _| {
+                if let Some(mail) = mail.upgrade() {
+                    mail.change_flag(MessageFlag::Seen, wanted);
+                }
+            });
+        }
+    }
+
+    /// Asks the window to store the user's wanted value of the open
+    /// message's flag (specs/011-read-and-star FR-001). Marking it unread
+    /// first stops the second after opening from marking it read again
+    /// (research §14). Nothing happens without an open message.
+    fn change_flag(&self, flag: MessageFlag, wanted: bool) {
+        if flag == MessageFlag::Seen && !wanted {
+            self.drop_pending_read();
+        }
+        let Some(identity) = self.open_message.borrow().clone() else {
+            return;
+        };
+        self.change_listed_flag(&identity, flag, wanted);
+    }
+
+    /// Asks the window to store the user's wanted value of a listed
+    /// message's flag, open or not, as the message's row star does
+    /// (specs/011-read-and-star FR-002, FR-004).
+    fn change_listed_flag(&self, identity: &str, flag: MessageFlag, wanted: bool) {
+        let Some((folder, _)) = self.listed_rows.borrow().clone() else {
+            return;
+        };
+        if let Some(change) = &*self.flag_change.borrow() {
+            change(&folder.account, identity, flag, wanted);
+        }
     }
 
     /// Sets how the window hears that the user took a row out of the list,
@@ -311,14 +408,14 @@ impl MailUi {
         match change {
             ListChange::AtOnce => {
                 self.drop_pending_change();
-                self.change_list(&shown, change, &in_window.read);
+                self.change_list(&shown, change);
             }
             ListChange::Animated => {
                 if close_leaving_rows(&self.items, &shown) {
                     self.change_after_closing();
                 }
                 if self.pending_change.borrow().is_none() {
-                    self.change_list(&shown, change, &in_window.read);
+                    self.change_list(&shown, change);
                 }
             }
         }
@@ -330,7 +427,7 @@ impl MailUi {
         match position_of(&self.items, &identity).filter(|_| still_listed) {
             Some(position) => {
                 self.selection.set_selected(position);
-                self.show_envelope(item_at(&self.items, position).listed());
+                self.show_envelope(&item_at(&self.items, position));
             }
             None => self.close_reader(),
         }
@@ -341,17 +438,12 @@ impl MailUi {
     /// since before that their widgets are not on screen and would jump
     /// open. A list at its top stays at its top, so rows arriving there are
     /// seen.
-    fn change_list(
-        &self,
-        shown: &[&MessageListRow],
-        change: ListChange,
-        read_in_window: &HashSet<String>,
-    ) {
+    fn change_list(&self, shown: &[&MessageListRow], change: ListChange) {
         let at_top = self
             .messages
             .vadjustment()
             .is_some_and(|scrolling| scrolling.value() == 0.0);
-        let closed = update_list_by_difference(&self.items, shown, change, read_in_window);
+        let closed = update_list_by_difference(&self.items, shown, change);
         match change {
             ListChange::AtOnce => closed.iter().for_each(|item| item.show_over(true, 0)),
             ListChange::Animated if !closed.is_empty() => {
@@ -470,8 +562,8 @@ impl MailUi {
     }
 
     /// Opens the row's message: its envelope from the row at once, its
-    /// content when the window has read it; a second later the window counts
-    /// it read. A narrow window brings the reader forward only when asked.
+    /// content when the window has read it; a second later it is marked
+    /// read. A narrow window brings the reader forward only when asked.
     /// The list does not change here: the action that opens decides how.
     fn open_message(&self, position: u32, bring_reader_forward: bool) {
         let Some(item) = self.items.item(position).and_downcast::<MessageItem>() else {
@@ -498,13 +590,13 @@ impl MailUi {
             "message opened"
         );
         *self.open_message.borrow_mut() = Some(listed.identity.clone());
-        self.count_read_after_opening(&listed.identity);
+        self.mark_read_after_opening();
         self.selection.set_selected(position);
         // A neighbour opened after the trash may lie outside the visible area.
         self.messages
             .activate_action("list.scroll-to-item", Some(&position.to_variant()))
             .expect("a list view scrolls to an item");
-        self.show_envelope(listed);
+        self.show_envelope(&item);
         // The body stays empty until the content is read.
         self.reader_body.set_text("");
         self.show_body_or_failure(None);
@@ -516,23 +608,29 @@ impl MailUi {
         self.request_content(&account_id, &listed.identity);
     }
 
-    /// Counts the message read in the window a second after it opened,
-    /// unless another opens or the reader closes first (FR-009).
-    fn count_read_after_opening(&self, identity: &str) {
+    /// Marks the open message read a second after it opened, unless
+    /// another opens, the reader closes or the user marks it unread first;
+    /// a message read by then asks nothing (specs/010-message-list FR-009;
+    /// specs/011-read-and-star FR-003).
+    fn mark_read_after_opening(&self) {
         self.drop_pending_read();
         let mail = self.myself.clone();
-        let identity = identity.to_owned();
         let pending = glib::timeout_add_local_once(READ_AFTER_OPENING, move || {
             let Some(mail) = mail.upgrade() else {
                 return;
             };
             mail.pending_read.take();
-            if let Some(position) = position_of(&mail.items, &identity) {
-                item_at(&mail.items, position).set_unread(false);
+            if mail.open_item().is_some_and(|item| item.unread()) {
+                mail.change_flag(MessageFlag::Seen, true);
             }
-            mail.in_window.borrow_mut().read.insert(identity);
         });
         *self.pending_read.borrow_mut() = Some(pending);
+    }
+
+    /// The open message's row object.
+    fn open_item(&self) -> Option<MessageItem> {
+        let identity = self.open_message.borrow().clone()?;
+        position_of(&self.items, &identity).map(|position| item_at(&self.items, position))
     }
 
     fn drop_pending_read(&self) {
@@ -541,8 +639,17 @@ impl MailUi {
         }
     }
 
-    /// The open message's subject, sender, recipients and date.
-    fn show_envelope(&self, listed: &MessageListRow) {
+    /// The open message's subject, sender, recipients, date and star; the
+    /// star's icon is filled while it is starred, since the pressed look
+    /// alone is faint (specs/011-read-and-star FR-002).
+    fn show_envelope(&self, item: &MessageItem) {
+        let starred = item.starred();
+        self.star_action.set_state(&starred.to_variant());
+        self.star_button.set_icon_name(match starred {
+            true => "starred-symbolic",
+            false => "non-starred-symbolic",
+        });
+        let listed = item.listed();
         show_inert_text(&self.reader_subject, &subject_text(&listed.fields));
         self.reader_sender.set_text(&sender_text(&listed.fields));
         self.sender_avatar
@@ -598,14 +705,12 @@ impl MailUi {
 /// stay; one splice replaces the middle, keeping the object of a message
 /// still listed there unchanged, so the arrival or removal of a few messages
 /// rebuilds no other row (specs/009-synchronization/research.md §9). Every
-/// row's read state then changes in place, counting the window's reads. An
-/// animated change brings new rows in closed; the closed rows are returned,
-/// to open them.
+/// row's read state and star then change in place. An animated change
+/// brings new rows in closed; the closed rows are returned, to open them.
 fn update_list_by_difference(
     items: &gio::ListStore,
     rows: &[&MessageListRow],
     change: ListChange,
-    read_in_window: &HashSet<String>,
 ) -> Vec<MessageItem> {
     let shown = items.n_items() as usize;
     let mut same_start = 0;
@@ -646,21 +751,18 @@ fn update_list_by_difference(
     let mut closed = Vec::new();
     for (position, row) in rows.iter().enumerate() {
         let item = item_at(items, position as u32);
-        let unread = unread_in_window(row, read_in_window);
-        if item.unread() != unread {
-            item.set_unread(unread);
+        // Setting a property notifies whether or not it changes.
+        if item.unread() == row.seen {
+            item.set_unread(!row.seen);
+        }
+        if item.starred() != row.flagged {
+            item.set_starred(row.flagged);
         }
         if !item.shown() {
             closed.push(item);
         }
     }
     closed
-}
-
-/// Whether a row shows as unread: stored so, and not counted read in the
-/// window (specs/010-message-list FR-009).
-fn unread_in_window(row: &MessageListRow, read_in_window: &HashSet<String>) -> bool {
-    !row.seen && !read_in_window.contains(&row.identity)
 }
 
 /// Starts closing the rows whose message `rows` no longer lists, and says
@@ -703,9 +805,8 @@ fn item_at(items: &gio::ListStore, position: u32) -> MessageItem {
 }
 
 /// The rows the list shows: the stored rows but those taken out in the
-/// window, and with the unread filter on only the unread ones, counting the
-/// window's reads, and the open message (specs/010-message-list FR-008 to
-/// FR-010).
+/// window, and with the unread filter on only the unread ones and the open
+/// message (specs/010-message-list FR-008, FR-010).
 fn shown_rows<'a>(
     rows: &'a [MessageListRow],
     unread_only: bool,
@@ -714,11 +815,7 @@ fn shown_rows<'a>(
 ) -> Vec<&'a MessageListRow> {
     rows.iter()
         .filter(|row| !in_window.removed.contains(&row.identity))
-        .filter(|row| {
-            !unread_only
-                || unread_in_window(row, &in_window.read)
-                || open == Some(row.identity.as_str())
-        })
+        .filter(|row| !unread_only || !row.seen || open == Some(row.identity.as_str()))
         .collect()
 }
 
@@ -739,8 +836,11 @@ fn next_after_leaving(above: Option<(u32, bool)>, below: Option<(u32, bool)>) ->
 /// date while the pointer is over the row, turns red, Adwaita's colour for
 /// a destructive action, while the pointer is over the icon itself, and
 /// takes its message out of the list in the
-/// window (specs/010-message-list FR-002, FR-010). A signal with an object
-/// in the form passes that object first.
+/// window (specs/010-message-list FR-002, FR-010); the star under the date
+/// shows its outline while the pointer is over the row and stars or
+/// unstars its message without opening it (specs/011-read-and-star
+/// FR-004). A signal with an object in the form passes that object first;
+/// one without passes its emitter.
 fn row_handlers(mail: Weak<MailUi>) -> gtk::BuilderRustScope {
     let scope = gtk::BuilderRustScope::new();
     for (handler, reveal) in [("row_entered", true), ("row_left", false)] {
@@ -769,19 +869,57 @@ fn row_handlers(mail: Weak<MailUi>) -> gtk::BuilderRustScope {
             None
         });
     }
-    scope.add_callback("trash_row", move |values| {
-        let item = values
+    for (handler, pointed) in [("row_pointed", true), ("row_unpointed", false)] {
+        scope.add_callback(handler, move |values| {
+            if let Some(item) = row_item(values) {
+                item.set_pointed(pointed);
+            }
+            None
+        });
+    }
+    // The list opens a message when a click on its row is released; a
+    // claimed press never reaches it (GTK's list factory widget, bubble
+    // phase). A click where no star shows opens the message as before.
+    scope.add_callback("star_pressed", move |values| {
+        let press = values
             .first()
-            .and_then(|value| value.get::<gtk::ListItem>().ok())
-            .expect("message-row.ui: the row's list item")
-            .item()
-            .and_downcast::<MessageItem>();
-        if let (Some(mail), Some(item)) = (mail.upgrade(), item) {
+            .and_then(|value| value.get::<gtk::GestureClick>().ok())
+            .expect("message-row.ui: the star's click");
+        let star = press.widget().and_downcast::<gtk::Image>();
+        if star.is_some_and(|star| star.icon_name().is_some_and(|icon| !icon.is_empty())) {
+            press.set_state(gtk::EventSequenceState::Claimed);
+        }
+        None
+    });
+    let starring = mail.clone();
+    scope.add_callback("star_row", move |values| {
+        let item = row_item(values);
+        // Where no star shows, the click asks for nothing.
+        if let (Some(mail), Some(item)) = (starring.upgrade(), item)
+            && !item.star_icon().is_empty()
+        {
+            let identity = &item.listed().identity;
+            mail.change_listed_flag(identity, MessageFlag::Flagged, !item.starred());
+        }
+        None
+    });
+    scope.add_callback("trash_row", move |values| {
+        if let (Some(mail), Some(item)) = (mail.upgrade(), row_item(values)) {
             mail.remove_in_window(&item.listed().identity);
         }
         None
     });
     scope
+}
+
+/// The message of the row whose list item a row handler was given.
+fn row_item(values: &[glib::Value]) -> Option<MessageItem> {
+    values
+        .first()
+        .and_then(|value| value.get::<gtk::ListItem>().ok())
+        .expect("message-row.ui: the row's list item")
+        .item()
+        .and_downcast::<MessageItem>()
 }
 
 /// Where the message with this identity is listed.
@@ -799,10 +937,12 @@ struct ReaderWidgets {
     content_status: adw::StatusPage,
     content_action: gtk::Button,
     avatar: adw::Avatar,
+    star_button: gtk::ToggleButton,
 }
 
 /// Puts the approved message and envelope forms into the reader once, and
-/// leaves every control that would change mail unavailable.
+/// leaves every control that would change mail unavailable but the star
+/// and the message menu (specs/011-read-and-star).
 fn build_reader(window: &gtk::Builder) -> ReaderWidgets {
     let content = gtk::Builder::from_string(include_str!("../resources/ui/message-content.ui"));
     let envelope = gtk::Builder::from_string(include_str!("../resources/ui/envelope.ui"));
@@ -833,8 +973,6 @@ fn build_reader(window: &gtk::Builder) -> ReaderWidgets {
             .set_visible(false);
     }
     for (builder, name) in [
-        (&envelope, "star_button"),
-        (&envelope, "message_menu"),
         (window, "demo_button"),
         (window, "reader_trash"),
         (window, "reader_folders"),
@@ -869,6 +1007,9 @@ fn build_reader(window: &gtk::Builder) -> ReaderWidgets {
             .object("content_action")
             .expect("message-content.ui: content_action"),
         avatar: envelope.object("avatar").expect("envelope.ui: avatar"),
+        star_button: envelope
+            .object("star_button")
+            .expect("envelope.ui: star_button"),
     }
 }
 

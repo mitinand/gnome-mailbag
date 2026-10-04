@@ -1,7 +1,7 @@
 # Microsoft 365 Integration: Acceptance on the Live Account
 
 Applies after portion 4. Automated checks run with `scripts/check.sh`; the
-steps below need the maintainer's Microsoft 365 account in GOA with mail
+steps below need a Microsoft 365 account in GOA with mail
 enabled, an HTML-only message and a message with attachments in its Inbox.
 Refusals, short pages and stalls are verified by the scripted service in
 `mailbag-graph` and `mailbag-providers`, not live.

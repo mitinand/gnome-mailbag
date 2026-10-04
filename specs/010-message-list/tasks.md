@@ -151,7 +151,7 @@ preview.
   message whose page yields no words takes its plain piece; a refused
   piece stores an empty preview and the row; a temporary refusal fails the
   cycle as before.
-- [x] T012 [US1] First, with the maintainer and his account, one request
+- [x] T012 [US1] First, on a live account, one request
   to the service: a delta page of a folder with `$select=subject,
   bodyPreview`, to confirm the field comes back (research §7); the answer
   recorded in research §7. Then in crates/mailbag-graph/src/lib.rs `bodyPreview` in

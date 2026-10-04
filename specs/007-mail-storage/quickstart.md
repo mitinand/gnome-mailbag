@@ -1,7 +1,7 @@
 # Quickstart: Mail Storage
 
 How to check the feature. Automated tests cover the scripted servers; the
-steps below need the installed Flatpak build and the maintainer's accounts.
+steps below need the installed Flatpak build and live accounts.
 
 ## Automated
 

@@ -1,7 +1,7 @@
 # Gmail Integration: Acceptance on the Live Account
 
 Applies after portion 4. Automated checks run with `scripts/check.sh`; the
-steps below need the maintainer's Google account in GOA with mail enabled and
+steps below need a Google account in GOA with mail enabled and
 one Inbox message carrying a user label whose name is not in Latin letters.
 
 ## Load and read (SC-001, SC-002, SC-007)

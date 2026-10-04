@@ -545,16 +545,16 @@ net +73 after the simplify-review, accepted by the maintainer.
    library holds and hands out (`transport.rs`, `GioStream::compress`); the
    handle keeps the TLS connection itself, since GIO's TLS input and output
    streams do not keep it alive (found when a review removed the field: the
-   next command failed). NO or BAD leaves the connection as it is. Gmail announces it, iCloud and Yandex do not
-   (checked 2026-10-01); Google's IMAP documentation does not mention it
+   next command failed). NO or BAD leaves the connection as it is. Gmail announces it, the two Generic IMAP
+   servers probed do not (checked 2026-10-01); Google's IMAP documentation does not mention it
    (checked 2026-10-02), so the capability decides, for any server.
    Rejected: the IMAP library's own `compress` feature, which adds the
    async-compression crate and changes the session's type.
 3. **Rows and structures in one command.** `UID FETCH <uids> (… BODYSTRUCTURE)`
    per batch instead of two commands: a server spends about as much on a
    second command for the same messages as on the first (measured
-   2026-10-01 per message: rows and structure apart 10 + 10 ms on iCloud,
-   95 + 105 on Yandex, 33 + 34 on Gmail; in one command 10, 148 and 31).
+   2026-10-01 per message: rows and structure apart 10 + 10 ms on Generic
+   IMAP server A, 95 + 105 on server B, 33 + 34 on Gmail; in one command 10, 148 and 31).
    When the command does not answer for every message, because the server
    refused some or the parser rejected one structure, the messages it did
    not answer for, or answered without a structure, are read again apart:
@@ -570,15 +570,15 @@ list's acceptance, from the record's timestamps):
 | Folder | Before | After |
 |---|---|---|
 | Gmail Inbox, 763 messages | 54.5 s; texts 48.3 s | 31.5 s; texts 27.8 s; `compression enabled` in the record |
-| iCloud Inbox, 5 983 | 744.8 s; structures 202 s; 23 reconnections; 25 empty previews | 547.6 s; 0 reconnections; 15 empty previews, pages without words (010) |
-| Yandex Inbox, 9 322 | not filled in the application before | 1 587.6 s; rows with structures 1 100 s, 118 ms per message; texts 487 s |
+| Generic IMAP server A, Inbox, 5 983 | 744.8 s; structures 202 s; 23 reconnections; 25 empty previews | 547.6 s; 0 reconnections; 15 empty previews, pages without words (010) |
+| Generic IMAP server B, Inbox, 9 322 | not filled in the application before | 1 587.6 s; rows with structures 1 100 s, 118 ms per message; texts 487 s |
 
 A refresh of a folder where nothing changed ends in 0.4 to 2.4 s on every
 account, with the listing only. No warning in the record; no subject,
 address or text in it.
 
 **Left for a measurement, not built**: a batch above 100 messages helps
-only where the cost is per round trip (Gmail), not per message (iCloud,
+only where the cost is per round trip (Gmail), not per message (server A,
 §3), and grows the work a stop loses (FR-010); SASL-IR and Gmail's
 untagged CAPABILITY after sign-in save about two round trips per refresh;
 several connections per account belong to background synchronization

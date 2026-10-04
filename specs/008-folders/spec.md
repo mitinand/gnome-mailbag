@@ -703,7 +703,9 @@ rows and the failure shown after each.
   Starred, Important or All Mail folder there is no move and no delete,
   because the standard does not define their effect on the message's real
   folder, while flag changes are allowed; a provider that documents the
-  effect (Gmail) may allow more in its own terms.
+  effect (Gmail) may allow more in its own terms. *Flag changes in the
+  views built 2026-10-03 by [Read and star](../011-read-and-star/spec.md) (011 FR-002); the
+  rule for moves and deletes stands.*
   (e) *Background*: folder lists and folders kept fresh without a user
   action, for every account.
   (f) *Folder management*: creating, renaming, moving, deleting and hiding

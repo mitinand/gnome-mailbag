@@ -2,7 +2,12 @@
 
 **Feature**: `010-message-list`
 **Created**: 2026-09-30
-**Status**: Approved on 2026-09-30 (tasks T001). Sized at the feature-start on 2026-09-30 (budget: at most
+**Status**: Approved on 2026-09-30 (tasks T001). FR-002, FR-009,
+FR-011(b) and the Row entity amended on 2026-10-03 by
+[Read and star](../011-read-and-star/spec.md): the row shows a star under the date, the
+second's read state is stored and sent, the window's own record of
+messages counted read is retired, and a row's read state and star are
+the store's effective values. Sized at the feature-start on 2026-09-30 (budget: at most
 700 production lines and 750 test lines; one timer for the removal
 animation; no thread, queue, new dependency or change to the IMAP library
 forks); the decisions taken there are recorded under Clarifications. The
@@ -416,7 +421,11 @@ compared with the rule in the user's locale.
   text and turns red while the pointer is over it (changed from a round
   button over both preview lines on 2026-10-02, the maintainer's choice
   after the live check); pressing it is FR-010. Nothing else is shown in the row: no
-  attachment, star, thread or account marker (FR-011).
+  attachment, thread or account marker (FR-011). *Amended 2026-10-03 by
+  [Read and star](../011-read-and-star/spec.md)*: a star stands at the end of the second
+  line, under the date, while the message is starred, and an outline star
+  shows there while the pointer is over the row; a click on it stars or
+  unstars the message (011 FR-004).
 - **FR-003 — A preview for every message**: Every stored message MUST have
   a preview: the first words of its text as the user would read them,
   made once, with the batch that stores the message and off the window's
@@ -519,6 +528,10 @@ compared with the rule in the user's locale.
   nothing is stored or sent, and the next reading of the stored folder (a
   refresh, selecting the folder again) shows the stored read state again.
   Read and star makes the change durable and sends it (FR-011(b)).
+  *Amended 2026-10-03 by [Read and star](../011-read-and-star/spec.md)*: when the second
+  passes, the window stores a pending change to read (011 FR-003), the
+  dot goes out once the stored rows are read again, and the next refresh
+  sends it; the window's own record of messages counted read is retired.
 - **FR-010 — Move to Trash from the row**: Pressing the row's trash button
   MUST take the message out of the list at once, animated as a leaving row
   (FR-006), and open the next message when it was the open one (FR-007).
@@ -539,6 +552,7 @@ compared with the rule in the user's locale.
   row has the keyboard focus; a message the user moves or deletes leaves
   the list under FR-006 and FR-007. (b) *Read and star*: the read
   state FR-009 sets becomes durable and is sent; a star mark in the row.
+  *Built by [Read and star](../011-read-and-star/spec.md) (011 FR-003, FR-004).*
   (c) *Conversations*: a row for a conversation with its message count.
   (d) *Attachments*: an attachment mark in the row. (e) *Combined Inbox*
   and *Search*: lists over more than one folder, with the account named
@@ -549,8 +563,9 @@ compared with the rule in the user's locale.
 ### Key Entities
 
 - **Row**: one stored message as the list shows it: sender, date wording,
-  subject, preview, read state (the stored one, or the window's under
-  FR-009), and whether it is the open message.
+  subject, preview, read state and star (the store's effective values
+  since 011; before, the stored read state or the window's under FR-009),
+  and whether it is the open message.
 - **Preview**: up to 400 characters of a message's first readable words,
   kept with the message from the moment it is stored; empty when the
   message has no readable text.
@@ -624,8 +639,8 @@ compared with the rule in the user's locale.
   accepted this for previews on every row. Measured on the installed build
   at the live check (2026-10-02), each Inbox filled from nothing: 763
   Gmail messages in 56 s, 3 486 Microsoft 365 messages in 81 s and
-  5 976 iCloud messages in 12 min 27 s, the first batch listed after
-  about 10 s on Gmail and iCloud. iCloud spends about 75 ms opening each
+  5 976 Generic IMAP messages in 12 min 27 s, the first batch listed after
+  about 10 s on Gmail and that server, which spends about 75 ms opening each
   message whatever is read of it; making a fill faster belongs to
   synchronization (009). The batch
   stores its rows only with their previews, so an interrupted fill leaves

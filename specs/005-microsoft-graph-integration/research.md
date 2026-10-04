@@ -1,7 +1,7 @@
 # Microsoft 365 Integration: Research
 
 **Date**: 2026-09-23. Facts checked in documentation, in source or by the
-read-only probe against the maintainer's personal Microsoft 365 account in
+read-only probe against a Microsoft 365 account in
 GOA (a throwaway Rust program built inside the GNOME 50 SDK, outside the
 repository). Each section ends with the decision it supports.
 
@@ -199,7 +199,7 @@ from facts:
   (316 KB for one message with attachments, in 0.15 s); it accepts the
   immutable identifier.
 - Personal Microsoft accounts and organization accounts both go through the
-  same GOA provider; the live account is a personal one. An organization
+  same GOA provider; an organization account was not tried live. An organization
   that blocks the shared client identifier fails in Online Accounts.
 
 ## 7. Crate layout

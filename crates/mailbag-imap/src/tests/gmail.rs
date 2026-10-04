@@ -60,7 +60,7 @@ fn a_token_signs_in_with_xoauth2_and_never_with_login() {
             "AUTHENTICATE",
             "CAPABILITY",
             "ENABLE",
-            "EXAMINE"
+            "SELECT"
         ]
     );
     assert_eq!(log.sign_in_mechanisms, ["XOAUTH2"]);
@@ -122,7 +122,7 @@ fn utf8_names_are_enabled_before_the_mailbox_whether_they_are_accepted_or_refuse
                 "CAPABILITY",
                 "ENABLE",
                 "ID",
-                "EXAMINE"
+                "SELECT"
             ],
             "refused: {refused}"
         );
@@ -149,7 +149,7 @@ fn the_identification_reply_reaches_the_record_without_its_private_fields() {
         )));
         drop(reader);
         // A refusal does not stop the mailbox from opening.
-        assert!(fixture.log().commands.contains(&"EXAMINE".to_owned()));
+        assert!(fixture.log().commands.contains(&"SELECT".to_owned()));
         // Google asks for the vendor and a contact address beside the name.
         let sent = fixture
             .log()
@@ -205,6 +205,7 @@ fn gmails_identifier_is_listed_only_when_asked_for() {
         [ListedUid {
             uid: 10,
             seen: false,
+            flagged: false,
             gmail_message_id: Some(1_278_455_344_230_334_865),
         }]
     );

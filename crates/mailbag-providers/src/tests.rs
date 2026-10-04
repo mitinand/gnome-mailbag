@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+mod flags;
+
 use super::*;
 use crate::renewal::AccessRenewal;
 use crate::store_load::{BatchWriter, store_folder_list};
@@ -9,7 +11,7 @@ use crate::worker::{LoadKind, MailWorker, report_events};
 use goa_adapter::{GraphAccess, ImapAccess, ImapCredential, ImapEncryption};
 use mailbag_domain::{
     AccountId, ContentExplanation, DisplayFields, Failure, FailureKind, Folder, FolderBatch,
-    FolderRef, FolderRole, FolderState, IncompleteList, Message, ReceivedContent,
+    FolderRef, FolderRole, FolderState, IncompleteList, Message, MessageFlags, ReceivedContent,
 };
 use mailbag_graph::test_server as graph_service;
 use mailbag_imap::test_server::{
@@ -144,6 +146,7 @@ fn read_stored_messages(
                 fields: row.fields,
                 received_unix: row.received_unix,
                 seen: row.seen,
+                flagged: row.flagged,
                 content,
                 preview: row.preview,
             })
@@ -153,7 +156,7 @@ fn read_stored_messages(
 }
 
 /// Runs one load of `target` on `worker` and waits for its end; returns it
-/// with how many batches the load reported stored before.
+/// with how many changes of the store the load reported before.
 async fn finish_load(
     worker: &MailWorker,
     kind: LoadKind,
@@ -166,14 +169,14 @@ async fn finish_load(
     load_end(&events).await
 }
 
-/// The end of a load whose events arrive on `events`, and how many batches
-/// it reported stored before.
+/// The end of a load whose events arrive on `events`, and how many changes
+/// of the store it reported before.
 async fn load_end(events: &async_channel::Receiver<LoadEvent>) -> (LoadResult, usize) {
-    let mut batches = 0;
+    let mut store_changes = 0;
     loop {
         match events.recv().await.expect("the load reports its end") {
-            LoadEvent::BatchStored => batches += 1,
-            LoadEvent::Finished(outcome) => return (outcome, batches),
+            LoadEvent::StoreChanged => store_changes += 1,
+            LoadEvent::Finished(outcome) => return (outcome, store_changes),
         }
     }
 }
@@ -658,6 +661,7 @@ fn stored_earlier_message() -> Message {
         fields: DisplayFields::default(),
         received_unix: None,
         seen: true,
+        flagged: false,
         content: ReceivedContent::Text("Stored earlier".to_owned()),
         preview: "Stored earlier".to_owned(),
     }
@@ -905,7 +909,7 @@ fn graph_mailbox(
             .map(|(token, page)| (token.to_owned(), page))
             .collect(),
         messages,
-        token_accepted_requests: None,
+        ..graph_service::ScriptedChanges::default()
     }
 }
 
@@ -1112,6 +1116,29 @@ fn a_microsoft_365_round_applies_removals_partial_entries_and_arrivals() {
     assert_eq!(text_of(&stored[2].content), "Text 4");
 }
 
+/// A star set elsewhere comes as a partial entry with the follow-up flag
+/// alone: it changes the stored star, keeps the read state and reads
+/// nothing again (specs/011-read-and-star/research.md §6).
+#[test]
+fn a_microsoft_365_star_alone_changes_the_star_and_keeps_the_read_state() {
+    let id = graph_service::fixture_immutable_id;
+    let store = Arc::new(Store::in_memory());
+    let (service, outcome, stored) = graph_round(
+        vec![serde_json::json!({"id": id(1), "flag": {"flagStatus": "flagged"}})],
+        inbox_messages(&[1, 2, 3]),
+        &store,
+    );
+    assert!(matches!(outcome, LoadResult::Stored { .. }), "{outcome:?}");
+    assert_eq!(identities(&stored)[0], graph_identity(1));
+    assert!(stored[0].flagged && stored[0].seen, "{:?}", stored[0]);
+    assert!(!stored[1].flagged);
+    assert!(
+        !graph_paths(&service).contains(&format!("/me/messages/{}", id(1))),
+        "{:?}",
+        graph_paths(&service)
+    );
+}
+
 /// Research §5: a message moved from the Inbox to Archive and marked unread
 /// there; an older read-state entry in the Inbox's round must not mark it
 /// read. The message is read again and, being in Archive now, leaves the
@@ -1152,7 +1179,7 @@ fn an_entry_for_a_message_another_folder_holds_is_read_again_first() {
     // Archive's own cycle related the message there, unread.
     let archive = folder_of("synthetic-microsoft365", "archive");
     let archived = FolderBatch {
-        known_arrived: vec![(graph_identity(2), false)],
+        known_arrived: vec![(graph_identity(2), MessageFlags::default())],
         ..FolderBatch::default()
     };
     store.store_batch(&archive, &archived, || false).unwrap();
@@ -1509,6 +1536,7 @@ fn message_with(number: u32, content: ReceivedContent) -> Message {
         fields: DisplayFields::default(),
         received_unix: None,
         seen: false,
+        flagged: false,
         content,
         preview: String::new(),
     }
@@ -1782,7 +1810,7 @@ fn a_mailbox_load_stores_the_messages_of_the_folder_it_names() {
         read_stored_messages(&store, &folder_of("synthetic-account", "INBOX")),
         Ok(None)
     );
-    assert_eq!(fixture.log().examined_mailboxes, ["Work"]);
+    assert_eq!(fixture.log().opened_mailboxes, ["Work"]);
 }
 
 #[test]
@@ -1825,7 +1853,7 @@ fn row_fetches(fixture: &ImapFixture) -> Vec<String> {
 
 /// A cycle of the Generic IMAP Inbox of `fixture` into `store`, which already
 /// lists the Inbox; returns how it ended, what the Inbox then holds and how
-/// many batches were reported stored.
+/// many changes of the store were reported.
 fn synchronize_again(
     fixture: &ImapFixture,
     store: &Arc<Store>,
@@ -1997,15 +2025,17 @@ fn a_microsoft_365_round_without_changes_costs_one_request() {
     assert!(later[0].query.contains("$deltatoken=round-1"), "{later:?}");
 }
 
-/// SC-003: arrivals are fetched, read states change in place and messages
-/// the complete listing no longer reports leave.
+/// SC-003: arrivals are fetched, read states and stars change in place and
+/// messages the complete listing no longer reports leave.
 #[test]
-fn a_later_cycle_brings_arrivals_read_states_and_removals() {
+fn a_later_cycle_brings_arrivals_flags_and_removals() {
     let store = Arc::new(store_with_inbox(&folder_of("synthetic-account", "INBOX")));
     synchronize_again(&imap_server(plain_messages(3)), &store);
     let mut changed = plain_messages(4);
     changed.remove(0); // 10 is gone
     changed[0].seen = true; // 20 was read elsewhere
+    changed[1].flagged = true; // 30 was starred elsewhere
+    changed[2].flagged = true; // 40 arrives starred
     let fixture = imap_server(changed);
     let (outcome, stored, _) = synchronize_again(&fixture, &store);
     assert!(
@@ -2016,7 +2046,11 @@ fn a_later_cycle_brings_arrivals_read_states_and_removals() {
         identities(&stored),
         [imap_identity(40), imap_identity(30), imap_identity(20)]
     );
-    assert!(stored[2].seen);
+    let flags: Vec<(bool, bool)> = stored
+        .iter()
+        .map(|message| (message.seen, message.flagged))
+        .collect();
+    assert_eq!(flags, [(false, true), (false, true), (true, false)]);
     // Only the arrival was fetched.
     assert_eq!(row_fetches(&fixture), ["40"]);
 }
@@ -2201,7 +2235,7 @@ fn a_stopped_first_fill_continues_without_fetching_stored_messages_again() {
         // The listing's batch, then the first hundred.
         for _ in 0..2 {
             let event = events.recv().await.expect("a batch");
-            assert!(matches!(event, LoadEvent::BatchStored), "{event:?}");
+            assert!(matches!(event, LoadEvent::StoreChanged), "{event:?}");
         }
         drop(handle);
         let (outcome, _) = load_end(&events).await;

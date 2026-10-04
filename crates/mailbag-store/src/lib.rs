@@ -27,12 +27,12 @@ use failure::{StoreError, StoreOperation, storage_failure};
 use folders::{
     delete_memberships, delete_messages_without_folder, delete_unlisted_folders,
     read_folder_identities, read_folder_state, read_identities_in_other_folders, read_listed_rows,
-    read_stored_identities, relate_known, set_read_states, store_arrived, stored_content,
-    stored_folder, stored_folder_id, upsert_folders, write_folder_state,
+    read_pending_changes, read_stored_identities, relate_known, set_flag_states, store_arrived,
+    stored_content, stored_folder, stored_folder_id, upsert_folders, write_folder_state,
 };
 use mailbag_domain::{
-    AccountId, Failure, Folder, FolderBatch, FolderRef, FolderState, MessageListRow,
-    ReceivedContent,
+    AccountId, Failure, Folder, FolderBatch, FolderRef, FolderState, MessageFlag, MessageFlags,
+    MessageListRow, PendingChange, ReceivedContent,
 };
 use open::{configure_connection, create_schema, open_store};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -53,8 +53,8 @@ pub struct Store {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FolderSync {
     pub state: FolderState,
-    /// The identity and read state of every message the folder holds.
-    pub stored: HashMap<String, bool>,
+    /// The identity and the server's flags of every message the folder holds.
+    pub stored: HashMap<String, MessageFlags>,
 }
 
 /// How a write of a load's result ended when it did not fail.
@@ -118,7 +118,7 @@ impl Store {
     }
 
     /// What a cycle needs of the folder at its start: its state and the
-    /// messages it holds with their read state. A folder the store does not
+    /// messages it holds with the server's flags. A folder the store does not
     /// hold fails as a write would, since the cycle cannot store into it.
     pub fn read_folder_sync(&self, folder: &FolderRef) -> Result<FolderSync, Failure> {
         self.with_connection(StoreOperation::Write, |connection| {
@@ -160,8 +160,9 @@ impl Store {
 
     /// Stores one batch of a cycle in one transaction, whole or not at all
     /// (specs/009-synchronization FR-008): removals, then the messages left
-    /// in no folder, read states, full records, messages the account already
-    /// held, and the folder's state when the batch carries one.
+    /// in no folder, flags, full records, messages the account already
+    /// held, and the folder's state when the batch carries one. The pending
+    /// values stay (specs/011-read-and-star research §15).
     /// `load_cancelled` is asked under the store's lock, as for a folder list.
     pub fn store_batch(
         &self,
@@ -181,7 +182,7 @@ impl Store {
                 delete_memberships(&transaction, folder_id, account, &batch.removed)?;
                 delete_messages_without_folder(&transaction, account)?;
             }
-            set_read_states(&transaction, account, &batch.read_states)?;
+            set_flag_states(&transaction, account, &batch.flag_states)?;
             store_arrived(&transaction, folder_id, account, &batch.arrived)?;
             relate_known(&transaction, folder_id, account, &batch.known_arrived)?;
             if let Some(state) = &batch.state {
@@ -190,6 +191,68 @@ impl Store {
             transaction.commit()?;
             Ok(StoreWrite::Stored)
         })
+    }
+
+    /// The changes of the folder's messages the user wants and the server
+    /// may not have yet (specs/011-read-and-star FR-007).
+    pub fn read_pending_changes(&self, folder: &FolderRef) -> Result<Vec<PendingChange>, Failure> {
+        self.with_connection(StoreOperation::Read, |connection| {
+            let folder_id = stored_folder_id(connection, folder)?;
+            Ok(read_pending_changes(connection, folder_id)?)
+        })
+    }
+
+    /// Stores the value of `flag` the user wants for the account's message,
+    /// whatever the server's value is: a command for that flag may be on its
+    /// way and change it (specs/011-read-and-star FR-001, research §14). The
+    /// window reads it as the message's state until the server agrees or
+    /// refuses. A message the store no longer holds is left as it is.
+    pub fn write_pending_flag(
+        &self,
+        account: &AccountId,
+        identity: &str,
+        flag: MessageFlag,
+        wanted: bool,
+    ) -> Result<(), Failure> {
+        let (_, pending) = flag_columns(flag);
+        self.with_connection(StoreOperation::Write, |connection| {
+            connection.execute(
+                &format!("UPDATE message SET {pending} = ?3 WHERE account = ?1 AND identity = ?2"),
+                params![account.as_str(), identity, wanted],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// The cycle saw the server hold `value` of `flag` for the account's
+    /// messages: it becomes their server value and ends a pending value
+    /// equal to it; a newer wish for the other value stays
+    /// (specs/011-read-and-star FR-007).
+    pub fn settle_flags(
+        &self,
+        account: &AccountId,
+        identities: &[String],
+        flag: MessageFlag,
+        value: bool,
+    ) -> Result<(), Failure> {
+        let (server, pending) = flag_columns(flag);
+        let assignments = format!("{server} = ?3, {pending} = NULLIF({pending}, ?3)");
+        self.update_messages(account, identities, &assignments, value)
+    }
+
+    /// The server refused `refused` of `flag` for the account's messages: a
+    /// pending value equal to it ends; a newer wish for the other value stays
+    /// (specs/011-read-and-star FR-010).
+    pub fn drop_pending_flags(
+        &self,
+        account: &AccountId,
+        identities: &[String],
+        flag: MessageFlag,
+        refused: bool,
+    ) -> Result<(), Failure> {
+        let (_, pending) = flag_columns(flag);
+        let assignments = format!("{pending} = NULLIF({pending}, ?3)");
+        self.update_messages(account, identities, &assignments, refused)
     }
 
     /// The account's stored folders in no particular order; the window sorts
@@ -273,6 +336,29 @@ impl Store {
         })
     }
 
+    /// Sets `assignments` on each of the account's messages in `identities`,
+    /// in one transaction, with `value` as `?3`.
+    fn update_messages(
+        &self,
+        account: &AccountId,
+        identities: &[String],
+        assignments: &str,
+        value: bool,
+    ) -> Result<(), Failure> {
+        self.with_connection(StoreOperation::Write, |connection| {
+            let transaction = connection.transaction()?;
+            let mut update = transaction.prepare(&format!(
+                "UPDATE message SET {assignments} WHERE account = ?1 AND identity = ?2"
+            ))?;
+            for identity in identities {
+                update.execute(params![account.as_str(), identity, value])?;
+            }
+            drop(update);
+            transaction.commit()?;
+            Ok(())
+        })
+    }
+
     /// Runs `work` with the connection, opening the store at its first use,
     /// and hands a failure on as `operation`'s. A lock poisoned by a panic is
     /// taken over: SQLite rolled back the transaction the panic interrupted.
@@ -292,5 +378,14 @@ impl Store {
         }
         let connection = connection.as_mut().expect("the store was opened above");
         work(connection).map_err(|error| storage_failure(operation, &error))
+    }
+}
+
+/// The columns of `flag`: the server's value and the pending one
+/// (specs/011-read-and-star/data-model.md).
+fn flag_columns(flag: MessageFlag) -> (&'static str, &'static str) {
+    match flag {
+        MessageFlag::Seen => ("seen", "seen_pending"),
+        MessageFlag::Flagged => ("flagged", "flagged_pending"),
     }
 }

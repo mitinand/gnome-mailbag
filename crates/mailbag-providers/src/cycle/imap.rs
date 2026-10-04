@@ -4,7 +4,10 @@
 //! The cycle of an IMAP folder, Generic IMAP or Gmail (spec FR-005, FR-006;
 //! research §2, §3, §4).
 
-use super::{CycleEnd, completed};
+use super::{
+    CycleEnd, completed,
+    pending::{SentChanges, send_imap_changes, settle_sent_changes},
+};
 use crate::{
     LoadResult,
     gmail::{gmail_options, log_gmail_rows},
@@ -13,13 +16,16 @@ use crate::{
 };
 use goa_adapter::ImapAccess;
 use mailbag_content::decode_display_fields;
-use mailbag_domain::{FolderBatch, FolderState, IncompleteList, Message};
+use mailbag_domain::{FolderBatch, FolderState, IncompleteList, Message, MessageFlags};
 use mailbag_imap::{
     FolderListing, ImapError, ImapFailure, ImapStep, MailboxReader, OpenOptions, RowItems,
     ServerReply,
 };
 use mailbag_store::FolderSync;
-use std::{collections::HashSet, time::SystemTime};
+use std::{
+    collections::{HashMap, HashSet},
+    time::SystemTime,
+};
 
 /// How many missing messages one batch fetches (research §3).
 const BATCH_SIZE: usize = 100;
@@ -35,15 +41,18 @@ pub(super) enum IdentityRule {
 }
 
 /// A listed message the cycle knows by its identity.
-struct ListedMessage {
-    identity: String,
-    uid: u32,
-    seen: bool,
+pub(super) struct ListedMessage {
+    pub(super) identity: String,
+    pub(super) uid: u32,
+    pub(super) flags: MessageFlags,
 }
 
 /// The cycle of an IMAP folder, Generic IMAP or Gmail (spec FR-005, FR-006;
 /// research §2, §3): list every message, store what the listing proves,
-/// then fetch the missing messages newest first, a batch at a time.
+/// then fetch the missing messages newest first, a batch at a time. The
+/// user's pending changes are sent by the listing's UIDs after the listing
+/// and after each batch; when the cycle sent one, the folder is listed again
+/// to see which the server holds (specs/011-read-and-star FR-007).
 pub(super) async fn synchronize_imap_folder(
     access: ImapAccess,
     identity_rule: IdentityRule,
@@ -54,18 +63,42 @@ pub(super) async fn synchronize_imap_folder(
     let stored = batches.read_folder_sync()?;
     let listing = server.list_messages().await?;
     let listed = server.identify(&listing, &batches.folder.identity)?;
+    let listed_by_identity: HashMap<&str, &ListedMessage> = listed
+        .iter()
+        .map(|message| (message.identity.as_str(), message))
+        .collect();
     let missing = missing_messages(&listed, &stored);
     batches.store(&listing_changes(&listed, &stored, &listing, &missing))?;
+    let mut sent_changes = SentChanges::new();
+    send_imap_changes(
+        &mut server.reader,
+        &listed_by_identity,
+        &mut sent_changes,
+        batches,
+    )
+    .await?;
     for batch_messages in missing.chunks(BATCH_SIZE) {
         let (batch, refusal) = server
             .fetch_arrivals(batch_messages, recent_limit, batches)
             .await?;
         batches.store(&batch)?;
+        send_imap_changes(
+            &mut server.reader,
+            &listed_by_identity,
+            &mut sent_changes,
+            batches,
+        )
+        .await?;
         // The rows the server withheld are missing, so the folder stays
         // not completed; the listing's proof is stored.
         if let Some(refusal) = refusal {
             return Ok(batches.finish(listed.len(), Some(short_list(refusal))));
         }
+    }
+    if !sent_changes.is_empty()
+        && let Some(refusal) = confirm_sent_changes(&mut server, &sent_changes, batches).await?
+    {
+        return Ok(batches.finish(listed.len(), Some(short_list(refusal))));
     }
     if let Some(refusal) = listing.refusal {
         return Ok(batches.finish(listed.len(), Some(short_list(refusal))));
@@ -77,6 +110,30 @@ pub(super) async fn synchronize_imap_folder(
         })?;
     }
     Ok(batches.finish(listed.len(), None))
+}
+
+/// Lists the folder again after the cycle's own commands, which may have
+/// changed it, as a star taken off a message under Gmail's Starred label
+/// takes it out of the label; stores the removals and flags the listing
+/// proves and ends the sent changes it shows. Messages it newly lists wait
+/// for the next cycle, and the folder's state stays the cycle's. Returns the
+/// server's refusal to finish the listing (specs/011-read-and-star FR-007,
+/// research §15; 009 FR-001).
+async fn confirm_sent_changes(
+    server: &mut ImapFolder,
+    sent_changes: &SentChanges,
+    batches: &mut BatchWriter<'_>,
+) -> Result<Option<ServerReply>, CycleEnd> {
+    let stored = batches.read_folder_sync()?;
+    let listing = server.list_messages().await?;
+    let listed = server.identify(&listing, &batches.folder.identity)?;
+    let proven = FolderBatch {
+        state: None,
+        ..listing_changes(&listed, &stored, &listing, &[])
+    };
+    batches.store(&proven)?;
+    settle_sent_changes(&listed, sent_changes, batches)?;
+    Ok(listing.refusal)
 }
 
 /// The listed messages the folder does not hold, highest UID first, so the
@@ -94,7 +151,7 @@ fn missing_messages<'a>(
 }
 
 /// What the listing proves before anything is fetched: removals when it
-/// completed (spec FR-004), changed read states, and the folder's state: not
+/// completed (spec FR-004), changed flags, and the folder's state: not
 /// completed while messages are missing, refused listing or not; completed
 /// when none are and the listing completed; otherwise as it was.
 fn listing_changes(
@@ -117,15 +174,15 @@ fn listing_changes(
             .collect(),
         false => Vec::new(),
     };
-    let read_states = listed
+    let flag_states = listed
         .iter()
         .filter(|message| {
             stored
                 .stored
                 .get(&message.identity)
-                .is_some_and(|seen| *seen != message.seen)
+                .is_some_and(|flags| *flags != message.flags)
         })
-        .map(|message| (message.identity.clone(), message.seen))
+        .map(|message| (message.identity.clone(), message.flags.into()))
         .collect();
     let state = if !missing.is_empty() {
         Some(FolderState::default())
@@ -136,7 +193,7 @@ fn listing_changes(
     };
     FolderBatch {
         removed,
-        read_states,
+        flag_states,
         state,
         ..FolderBatch::default()
     }
@@ -220,7 +277,10 @@ impl ImapFolder {
                 Some(ListedMessage {
                     identity,
                     uid: message.uid,
-                    seen: message.seen,
+                    flags: MessageFlags {
+                        seen: message.seen,
+                        flagged: message.flagged,
+                    },
                 })
             })
             .collect();
@@ -272,6 +332,7 @@ impl ImapFolder {
                         .in_scope(|| decode_display_fields(&row.list_headers)),
                     received_unix: row.internal_date,
                     seen: row.seen,
+                    flagged: row.flagged,
                     content,
                     preview,
                 })
@@ -280,7 +341,7 @@ impl ImapFolder {
         let batch = FolderBatch {
             known_arrived: known
                 .iter()
-                .map(|message| (message.identity.clone(), message.seen))
+                .map(|message| (message.identity.clone(), message.flags))
                 .collect(),
             arrived,
             ..FolderBatch::default()

@@ -47,6 +47,11 @@ pub enum FailureAction {
     OnlineAccounts,
 }
 
+/// The toast for the user's change to a message that the store could not
+/// write: title and advice in one line (specs/011-read-and-star FR-011;
+/// specs/006-error-handling FR-006).
+pub const MESSAGE_NOT_CHANGED: &str = "Message not changed. Try again.";
+
 /// The words that name the failed load: the account's folder list when Retry
 /// refreshes the account, otherwise the mailbox (specs/008-folders FR-011).
 fn choose_by_load(
@@ -357,6 +362,7 @@ fn failed_step_title(step: ServerStep) -> &'static str {
         ServerStep::OpenMailbox => "Mailbox not opened",
         ServerStep::FetchMessages => "Message list not received",
         ServerStep::FetchText => "Message text not received",
+        ServerStep::ChangeFlags => "Message not changed on the server",
     }
 }
 
@@ -372,6 +378,7 @@ fn failed_step_explanation(step: ServerStep) -> &'static str {
         ServerStep::OpenMailbox => "The mail server did not open this mailbox.",
         ServerStep::FetchMessages => "The mail server did not send this mailbox's messages.",
         ServerStep::FetchText => "The mail server did not send the text of these messages.",
+        ServerStep::ChangeFlags => "The mail server refused to change this message.",
     }
 }
 
@@ -391,6 +398,9 @@ fn waiting_step_explanation(step: ServerStep) -> &'static str {
         }
         ServerStep::FetchText => {
             "The mail server stopped responding while sending the message text."
+        }
+        ServerStep::ChangeFlags => {
+            "The mail server stopped responding while changing this message."
         }
     }
 }

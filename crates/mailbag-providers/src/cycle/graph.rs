@@ -5,16 +5,17 @@
 //! service's delta reading, one batch per page, from the folder's saved
 //! position.
 
-use super::{CycleEnd, completed};
+use super::{CycleEnd, completed, pending::send_graph_changes};
 use crate::{
     LoadResult, microsoft365::received_fields, renewal::AccessRenewal, store_load::BatchWriter,
 };
 use goa_adapter::GraphAccess;
 use mailbag_content::preview_of_text;
-use mailbag_domain::{FolderBatch, FolderState, Message, ReceivedContent};
+use mailbag_domain::{FlagChanges, FolderBatch, FolderState, Message, ReceivedContent};
 use mailbag_graph::{
-    ChangePage, ChangesFrom, GraphError, GraphFailure, GraphMessage, MessageChange, NextPage,
-    read_message, read_message_changes, read_message_text, read_texts_received_between,
+    ChangePage, ChangesFrom, FlagUpdate, GraphError, GraphFailure, GraphMessage, MessageChange,
+    NextPage, read_message, read_message_changes, read_message_text, read_texts_received_between,
+    update_message_flags,
 };
 use mailbag_store::FolderSync;
 use std::{
@@ -39,7 +40,10 @@ enum Reading {
 
 /// The cycle of a Microsoft 365 folder: pages of the delta reading, each
 /// stored as a batch, until the reading completes with the position the
-/// next cycle starts from.
+/// next cycle starts from. The user's pending changes are sent after each
+/// stored page of a first or full reading and after a round's last page,
+/// never within a round, whose later pages may still report older values
+/// (specs/011-read-and-star FR-007).
 pub(super) async fn synchronize_graph_folder(
     access: GraphAccess,
     service_url: String,
@@ -100,6 +104,9 @@ pub(super) async fn synchronize_graph_folder(
                     },
                 });
                 batches.store(&batch)?;
+                if !matches!(reading, Reading::Round) {
+                    send_graph_changes(&mut service, batches).await?;
+                }
                 from = ChangesFrom::Link(next_link);
             }
             NextPage::Done(delta_link)
@@ -111,6 +118,7 @@ pub(super) async fn synchronize_graph_folder(
                     synchronized: false,
                 });
                 batches.store(&batch)?;
+                send_graph_changes(&mut service, batches).await?;
                 round_start = Some(delta_link.clone());
                 from = ChangesFrom::Link(delta_link);
                 reading = Reading::Round;
@@ -127,6 +135,7 @@ pub(super) async fn synchronize_graph_folder(
                 }
                 batch.state = Some(completed(Some(delta_link)));
                 batches.store(&batch)?;
+                send_graph_changes(&mut service, batches).await?;
                 return Ok(batches.finish(reported, None));
             }
         }
@@ -159,10 +168,10 @@ fn where_to_start(stored: &FolderSync, folder_id: &str) -> (ChangesFrom, Reading
 
 /// A page's entries merged per message in their order, since the service
 /// may repeat and reorder them: a later entry wins, and a partial one never
-/// drops an earlier read state. An entry marking the message removed, met
-/// with another entry for it, is trusted neither way: the message is read
-/// as the service holds it now, like an entry that changed other fields,
-/// whatever else the page says about it (research §5).
+/// drops an earlier read state or star. An entry marking the message
+/// removed, met with another entry for it, is trusted neither way: the
+/// message is read as the service holds it now, like an entry that changed
+/// other fields, whatever else the page says about it (research §5).
 fn merge_per_message(changes: Vec<MessageChange>) -> HashMap<String, MessageChange> {
     let mut merged: HashMap<String, MessageChange> = HashMap::new();
     let mut read_again: HashSet<String> = HashSet::new();
@@ -180,6 +189,7 @@ fn merge_per_message(changes: Vec<MessageChange>) -> HashMap<String, MessageChan
                 MessageChange::Changed {
                     id: id.clone(),
                     is_read: None,
+                    flagged: None,
                     other_fields: true,
                 }
             }
@@ -187,27 +197,32 @@ fn merge_per_message(changes: Vec<MessageChange>) -> HashMap<String, MessageChan
                 Some(MessageChange::Listed(mut message)),
                 MessageChange::Changed {
                     is_read,
+                    flagged,
                     other_fields: false,
                     ..
                 },
             ) => {
                 message.is_read = is_read.unwrap_or(message.is_read);
+                message.flagged = flagged.unwrap_or(message.flagged);
                 MessageChange::Listed(message)
             }
             (
                 Some(MessageChange::Changed {
                     is_read: earlier_read,
+                    flagged: earlier_flagged,
                     other_fields: earlier_fields,
                     ..
                 }),
                 MessageChange::Changed {
                     id,
                     is_read,
+                    flagged,
                     other_fields,
                 },
             ) => MessageChange::Changed {
                 id,
                 is_read: is_read.or(earlier_read),
+                flagged: flagged.or(earlier_flagged),
                 other_fields: other_fields || earlier_fields,
             },
             (_, change) => change,
@@ -226,9 +241,14 @@ fn identity(graph_id: &str) -> String {
     format!("graph:{graph_id}")
 }
 
+/// The service's id of a stored Microsoft 365 message.
+pub(super) fn graph_id(identity: &str) -> Option<&str> {
+    identity.strip_prefix("graph:")
+}
+
 /// Microsoft Graph for one cycle, with the one renewal of its token the
 /// cycle may use (research §13).
-struct GraphService {
+pub(super) struct GraphService {
     service_url: String,
     access_token: String,
     renewal: Option<AccessRenewal>,
@@ -254,6 +274,18 @@ impl GraphService {
     async fn read_changes(&mut self, from: &ChangesFrom) -> Result<ChangePage, GraphError> {
         self.request(async |service_url, token| {
             read_message_changes(service_url, token, from).await
+        })
+        .await
+    }
+
+    /// Sets the message's read mark or star.
+    pub(super) async fn update_flags(
+        &mut self,
+        id: &str,
+        update: FlagUpdate,
+    ) -> Result<(), GraphError> {
+        self.request(async |service_url, token| {
+            update_message_flags(service_url, token, id, update).await
         })
         .await
     }
@@ -321,10 +353,18 @@ impl GraphService {
                     wants_text: wants_text(&message),
                     message,
                 }),
+                // Only the flags the entry names: one the entry leaves out
+                // keeps what the store holds, which an earlier page of this
+                // round may have written (specs/011-read-and-star/research.md §14).
                 MessageChange::Changed {
-                    is_read: Some(seen),
-                    ..
-                } => batch.read_states.push((stored_identity, seen)),
+                    is_read, flagged, ..
+                } if is_read.is_some() || flagged.is_some() => {
+                    let changes = FlagChanges {
+                        seen: is_read,
+                        flagged,
+                    };
+                    batch.flag_states.push((stored_identity, changes));
+                }
                 _ => {}
             }
         }
@@ -446,6 +486,7 @@ fn stored_message(arrival: Arrival, texts: &HashMap<String, Option<String>>) -> 
         fields: received_fields(&message),
         received_unix: message.received_unix,
         seen: message.is_read,
+        flagged: message.flagged,
         content,
         preview: preview_of_text(message.body_preview.as_deref().unwrap_or_default()),
     }

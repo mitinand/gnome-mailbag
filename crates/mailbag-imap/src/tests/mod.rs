@@ -3,6 +3,7 @@
 
 mod acquisition;
 mod compression;
+mod flags;
 mod gmail;
 mod listing;
 mod mailboxes;

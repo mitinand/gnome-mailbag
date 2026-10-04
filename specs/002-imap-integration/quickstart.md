@@ -171,7 +171,7 @@ sudo update-ca-trust
 ```
 
 Use only the disposable account for state inspection; do not remove or alter
-personal accounts. The prototype's real iCloud/GOA access is existing evidence,
+personal accounts. The prototype's real GOA access is existing evidence,
 not proof that this host has no Generic IMAP account. Record actual GOA, GLib,
 GnuTLS and Flatpak versions for Mailbag's installed acceptance.
 

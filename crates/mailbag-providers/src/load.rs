@@ -23,13 +23,14 @@ pub enum LoadTarget {
 }
 
 /// What a load tells whoever started it, on that caller's context: any number
-/// of stored batches, then exactly one end (specs/009-synchronization
+/// of changes to the store, then exactly one end (specs/009-synchronization
 /// research §7).
 #[derive(Debug)]
 pub enum LoadEvent {
-    /// The cycle stored a batch of its folder; the window reads the store
-    /// again.
-    BatchStored,
+    /// The cycle changed the folder's stored state, a batch or a dropped
+    /// pending change (specs/011-read-and-star FR-010); the window reads the
+    /// store again.
+    StoreChanged,
     Finished(LoadResult),
 }
 
@@ -54,6 +55,10 @@ pub(crate) enum LoadFailure {
     Imap(ImapError),
     /// The Microsoft Graph request failed or was refused.
     MicrosoftGraph(GraphError),
+    /// The mail service refused to change a message's read state or star,
+    /// which the failure names as IMAP's refusal does
+    /// (specs/011-read-and-star FR-010).
+    MicrosoftGraphChangeRefused(GraphError),
     /// The mail worker stopped the load without a result: a panic, with its
     /// message and place as `message at file:line`, or `None` when the worker
     /// vanished without one.
