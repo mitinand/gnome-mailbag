@@ -642,8 +642,10 @@ documentation does not say how, and FR-007's rule covers either form.
   to FR-010), amended 2026-10-03*: a cycle sends after storing its
   listing, before each batch of missing messages and once before closing,
   not before learning changes, since the listing gives the address and
-  settles unknown outcomes; a server value written by the listing or by
-  an accepted command ends a pending change equal to it.
+  settles unknown outcomes; a pending change ends when the cycle sees
+  the server hold it: on IMAP a listing of the cycle shows it, on
+  Microsoft 365 the service accepts the request (amended 2026-10-04,
+  011 research §15).
   (b) *Moving and deleting*: a message the user moved is not taken for a
   message someone else removed: its place in the destination is recorded
   from the server's answer (the new number where the server offers UIDPLUS,
@@ -692,8 +694,8 @@ flowchart TD
     listing --> proof{Listing completed<br/>by the server?}
     proof -->|yes| remove[Removed: stored messages<br/>not listed]
     proof -->|no| keep([Remove nothing;<br/>the cycle ends incomplete, FR-011])
-    remove --> states[Flag changes;<br/>an equal pending change ends]
-    states --> pending[/"Send the folder's pending changes<br/>(011 FR-007), again before each batch<br/>of arrivals and once before the end"/]
+    remove --> states[Flag changes]
+    states --> pending[/"Send the folder's pending changes the server<br/>lacks (011 FR-007), again before each batch<br/>of arrivals and once before the end"/]
     pending --> arrive[Arrived: list fields of messages the<br/>store lacks, highest numbers first,<br/>with texts of the last 30 days]
 
     provider -->|Microsoft 365| position{Saved position<br/>accepted?}
@@ -702,7 +704,8 @@ flowchart TD
     changes --> pending365[/"Send the folder's pending changes<br/>after the round's last page, and after<br/>each page of a whole reading (011 FR-007)"/]
     full --> pending365
 
-    arrive --> done([Cycle complete:<br/>state saved, folder in agreement])
+    arrive --> relist[When a change was sent: list again,<br/>store removals and flag changes,<br/>end the sent changes it shows (011 FR-007)]
+    relist --> done([Cycle complete:<br/>state saved, folder in agreement])
     pending365 --> done
 ```
 

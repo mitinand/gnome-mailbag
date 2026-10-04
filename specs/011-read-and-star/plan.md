@@ -51,12 +51,15 @@ the folder's pending changes, addresses each message by the UID the
 listing gave for its identity, and sends one `UID STORE … ±FLAGS.SILENT`
 per group of equal changes, a hundred messages per command, in a mailbox
 opened with `SELECT` (§2, §4); on Microsoft 365 it sends one `PATCH` per
-message after its round of changes (§6). An accepted command settles:
-server value := sent, and a pending value equal to it ends, in one
-transaction; a newer wish for another value stays for the next sending
-step (§14). Every write of a server value, the listing's and the
-command's alike, ends a pending value equal to it (§11), and a pending
-value equal to the stored server value ends without a command. A refusal
+message after its round of changes (§6). A pending change ends only when
+the cycle sees the server hold it (§15): on IMAP a listing of the cycle
+shows the value (the first listing, without a command, for a change not
+yet sent; a second listing after the cycle's commands for one it sent;
+an OK ends nothing); on Microsoft 365 the service accepts the request,
+and every pending change is sent. The settle writes server value := that
+value and ends a pending value equal to it, in one transaction; a newer
+wish for another value stays for the next sending step (§14). A server
+report alone never ends a pending value. A refusal
 drops the pending values equal to the refused one, tells the window the
 store changed, and fails the cycle with the server's reply (§7). A lost
 connection, or a 5xx answer, leaves the pending change for the next cycle
@@ -66,10 +69,10 @@ connection, or a 5xx answer, leaves the pending change for the next cycle
 
 | Step | What it does | Cost |
 |---|---|---|
-| Stored flags and pending values | three columns; effective values in the row read; the batch write of the reported flags, ending an equal pending value; `read_pending_changes`; `write_pending_flag`; `settle_flags` and `drop_pending_flags`, ending only a pending value equal to the command's | ≈ 135 (domain + store) |
+| Stored flags and pending values | three columns; effective values in the row read; the batch write of the reported flags, leaving the pending values (§15); `read_pending_changes`; `write_pending_flag`; `settle_flags` and `drop_pending_flags`, ending only a pending value equal to the command's | ≈ 135 (domain + store) |
 | Mailboxes opened for writing | `session::select_mailbox` replaces `examine_mailbox`; the reconnect path uses it too | ≈ 8 |
 | The flags on the wire | `\Flagged` parsed with `\Seen`; `MailboxReader::store_flags(uids, flag, set)`; `flag` among the Microsoft 365 fields, `flagStatus` read and merged; `update_message_flags` | ≈ 110 (imap + graph) |
-| The cycle sends | the cycles' read side of the star; `cycle/pending.rs`: `send_imap_changes` (a hundred UIDs per command), `send_graph_changes` (a 5xx keeps the pending change), a pending value equal to the server's ended without a command; the batch writer's `pending_changes`, `settle`, `drop_pending` and the `StoreChanged` event; both loops restructured | ≈ 170 |
+| The cycle sends | the cycles' read side of the star; `cycle/pending.rs`: `send_imap_changes` (a hundred UIDs per command), `send_graph_changes` (a 5xx keeps the pending change), an IMAP wish equal to the listing's value ended without a command, the sent values and the listing after the commands that settles them (§15); the batch writer's `pending_changes`, `settle`, `drop_pending` and the `StoreChanged` event; both loops restructured | ≈ 170 |
 | The window | the `message` action group; the writes one at a time on the pool, the re-read and the failed write's toast; the star in the difference update and the envelope's icon; read on opening writes the change; the star in the row; the header menu's two actions; the failure wording | ≈ 130 |
 
 ## How a change travels
@@ -92,12 +95,13 @@ sequenceDiagram
     U->>W: Refresh Mailbox (later: background synchronization)
     W->>K: a cycle of the folder
     K->>S: SELECT, UID FETCH 1:* (UID FLAGS [X-GM-MSGID])
-    K->>D: store the listing (server values; an equal pending value ends)
+    K->>D: store the listing (server values; pending values untouched)
     K->>D: read_pending_changes(folder)
     K->>S: UID STORE 4711,4720 +FLAGS.SILENT (\Flagged)
-    S-->>K: OK
-    K->>D: settle_flags: flagged := 1, flagged_pending := NULL where it equals 1
+    S-->>K: OK (the cycle records what it sent)
     K->>S: fetch the missing messages, a batch at a time (sending again before each)
+    K->>S: UID FETCH 1:* (UID FLAGS …) once more
+    K->>D: settle_flags: flagged := 1, flagged_pending := NULL where it equals 1
 ```
 
 ## The cycle's loop
@@ -105,16 +109,17 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     open([SELECT the folder]) --> list[List every message:<br/>identity → UID, flags]
-    list --> storelist[Store what the listing proves<br/>removals, flag states, folder state;<br/>an equal pending value ends]
-    storelist --> send[Send the folder's pending changes<br/>by the listing's UIDs]
+    list --> storelist[Store what the listing proves<br/>removals, flag states, folder state]
+    storelist --> send[Send the folder's pending changes<br/>by the listing's UIDs; a wish the listing<br/>already shows ends without a command]
     send --> ok{Accepted?}
-    ok -->|OK| settle[Settle: server := sent,<br/>a pending value equal to it ends]
+    ok -->|OK| settle[Record what was sent]
     ok -->|NO or BAD| drop[Drop that command's pending changes,<br/>tell the window the store changed,<br/>fail the cycle with the reply]
     ok -->|connection lost, 5xx| lost[Fail the cycle;<br/>pending stays for the next cycle]
     settle --> more{Missing messages left?}
     more -->|yes| batch[Fetch one batch, store it]
     batch --> send
-    more -->|no| done([Close])
+    more -->|no| relist[When anything was sent: list again,<br/>store what it proves, settle the sent<br/>changes it shows; a refusal ends incomplete]
+    relist --> done([Close])
 ```
 
 ## Function map
@@ -127,14 +132,12 @@ flowchart TD
   today's read with one more column.
 - `store_batch`: `set_flag_states` writes the flags a report named
   (`FlagChanges { seen: Option<bool>, flagged: Option<bool> }`; `seen =
-  COALESCE(?seen, seen)`) and ends an equal pending value of each flag
-  written (`seen_pending = CASE WHEN ?seen IS NOT NULL AND seen_pending =
-  ?seen THEN NULL ELSE seen_pending END`); `store_arrived`'s upsert and
-  `relate_known` do the same with both flags; a differing pending value
-  and a flag not reported are untouched.
+  COALESCE(?seen, seen)`); `store_arrived`'s upsert and `relate_known`
+  write both flags; the pending columns are untouched (§15; written
+  first as ending an equal pending value, replaced on 2026-10-04).
 - `read_pending_changes(folder)`: the folder's messages with a non-null
-  pending column, as `(identity, flag, wanted, server value)`; a small
-  query over the folder's memberships.
+  pending column, as `(identity, flag, wanted)`; a small query over the
+  folder's memberships.
 - `write_pending_flag(account, identity, flag, wanted)`: one `UPDATE`
   that sets the pending column to `wanted`, whatever the server column
   holds: a command for that flag may be in flight (§14).
@@ -175,15 +178,17 @@ flowchart TD
 
 **`mailbag-providers::cycle::pending`** — the sending step, shared.
 
-- `send_imap_changes(reader, listed_uids: &HashMap<identity, uid>, batches)`:
-  1. `batches.pending_changes()`; a wanted value equal to the stored
-     server value → `batches.settle` with that value, no command;
-  2. keep those the listing shows; group by `(flag, wanted)`, a hundred
-     UIDs per command;
-  3. per command `store_flags`; `Ok(None)` → `batches.settle(uids, flag,
-     wanted)`; `Ok(Some(reply))` → `batches.drop_pending(uids, flag,
-     wanted)` and `Err(CycleEnd::Failed(refused(reply)))`; `Err` → `Err`
-     (pending stays).
+- `send_imap_changes(reader, listed, sent_changes, batches)` (amended
+  2026-10-04, §15):
+  1. `batches.pending_changes()`; keep those the listing shows; the
+     server's value is the one in `sent_changes`, otherwise the
+     listing's; a wish equal to the listing's value with nothing sent →
+     `batches.settle`, no command; equal to the value sent → wait;
+  2. group the others by `(flag, wanted)`, a hundred UIDs per command;
+  3. per command `store_flags`; `Ok(None)` → record each in
+     `sent_changes`; `Ok(Some(reply))` → `batches.drop_pending(uids,
+     flag, wanted)` and `Err(CycleEnd::Failed(refused(reply)))`; `Err` →
+     `Err` (pending stays).
 - `send_graph_changes(service, batches)`: the same per message with
   `GraphService::update_flags(id, update)`, which runs
   `update_message_flags` through `request` (the renewal applies once as
@@ -196,7 +201,7 @@ flowchart TD
   calls with the cycle's failure mapping; `drop_pending` sends
   `LoadEvent::StoreChanged`, since the window must read the reverted row;
   `settle` changes no effective state and sends nothing; `finish` counts
-  `settled`, the changes the server accepted or already had.
+  `settled`, the changes the cycle saw the server hold.
 - `LoadEvent::BatchStored` is renamed `StoreChanged`: "the cycle changed
   the folder's stored state, a batch or a dropped pending change; the
   window reads again" (the challenge found the old name false for the
@@ -205,11 +210,14 @@ flowchart TD
   missing → store the listing → send → `for` each chunk `{ fetch; store;
   send }` → when a command was accepted, list once more and store the
   removals and flags it proves (amended 2026-10-04) → finish; the
-  listing's `identity → uid` map lives in `listed_uids`;
-  `send_imap_changes` says whether the server accepted a command.
+  listing's `identity → uid` map lives in `listed_uids`. Amended again on
+  2026-10-04 (§15): the cycle keeps `sent_changes`, and when it is not
+  empty `confirm_sent_changes` lists again, stores what the listing
+  proves, settles the sent changes it shows and returns its refusal, with
+  which the cycle ends incomplete.
 - `cycle::graph::synchronize_graph_folder`: after the round's last page
   is stored, and after each stored page of a first fill or a full
-  reading, `send_graph_changes`.
+  reading, `send_graph_changes`, which sends every pending change (§15).
 
 **`mailbag::mail_ui`** — the actions.
 
@@ -307,7 +315,8 @@ Taken on 2026-10-02 and 2026-10-03; recorded in the spec's Clarifications:
    amended on 2026-10-03 at the window's review: the row's star stands
    under the date, in a place every row keeps, and stars or unstars its
    message, with an outline star while the pointer is over the row.
-7. Every write of a server value ends an equal pending value (§11); the
+7. Every write of a server value ends an equal pending value (§11;
+   replaced on 2026-10-04 by §15: only the cycle's evidence ends one); the
    window re-reads the folder's rows after a write (§12; decided
    2026-10-03, one row stays optional); the cycle's event is named for
    what it means (§13).
@@ -321,6 +330,12 @@ Taken on 2026-10-02 and 2026-10-03; recorded in the spec's Clarifications:
    Microsoft 365 change the next round does not report is sent again; a
    5xx is an unknown outcome (the maintainer's decision); a hundred UIDs
    per command. Test budget 850.
+10. From the review of the implementation of 2026-10-04 (§15): a pending
+    change ends only when the cycle sees the server hold it (an IMAP
+    listing of the cycle; a Microsoft 365 request accepted); the refused
+    listing after the commands ends the cycle incomplete; the row's star
+    is no button for assistive technologies; two quick clicks on a star
+    stay a recorded limitation. The maintainer's decision.
 
 ## Portions and review pauses
 
@@ -381,10 +396,11 @@ message under many labels.
 
 - **I. Necessary complexity only**: the pending columns answer "a refresh
   must not undo my change" (spec US1), sending between batches answers
-  the minutes-long first fill (US3), the short-circuit on an equal wish
-  and the equal-value rule at every server write answer "star, then
-  unstar" and "another client did it first" (Edge Cases, FR-009), the
-  settle write answers the flicker between sending and the next listing.
+  the minutes-long first fill (US3), ending a wish the IMAP listing
+  already shows answers "star, then unstar" and "another client did it
+  first" (Edge Cases, FR-009), the listing after the commands answers a
+  command whose OK changed nothing (§15), the settle write answers the
+  flicker between sending and the next listing.
   Optional mechanisms are listed apart with their situations. No
   dependency added; no fork change.
 - **II. Clear language and concrete names**: `write_pending_flag`,

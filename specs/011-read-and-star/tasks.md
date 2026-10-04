@@ -469,6 +469,46 @@ date and becomes a control.
   production, ≤ 850 test lines), what was verified and how, and the open
   items.
 
+## Phase 7: the implementation's review (2026-10-04)
+
+The outside review of the built branch (research §15); the maintainer
+decided every point in this feature, two quick clicks on a star as a
+recorded limitation.
+
+- [ ] T038 Documents (portion 7a): research §15 and the notes on §11,
+  §12, §14; spec FR-001, FR-002, FR-004, FR-007, FR-009, Edge Cases,
+  Key Entities, SC-004, Assumptions and the Clarifications of
+  2026-10-04; data-model; plan; quickstart; 009 spec FR-015(a) and its
+  flowchart, 009 data-model. STOP for the maintainer's review.
+- [ ] T039 [P] In crates/mailbag-store: `set_flag_states`,
+  `store_arrived` and `relate_known` write the server value and leave the
+  pending columns; `read_pending_changes` returns `(identity, flag,
+  wanted)` and `PendingChange` in crates/mailbag-domain loses its server
+  value; store tests: a report leaves an equal pending value.
+- [ ] T040 In crates/mailbag-providers/src/cycle/: `send_imap_changes`
+  compares each wish with the value the cycle last sent, otherwise the
+  listing's; ends a wish equal to the listing's value without a command,
+  skips one equal to the value sent, sends the others and records what it
+  sent; an OK settles nothing; `confirm_sent_changes` replaces
+  `store_listing_after_commands`: it lists again, stores what the listing
+  proves, settles the sent changes it shows and returns its refusal, with
+  which the cycle ends incomplete; `send_graph_changes` sends every
+  pending change; `changes_to_send` goes. The scripted IMAP server
+  ignores a store on a UID the mailbox does not list. Tests: a read mark
+  sent under Starred after the star was taken off stays pending; a change
+  whose answer was lost ends by the next listing without a command
+  (kept); a refused listing after the commands ends the cycle
+  incomplete; a 504, the wish taken back and an empty round still send
+  the request; a page reporting the wish and a later page replaying the
+  old value leave the change for the request; the tests that relied on
+  an OK or a report settling are rewritten.
+- [ ] T041 In crates/mailbag/resources/ui/message-row.ui the star loses
+  its `accessible-role`; no test (two quick clicks stay a limitation,
+  research §15.4).
+- [ ] T042 STOP (portion 7b): ./scripts/check.sh, the GTK tests one per
+  process, the size of the change, a suggested commit message; PR #17
+  updated by the maintainer.
+
 ## Dependencies
 
 - T001 before everything; T002 after approval; each STOP (T002, T010,

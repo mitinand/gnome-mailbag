@@ -51,21 +51,20 @@ memberships (the primary key's prefix) and sorts them.
   1. delete the folder's memberships of the removed identities;
   2. delete the account's messages left without a membership;
   3. set `seen` and `flagged` of the listed flag changes by `(account,
-     identity)`, only the flags the report named; a pending value equal
-     to the value written becomes `NULL` (011 FR-001), a differing one
-     and a flag not named are untouched;
+     identity)`, only the flags the report named; a flag not named and
+     the pending values are untouched (011 FR-001, research §15);
   4. for each full record (an arrival, or a message whose fields the
      service reported again), insert the `message` row or update its list
-     fields, read state and star by `(account, identity)`, with the same
-     rule for the pending values; its content replaces
+     fields, read state and star by `(account, identity)`, leaving the
+     pending values; its content replaces
      the stored one unless the record's content is `not_downloaded` and a
      content is stored (another folder's cycle downloaded it), or the
      record's content is `text_not_returned` and a text is stored (the
      service reported the message's fields again but returned no text);
   5. insert the arrival's membership in the folder if missing, and the
      memberships of the batch's messages the account already held,
-     setting their `seen` and `flagged` as listed, with the same rule for
-     the pending values;
+     setting their `seen` and `flagged` as listed, leaving the pending
+     values;
   6. when the batch carries a folder state, write the three state
      columns.
   A folder the store does not hold fails the write, as 008's loads do.

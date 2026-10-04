@@ -69,7 +69,7 @@ when nothing is pending, next to `message.seen` and the new
 older, is what the feature needs; two columns are exactly that. The effective state is one `COALESCE` in the row read; the
 cycle's read gets the pending values with the server values it already
 reads. (A wish equal to the server value was first to be dropped in the
-same `UPDATE`; §14 keeps it, and the sending step ends it.)
+same `UPDATE`; §14 keeps it, and §15 says what ends it.)
 
 **Alternatives**: a `pending_change` table (message, flag, wanted,
 created): keeps history nobody reads, needs a join in every read and a
@@ -129,8 +129,8 @@ IMAP clients report the same asymmetry for Gmail (eM Client forum,
 star state beyond `\Flagged`/`\Starred` over IMAP, and the Gmail REST
 API, which would show the message's labels, is not enabled for the
 Online Accounts client (`403 PERMISSION_DENIED`). Recorded as a known
-limitation (spec Assumptions); to be looked at again later, since the
-apps may catch up after hours.
+limitation (spec Assumptions); about three hours later the apps still
+showed both stars, so it is not a delay.
 
 ## §6 Microsoft 365: PATCH and what the next round reports
 
@@ -232,6 +232,9 @@ until opened anew (spec FR-002).
 
 ## §11 Every write of a server value ends an equal pending value
 
+*Replaced by §15 on 2026-10-04: a server report no longer ends a pending
+value; kept as the history of the decision.*
+
 **Decision**: the store's flag writes (`set_flag_states`, the upsert of a
 full record, `relate_known`) set the pending column to `NULL` when the
 value written equals it, and leave a differing pending value untouched;
@@ -261,6 +264,7 @@ server value and ends an equal one without a command (a settle with that
 value). The writes still end an equal pending value as above.
 
 ## §12 The window re-reads the rows after a write
+
 
 **Decision**: after `write_pending_flag` succeeds, the window reads the
 shown folder's rows again, the same read as after a stored batch; the
@@ -315,7 +319,10 @@ maintainer decided them the same day.
    value equal to the refused value; a pending value equal to the stored
    server value is ended by the next sending step without a command. The
    same sequence then ends with pending 0 after the OK and a second
-   command that unstars (spec FR-001, FR-007, FR-010).
+   command that unstars (spec FR-001, FR-007, FR-010). *Amended by §15
+   on 2026-10-04: an OK ends nothing and the wish equal to a server value
+   ends only by a listing of the cycle (IMAP) or is sent (Microsoft 365);
+   the newer wish still goes with the next sending step.*
 2. **A Microsoft 365 partial entry re-applied a stale flag.** T007 took
    the flag a partial entry did not name from the cycle's starting
    snapshot; a message reported in two pages of one round (its read state
@@ -347,3 +354,101 @@ maintainer decided them the same day.
 
 The test budget rose to 850 for the race tests (a held completion on the
 scripted IMAP server; two rapid writes in the window).
+
+## §15 The review of the implementation: what ends a pending change
+
+An outside review of the built branch on 2026-10-04 found five points;
+the maintainer decided them in this feature the same day, the fourth as
+a recorded limitation.
+
+**Decision**: a pending change ends only when the cycle sees the server
+hold the wanted value, when the server refuses it (§7), or with the
+message (spec FR-001, FR-007, FR-009):
+
+- *IMAP*: a listing of this cycle shows the wanted value. The listing at
+  the cycle's start ends a change no command of this cycle carried, with
+  no command; a change the cycle sent ends by the listing after the
+  cycle's commands (§2, amended 2026-10-04). A command's `OK` ends
+  nothing.
+- *Microsoft 365*: the service accepts the request (2xx). A delta report
+  never ends a pending change, so every pending change is sent; a
+  request sets a value, so sending one the service already holds is
+  harmless.
+- A server report, the listing's or a delta page's, writes the server
+  value and leaves the pending value as it is.
+
+This replaces §11 (every write of a server value ends an equal pending
+value) and, from §14.1, the end of a wish equal to the stored server
+value without a command; §14.1's other half stands: a command ends only
+a pending value equal to its own, so a wish made while it is in flight
+stays. `PendingChange` loses the stored server value, which nothing
+compares any more.
+
+**Why** (checked):
+
+1. *An `OK` does not say the message changed.* RFC 3501 §6.4.8: a UID the
+   mailbox lacks is ignored without an error, so a `UID STORE` may answer
+   `OK` and change nothing; all three probed servers do so (§5). Within a
+   cycle the listing's UIDs go stale: on Gmail a star taken off under
+   Starred takes the message out of that mailbox (§2, amended), so a
+   read mark sent afterwards by its old UID is ignored that way (the
+   review reproduced it on the scripted server; not tried on Gmail);
+   another client may also move or delete a message mid-cycle.
+   The `OK` settled the change, and the next listing under another label
+   wrote the real value: the user's change was lost without a notice.
+2. *A Microsoft 365 report may be older than the service.* The delta
+   documentation lists processing delays and replays, the same change
+   appearing again in later responses. Two losses followed: a request
+   answered 504 but applied, the user changing back, the round not yet
+   reporting the request, and the wish, equal to the stored value, ended
+   without a request while the service kept the first one; and a page
+   reporting the wished value, which ended it, before a later page
+   replayed the older one.
+
+**Within one IMAP cycle**, the server's value of a message's flag is the
+value this cycle last sent for it, otherwise the listing's. A wish equal
+to the listing's value, with nothing sent for it in this cycle, ends
+without a command; a wish equal to the value last sent waits for the
+listing after the commands; any other wish is sent, so a user changing
+back while a command is in flight is still sent (§14.1). After its last
+sending step, a cycle that sent anything lists the folder again, stores
+what that listing proves, and ends the sent changes it shows with their
+value; a sent change it does not show, or shows otherwise, stays for the
+next cycle of a folder that lists the message. So a change whose answer
+was lost is still ended by the next cycle's listing without a second
+command (SC-004).
+
+**Left as a limitation**: a delta replay of an older value after an
+accepted request writes that value as the server's; with nothing pending
+the row shows it until the message changes again. Any change from
+another client meets the same replay, so the limitation is 009's reading
+of delta, not this feature's (spec Assumptions).
+
+**The other points**:
+
+3. *The listing after the commands may be refused* (a partial answer with
+   `NO`): the refusal was dropped and the cycle reported success. Now the
+   cycle ends incomplete with the server's reply, as after a refused first
+   listing; what the partial listing shows is stored and ends what it
+   shows.
+4. *Two quick clicks on a star* both ask for the same value, since the
+   star takes its state only from the rows read after each write (§9,
+   §12). Kept, as a limitation (spec Assumptions): the second click must
+   come before the write and the folder's read again end, tens of
+   milliseconds on a usual folder and about 100 ms on one of 100 000
+   rows (estimated, not measured), which a deliberate second click rarely
+   beats; an accidental double click leaves the star set. Showing the
+   wish before the write commits was weighed and rejected: constitution
+   III acknowledges a local change only after its commit, and 007 FR-001
+   shows only stored state. Taking the toggle from the window's queued
+   writes closes only the write's part, not the read's; not taken.
+5. *The row's star claimed the role of a button* it is not: it takes no
+   focus and no key. The role goes; the keyboard reaches the star through
+   the open message's envelope (spec FR-002). A drag past GTK's drag
+   threshold cancels the click (checked in `gtkgestureclick.c`); a
+   release closer than that, off the icon, still acts, which is kept. A
+   `GtkButton` in the row was weighed: a tab stop in every row and a form
+   change; not taken.
+
+The plan's size estimate is not rewritten; the overrun is reported with
+the pull request.

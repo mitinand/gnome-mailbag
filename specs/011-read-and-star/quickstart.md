@@ -9,9 +9,9 @@ client open beside the window.
 
 - `mailbag-store`: rows read the effective state; a pending write stores
   the wish even when it equals the server value; a batch's flag write
-  ends an equal pending value, leaves a differing one and leaves a flag
-  the report did not name; the pending query lists only the folder's
-  non-null values with their server values; a settle or a drop ends only
+  leaves the pending values, equal or not, and leaves a flag the report
+  did not name; the pending query lists only the folder's non-null
+  values; a settle or a drop ends only
   a pending value equal to the command's; a restart over the same store
   reads the pending state again (SC-002's store half).
 - `mailbag-imap`: the folder is opened with `SELECT`; `\Flagged` is read
@@ -29,8 +29,11 @@ client open beside the window.
   change made while a command is in flight survives its acceptance and is
   sent next; 250 pending changes go in three commands; a 504 keeps the
   pending change for the next cycle; a message reported in two pages of
-  one round keeps both flags; a wish equal to the server value ends
-  without a command;
+  one round keeps both flags; a wish the IMAP listing already shows ends
+  without a command, while Microsoft 365 sends every pending change and
+  no report ends one; a read mark sent under Starred after the star was
+  taken off stays pending; a refused listing after the commands ends the
+  cycle incomplete (research §15);
   a star during a first fill of 300 messages is received before the
   second batch's rows are read, and one after the last batch before the
   connection closes (SC-003); a connection closed after the command and

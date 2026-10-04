@@ -224,8 +224,9 @@ the stored state, the banner and the server's record are compared.
 ### Edge Cases
 
 - The user stars and unstars before any cycle runs: the pending change is
-  the newest wish; the next cycle finds it equal to the server state and
-  ends it without a command (FR-007).
+  the newest wish; on IMAP the next cycle's listing shows it equal to the
+  server state and it ends without a command; on Microsoft 365 the
+  request is sent and sets the value the service has (FR-007).
 - The user changes the flag again while a command for it is in flight:
   the newer wish stays, since an accepted or refused command ends only a
   pending change equal to its own value; the next sending step sends the
@@ -244,6 +245,12 @@ the stored state, the banner and the server's record are compared.
 - A Microsoft 365 round reports one message in two pages, the first with
   its read state, the second with its star alone: each writes only what
   it reports; the read state stays (FR-001).
+- A Microsoft 365 page reports the wished value, or a later page or round
+  replays an older one: no report ends the pending change; the request
+  is sent after the round, and its acceptance ends it (FR-007, FR-009).
+- Two quick clicks on a star, the second before the first is stored and
+  read again: both ask for the same state, and the star stays as the
+  first click left it (Assumptions).
 - The unread filter is on: the open message stays listed as 010 FR-008
   says, whether its read state is the server's or pending.
 - The server does not keep the flag permanently: the next listing shows
@@ -251,11 +258,18 @@ the stored state, the banner and the server's record are compared.
   beyond FR-009 (Assumptions).
 - The store is discarded at start before the first release: pending
   changes not yet sent are lost with it (007 FR-012, accepted).
-- A command for a message the server no longer has: on IMAP the server
-  answers OK and does nothing; the change settles, and the next listing
-  removes the message; on Microsoft 365 the refusal is FR-010's: the
-  change ends, the refresh fails with the service's words, and the next
-  round removes the message.
+- A command for a message the mailbox no longer has: on IMAP the server
+  answers OK and does nothing (RFC 3501 §6.4.8). The change stays: the
+  listing after the cycle's commands does not show the message, so a
+  folder that lists it sends the change. On Gmail a star taken off under
+  Starred takes the message out of that label, and a read mark made next
+  goes with the cycle of another label; on Generic IMAP that listing
+  proves the message gone and it goes with its change. On Microsoft 365
+  the refusal is FR-010's: the change ends, the refresh fails with the
+  service's words, and the next round removes the message.
+- The listing after the cycle's commands is refused: the cycle ends
+  incomplete with the server's reply, as with a refused listing at its
+  start; a sent change that listing does not show stays (FR-007).
 
 ## Clarifications
 
@@ -424,6 +438,40 @@ the stored state, the banner and the server's record are compared.
   moving and deleting (FR-013(b)), whose commands raise the same
   question. The maintainer's choice, the cheapest.
 
+### Session 2026-10-04 (review of the implementation)
+
+- Q: What ends a pending change? → A: Only seeing the server hold it, a
+  refusal, or the message leaving. On IMAP a command's OK does not say
+  the message changed: a UID the mailbox lacks is ignored (RFC 3501
+  §6.4.8), and Gmail's Starred loses a message whose star is taken off,
+  so a read mark sent next by its old UID was settled and later lost. On
+  Microsoft 365 a delta report may come late or be replayed, so a report
+  equal to the wish, or a stored value equal to it, does not say the
+  service holds it. Now an IMAP change ends by a listing of the cycle
+  that shows it, a Microsoft 365 change by the service accepting the
+  request, and no report ends a pending change. This replaces the answer
+  of 2026-10-02 ("the write of a server state ends a pending change equal
+  to it") and the end of an equal wish without a command of 2026-10-03;
+  IMAP still sends nothing without the listing's evidence (FR-001,
+  FR-007, FR-009; research §15). The maintainer's decision, the review's
+  points decided in this feature.
+- Q: The listing after the cycle's commands is refused: success? → A: No:
+  the cycle ends incomplete with the reply, as a refused listing at the
+  start does (FR-007).
+- Q: Two quick clicks on a star both starred. → A: Kept as a limitation
+  (Assumptions): the window is the write and the folder's read again,
+  tens of milliseconds, about 100 ms on 100 000 rows (estimated). Showing
+  the wish before its commit breaks constitution III and 007 FR-001;
+  taking the toggle from the queued writes closes only part of it. The
+  maintainer's choice, no code.
+- Q: The row's star is announced as a button but takes no focus. → A:
+  The role goes; the keyboard stars through the envelope (FR-004). A
+  `GtkButton` per row was weighed: a tab stop in every row and a form
+  change; not taken.
+- Q: Microsoft 365 replays after an accepted request? → A: Recorded as a
+  limitation of reading delta (Assumptions); it is 009's, not this
+  feature's.
+
 ## Requirements
 
 ### Functional Requirements
@@ -437,13 +485,11 @@ the stored state, the banner and the server's record are compared.
   with the pending change applied over it. A newer wish for the same flag
   replaces the older, whatever the server state at that moment. A pending
   change survives a refresh, a reselection and a restart, and ends only
-  when the server has it (FR-007, FR-009), when the server refuses it
-  (FR-010), or when the message leaves the store. A cycle writes the
-  server state it was told, a report that names one flag writing that
-  flag alone: a pending change equal to the value written ends with that
-  write, and one the server does not have yet is never changed by a
-  cycle's report; only the server's refusal drops it (FR-010; 009 FR-002,
-  amended).
+  when a cycle sees the server hold it (FR-007, FR-009), when the server
+  refuses it (FR-010), or when the message leaves the store. A cycle
+  writes the server state it was told, a report that names one flag
+  writing that flag alone; a report never changes a pending change
+  (009 FR-002, amended; research §15).
 - **FR-002 — Actions in the window**: The open message MUST be starred
   and unstarred by the star toggle in the reader's envelope, which shows
   the effective state with the filled star icon while the message is
@@ -453,7 +499,7 @@ the stored state, the banner and the server's record are compared.
   reader then show it from the store (FR-001). Mark as Unread leaves the message open
   and unread; it is not counted read again until it is opened anew. A
   change to the state the window already shows is stored all the same
-  and ends at the next sending step without a command (FR-007): two quick
+  and ends as FR-007 says, on IMAP without a command: two quick
   opposite changes are both written, in order, before the rows are read
   again. The
   actions are available in every folder, the Starred, Important and All
@@ -475,7 +521,9 @@ the stored state, the banner and the server's record are compared.
   whose message is not starred, an outline star shows in that place. A
   click on the star, outline or filled, asks for the opposite state of
   that row's message (FR-002) and does not open the message. The row's
-  accessible description says "Starred" with its read state. (Amends 010
+  accessible description says "Starred" with its read state. The row's
+  star serves the pointer and takes no keyboard focus; the keyboard stars
+  through the envelope (FR-002). (Amends 010
   FR-002 and FR-011(b); the form change was approved on 2026-10-02 and
   amended on 2026-10-03.)
 
@@ -500,24 +548,34 @@ the stored state, the banner and the server's record are compared.
 - **FR-007 — How a cycle sends**: After storing its listing (on Microsoft
   365, after its round of changes), before each batch of missing
   messages, and once before closing, a cycle MUST send the folder's
-  pending changes that differ from the stored server state; one equal to
-  it ends without a command. Each message is addressed as the listing
+  pending changes the server does not hold as far as the cycle knows: on
+  IMAP, against the value this cycle last sent for that flag of the
+  message, otherwise the listing's; on Microsoft 365 every pending
+  change, since a delta report may come late or be replayed (research
+  §15). Each message is addressed as the listing
   identifies it: on IMAP by the UID the listing shows for the message's
   identity in this mailbox, under this opening's numbering version; on
   Microsoft 365 by the message's identity. On IMAP equal changes to
   several messages go in one command, a hundred messages per command at
   most (servers bound a command line); on Microsoft 365 each message is
-  one request. When the server accepts a command, the server state
-  becomes the sent value and a pending change equal to it ends, in one
-  transaction, so the window shows no difference; a wish made meanwhile
-  for another value stays and goes with the next sending step. On IMAP,
-  a pending message the listing
+  one request. A pending change ends when the cycle sees the server hold
+  its value: on IMAP when a listing of this cycle shows it (the listing
+  at the start, without a command, for a change the cycle has not sent;
+  the listing after its commands for one it sent), since a command's OK
+  alone does not say the message changed (RFC 3501 §6.4.8: a UID the
+  mailbox lacks is ignored); on Microsoft 365 when the service accepts
+  the request. The server state then becomes that value and a pending
+  change equal to it ends, in one transaction, so the window shows no
+  difference; a wish made meanwhile for another value stays and goes
+  with the next sending step. On IMAP, a pending message the listing
   does not show is left for the cycle of a folder that lists it. A
   command may change the folder itself, as a star taken off a message
   under Gmail's Starred label takes it out of the label: on IMAP a cycle
-  that had a command accepted lists the folder once more after its last
-  sending step and stores the removals and flags that listing proves;
-  messages it newly lists arrived during the cycle, which 009 FR-001
+  that sent a command lists the folder once more after its last sending
+  step, stores the removals and flags that listing proves and ends the
+  sent changes it shows; when the server refuses that listing, the cycle
+  ends incomplete with the reply, as with a refused listing at its start.
+  Messages it newly lists arrived during the cycle, which 009 FR-001
   lets the next cycle bring, and wait for it. A cycle otherwise
   changes nothing on the server (009 FR-001, amended).
 - **FR-008 — Mailboxes opened for writing**: An IMAP folder MUST be opened
@@ -531,12 +589,13 @@ the stored state, the banner and the server's record are compared.
   connection breaks after a command was sent, or the service answers that
   it could not complete the request (a 5xx status), the cycle fails as
   any broken cycle (009 FR-011) and the pending change stays. On IMAP the
-  next cycle's listing writes the server state: a pending change the
-  server has ends with that write (FR-001); one it lacks is sent
-  (FR-007); a change is never sent again without the listing's evidence.
-  On Microsoft 365 the service may report a change with a delay, so a
-  pending change the next round does not report is sent again; the
-  request sets a value, so a repeated request is harmless.
+  next cycle's listing shows the server state: a pending change the
+  server has ends without a command; one it lacks is sent (FR-007); a
+  change is never sent again without the listing's evidence. On
+  Microsoft 365 the service may report a change with a delay or replay an
+  older one, so the pending change is sent again whatever the next round
+  reports; the request sets a value, so a repeated request is
+  harmless.
 - **FR-010 — A refused change**: When the server refuses a command (an
   IMAP `NO` or `BAD`; a Microsoft 365 4xx other than the rejected token
   009 FR-011 handles, a temporary refusal included; a 5xx is FR-009's
@@ -585,10 +644,10 @@ the stored state, the banner and the server's record are compared.
 
 - **Pending change**: the wanted value of one flag (read, starred) of one
   message that the server does not have yet; at most one per flag, the
-  newest wish; ends by sending, by the server's listing agreeing, by a
+  newest wish; ends when a cycle sees the server hold it (FR-007), by a
   refusal or with the message.
 - **Server state**: a message's read state and star as the server last
-  reported them; written only by cycles and by an accepted command.
+  reported them; written only by cycles.
 - **Effective state**: the server state with the pending changes applied
   over it; what the row and the reader show.
 - **Command**: one request to the server carrying one change for one or
@@ -617,7 +676,11 @@ the stored state, the banner and the server's record are compared.
   sends it once; with a scripted service answering 504, the pending
   change stays and the next cycle sends it again. A change made while a
   command for the same flag is in flight survives the command's
-  acceptance and is sent by the next sending step.
+  acceptance and is sent by the next sending step. A star answered 504,
+  then taken back by the user, is sent again although the next round
+  reports nothing; a read mark sent by a UID the mailbox no longer has
+  stays pending; a refused listing after the commands ends the cycle
+  incomplete with the reply.
 - **SC-005**: With a scripted server that refuses the command, the row
   shows the server's state within the cycle, a notice carries the
   server's reply, and the next cycle sends nothing for that message.
@@ -671,6 +734,17 @@ the stored state, the banner and the server's record are compared.
   report the message unstarred; a star set and taken off over IMAP
   leaves both views agreeing. Nothing over IMAP reaches that state, so
   the application shows the server's IMAP state, the truth it can read.
+- *Known limitation, the window (research §15.4)*: a second click on a
+  star that comes before the first is stored and the folder read again
+  (tens of milliseconds; about 100 ms on a folder of 100 000 messages,
+  estimated) asks for the same state as the first; the star then stays
+  as the first click left it, and a further click changes it.
+- *Known limitation, Microsoft 365 (research §15)*: the service may
+  replay an older change in a later delta response; after an accepted
+  request such a replay writes the older value as the server's, and with
+  nothing pending the row shows it until the message changes again. Any
+  change from another client meets the same replay; ordering delta
+  reports belongs to 009's reading of the service.
 - *Known limitation, every IMAP server (observed 2026-10-04)*: a cycle
   learns the server's flags and removals of the messages it already holds
   from its listing at the start and, after its own commands, at the end;
@@ -700,8 +774,8 @@ To be applied with this feature, in the owning documents:
   action. 009 data-model ("not stored: … read and star adds them" for
   UIDs, "pending changes"): UIDs stay unstored, the stored message
   carries its pending wanted values, and the cycle's read, the batch's
-  steps and the row read name both flags, the equal-value rule and the
-  effective values. 009 contracts/synchronization.md: a cycle writes
+  steps and the row read name both flags, the pending values a report
+  leaves as they are, and the effective values. 009 contracts/synchronization.md: a cycle writes
   through the batch write, the settle and the drop, and reads the pending
   changes; the flag shapes and `StoreChanged`.
 - 007 FR-014(c): built. 007 FR-002 (what is stored per message): the
