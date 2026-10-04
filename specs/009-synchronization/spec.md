@@ -23,8 +23,8 @@ ends with a second pass; sized the same day (budget: at most 250
 production lines and 400 test lines; no thread, timer or queue of its own,
 no new dependency, no change to the IMAP library forks; four columns on
 the folder); challenged the same day in fresh sessions (Clarifications
-2026-10-04), approved and built the same day on branch `claude/state-pass`
-(tasks T039–T045); its final passes are tasks T046–T047.
+2026-10-04), approved, built and checked on the installed build the same
+day on branch `claude/state-pass` (tasks T039–T047).
 Approved on 2026-09-29 (tasks T001). Sized at the feature-start on
 2026-09-28 (budget: at most 1 500 production lines, raised to 1 600 at
 planning and to 2 000 during the implementation, and 1 500 test lines,

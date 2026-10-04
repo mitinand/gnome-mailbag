@@ -10,8 +10,8 @@ connection, faster) was built without tasks, by the feature-start's path
 for internal changes: three reviewed portions, the installed-build check,
 then the documents (plan "Amendment 2026-10-02", research §14). The
 amendment of 2026-10-04 (the state pass) has its tasks in Phase 8, on
-branch `claude/state-pass`; its documents were approved and portions
-8b–8d built the same day; T046–T047 are its final passes.
+branch `claude/state-pass`; its documents were approved, portions
+8b–8d built and the final passes T046–T047 done the same day.
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -612,10 +612,15 @@ STOP for the maintainer's review.
   pass; the four 011 tests held without change, their fixtures having no
   CONDSTORE; two older cycle tests now count the second pass's opening
   and listing.
-- [ ] T046 STOP: ./scripts/check.sh, the size against the budget (≤ 250
+- [x] T046 STOP: ./scripts/check.sh, the size against the budget (≤ 250
   production, ≤ 400 test lines), the quickstart's steps 11 and 12 on the
   installed build with the maintainer, the record checked for privacy
-  (counts and the pass's outcome; folder names at debug).
+  (counts and the pass's outcome; folder names at debug). Done on
+  2026-10-04: steps 11 and 12 passed (research §15 "Measured on the
+  installed build"); the record carries counts and the outcome at info
+  and the folder's name and numbers at debug; the size exceeded the
+  budget (≈ 285 production, ≈ 540 test lines, the scripted server's 112
+  among them), accepted by the maintainer.
 - [x] T047 Final passes: one consistency analysis and `simplify-review` on
   the branch diff, each in a fresh session; findings reported, scope-adding
   ones brought to the maintainer; the measured facts stay in research §15.

@@ -690,6 +690,22 @@ decided for COMPRESS=DEFLATE, likewise undocumented by Google, that the
 announced capability decides (§14). Decided on 2026-10-04: the same rule
 for CONDSTORE, for any server (the maintainer's decision).
 
+**Measured on the installed build** (2026-10-04, quickstart steps 11 and
+12; a Gmail account of 767 messages and Generic IMAP server A, 6 009): a
+first fill's second pass found nothing changed and cost the opening alone;
+a refresh with a pending star listed the folder in full, sent the command,
+and its second pass listed the one changed message with `CHANGEDSINCE`
+and settled the star, the whole refresh in 1.2 s; a fill of 6 009 messages
+took 8.4 minutes, and its second pass listed every message in 0.23 s,
+storing the one removal and the two flag changes made in the web interface
+during the fill. Observed once on Gmail, cause inferred: a refresh four
+seconds after the cycle's command found HIGHESTMODSEQ raised with no
+listed change in the label, so the pass listed the changed flags and
+found none, one round trip; Gmail's mod-sequence is account-wide (004
+research), so a quiet refresh there may read the changed flags instead
+of nothing. The store was discarded once for its changed structure
+(007 FR-014).
+
 **Left to 020**: how often a pass runs during a fill; slicing a fill into
 short cycles, each with its own pass (the newest-first order means
 everything above a UID is stored, so a continued fill could list only the

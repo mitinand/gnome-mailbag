@@ -454,8 +454,9 @@ Decided at a feature-start on 2026-10-04 after the live check of
 Clarifications 2026-10-04), for branch `claude/state-pass`, from
 `claude/read-star`, whose full listing after a cycle's commands this
 amendment replaces. Documents first (tasks T039), then four portions.
-Built on 2026-10-04 (tasks T040–T045, four commits); the final passes are
-tasks T046–T047, whose findings this section records as "built as".
+Built on 2026-10-04 (tasks T040–T045, four commits) and checked on the
+installed build the same day (T046); the final passes' findings (T047)
+this section records as "built as".
 
 ### Size
 
