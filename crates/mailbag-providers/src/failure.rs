@@ -127,17 +127,18 @@ impl LoadFailure {
         }
     }
 
+    /// The mail service's failure, whatever the request was.
+    fn graph_error(&self) -> Option<&GraphError> {
+        match self {
+            Self::MicrosoftGraph(error) | Self::MicrosoftGraphChangeRefused(error) => Some(error),
+            _ => None,
+        }
+    }
+
     /// The mail service's status for a refused request.
     fn status(&self) -> Option<u32> {
-        match self {
-            Self::MicrosoftGraph(GraphError {
-                failure: GraphFailure::Refused { status, .. },
-                ..
-            })
-            | Self::MicrosoftGraphChangeRefused(GraphError {
-                failure: GraphFailure::Refused { status, .. },
-                ..
-            }) => Some(*status),
+        match self.graph_error()?.failure {
+            GraphFailure::Refused { status, .. } => Some(status),
             _ => None,
         }
     }
@@ -146,15 +147,10 @@ impl LoadFailure {
     fn server_code(&self) -> Option<&str> {
         match self {
             Self::Imap(error) => error.server_reply.as_ref()?.code.as_deref(),
-            Self::MicrosoftGraph(GraphError {
-                failure: GraphFailure::Refused { code, .. },
-                ..
-            })
-            | Self::MicrosoftGraphChangeRefused(GraphError {
-                failure: GraphFailure::Refused { code, .. },
-                ..
-            }) => code.as_deref(),
-            _ => None,
+            _ => match &self.graph_error()?.failure {
+                GraphFailure::Refused { code, .. } => code.as_deref(),
+                _ => None,
+            },
         }
     }
 
@@ -166,9 +162,9 @@ impl LoadFailure {
             lines.push(format!("Status: {status}"));
         }
         if let Some(code) = self.server_code() {
-            let label = match self {
-                Self::MicrosoftGraph(_) | Self::MicrosoftGraphChangeRefused(_) => "Service code",
-                _ => "Server code",
+            let label = match self.graph_error() {
+                Some(_) => "Service code",
+                None => "Server code",
             };
             lines.push(format!("{label}: {code}"));
         }

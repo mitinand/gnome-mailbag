@@ -374,7 +374,11 @@ maintainer decided them the same day.
    on the first, its star alone on the second; the service documents that
    an item may appear more than once) had its read state reverted by the
    second page. A report now writes only the flags it names
-   (`FlagChanges` with options, `COALESCE` in the store).
+   (`FlagChanges` with options, `COALESCE` in the store). *Since
+   2026-10-05*: no report names one flag, since a Microsoft 365 entry
+   about a stored message is read from the message (009 FR-007); every
+   report carries both flags (`MessageFlags`), and `FlagChanges` with the
+   `COALESCE` went at the refactor pass, the maintainer's decision.
 3. **Mark as Unread in the first second.** The plan checked "already in
    the wanted state" before dropping the read timer; an open unread
    message is still unread, so the handler returned and the timer later

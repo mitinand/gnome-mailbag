@@ -156,7 +156,9 @@ flowchart TD
   set; `update_shown(change)`.
 - `shown_rows(rows, filter_on, open, read_in_window) -> Vec<row>`: a pure
   function: all rows, or the unread ones (not in the set) and the open
-  message.
+  message. *Built as* `shown_rows(rows, unread_only, open,
+  removed_in_window)` since 011, which stores the read state and drops
+  the read-in-window set.
 - `set_unread_filter(on)`: `update_shown(AtOnce)`.
 - `remove_in_window(identity)`: `update_shown` with the row left out,
   animated; in a narrow window the reader's page is not brought forward.

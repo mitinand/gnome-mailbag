@@ -30,14 +30,16 @@ user's word, *mailbox*, where it names the refreshed folder
   `mailbag-imap` does not depend on `mailbag-domain`. A
   Generic IMAP message's identity is `imap:<folder>/<UIDVALIDITY>/<UID>`.
 - `FolderBatch { removed: Vec<String>, flag_states: Vec<(String,
-  FlagChanges)>, known_arrived: Vec<(String, MessageFlags)>, arrived:
+  MessageFlags)>, known_arrived: Vec<(String, MessageFlags)>, arrived:
   Vec<Message>, state: Option<FolderState> }` (since 011; before,
   `read_states: Vec<(String, bool)>` and `known_arrived: Vec<(String,
   bool)>`): one whole part of a cycle's result. `removed`
   holds identities proven gone from the folder (spec FR-004);
   `flag_states` the new `seen` and `flagged` the server reported for
-  messages the folder holds, each an `Option` so that a report naming one
-  flag writes that flag alone (011 FR-001);
+  messages the folder holds, both flags (since 2026-10-05; before,
+  `FlagChanges` with an `Option` per flag, so that a Microsoft 365 entry
+  naming one flag wrote that flag alone, which the cycle now reads from
+  the message instead, FR-007);
   `known_arrived` messages the folder did not hold but the account did, with
   their listed flags, related without fetching (research §4); `arrived`
   full records to insert or update (messages the account did not hold, and

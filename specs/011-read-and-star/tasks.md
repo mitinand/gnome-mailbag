@@ -633,6 +633,17 @@ the maintainer's word.
   and shown after the refresh; the next round sent the window's own two
   changes and settled them.
 
+- [x] T052 Refactor pass in a fresh session (2026-10-05), after the
+  branch's reviews: `InWindow` became `removed_in_window`, a
+  `HashSet<String>`; `failure.rs` gained `graph_error()` as the one owner
+  of "this failure carries a Graph error"; four plan lines marked "built
+  as"; and, at the maintainer's decision, `FlagChanges` with its
+  `Option`s, the `COALESCE` in `set_flag_states`, the conversion in
+  `relate_known` and the flag merge of two partial entries went, since no
+  report names one flag any more (009 FR-007): `flag_states` carries
+  `MessageFlags`. Contract, plan, data-model, research and spec FR-001,
+  Edge Cases and Clarifications say so.
+
 ## Dependencies
 
 - T001 before everything; T002 after approval; each STOP (T002, T010,

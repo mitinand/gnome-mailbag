@@ -2541,7 +2541,7 @@ fn store_completed_cycle(
 #[test]
 fn without_the_filter_every_stored_row_is_shown() {
     let rows = [listed_row("a", true), listed_row("b", false)];
-    let shown: Vec<&str> = shown_rows(&rows, false, None, &InWindow::default())
+    let shown: Vec<&str> = shown_rows(&rows, false, None, &HashSet::new())
         .iter()
         .map(|row| row.identity.as_str())
         .collect();
@@ -2557,7 +2557,7 @@ fn the_filter_shows_the_unread_rows_and_the_open_message_in_their_order() {
         listed_row("open elsewhere", false),
     ];
     let identities = |open| -> Vec<&str> {
-        shown_rows(&rows, true, open, &InWindow::default())
+        shown_rows(&rows, true, open, &HashSet::new())
             .iter()
             .map(|row| row.identity.as_str())
             .collect()
@@ -2568,7 +2568,7 @@ fn the_filter_shows_the_unread_rows_and_the_open_message_in_their_order() {
         ["unread", "open and read", "open elsewhere"]
     );
     assert_eq!(identities(Some("unread")), ["unread", "open elsewhere"]);
-    assert!(shown_rows(&rows[..1], true, None, &InWindow::default()).is_empty());
+    assert!(shown_rows(&rows[..1], true, None, &HashSet::new()).is_empty());
 }
 
 /// A fixed "now": 30 September 2026, 15:00 local time.
@@ -2668,11 +2668,9 @@ fn the_window_s_removals_and_the_filter_change_the_rows_shown() {
         listed_row("read", true),
         listed_row("unread", false),
     ];
-    let in_window = InWindow {
-        removed: HashSet::from(["removed".to_owned()]),
-    };
+    let removed_in_window = HashSet::from(["removed".to_owned()]);
     let identities = |unread_only| -> Vec<&str> {
-        shown_rows(&rows, unread_only, None, &in_window)
+        shown_rows(&rows, unread_only, None, &removed_in_window)
             .iter()
             .map(|row| row.identity.as_str())
             .collect()

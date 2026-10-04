@@ -147,7 +147,8 @@ sequenceDiagram
   answers a load's `AccessRenewal::renew` with the Online Accounts request
   the load started with (research §13).
 - `store_load::BatchWriter::store(batch)` — writes, then sends
-  `LoadEvent::BatchStored`; a cancelled write ends the cycle as cancelled.
+  `LoadEvent::BatchStored` (built as `StoreChanged` since 011); a
+  cancelled write ends the cycle as cancelled.
   `BatchWriter::finish` writes the cycle's record line.
 
 **`mailbag-imap`**
@@ -175,7 +176,8 @@ sequenceDiagram
 
 **`mailbag` (the window)**
 
-- `WindowUi::start_load` passes an event handler: `BatchStored` for any
+- `WindowUi::start_load` passes an event handler: `BatchStored` (built
+  as `StoreChanged` since 011) for any
   folder of the shown folder's account calls `read_shown_mailbox_again`,
   which keeps the rows and the banner on screen and marks one more read
   when a read is running; `Finished` as today.

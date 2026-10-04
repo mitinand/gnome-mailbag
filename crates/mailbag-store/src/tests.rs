@@ -9,8 +9,8 @@
 use super::*;
 use crate::{test_directory::TestDirectory, test_record::CapturedRecord};
 use mailbag_domain::{
-    ContentExplanation, DisplayFields, FailureKind, FlagChanges, FolderBatch, FolderNumbers,
-    FolderRole, FolderState, Message, MessageFlag, MessageFlags, PendingChange, ReceivedContent,
+    ContentExplanation, DisplayFields, FailureKind, FolderBatch, FolderNumbers, FolderRole,
+    FolderState, Message, MessageFlag, MessageFlags, PendingChange, ReceivedContent,
 };
 use std::{fs, os::unix::fs::PermissionsExt, path::Path};
 
@@ -104,14 +104,6 @@ fn read_flags(seen: bool) -> MessageFlags {
     MessageFlags {
         seen,
         flagged: false,
-    }
-}
-
-/// A server report that names the read state only.
-fn read_report(seen: bool) -> FlagChanges {
-    FlagChanges {
-        seen: Some(seen),
-        flagged: None,
     }
 }
 
@@ -631,7 +623,7 @@ fn a_batch_removes_changes_relates_and_adds_in_one_write() {
 
     let second = FolderBatch {
         removed: vec!["gone".to_owned()],
-        flag_states: vec![("read".to_owned(), read_report(true))],
+        flag_states: vec![("read".to_owned(), read_flags(true))],
         known_arrived: vec![("shared".to_owned(), read_flags(true))],
         arrived: vec![dated_message("new", 5)],
         state: None,
@@ -676,7 +668,7 @@ fn a_related_or_read_message_keeps_its_preview() {
     store.store_batch(&work, &elsewhere, || false).unwrap();
     let related = FolderBatch {
         known_arrived: vec![("shared".to_owned(), read_flags(true))],
-        flag_states: vec![("shared".to_owned(), read_report(true))],
+        flag_states: vec![("shared".to_owned(), read_flags(true))],
         ..FolderBatch::default()
     };
     store.store_batch(&inbox, &related, || false).unwrap();
@@ -1141,15 +1133,9 @@ fn a_server_value_written_leaves_the_pending_values() {
     // or not, and none ends the wish.
     let report = FolderBatch {
         flag_states: vec![
-            // The report names the read state only, so the star stays stored.
-            ("named".to_owned(), read_report(true)),
-            (
-                "differing".to_owned(),
-                FlagChanges {
-                    seen: None,
-                    flagged: Some(false),
-                },
-            ),
+            // Both flags as the server holds them: read and unstarred.
+            ("named".to_owned(), read_flags(true)),
+            ("differing".to_owned(), read_flags(false)),
         ],
         arrived: vec![message_with_flags("arrived", true, false)],
         known_arrived: vec![(

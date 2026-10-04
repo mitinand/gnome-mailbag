@@ -209,23 +209,20 @@ fn merge_per_message(changes: Vec<MessageChange>) -> HashMap<String, MessageChan
                 message.flagged = flagged.unwrap_or(message.flagged);
                 MessageChange::Listed(message)
             }
+            // Two partial entries: only whether other fields changed matters,
+            // since a changed message is read again (009 FR-007).
             (
                 Some(MessageChange::Changed {
-                    is_read: earlier_read,
-                    flagged: earlier_flagged,
                     other_fields: earlier_fields,
                     ..
                 }),
                 MessageChange::Changed {
-                    id,
-                    is_read,
-                    flagged,
-                    other_fields,
+                    id, other_fields, ..
                 },
             ) => MessageChange::Changed {
                 id,
-                is_read: is_read.or(earlier_read),
-                flagged: flagged.or(earlier_flagged),
+                is_read: None,
+                flagged: None,
                 other_fields: other_fields || earlier_fields,
             },
             (_, change) => change,

@@ -7,9 +7,8 @@
 
 use crate::content::{content_columns, content_from_columns};
 use mailbag_domain::{
-    AccountId, DisplayFields, FlagChanges, Folder, FolderNumbers, FolderRef, FolderRole,
-    FolderState, Message, MessageFlag, MessageFlags, MessageListRow, PendingChange,
-    ReceivedContent,
+    AccountId, DisplayFields, Folder, FolderNumbers, FolderRef, FolderRole, FolderState, Message,
+    MessageFlag, MessageFlags, MessageListRow, PendingChange, ReceivedContent,
 };
 use rusqlite::{Connection, Row, Transaction, params, types::Type};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -185,26 +184,23 @@ pub(crate) fn delete_memberships(
     Ok(())
 }
 
-/// Writes the flags a server reported for the account's messages, leaving a
-/// flag it did not name as stored. The pending values stay: a report alone
-/// does not say the server holds a wish (specs/011-read-and-star research
-/// §15).
+/// Writes the flags a server reported for the account's messages. The
+/// pending values stay: a report alone does not say the server holds a wish
+/// (specs/011-read-and-star research §15).
 pub(crate) fn set_flag_states(
     transaction: &Transaction,
     account: &AccountId,
-    flag_states: &[(String, FlagChanges)],
+    flag_states: &[(String, MessageFlags)],
 ) -> rusqlite::Result<()> {
-    // A flag not reported is NULL, which writes nothing.
     let mut update = transaction.prepare(
-        "UPDATE message SET seen = COALESCE(?3, seen), flagged = COALESCE(?4, flagged) \
-         WHERE account = ?1 AND identity = ?2",
+        "UPDATE message SET seen = ?3, flagged = ?4 WHERE account = ?1 AND identity = ?2",
     )?;
-    for (identity, changes) in flag_states {
+    for (identity, flags) in flag_states {
         update.execute(params![
             account.as_str(),
             identity,
-            changes.seen,
-            changes.flagged
+            flags.seen,
+            flags.flagged
         ])?;
     }
     Ok(())
@@ -280,11 +276,7 @@ pub(crate) fn relate_known(
     for (identity, _) in known_arrived {
         relate.execute(params![folder_id, account.as_str(), identity])?;
     }
-    let flag_states: Vec<(String, FlagChanges)> = known_arrived
-        .iter()
-        .map(|(identity, flags)| (identity.clone(), (*flags).into()))
-        .collect();
-    set_flag_states(transaction, account, &flag_states)
+    set_flag_states(transaction, account, known_arrived)
 }
 
 /// The changes of the folder's messages the user wants and the server may

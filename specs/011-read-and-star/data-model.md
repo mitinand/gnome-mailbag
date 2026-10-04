@@ -35,11 +35,12 @@ existing store at start (007 FR-012), pending changes included.
   server `seen` and `flagged`, so the listing's changed flags are found
   as today.
 - **Writing a server value** (`store_batch`'s `set_flag_states`, the
-  upsert of a full record and `relate_known`; spec FR-001, FR-009): only
-  the flags the server reported are written (a Microsoft 365 partial
-  entry names one: `seen = COALESCE(?seen, seen)`); the pending columns
-  are untouched, since a report alone does not end a pending change
-  (research §15).
+  upsert of a full record and `relate_known`; spec FR-001, FR-009): the
+  flags the server reported are written, both of them since 2026-10-05
+  (before, a Microsoft 365 partial entry named one and `seen =
+  COALESCE(?seen, seen)` kept the other; such an entry is now read from
+  the message, 009 FR-007); the pending columns are untouched, since a
+  report alone does not end a pending change (research §15).
 - **Reading the pending changes** (`read_pending_changes`, spec FR-007):
   the folder's messages with a non-null pending column, by
   `membership.folder`, as `(identity, flag, wanted)`; read before each

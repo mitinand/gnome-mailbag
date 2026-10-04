@@ -135,7 +135,10 @@ flowchart TD
   (`FlagChanges { seen: Option<bool>, flagged: Option<bool> }`; `seen =
   COALESCE(?seen, seen)`); `store_arrived`'s upsert and `relate_known`
   write both flags; the pending columns are untouched (§15; written
-  first as ending an equal pending value, replaced on 2026-10-04).
+  first as ending an equal pending value, replaced on 2026-10-04). *Since
+  2026-10-05*: every report carries both flags (`MessageFlags`), since a
+  Microsoft 365 entry naming one is read from the message (009 FR-007);
+  `FlagChanges` and the `COALESCE` went at the refactor pass.
 - `read_pending_changes(folder)`: the folder's messages with a non-null
   pending column, as `(identity, flag, wanted)`; a small query over the
   folder's memberships.
@@ -259,7 +262,9 @@ flowchart TD
   the shown state: two quick opposite changes are both written, in order.
 - `mark_read_after_opening`: the timer's closure calls
   `change_flag(Seen, true)` when the open row is still unread, instead of
-  the read-in-window set, which is removed (010's `InWindow.read`).
+  the read-in-window set, which is removed (010's `InWindow.read`; built
+  with `InWindow` replaced by its one remaining set,
+  `MailUi::removed_in_window`).
 - `update_list_by_difference`: sets `starred` as it sets `unread`, in
   place; `lists_same_message` leaves both out, since a new item would
   animate the row away and back.

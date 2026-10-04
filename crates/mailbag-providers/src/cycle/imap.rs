@@ -298,7 +298,7 @@ fn listing_changes(
                 .get(&message.identity)
                 .is_some_and(|flags| *flags != message.flags)
         })
-        .map(|message| (message.identity.clone(), message.flags.into()))
+        .map(|message| (message.identity.clone(), message.flags))
         .collect();
     FolderBatch {
         removed,

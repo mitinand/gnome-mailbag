@@ -170,9 +170,9 @@ pub struct FolderNumbers {
 pub struct FolderBatch {
     /// Identities proven gone from the folder.
     pub removed: Vec<String>,
-    /// The new flags of messages the folder holds, each with only the flags
-    /// the server reported.
-    pub flag_states: Vec<(String, FlagChanges)>,
+    /// The server's flags of messages the folder holds, as a listing or a
+    /// reading of the messages reported them.
+    pub flag_states: Vec<(String, MessageFlags)>,
     /// Messages the folder did not hold but its account did, with their
     /// listed flags: related to the folder without fetching them.
     pub known_arrived: Vec<(String, MessageFlags)>,
@@ -214,24 +214,6 @@ pub enum MessageFlag {
 pub struct MessageFlags {
     pub seen: bool,
     pub flagged: bool,
-}
-
-/// The flags a server report named; a flag it did not name is `None` and
-/// keeps its stored value.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct FlagChanges {
-    pub seen: Option<bool>,
-    pub flagged: Option<bool>,
-}
-
-/// A report that names both flags, as an IMAP listing does.
-impl From<MessageFlags> for FlagChanges {
-    fn from(flags: MessageFlags) -> Self {
-        Self {
-            seen: Some(flags.seen),
-            flagged: Some(flags.flagged),
-        }
-    }
 }
 
 /// A change of one flag the user wants and the server may not have yet.

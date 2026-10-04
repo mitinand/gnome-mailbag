@@ -66,14 +66,6 @@ enum ListChange {
     Animated,
 }
 
-/// What the window alone remembers of the shown folder since the latest
-/// read of its stored rows: messages taken out with their trash button
-/// (specs/010-message-list FR-010).
-#[derive(Default)]
-struct InWindow {
-    removed: HashSet<String>,
-}
-
 /// Asks the window for the content of an account's message.
 type ContentRequest = Box<dyn Fn(&AccountId, &str)>;
 
@@ -124,7 +116,10 @@ pub struct MailUi {
     /// Whether the list shows only the unread messages and the open one; the
     /// same for every folder and account (specs/010-message-list FR-008).
     unread_only: Cell<bool>,
-    in_window: RefCell<InWindow>,
+    /// The messages taken out with their trash button since the latest
+    /// read of the shown folder's stored rows (specs/010-message-list
+    /// FR-010).
+    removed_in_window: RefCell<HashSet<String>>,
     /// Applies the list's latest state once the rows that leave are closed.
     pending_change: RefCell<Option<glib::SourceId>>,
     /// The identity of the message the reader shows.
@@ -185,7 +180,7 @@ impl MailUi {
             mark_unread: gio::SimpleAction::new("mark-scope-unread", None),
             listed_rows: RefCell::new(None),
             unread_only: Cell::new(false),
-            in_window: RefCell::default(),
+            removed_in_window: RefCell::default(),
             pending_change: RefCell::new(None),
             open_message: RefCell::new(None),
             pending_read: RefCell::new(None),
@@ -325,7 +320,7 @@ impl MailUi {
             self.clear();
         }
         *self.listed_rows.borrow_mut() = Some((folder.clone(), rows.clone()));
-        *self.in_window.borrow_mut() = InWindow::default();
+        self.removed_in_window.borrow_mut().clear();
         self.update_shown(change);
     }
 
@@ -347,8 +342,8 @@ impl MailUi {
             return false;
         };
         let open = self.open_message.borrow();
-        let in_window = self.in_window.borrow();
-        shown_rows(&rows, self.unread_only.get(), open.as_deref(), &in_window).is_empty()
+        let removed = self.removed_in_window.borrow();
+        shown_rows(&rows, self.unread_only.get(), open.as_deref(), &removed).is_empty()
     }
 
     /// Takes a message out of the list in the window only, as its trash
@@ -360,9 +355,8 @@ impl MailUi {
         let Some(position) = position_of(&self.items, identity) else {
             return;
         };
-        self.in_window
+        self.removed_in_window
             .borrow_mut()
-            .removed
             .insert(identity.to_owned());
         if self.open_message.borrow().as_deref() == Some(identity) {
             match self.next_after_leaving_at(position) {
@@ -404,8 +398,8 @@ impl MailUi {
             false => ListChange::AtOnce,
         };
         let open = self.open_message.borrow().clone();
-        let in_window = self.in_window.borrow();
-        let shown = shown_rows(&rows, self.unread_only.get(), open.as_deref(), &in_window);
+        let removed = self.removed_in_window.borrow();
+        let shown = shown_rows(&rows, self.unread_only.get(), open.as_deref(), &removed);
         match change {
             ListChange::AtOnce => {
                 self.drop_pending_change();
@@ -420,7 +414,7 @@ impl MailUi {
                 }
             }
         }
-        drop(in_window);
+        drop(removed);
         let Some(identity) = open else {
             return;
         };
@@ -821,10 +815,10 @@ fn shown_rows<'a>(
     rows: &'a [MessageListRow],
     unread_only: bool,
     open: Option<&str>,
-    in_window: &InWindow,
+    removed_in_window: &HashSet<String>,
 ) -> Vec<&'a MessageListRow> {
     rows.iter()
-        .filter(|row| !in_window.removed.contains(&row.identity))
+        .filter(|row| !removed_in_window.contains(&row.identity))
         .filter(|row| !unread_only || !row.seen || open == Some(row.identity.as_str()))
         .collect()
 }

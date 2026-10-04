@@ -258,8 +258,9 @@ the stored state, the banner and the server's record are compared.
   dropped first, nothing is marked read (FR-003); when the timer's write
   has already started, the unread wish is written after it.
 - A Microsoft 365 round reports one message in two pages, the first with
-  its read state, the second with its star alone: each writes only what
-  it reports; the read state stays (FR-001).
+  its read state, the second with its star alone: each names the message,
+  and the cycle reads it as the service holds it, both flags (009 FR-007,
+  since 2026-10-05; before, each wrote only what it reported).
 - A Microsoft 365 page reports the wished value, or a later page or round
   replays an older one: no report ends the pending change; the request is
   sent after the round, and its acceptance ends it (FR-007, FR-009); since
@@ -417,7 +418,9 @@ the stored state, the banner and the server's record are compared.
 - Q: A Microsoft 365 partial entry names one flag; where does the other
   come from? → A: From nowhere: a report writes only what it names. Taking
   it from the cycle's starting snapshot re-applied a stale value when a
-  message came in two pages of one round (FR-001).
+  message came in two pages of one round (FR-001). (Superseded on
+  2026-10-05: such an entry makes the cycle read the message, 009
+  FR-007, so every report carries both flags.)
 - Q: Mark as Unread within the second checked the state before dropping
   the timer. → A: The timer is dropped first; and the window's writes run
   one at a time, so a wish made while the timer's write runs lands after
@@ -628,9 +631,10 @@ command; each point verified against the code.
   change survives a refresh, a reselection and a restart, and ends only
   when a cycle sees the server hold it (FR-007, FR-009), when the server
   refuses it (FR-010), or when the message leaves the store. A cycle
-  writes the server state it was told, a report that names one flag
-  writing that flag alone; a report never changes a pending change
-  (009 FR-002, amended; research §15).
+  writes the server state it was told; a Microsoft 365 report that names
+  one flag makes the cycle read the message (009 FR-007, since
+  2026-10-05; before, such a report wrote that flag alone); a report never
+  changes a pending change (009 FR-002, amended; research §15).
 - **FR-002 — Actions in the window**: The open message MUST be starred
   and unstarred by the star toggle in the reader's envelope, which shows
   the effective state with the filled star icon, and the advice to
