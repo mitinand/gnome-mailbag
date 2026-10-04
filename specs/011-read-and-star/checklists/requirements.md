@@ -38,6 +38,8 @@
   stay out of the spec and belong to the plan. Measured values (0.6–0.8 s,
   85 KB) are confined to Assumptions as checked facts. No [NEEDS
   CLARIFICATION] markers: the open choices were decided with the
-  maintainer at the sizing and are recorded under Clarifications.
-  Next: a challenge of the requirements in a fresh session, then clarify
-  only what survives it.
+    maintainer at the sizing and are recorded under Clarifications. The
+  challenge and the clarifications followed on 2026-10-02 and 2026-10-03.
+- Re-checked on 2026-10-05 after the consistency analyses of the branch:
+  every item holds; the Clarifications name a few functions where a review
+  discussed them, accepted as the record of those reviews.

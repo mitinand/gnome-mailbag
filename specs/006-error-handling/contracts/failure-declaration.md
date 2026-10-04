@@ -53,6 +53,8 @@ pub enum ServerStep {
     OpenMailbox,
     FetchMessages,
     FetchText,
+    /// A flag command (since 011 FR-007; added on 2026-10-05 to this record).
+    ChangeFlags,
 }
 
 /// Why fewer messages arrived than the folder offered.
@@ -93,14 +95,14 @@ chooses the kind; reading a protocol's codes happens there.
 | `AccountRequestStopped` | providers | `AccessError::Cancelled`, which reaches no channel: the load reports a cancellation (FR-010); the variant keeps the conversion total |
 | `ServerUnavailable(ServerStep)` | providers | An IMAP failure at any step whose code is `UNAVAILABLE` (RFC 5530) |
 | `ServerRejectedSignIn` | providers | `ImapFailure::Failed(SignIn)` with `AUTHENTICATIONFAILED` or no code |
-| `ServerStepFailed(ServerStep)` | providers | Any other `ImapFailure::Failed(step)` |
+| `ServerStepFailed(ServerStep)` | providers | Any other `ImapFailure::Failed(step)`; since 011 also a refused Microsoft 365 change, `MicrosoftGraphChangeRefused` → `ServerStepFailed(ChangeFlags)` |
 | `ServerNotResponding(ServerStep)` | providers | `ImapFailure::TimedOut(step)` |
 | `NoSignInMethod` | providers | `ImapFailure::NoSignInMethod` |
 | `MailboxChanged` | providers | `ImapFailure::MailboxChanged`; since 009 only a reconnection that met another UIDVALIDITY (009 research §10) |
 | `ServiceUnreachable` | providers | `GraphFailure::ConnectionFailed` |
 | `ServiceNotResponding` | providers | `GraphFailure::TimedOut` |
 | `ServiceRejectedSignIn` | providers | `GraphFailure::Refused` with status 401 |
-| `RequestRefused` | providers | `GraphFailure::Refused` with any other status |
+| `RequestRefused` | providers | `GraphFailure::Refused` with any other status, except a refused change (above) |
 | `UnexpectedAnswer` | providers | `GraphFailure::InvalidReply` |
 | `Stopped` | whoever caught the panic | A panic on a worker thread, or a worker that vanished without one (FR-014) |
 | `StorageFull` | the store | SQLite or the file system reports a full disk |
@@ -173,6 +175,7 @@ value, so a new variant without a declaration does not compile.
 | A short list | `declare_short_list(&IncompleteList) -> DeclaredFailure` | The banner above the list; its button opens the dialog |
 | A message's content | `declare_content(&ReceivedContent) -> Option<DeclaredFailure>` (`None` for text) | The reader's status page in the body's place; no dialog |
 | A Settings launch | `LaunchError::message()` (in `mailbag`): one line, title and advice, no `DeclaredFailure`, since the toast shows nothing more | A toast |
+| A change to stored mail the store could not write (011 FR-011) | `message_not_changed(&FailureKind)` (in `mailbag`): one line, title and the advice the failure's kind gets elsewhere (a full disk: free some space); added 2026-10-05 | A toast |
 
 A failed load reaches the window as `LoadResult::Failed(Failure)`; a panic on
 the worker as a `Failure` of kind `Stopped`.
@@ -193,8 +196,9 @@ advice, each remote text under its heading, the technical lines under
 "Technical details", in that order, separated by blank lines, skipping
 what is empty.
 
-The toast shows `LaunchError::message()`, one line, title and advice, and
-nothing of this table.
+A toast shows one line, title and advice, and nothing of this table:
+`LaunchError::message()` for a Settings launch, `message_not_changed` for a
+change the store could not write (011 FR-011).
 
 ## Invariants
 
@@ -210,8 +214,8 @@ nothing of this table.
   domain types only.
 - The action names: `Retry` runs the failed operation, which the window
   chooses from the carrier as a `RetriedOperation`: a mailbox load's
-  failure, a short list and a message's content refresh the mailbox,
-  `app.refresh-mailbox`; a folder list's failure refreshes the account,
+  failure and a short list refresh the mailbox, `app.refresh-mailbox` (a
+  message's content offers no action since 009); a folder list's failure refreshes the account,
   `app.refresh-account`; stored mail that cannot be read is read again,
   `app.read-stored-mail` (amended by 007 on 2026-09-26 and by 008 on
   2026-09-27). `OnlineAccounts`

@@ -3,12 +3,15 @@
 **Feature**: `006-error-handling`
 **Created**: 2026-09-24
 **Status**: Implemented on `claude/errors` and accepted live by the
-maintainer 2026-09-25 (plan.md, "Post-implementation"); FR-006 amended on
-2026-10-03 by [Read and star](../011-read-and-star/spec.md): the toast also carries a change to
-stored mail that could not be written; where the wording
+maintainer 2026-09-25 (plan.md, "Post-implementation"); where the wording
 is written in code corrected 2026-09-26, and failures handed to the
 application as domain values decided the same day and built in portion 6
-(research §1). The decisions taken
+(research §1). FR-006 amended on 2026-10-03 by
+[Read and star](../011-read-and-star/spec.md): the toast also carries a
+change to stored mail that could not be written; FR-002 and the contract
+amended on 2026-10-05 at its consistency analysis: the application scope
+names that change, the contract gains `ChangeFlags` and the toast's advice
+by the failure's kind. The decisions taken
 at sizing, at the specification challenge and on the prototype are
 recorded under Clarifications. FR-004 and the contract amended on
 2026-09-27 by [Folders](../008-folders/spec.md), built and accepted with it
@@ -318,9 +321,14 @@ from the approved forms, and decided:
   messages are shown than the Inbox offered), *the account* (nothing of its
   mail could be loaded, or a setting or credential of the account is wrong),
   *the application* (something outside any account's mail, such as Settings
-  that did not open). A failure MUST NOT widen its scope:
-  one message's problem never fails the list, a list short of messages never
-  fails the account, and an account's failure never hides another account.
+  that did not open, or a change of the user's that the store could not
+  write, which changes nothing on screen, 011 FR-011; *amended
+  2026-10-05*). A failure MUST NOT widen its scope:
+  one message's problem never fails the list (a server's refusal of the
+  user's change to a message is the refresh's own step, so it fails the
+  refresh, 011 FR-010 and research §7; *recorded 2026-10-05*), a list
+  short of messages never fails the account, and an account's failure
+  never hides another account.
   It MUST NOT narrow it either: a load that delivered nothing is an account
   failure, never an empty Inbox; a list short of messages is shown as
   incomplete, never as complete (constitution III).

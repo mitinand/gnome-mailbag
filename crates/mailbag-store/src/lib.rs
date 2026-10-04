@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Andrey Mitin
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The mail store: each account's folders and their messages as the latest
-//! completed loads left them, in one SQLite file in the user's data directory
+//! The mail store: each account's folders and their messages as its cycles
+//! stored them, in one SQLite file in the user's data directory
 //! (specs/007-mail-storage, specs/008-folders). The mail worker writes a
 //! load's result, the window reads it; both call it off GTK's thread. It
 //! speaks the domain's types and hands its failures on as the domain's

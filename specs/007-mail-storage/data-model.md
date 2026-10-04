@@ -7,7 +7,8 @@ The `message` table's `preview` column, added on 2026-09-30 by
 [Message list](../010-message-list/spec.md), and its `flagged`,
 `seen_pending` and `flagged_pending` columns, added on 2026-10-03 by
 [Read and star](../011-read-and-star/spec.md), are recorded in 008's
-table.
+table; the folder's state columns, the four numbers of 2026-10-04
+included, are in [009's data model](../009-synchronization/data-model.md).
 
 The persisted form of the store as built now (spec FR-002, FR-003). A row of
 `message` is the domain's `Message` (`mailbag-domain`), keyed by the

@@ -11,7 +11,7 @@ mod tests;
 
 use crate::accounts::{AccountPage, Selection};
 use crate::failure_declarations::{
-    DeclaredFailure, MESSAGE_NOT_CHANGED, declare_failure, declare_short_list,
+    DeclaredFailure, declare_failure, declare_short_list, message_not_changed,
 };
 use crate::failure_dialog::{self, RetriedOperation, show_action_button, status_description};
 use crate::mail_ui::MailUi;
@@ -661,7 +661,10 @@ impl WindowUi {
             };
             match written {
                 Ok(()) => window.read_shown_mailbox_again(),
-                Err(_) => window.sidebar.borrow().show_toast(MESSAGE_NOT_CHANGED),
+                Err(failure) => window
+                    .sidebar
+                    .borrow()
+                    .show_toast(message_not_changed(&failure.kind)),
             }
             window.flag_writes.borrow_mut().pop_front();
             window.write_oldest_flag();

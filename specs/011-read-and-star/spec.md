@@ -21,6 +21,11 @@ full on 2026-10-04 (Clarifications, the second review). Amended on
 sent change ends by the server's report of its own message, read right
 after the command, not by the listing after the commands (FR-007(b), (d),
 (e), SC-004, Edge Cases; Clarifications, the third review; research §15).
+Amended on 2026-10-05: FR-007(d) (a refused reading confirms what it
+reported), FR-006 and FR-010's wording, the Assumptions (the Microsoft 365
+limitation narrowed), 009 FR-007 (a round's entry about a stored message
+is read from the service), both flags in every report (tasks T052) and the
+alignments of the consistency analyses (Clarifications 2026-10-05).
 **Input**: Marking a message read or unread and starring or unstarring it
 are the first changes the user makes that last: they survive a refresh and
 a restart, reach the server, and show up in every other client of the
@@ -526,8 +531,8 @@ behaviour, readability, size, architecture and security.
   technology (role `presentation`, no label; the row's description
   carries the state, FR-004); the envelope's star advises to unstar while
   starred (FR-002); FR-007 reads as labelled clauses; in the code the
-  settle after the commands is a loop, `settle_changes_server_holds` and
-  `toggle_row_star` say what they do, and the header's two actions are
+    settle after the commands is a loop, the settle and the row's star
+  handler say what they do, and the header's two actions are
   removed by their names. Left as they were: the `expect` on a Microsoft
   365 identity (chosen at the simplification review), the repeated
   failure arms of the refused change, and the one GUI test of five
@@ -693,8 +698,9 @@ command; each point verified against the code.
   message; a change made during a cycle whose pass listed nothing or the
   changed flags alone (009 FR-005; such a cycle lasts under a second)
   has no number to be addressed by and waits for the folder's next
-  cycle, shown in the window meanwhile, as any other change does
-  (*clarified 2026-10-04 after the review of the state pass*). A failed
+    cycle, shown in the window meanwhile, as any other change does, unless
+  that listing named its message, in which case it is sent (*clarified
+  2026-10-04 after the review of the state pass; aligned 2026-10-05*). A failed
   refresh is not retried on its own for a pending
   change (006 keeps retries the user's).
 - **FR-007 — How a cycle sends**: (a) *When*: after storing its listing
@@ -729,10 +735,11 @@ command; each point verified against the code.
   nothing (research §15); a message that reading does not report has left
   the folder and its change waits for a folder that lists it; one it
   reports with another value was changed meanwhile and keeps its change
-  for the next cycle; a reading the server refuses confirms the messages
+    for the next cycle; a reading the server refuses confirms the messages
   it reported before the refusal and no other, and the cycle goes on with
-  the rest pending; on Microsoft 365 the
-  service accepting the request. The server state then becomes that
+  the rest pending; on Microsoft 365 the service accepting the request
+  (its 2xx status is the evidence; the answer's body, which echoes the
+  values, is not read). The server state then becomes that
   value and a pending change equal to it ends, in one transaction, so
   the window shows no difference; a wish made meanwhile for another
   value stays and goes with the next sending step. (e) *After the
@@ -745,9 +752,12 @@ command; each point verified against the code.
   command, (d) does (*since 2026-10-04, later*); when the server refuses
   that listing, the cycle ends
   incomplete with the reply, as with a refused listing at its start. Messages it newly lists arrived during the
-  cycle, which 009 FR-001 lets the next cycle bring, and wait for it.
-  (f) A cycle otherwise changes nothing on the server (009 FR-001,
-  amended).
+    cycle, which 009 FR-001 lets the next cycle bring, and wait for it. A
+  cycle that a refused row command ends early (009 FR-010) runs no second
+  pass: the folder stays not completed and the next cycle lists every
+  message, which stores the folder's own change then (*recorded
+  2026-10-05*). (f) A cycle otherwise changes nothing on the server (009
+  FR-001, amended).
 - **FR-008 — Mailboxes opened for writing**: An IMAP folder MUST be opened
   for writing (`SELECT`) wherever a cycle may send; a mailbox the server
   opens read-only refuses the command, and FR-010 applies. (Amends 002
@@ -774,8 +784,11 @@ command; each point verified against the code.
   unknown outcome), the pending changes equal to the value that command
   carried MUST end, a newer wish for another value stays, the rows show
   the effective state, and the cycle fails under
-  006 with a failure that names the change and carries the server's
-  reply; the other pending changes of the folder wait for the next cycle.
+  006 with a failure that says the server did not confirm a change to
+  messages and carries the server's reply (*reworded 2026-10-05*: one
+  IMAP command covers up to a hundred messages, so the failure names no
+  single message or flag; the reverted rows show which); the other
+  pending changes of the folder wait for the next cycle.
   The failure is the refresh's: its channel, Retry and details are 006's;
   006 needs no amendment for it, this is one more failure declared under
   its FR-001.
@@ -844,10 +857,12 @@ stateDiagram-v2
     wanted --> agreed: IMAP, the listing at the cycle's start shows the wanted value, no command
     wanted --> sent: a sending step of the folder's cycle sends the command (IMAP UID STORE, Microsoft 365 PATCH)
     sent --> agreed: IMAP, the flags read right after the command show the wanted value, Microsoft 365, the request accepted (2xx)
-    sent --> wanted: IMAP, the reading does not report the message (it left the folder), shows another value or is refused, Microsoft 365, a 5xx or a lost connection. Not sent again this cycle, the next cycle of a folder that lists it sends
+    sent --> wanted: IMAP, the reading does not report the message (it left the folder), shows another value or is refused, Microsoft 365, a 5xx, or on either a lost connection. Not sent again this cycle, the next cycle of a folder that lists it sends
     sent --> dropped: the server refuses the command (NO or BAD, a 4xx other than the token's 401). The cycle fails with the server's reply
     dropped --> agreed
     agreed --> [*]: the message leaves every folder
+    wanted --> [*]: the message leaves every folder, its wish with it
+    sent --> [*]: the message leaves every folder, its wish with it
 ```
 
 What the server reports meanwhile writes the server's value and never
@@ -924,9 +939,11 @@ cycle whose pass listed nothing waits for the next cycle (FR-006).
   0.6–0.8 s and answers with the whole message, about 85 KB; a change of
   the read mark comes back in the next round as a partial entry, a
   change of the follow-up flag as a full entry with every list field,
-  which 009's rule treats as fields reported again and re-reads the text
+    which 009's rule treats as fields reported again and re-reads the text
   of a recent message once. Checked on 2026-10-02; the extra read is
-  accepted for the third-priority provider.
+  accepted for the third-priority provider. Since 2026-10-05 each round
+  entry about a stored message costs one more request of list fields (009
+  FR-007; research §6).
 - One load runs at a time in the application (008 FR-012) and only
   Refresh starts one, so every change waits for the user's refresh
   (FR-006); background synchronization lifts this.
@@ -1034,3 +1051,14 @@ To be applied with this feature, in the owning documents:
   flags fetch of the sent UIDs, taken), 009 contracts/synchronization.md
   (`fetch_flags`), 002 contracts/imap-reading.md (the reading after a
   command).
+- *2026-10-05*: 009 FR-007 (a round's entry about a stored message is
+  read from the service), FR-004 and FR-015(a) (the pending rule points to
+  FR-007(d) here), 009 contracts/synchronization.md (`flag_states` carries
+  both flags; the pending changes read for the pass); 002 FR-005, Scope,
+  US2, SC-002, 004 and 005 (the no-remote-changes guarantee: only the
+  user's own changes reach the server); 006 FR-002 and its contract (the
+  application scope, `ChangeFlags`, the toast's advice by kind); 007 FR-003
+  and 008's data model and Key Entities (the folder's UIDVALIDITY, no UID
+  on a membership); 010 FR-001, FR-002, FR-010, SC-009, SC-010 and the
+  passages restating FR-009 (the row's star, the description, the removed
+  rows kept through re-reads, the stored read state).

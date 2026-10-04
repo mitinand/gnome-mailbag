@@ -86,7 +86,7 @@ impl<'a> BatchWriter<'a> {
             .map_err(|failure| self.store_failed(failure))
     }
 
-    /// The folder's pending changes, each with the server's value as stored.
+    /// The folder's pending changes.
     pub(crate) fn pending_changes(&self) -> Result<Vec<PendingChange>, LoadResult> {
         self.store
             .read_pending_changes(&self.folder)

@@ -82,8 +82,9 @@ user's word, *mailbox*, where it names the refreshed folder
   listing keeps the removals the listing proved and stored. `Failed` and
   `Cancelled` as today; the batches stored before stay (spec FR-010).
 - A cycle writes through `Store::store_batch` and, since 011, through
-  `settle_flags` and `drop_pending_flags`, and reads
-  `read_pending_changes` before each sending step (011 FR-007: after the
+    `settle_flags` and `drop_pending_flags`, and reads
+  `read_pending_changes` once at the cycle's start, for the pass's plan
+  (009 FR-005(b)), and before each sending step (011 FR-007: after the
   listing is stored, before each batch of missing messages, once before
   closing); nothing reaches the window with data (007 FR-001).
 - Renewing a Microsoft 365 token (research §13) stays inside
@@ -141,8 +142,8 @@ user's word, *mailbox*, where it names the refreshed folder
   gmail_message_id: Option<u64> }` (research §2; `flagged` since 011);
   `store_flags(uids, flag: StoreFlag, set) -> Result<Option<ImapError>,
   ImapError>` (a refusal with the server's reply and alerts) since 011 (its FR-005, FR-008);
-  `fetch_flags(uids) -> Result<FolderListing, ImapError>` (since
-  2026-10-04, later: the flags of the named UIDs, read right after a
+    `fetch_flags(uids) -> Result<FolderListing, ImapError>` (since the
+  reading after the command, 2026-10-04: the flags of the named UIDs, read right after a
   command to confirm it, a UID the mailbox lacks not reported; 011
   FR-007(d)); `fetch_rows_by_uid(&[u32], row_items) ->
   MessageList` replaces the sequence-number `fetch_rows` and keeps its
@@ -173,7 +174,8 @@ user's word, *mailbox*, where it names the refreshed folder
 
 - `MessageItem`: the list's row object, with the properties the row
   template binds: `identity`, `sender`, `subject`, `date-text`, `unread`,
-  `starred` (since 011) and `read-state-text` ("Read" or "Unread", with
+  `starred` (since 011) and `row-state-text` (`read-state-text` until
+  2026-10-05; "Read" or "Unread", with
   "starred" since 011) for the row's accessible description (research
   §9). `message-row.ui` is a `GtkListItem` template,
   its preview hidden in the template (*amended 2026-09-30 by

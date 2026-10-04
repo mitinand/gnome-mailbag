@@ -1900,8 +1900,9 @@ fn window_with_inbox(
 }
 
 /// The trash button takes the open row out of the list in the window, opens
-/// the neighbour the rule names, and changes nothing stored; the next read
-/// lists the row again (010 FR-007, FR-010; SC-003, SC-010).
+/// the neighbour the rule names, and changes nothing stored; the row stays
+/// out while the folder stays shown, a refresh included, and is listed
+/// again when the folder is shown anew (010 FR-007, FR-010; SC-003, SC-010).
 #[test]
 #[ignore = "requires a graphical GTK session"]
 fn the_trash_button_removes_the_row_in_the_window() {
@@ -1920,12 +1921,25 @@ fn the_trash_button_removes_the_row_in_the_window() {
     assert_eq!(listed_identities(&widgets), ["uid:20", "uid:10"]);
     assert_eq!(widgets.selected_row(), Some(0));
     assert_eq!(widgets.reader_subject(), "Subject of uid:20");
-    // Nothing was stored or sent: a refresh lists the message again.
+    // Nothing was stored or sent; a refresh reads the rows again and the
+    // row stays out, as it does after any stored change re-reads them.
     ui.refresh_mailbox_action().activate(None);
     settle(&ui);
     loader.report_stored(&messages, None);
     settle(&ui);
+    assert_eq!(listed_identities(&widgets), ["uid:20", "uid:10"]);
+    // Shown anew after another folder, the folder lists the row again.
+    let generic = account("synthetic-generic");
+    widgets.select(&ui, &generic, Some("Projects"));
+    settle(&ui);
+    widgets.select(&ui, &generic, Some("INBOX"));
+    settle(&ui);
     assert_eq!(listed_identities(&widgets), ["uid:30", "uid:20", "uid:10"]);
+    widgets.open_row(0);
+    settle(&ui);
+    press_trash_of(&widgets, "Sender of uid:30");
+    settle(&ui);
+    assert_eq!(listed_identities(&widgets), ["uid:20", "uid:10"]);
 
     // Under the filter the next unread row opens too, and the row taken out
     // closes whole before it leaves.
@@ -2454,7 +2468,7 @@ fn a_changed_read_state_changes_its_item_in_place() {
     assert_eq!(item_list(&items), before);
     assert!(before[0].unread());
     assert!(!before[1].unread());
-    assert_eq!(before[1].read_state_text(), "Read");
+    assert_eq!(before[1].row_state_text(), "Read");
 }
 
 #[test]

@@ -271,8 +271,8 @@ or with its Mail off, and a late result cannot bring it back (US4).
   removed: provider tests repeating a `match` line for line and the last
   block of `stored_mail_leaves_with_its_account`; documents brought in line
   with the code; the measured size recorded in plan.md and accepted.
-- [ ] T026 STOP: the maintainer reviews the final review's changes and
-  commits.
+- [x] T026 STOP: the maintainer reviews the final review's changes and
+  commits (merged in the Storage pull request).
 
 ## Dependencies
 
@@ -284,7 +284,7 @@ or with its Mail off, and a late result cannot bring it back (US4).
   T007.
 - Portion 2 needs the store; T013 before any code of the portion; T014
   before T016 (the window receives `LoadResult::Stored`).
-- Portion 3 needs portion 2's window and the store's `keep_accounts`.
+- Portion 3 needs portion 2's window and the store's `delete_other_accounts` (named `keep_accounts` until T025).
 
 ## Parallel opportunities
 

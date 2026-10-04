@@ -28,7 +28,7 @@ flatpak run --command=sqlite3 io.github.mitinand.Mailbag ~/.var/app/io.github.mi
 | Step | How | Expected |
 |---|---|---|
 | 1. Stored mail without a network (US1) | On each account choose Refresh Account, then Refresh Mailbox on its Inbox; quit; turn the network off; start; select each account's Inbox; open a few messages, one without plain text among them | The same rows, read states and texts as before quitting; no load starts |
-| 2. A refresh replaces the Inbox (US2) | Network on; send yourself a message; Refresh Mailbox on the Inbox | The rows stay with the spinner during the load; the new message appears; the reader closes |
+| 2. A refresh replaces the Inbox (US2) | Network on; send yourself a message; Refresh Mailbox on the Inbox | The rows stay with the spinner during the load; the new message appears; the reader stays open while its message is listed (FR-005 as amended by 009) |
 | 3. A failed refresh keeps the mail (US3) | Network off; refresh | The rows stay; the banner says the server is unreachable; its dialog has Retry; after a restart the rows are there without a banner |
 | 4. An account leaves (US4) | Turn Mail off for one account in Online Accounts; then query the store | The account disappears, as 001 describes; the query shows no row for it; turning Mail on and refreshing brings its mail back |
 | 5. A damaged store (US5) | Quit; overwrite the store: `head -c 8192 /dev/urandom > <store path>`; start with `--log-level=info` | One warning line says the store was discarded as not a store; every account says that no mail is loaded until refreshed |

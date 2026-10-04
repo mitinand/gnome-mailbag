@@ -8,9 +8,9 @@ client open beside the window.
 ## Automated
 
 - `mailbag-store`: rows read the effective state; a pending write stores
-  the wish even when it equals the server value; a batch's flag write
-  leaves the pending values, equal or not, and leaves a flag the report
-  did not name; the pending query lists only the folder's non-null
+    the wish even when it equals the server value; a batch's flag write
+  leaves the pending values, equal or not (since 2026-10-05 a report
+  carries both flags); the pending query lists only the folder's non-null
   values; a settle or a drop ends only
   a pending value equal to the command's; a restart over the same store
   reads the pending state again (SC-002's store half).
@@ -73,7 +73,9 @@ client open beside the window.
    shown; refresh: it reaches the server.
 6. Gmail: mark a message read under one label it shares with another;
    select the other label: it is read there too. Unstar a message while
-   viewing the Starred folder, refresh: it leaves the folder.
+   viewing the Starred folder, refresh: it leaves the folder (the unstar
+   stays pending until another label's cycle lists the message,
+   Assumptions; the record `changes confirmed` shows it as unconfirmed).
 7. In the web client, star a message and mark another unread; refresh:
    the window shows both.
 8. Refresh a large folder for the first time and, while it fills, open
@@ -85,3 +87,7 @@ client open beside the window.
 10. Star a message, refresh, and unstar it while the refresh runs: after
     the refresh the message is unstarred in the window and, after one
     more refresh, in the web client; the record shows the second command.
+11. With `--log-level=debug`, read the records of steps 1 to 10: `message
+    change stored`, `flags stored`, `changes confirmed`, `batch stored` and,
+    on Microsoft 365, `changed messages read again` carry identities,
+    flags and counts, never a subject or an address (privacy, 003).

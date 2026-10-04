@@ -302,25 +302,28 @@ impl MailUi {
     /// the list by its difference with the rows shown, with animations; a
     /// folder shown anew changes at once (specs/010-message-list FR-006). The
     /// open message stays while it is listed, with its envelope from the new
-    /// row, and what the window alone remembered is forgotten; the same read
-    /// changes nothing. The content is not read again: a text a cycle
-    /// replaced, such as an edited draft's, shows when the message is opened
-    /// again.
+    /// row; the same read changes nothing. The rows taken out in the window
+    /// stay out while the folder stays shown, whatever reads its rows again,
+    /// and are listed again when the folder is shown anew (specs/010-message-list
+    /// FR-010). The content is not read again: a text a cycle replaced, such
+    /// as an edited draft's, shows when the message is opened again.
     pub fn show_rows(&self, folder: &FolderRef, rows: &Rc<[MessageListRow]>) {
-        let (same_account, change) = match &*self.listed_rows.borrow() {
+        let (same_account, same_folder, change) = match &*self.listed_rows.borrow() {
             Some((listed, listed_rows)) if listed == folder && Rc::ptr_eq(listed_rows, rows) => {
                 return;
             }
-            Some((listed, _)) if listed == folder => (true, ListChange::Animated),
-            Some((listed, _)) => (listed.account == folder.account, ListChange::AtOnce),
-            None => (false, ListChange::AtOnce),
+            Some((listed, _)) if listed == folder => (true, true, ListChange::Animated),
+            Some((listed, _)) => (listed.account == folder.account, false, ListChange::AtOnce),
+            None => (false, false, ListChange::AtOnce),
         };
         // Identities name messages within one account.
         if !same_account {
             self.clear();
         }
         *self.listed_rows.borrow_mut() = Some((folder.clone(), rows.clone()));
-        self.removed_in_window.borrow_mut().clear();
+        if !same_folder {
+            self.removed_in_window.borrow_mut().clear();
+        }
         self.update_shown(change);
     }
 

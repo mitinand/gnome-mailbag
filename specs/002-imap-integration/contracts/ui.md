@@ -4,7 +4,10 @@
 [Synchronization](../../009-synchronization/spec.md) (FR-013): a list view
 with a row template, and the reader kept open while its message is listed.
 The row amended on 2026-09-30 by [Message list](../../010-message-list/spec.md) (FR-002): the
-preview, the date wording and the trash button.
+preview, the date wording and the trash button. The row amended on
+2026-10-03 by [Read and star](../../011-read-and-star/spec.md) (FR-004): the
+star and "starred" in the row's description; the reader's star and mark
+controls act since 2026-10-04 (below).
 
 Preserve the approved geometry, navigation, breakpoints, spacing and control
 placement. The Refresh Inbox menu addition is already approved. Reuse the
@@ -67,7 +70,7 @@ See the limited protocol-support decision in [research](../research.md#6-ui-and-
 | list_page title | “Inbox” for the selected account, including narrow navigation. |
 | messages | A GtkListView over a GtkSingleSelection. message-row.ui is its GtkListItem template, built into a GtkBuilderListItemFactory; its labels bind to the row object's properties. One click or Enter opens a message; the selected row is the open message. The list is updated by difference, so the open message stays open while it is listed (009 FR-013). |
 | sender / subject / time | Received display fields; the date worded as 010 FR-004 says. Rows are ordered by 010 FR-001. |
-| dot | Show for unread, bound in the row template; keep its decorative role. Put “Unread”/“Read” in the list item's accessible description, bound in the template. |
+| dot | Show for unread, bound in the row template; keep its decorative role. Put “Unread”/“Read”, with “starred” since 011, in the list item's accessible description, bound in the template; the row's properties are [010's contract](../../010-message-list/contracts/message-list.md). |
 | preview / trash_reveal | The stored preview in up to two lines; the trash button revealed while the pointer is over the row (010 FR-002, FR-010). |
 | singleton_slot / envelope_slot | Instantiate existing message-content.ui and envelope.ui once; populate locally when a message opens. |
 | reader_subject / reader_sender / single_date | Received subject, sender and received date. |

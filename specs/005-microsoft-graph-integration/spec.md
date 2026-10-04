@@ -9,7 +9,10 @@ specification challenge (see Clarifications); FR-003 and FR-006 amended
 on 2026-09-27 by [Folders](../008-folders/spec.md), built and accepted with it
 the same day. FR-002, FR-003, FR-006 and FR-008 amended on 2026-09-29 by
 [Synchronization](../009-synchronization/spec.md): Refresh Mailbox runs a
-cycle over the folder's changes, page by page
+cycle over the folder's changes, page by page. Scope, the lasting
+guarantee, US2 AS3, FR-003, SC-002 and the deferred flag row amended on
+2026-10-05 for [Read and star](../011-read-and-star/spec.md): only the
+user's own read and star changes reach the service.
 **Input**: On an explicit refresh, load recent Inbox message metadata and text
 of the selected Microsoft 365 account into memory, the way
 [IMAP integration](../002-imap-integration/spec.md) does for a Generic IMAP
@@ -35,7 +38,8 @@ extends [account observation](../001-goa-account-observation/spec.md) and the
 IMAP integration, and is the first provider that does not speak IMAP.
 
 **Scope**: Only the Inbox of one selected Microsoft 365 account, with no
-remote mail changes. Other folders, other providers, a combined Inbox and
+remote mail changes from reading (*amended 2026-10-05*: the user's own read
+and star changes are sent, 011). Other folders, other providers, a combined Inbox and
 everything the service offers beyond reading the Inbox are outside this
 feature. Microsoft 365 is a third mail provider with its own rules, not a
 variant of the two IMAP providers: a message is identified by an identifier
@@ -53,7 +57,8 @@ and Gmail integrations. They exist to evaluate the integration and stay
 minimal; later features may replace them without retaining these mechanisms.
 
 The lasting guarantees are: connections with a verified server certificate
-(002 FR-010); reading without remote changes (002 FR-005); no token on disk
+(002 FR-010); reading without remote changes (002 FR-005, as amended for
+011: only the user's own changes reach the service); no token on disk
 or in diagnostics (FR-002); no mail shown for another or a confirmed excluded
 account (002 FR-007–008); no false empty result or partial load presented as
 complete (002 FR-003); responsive operation without endless loading or
@@ -163,7 +168,8 @@ Opening sends no request and no attachment contents were downloaded.
    service rendered from it appears; no HTML source is shown and Mailbag
    converts nothing itself.
 3. **Given** unread messages, **when** listed and opened, **then** they remain
-   unread on the service and no other property or folder membership changes.
+   unread on the service until the user keeps one open for a second (011
+   FR-003), and no other property or folder membership changes.
 4. **Given** a message with attachments, **when** its batch is loaded,
    **then** its text is available for local reading without downloading
    attachment contents, and an attached text file is never shown as the body.
@@ -276,9 +282,10 @@ the service delivers display fields and text as ready values in one answer.
   with it; the same token, or a second refusal, is the rejected sign-in
   above (009 FR-011, research §13).*
 - **FR-003 — Acquisition and reading as for IMAP**: The IMAP integration's
-  FR-002 (batch), FR-003 (loading and refresh), FR-005 (no remote changes),
-  FR-006 (memory), FR-007 (correct view), FR-008 (account changes), FR-009
-  (failures and bounded work) and FR-010 (secure connection) MUST hold for a
+  FR-002 (batch), FR-003 (loading and refresh), FR-005 (no remote changes
+  beyond the user's own, as amended), FR-006 (memory), FR-007 (correct
+  view), FR-008 (account changes), FR-009 (failures and bounded work) and
+  FR-010 (secure connection) MUST hold for a
   Microsoft 365 account, with these readings: "newest first" is the received
   time the service reports, and the service orders the list; the secure
   connection is the encrypted web connection the service requires, with the
@@ -412,7 +419,7 @@ the service delivers display fields and text as ready values in one answer.
   first by received time, with zero password requests during the run (US1,
   US3; FR-001–003).
 - **SC-002**: The IMAP integration's SC-002 (zero requests on opening, zero
-  remote changes, zero attachment downloads) and SC-003 (refresh and failure
+  remote changes beyond the user's own, zero attachment downloads) and SC-003 (refresh and failure
   behaviour) hold for a Microsoft 365 account, and an HTML-only message shows
   text rather than an explanation (US2; FR-003, FR-005).
 - **SC-003**: With the account's authorization refused by the service, a
@@ -443,9 +450,9 @@ the service delivers display fields and text as ready values in one answer.
 - **SC-009**: Refresh Inbox is available for a selected Microsoft 365 account,
   and accessibility established by F01 and the IMAP integration does not
   regress (FR-010).
-- **SC-010**: A refresh of an account whose Inbox holds more
-  than 100 messages, completes with text within the wait limit of the IMAP
-  integration (FR-003).
+- **SC-010**: A refresh of an account whose Inbox holds more than 100
+  messages completes with text within the wait limit (60 s since 009's
+  amendment of FR-008) (FR-003).
 - **SC-011**: Against a scripted service that answers with fewer than 100
   messages and offers a further page, the batch shows those messages and is
   reported as incomplete, and the service receives exactly one request
@@ -461,12 +468,12 @@ of them gets requirements, plan decisions or code in this feature.
 |---|---|---|
 | The folder hierarchy: folders found by their role and listed with their display names, child folders, hidden folders, item and unread counts | Folder navigation and combined Inbox | Folders, labels and combined Inbox |
 | Change tracking: rounds of changes since a saved point, entries for removed messages as proof that a message left the folder, changed messages arriving with only their changed properties | "What changed since the last load" without refetching | Mail storage and synchronization; the probe facts in Assumptions are its evidence |
-| Read state and flag changes through the service | Marking read and starring | Read and star |
+| Read state and flag changes through the service | Marking read and starring | Read and star. *Built by 011 on 2026-10-03* |
 | Moving, deleting and permanently deleting through the service; the Deleted Items and Archive roles | Archive, trash and permanent deletion | Moving and deleting |
 | The body rendered as HTML, with inline pictures as attachments the body refers to | HTML reading | HTML reader |
 | The attachment indication on a message, attachment listing and download | Saving and opening attachments | Attachments |
 | Following the service's further pages when a list exceeds one answer | Loading more than one answer holds | Mail storage and synchronization |
-| The wait the service asks for after a refusal because of its limits | Telling the user when to try again | Error presentation |
+| The wait the service asks for after a refusal because of its limits | Telling the user when to try again | Error presentation; left to background synchronization (020) by 009 research §15 on 2026-10-05 |
 | The service's search | Remote search | Search |
 | Change notifications the service pushes | Background freshness | Background and notifications |
 | The conversation identifier and index | Grouping messages into conversations | Conversations |
@@ -501,7 +508,10 @@ of them gets requirements, plan decisions or code in this feature.
   the changed property and the identifier. The first request of a cold run
   once took several seconds, later ones well under a second. Details belong to
   the plan's research.
-- The service's limits need no mechanism here: a load makes one request, the limits allow thousands per ten minutes
+- The service's limits need no mechanism here: a load made one request when
+  this was written (a cycle now makes one per page, one per recent text and,
+  since 2026-10-05, one per stored message a round names, 009 FR-007, still
+  far below the limits); the limits allow thousands per ten minutes
   per application identity and mailbox, and the application identity GOA uses
   is shared by every GNOME application on the machine, which is why another
   application can use up the allowance. A token lasts about an hour, GOA

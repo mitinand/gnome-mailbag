@@ -54,7 +54,8 @@ per change, and changes at once when the folder shown changes (§10); the
 unread filter derives the shown rows from the stored ones and reuses the
 difference update (§11); when the user takes the open message out, the
 next message opens by the maintainer's rule (§12); an opened message
-counts as read after a second, in the window only (§13); dates read like
+counts as read after a second, in the window only (§13; stored and sent
+since Read and star); dates read like
 a calendar in the user's locale (§14).
 
 ## Minimal version
@@ -153,7 +154,9 @@ flowchart TD
   `trash_entered`, `trash_left` (red or dimmed trash) and `trash_row` (the list item they receive → `remove_in_window`).
 - `show_rows(folder, rows)`: `AtOnce` for another folder or an empty
   list, else `Animated`; keep the stored rows; empty the read-in-window
-  set; `update_shown(change)`.
+  set; `update_shown(change)`. *Built as* (2026-10-05): the read-in-window
+  set is retired (011); the rows taken out in the window are emptied only
+  when another folder is shown (spec FR-010).
 - `shown_rows(rows, filter_on, open, read_in_window) -> Vec<row>`: a pure
   function: all rows, or the unread ones (not in the set) and the open
   message. *Built as* `shown_rows(rows, unread_only, open,
@@ -163,7 +166,8 @@ flowchart TD
 - `remove_in_window(identity)`: `update_shown` with the row left out,
   animated; in a narrow window the reader's page is not brought forward.
 - `update_shown(change)`:
-  1. `next_after_leaving(above, below) -> Choice` — a pure function of
+    1. `next_after_leaving(above, below) -> Choice` (*built as* `->
+     Option<u32>`, the position to open) — a pure function of
      the two neighbours' states (none, read, unread) that names FR-007's
      row; when the open message is among the rows to remove, its
      neighbours in the list as shown (leaving rows left out) are passed
@@ -175,16 +179,19 @@ flowchart TD
      at once; otherwise, or with
      nothing to close, `change_list` applies it now:
      `update_list_by_difference` as today, arrivals inserted hidden when
-     animated; the read states treat rows in the read-in-window set as
-     read (research §10, as changed at the implementation).
+          animated; the read states treat rows in the read-in-window set as
+     read (research §10, as changed at the implementation; the set is
+     retired since 011).
   3. Arrivals and reopened rows shown on the second frame (a tick
      callback) when animated, at once otherwise.
-  4. `keep_top_in_view` — `scroll_to(0)` when the list was at its top
-     before the change.
+    4. `keep_top_in_view` — `scroll_to(0)` when the list was at its top
+     before the change (*built* inside `change_list`, not as a function).
 - `open_message(position, bring_reader_forward)`: as today, refusing a
   closed row, plus `start_read_on_opening` (drop the pending timeout; a
   one-second timeout that puts the identity into the read-in-window set
-  and sets the row object's `unread` false).
+  and sets the row object's `unread` false). *Built as* since 011: the
+  timeout stores the read state as a pending change (`change_flag(Seen,
+  true)`).
 - `close_reader` and `clear`: drop the pending read timeout; a closing's
   timeout that fires after them finds nothing to change.
 
@@ -224,7 +231,8 @@ Taken on 2026-09-30:
    desktop's Time Format setting through the portal (≈ 55 lines) were
    weighed.
 3. The unread filter as derived rows, not a filter model (research §11),
-   with the read-in-window set the challenge added. Accepted.
+   with the read-in-window set the challenge added (retired by 011).
+   Accepted.
 4. No animation flag at the load's start: a change animates unless the
    folder shown changed or the filter changed (research §10). Dropped at
    the challenge.
@@ -281,8 +289,9 @@ thread.
 
 - **I. Necessary complexity only**: every mechanism answers a scenario the
   spec states: the piece and its clean cut (previews for old messages,
-  cut parts), the timer (a leaving row off screen), the read-in-window
-  set (a toggle or another opening would bring the dot back), derived
+    cut parts), the timer (a leaving row off screen), the read-in-window
+  set (a toggle or another opening would bring the dot back; retired by
+  011, which stores the read state), derived
   rows (a read row leaving the filtered list animated). Optional
   mechanisms are listed apart. No dependency added.
 - **II. Clear language and concrete names**: functions are named for

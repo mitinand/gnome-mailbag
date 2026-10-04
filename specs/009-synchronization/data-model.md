@@ -68,9 +68,10 @@ memberships (the primary key's prefix) and sorts them.
   cancellation check under the store's lock:
   1. delete the folder's memberships of the removed identities;
   2. delete the account's messages left without a membership;
-  3. set `seen` and `flagged` of the listed flag changes by `(account,
-     identity)`, only the flags the report named; a flag not named and
-     the pending values are untouched (011 FR-001, research §15);
+    3. set `seen` and `flagged` of the listed flag changes by `(account,
+     identity)`, both flags as reported (since 2026-10-05; until then only
+     the flags a report named); the pending values are untouched (011
+     FR-001, research §15);
   4. for each full record (an arrival, or a message whose fields the
      service reported again), insert the `message` row or update its list
      fields, read state and star by `(account, identity)`, leaving the
@@ -84,9 +85,10 @@ memberships (the primary key's prefix) and sorts them.
      setting their `seen` and `flagged` as listed, leaving the pending
      values;
   6. when the batch carries a folder state, write the three state
-     columns and, since 2026-10-04, the four numbers (null for Microsoft
-     365; a pass whose listing the server did not complete writes them as
-     they were stored).
+          columns and, since 2026-10-04, the four numbers (null for Microsoft
+     365 and for a folder not completed; a pass with messages missing
+     writes the not-completed state without numbers, and a refused listing
+     with nothing missing writes no state, spec FR-005(c)).
   A folder the store does not hold fails the write, as 008's loads do.
 - **Reading a folder's rows**: `None` when `synchronized = 0` and the folder
   holds no membership ("no mail loaded", 007 FR-006); otherwise the
@@ -94,7 +96,9 @@ memberships (the primary key's prefix) and sorts them.
   (`COALESCE(pending, server)`, 011 FR-001) of its messages in the order
   above, without `content_detail`.
 - **Reading the pending changes** (011 FR-007): the folder's messages with
-  a non-null pending value, before each sending step; the sending step
+  a non-null pending value, once at the cycle's start for the pass's plan
+  and the wishes the listing shows (spec FR-005(b)) and before each
+  sending step; the sending step
   ends them with `settle_flags` or `drop_pending_flags` (011 data model).
 - **Finding stored messages of a batch**: which of up to a hundred
   identities the account already holds, by `(account, identity)`.

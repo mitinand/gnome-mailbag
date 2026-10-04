@@ -7,7 +7,10 @@
 amended on 2026-10-03 by [Read and star](../011-read-and-star/spec.md): the stored message
 carries its star and the user's pending wanted values, a message is
 addressed on its server by what the cycle's own listing shows for its
-identity, and FR-014(c) is built. Challenged 2026-09-25; FR-013
+identity on IMAP and by its identity on Microsoft 365, and FR-014(c) is
+built. FR-003 and FR-014(a) amended on 2026-10-04 by Synchronization's
+state pass (CONDSTORE built; the folder keeps its latest pass's four
+numbers), recorded 2026-10-05. Challenged 2026-09-25; FR-013
 aligned on 2026-09-26 with 006 as corrected that day. FR-002, FR-003 and
 FR-014(b) amended on 2026-09-27 by [008](../008-folders/spec.md), which
 builds the target model of FR-003 except the IMAP UID and the folder state
@@ -309,11 +312,15 @@ window shows and what the record says.
   unfinished first fill continues from, and whether the folder's latest
   cycle completed; UIDVALIDITY is part of a Generic IMAP
   message's identity, `imap:<folder>/<UIDVALIDITY>/<UID>`, instead of a
-  folder field; the UID on each membership stays deferred to read and star
+  folder field (*amended 2026-10-04 by 009's state pass*: the folder also
+  keeps the UIDVALIDITY its latest state pass saw, with three more
+  numbers, for that pass's comparison only; the identity still carries
+  it); the UID on each membership stays deferred to read and star
   (FR-014(c)), since no cycle needs it. *Amended 2026-10-03 by
   [Read and star](../011-read-and-star/spec.md)*: no UID is stored on a membership at all; a
-  message is addressed on its server by the number the cycle's own listing
-  shows for its identity (011 FR-007).
+  message is addressed on its server on IMAP by the number the cycle's own
+  listing shows for its identity, on Microsoft 365 by its identity (011
+  FR-007).
 
 **Loads and the window**
 
@@ -403,8 +410,8 @@ window shows and what the record says.
   Until then a load delivers the newest 100 and replaces the stored folder.
   *Built by [009](../009-synchronization/spec.md)*, except QRESYNC; CONDSTORE
   built on 2026-10-04 by 009's state pass (009 FR-005), whose folder state
-  keeps the highest modification sequence beside the count and the next
-  number.
+  keeps the four numbers of its latest state pass: UIDVALIDITY, the
+  message count (EXISTS), UIDNEXT and HIGHESTMODSEQ (009 Key Entities).
   (b) *Folders and labels*: built by [008](../008-folders/spec.md) except
   what its FR-013 defers, among them counts, the combined Inbox, and for
   Gmail All Mail plus Trash and Spam as the synchronized folders with labels

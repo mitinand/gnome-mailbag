@@ -457,8 +457,9 @@ doing so.
 
 ## Deferred, no tasks
 
-Sending pending changes before learning changes, and the other rules for
-read and star and for moving and deleting (spec FR-015(a), (b));
+Sending pending changes (built by 011, after the listing and not before
+it, 011 FR-007) and the rules for moving and deleting (spec FR-015(a),
+(b));
 background synchronization, cycles in parallel and continuing a first fill
 after the start (FR-015(c)); HTML, previews, download on opening and
 retention (FR-015(d)); CONDSTORE (FR-015(e); built in Phase 8 on
@@ -570,15 +571,17 @@ STOP for the maintainer's review.
   `run_state_pass` (the plan's listing; removals only from a complete
   listing of every message; flag states; a completed listing always
   writes the state, synchronized when nothing is missing, with the
-  numbers converted from the opening's; a refused listing leaves the
-  numbers as stored; the listed and the missing messages returned), and
+    numbers converted from the opening's; a refused listing leaves the
+  numbers as stored (superseded by T047: a not-completed state carries
+  none); the listed and the missing messages returned), and
   `synchronize_imap_folder` in the plan's order: open → read → pass (the
   pending changes read once, handed on to `end_changes_the_listing_shows`)
   → end the wishes the listing shows → send → batches with sends → when
   batches were fetched or commands sent: `reopen`, the pass again against
   the first pass's numbers (none when its listing was refused),
-  `settle_sent_changes` on what it listed, the folder left not completed
-  when it listed messages it did not fetch → finish;
+    `settle_sent_changes` on what it listed (superseded by 011 Phase 8: the
+  pass confirms no command), the folder left not completed when it listed
+  messages it did not fetch → finish;
   `confirm_sent_changes` goes. Record lines: the pass's outcome at info
   with counts, the numbers at debug. Built as planned, with `pass_state`
   owning the folder's state after a pass (not completed while messages
@@ -618,9 +621,8 @@ STOP for the maintainer's review.
   (counts and the pass's outcome; folder names at debug). Done on
   2026-10-04: steps 11 and 12 passed (research §15 "Measured on the
   installed build"); the record carries counts and the outcome at info
-  and the folder's name and numbers at debug; the size exceeded the
-  budget (≈ 285 production, ≈ 540 test lines, the scripted server's 112
-  among them), accepted by the maintainer.
+    and the folder's name and numbers at debug; the size exceeded the
+  budget, accepted by the maintainer.
 - [x] T047 Final passes: one consistency analysis and `simplify-review` on
   the branch diff, each in a fresh session; findings reported, scope-adding
   ones brought to the maintainer; the measured facts stay in research §15.

@@ -80,9 +80,12 @@ Gmail offers.
 Google's [extensions page](https://developers.google.com/workspace/gmail/imap/imap-extensions):
 `X-GM-MSGID` and `X-GM-THRID` are 64-bit unsigned integers; `X-GM-LABELS`
 is a parenthesized list of labels "encoded in UTF-7 as appropriate", system
-labels written with a leading backslash (`\Inbox`, `\Sent`, `\Drafts`,
-`\Junk`, `\Trash`, `\Flagged`, `\All`, `\Important`); the web interface shows
-the message identifier in hexadecimal.
+labels written with a leading backslash; the page's LIST example shows the
+folder attributes `\Inbox`, `\Sent`, `\Drafts`, `\Junk`, `\Trash`,
+`\Flagged`, `\All`, `\Important`, while a message's `X-GM-LABELS` carry
+label values, among them `\Starred` for a flagged message (011 research §5),
+so the two sets differ; the web interface shows the message identifier in
+hexadecimal.
 
 Checked in the forks: imap-proto `parser/gmail.rs` parses all three
 attributes in FETCH responses and is wired into `msg_att`; async-imap's
@@ -103,13 +106,13 @@ fork accessor, and nothing in this feature reads it.
 Probe:
 
 - By default Gmail sends localized folder names in modified UTF-7, for
-  example `[Gmail]/&BBIEQQRP- &BD8EPgRHBEIEMA-` for "[Gmail]/Вся почта", and
-  user labels the same way inside `X-GM-LABELS`.
+  example `[Gmail]/&BBIEQQRP- &BD8EPgRHBEIEMA-` for a localized All Mail name,
+  and user labels the same way inside `X-GM-LABELS`.
 - `ENABLE UTF8=ACCEPT` after EXAMINE: `BAD ENABLE not allowed now.` Before any
   EXAMINE, or after UNSELECT: `* ENABLED UTF8=ACCEPT` then `OK`. RFC 5161
   allows ENABLE only in the authenticated state.
 - After it, LIST names and `X-GM-LABELS` come as UTF-8 quoted strings
-  ("ЯрлыкВерхний/ЯрлыкВложенный"); imap-proto parses them (the fork carries
+  (a nested user label in its own script); imap-proto parses them (the fork carries
   the UTF-8 text backport); EXAMINE with a UTF-8 name works.
 - No dependency decodes modified UTF-7: not imap-proto, async-imap or
   mail-parser.
@@ -137,9 +140,10 @@ Recorded so that storage, folders and conversations start from facts:
   identifier, as the spec's FR-004 states.
 - CONDSTORE: EXAMINE INBOX (CONDSTORE) reported HIGHESTMODSEQ 90283 while the
   largest MODSEQ of any Inbox message was 90205; `CHANGEDSINCE 90204` returned
-  exactly the newest message. HIGHESTMODSEQ is account-wide; it serves as the
-  next "since" value but must not be compared with message MODSEQs. No
-  QRESYNC.
+  exactly the newest message. HIGHESTMODSEQ appears account-wide: inferred
+  from this one folder, whose value exceeded every message's, and Google
+  documents neither CONDSTORE nor the counter; it serves as the next "since"
+  value but must not be compared with message MODSEQs. No QRESYNC.
 - Folder names are localized per account language; special folders are
   recognized by `NameAttribute::All/Trash/Sent/Flagged/Junk/Drafts`, and
   `\Important` arrives as an extension attribute. `INBOX` keeps its standard
@@ -246,7 +250,7 @@ sign-in was attempted." No other UI change.
 | OAUTHBEARER | Not documented by Google for IMAP; XOAUTH2 works |
 | UTF-7 decoder | UTF-8 mode replaces it |
 | X-GM-THRID | Fork accessor needed; no reader until conversations |
-| All Mail, labels as folders, X-GM-RAW, CONDSTORE sync, reconnect after expiry | Deferred in the spec with their features |
+| All Mail, labels as folders, X-GM-RAW, CONDSTORE sync, reconnect after expiry | Deferred in the spec with their features; CONDSTORE built by 009 on 2026-10-04 |
 | Provider trait or shared contract document | Two implementations exist now; the contract is written when Graph tests it (roadmap rule) |
 
 ## 11. Compression (added 2026-10-02 by 009)

@@ -24,7 +24,11 @@ production lines and 400 test lines; no thread, timer or queue of its own,
 no new dependency, no change to the IMAP library forks; four columns on
 the folder); challenged the same day in fresh sessions (Clarifications
 2026-10-04), approved, built and checked on the installed build the same
-day on branch `claude/state-pass` (tasks T039–T047).
+day on branch `claude/state-pass` (tasks T039–T047); FR-011 and FR-015(a)
+amended the same day. FR-007 amended on 2026-10-05 (a round's entry about
+a stored message is read from the service; Clarifications 2026-10-05);
+FR-004, FR-015(a), the flowchart and the data model aligned on 2026-10-05
+at the consistency analyses of Read and star.
 Approved on 2026-09-29 (tasks T001). Sized at the feature-start on
 2026-09-28 (budget: at most 1 500 production lines, raised to 1 600 at
 planning and to 2 000 during the implementation, and 1 500 test lines,
@@ -236,9 +240,11 @@ user sees without the rule named.
   (FR-006). All Mail, Starred and Important are label folders like the
   others; refreshing All Mail fills the whole account.
 - **Microsoft Graph reports the same change twice**, or reports changes out
-  of order within one refresh: the last entry received for a message wins;
+    of order within one refresh: the last entry received for a message wins;
   a removal met with another entry for the message in one page makes the
-  cycle read the message as the service holds it now (FR-007).
+  cycle read the message as the service holds it now, and since
+  2026-10-05 so does every entry about a message the store holds
+  (FR-007).
 - **Microsoft Graph reports a change for a message the store does not
   hold**: its list fields are fetched before it is stored; a partial record
   never becomes a row (FR-007).
@@ -450,9 +456,10 @@ facts and the alternatives.
   capability decides, for any server (research §14). Decided on
   2026-10-04: the same for CONDSTORE, for any server, replacing "except
   Gmail" of 2026-09-28 and FR-015(e) (the maintainer's decision). Gmail's
-  HIGHESTMODSEQ is one for the account (004 research), so on Gmail a pass
-  skips the listing only when nothing in the whole account changed; what
-  it lists is still only the changed messages.
+    HIGHESTMODSEQ appears to be one for the account (004 research, inferred
+  from one folder), so on Gmail a pass skips the listing only when nothing
+  in the whole account changed; what it lists is still only the changed
+  messages.
 - Q: Which cheaper ways without extensions were weighed? → A: Measured on
   2026-10-04 (research §15): `SEARCH UNSEEN`, `SEARCH FLAGGED` and `SEARCH
   ALL` each cost a round trip, as much as the whole listing of a folder
@@ -479,6 +486,14 @@ facts and the alternatives.
   requires UIDNEXT with every opening.
 
 ### Session 2026-10-05 (011's fourth review)
+
+- Q: Does CONDSTORE on Gmail stand under constitution VII and VIII, added
+  after the decision of 2026-10-04? → A: Yes (the maintainer, 2026-10-05):
+  VII allows a path the provider's measured behaviour shows, and Gmail
+  announces and answers CONDSTORE; VIII is kept, since the numbers decide
+  only how much is read, and an equal HIGHESTMODSEQ meaning no flag
+  changed is what RFC 7162 requires. The measurement covered folders
+  under 800 messages; Gmail at scale stays unknown (research §15).
 
 - Q: A Microsoft 365 round reported a flag older than a change the
   application had made and the service accepted; the store took it and
@@ -595,11 +610,12 @@ facts and the alternatives.
 - **FR-004 — Removal only with proof**: A stored message MUST leave a
   folder only when its server proves it is no longer in that folder. On
   IMAP the proof is a listing of every message of the folder that the
-  server completed in the same cycle; a state pass whose UIDVALIDITY,
-  EXISTS and UIDNEXT equal those of the listing the store reflects lists
-  nothing of the kind and removes nothing, since by RFC 3501 §2.3.1.1 no
+    server completed in the same cycle; a state pass that lists nothing or
+  only the changed flags, because its UIDVALIDITY, EXISTS and UIDNEXT
+  equal those of the listing the store reflects and nothing calls for a
+  full listing (FR-005(b)), removes nothing, since by RFC 3501 §2.3.1.1 no
   message was added under that numbering and so none left (*amended
-  2026-10-04*, FR-005). On Microsoft 365 it is the service
+  2026-10-04*, FR-005; *aligned 2026-10-05*). On Microsoft 365 it is the service
   reporting the message removed from the folder, the service placing the
   message elsewhere or not finding it when the cycle reads it again
   (FR-007), or a completed full reading of the folder that does not list
@@ -631,16 +647,18 @@ facts and the alternatives.
   A first pass of a folder that holds pending changes (011) lists every
   message, since a change is addressed by the UID the listing shows; the
   second pass needs no such rule: the cycle's commands are confirmed by
-  the flags read right after them (011 FR-007(d), *since 2026-10-04, later*; until then
-  the pass confirmed them, which a command that changes nothing escaped),
+    the flags read right after them (011 FR-007(d), since the reading after
+  the command of 2026-10-04; until then the pass confirmed them, which a
+  command that changes nothing escaped),
   and the pass learns what the folder's numbers say changed, the folder's
   own change included (011 FR-007(e)). (c) It stores what its
   listing proves and, when its listing completed and the store lacks
   none of the listed messages, the four numbers it started from with the
   completed state (FR-008), so the next pass may see a change twice but
   never misses one; a folder not completed holds no numbers, since its
-  next pass lists every message anyway; a refused listing with nothing
-  missing writes nothing; a pass that lists messages the store lacks
+    next pass lists every message anyway; a refused listing with nothing
+  missing writes no state (the flag changes it reported are stored); a
+  pass that lists messages the store lacks
   without fetching them leaves the folder not completed, so the next
   cycle's pass lists every message and fetches them (maintainer's
   decision at the final review, 2026-10-04: the numbers travel only with
@@ -677,17 +695,18 @@ facts and the alternatives.
   as the service holds it now, with the folder it is in; it is related to
   this folder only if it is there, and leaves this folder when it is not
   (FR-004). *Amended 2026-10-05 (011's fourth review; 011 research §6)*:
-  in a round of changes no entry about a message the account holds is
-  taken from the entry, flags included: the message is read as the
+    in a round of changes no entry other than a removal about a message the
+  account holds is taken from the entry, flags included: the message is read as the
   service holds it now, since the service may report a change late or
   again (its documentation) and an entry older than a change the
   application made and the service accepted would otherwise undo it in
   the store; the reading's answer that the message is elsewhere or gone
   removes it from the folder (FR-004); a reading the service refuses or
   that fails fails the cycle, the page unstored and the saved position
-  kept, so the next cycle reads the round again. An entry about a message
-  the account does not hold, and the pages of a first fill or of a whole
-  reading, are stored as reported. A first fill continued from a saved
+    kept, so the next cycle reads the round again. A full entry about a
+  message the account does not hold, and the full entries of a first fill
+  or of a whole reading, are stored as reported; a partial entry is read
+  again in any reading. A first fill continued from a saved
   place reads one more round of changes before it completes, so changes
   made during the pause are included as far as the service reports them.
   Messages keep their immutable identifier (005 FR-004).
@@ -827,10 +846,11 @@ facts and the alternatives.
   to FR-010), amended 2026-10-03*: a cycle sends after storing its
   listing, before each batch of missing messages and once before closing,
   not before learning changes, since the listing gives the address and
-  settles unknown outcomes; a pending change ends when the cycle sees
-  the server hold it: on IMAP a listing of the cycle shows it, on
-  Microsoft 365 the service accepts the request (amended 2026-10-04,
-  011 research §15).
+    settles unknown outcomes; a pending change ends as 011 FR-007(d) says:
+  on IMAP the listing at the cycle's start or the flags read right after
+  the command show the message with the value, on Microsoft 365 the
+  service accepts the request (amended 2026-10-04 and 2026-10-05, 011
+  research §15).
   (b) *Moving and deleting*: a message the user moved is not taken for a
   message someone else removed: its place in the destination is recorded
   from the server's answer (the new number where the server offers UIDPLUS,
@@ -888,7 +908,8 @@ flowchart TD
     numbers -->|otherwise, no numbers to compare,<br/>or pending changes to send| listing[List every message: number, read state and star;<br/>Generic IMAP identities carry the numbering version]
     listing --> proof{Listing completed<br/>by the server?}
     proof -->|yes| remove[Removed: stored messages<br/>not listed]
-    proof -->|no| keep([Remove nothing;<br/>the cycle ends incomplete, FR-011])
+    proof -->|no| keep[Remove nothing; the refusal is<br/>reported when the cycle ends, FR-011]
+    keep --> states
     remove --> states[Flag changes; the numbers<br/>stored with the batch]
     flags --> states
     states --> pending[/"Send the folder's pending changes the server<br/>lacks (011 FR-007), again before each batch<br/>of arrivals and once before the end"/]
@@ -896,12 +917,12 @@ flowchart TD
     pending --> arrive[Arrived: list fields of messages the<br/>store lacks, highest numbers first,<br/>with texts of the last 30 days]
 
     provider -->|Microsoft 365| position{Saved position<br/>accepted?}
-    position -->|yes| changes[Changes since the position,<br/>page by page, with texts<br/>of the last 30 days]
+    position -->|yes| changes[Changes since the position, page by page;<br/>a stored message an entry names is read<br/>from the service (FR-007); texts of the last 30 days]
     position -->|no| full[Whole folder, latest first,<br/>page by page, with texts of the<br/>last 30 days; at its end, removed:<br/>stored messages it did not list]
     changes --> pending365[/"Send the folder's pending changes<br/>after the round's last page, and after<br/>each page of a whole reading (011 FR-007)"/]
     full --> pending365
 
-    arrive --> relist[After batches or commands: the state pass again<br/>(open anew, compare with the first pass, list what the numbers call for),<br/>end the sent changes it shows (011 FR-007); messages it lists<br/>but does not fetch leave the folder not completed]
+    arrive --> relist[After batches or commands: the state pass again<br/>(open anew, compare with the first pass, list what the numbers call for),<br/>which confirms no command (011 FR-007(e)); messages it lists<br/>but does not fetch leave the folder not completed]
     relist --> done([Cycle complete:<br/>state saved, folder in agreement])
     pending365 --> done
 ```
@@ -978,8 +999,8 @@ rows is shown as an empty folder.
 - **SC-012** (*2026-10-04*): During a scripted first fill of 300 messages,
   a flag the server changes and a message it removes after the first
   batch are stored when the fill ends, with no further refresh; a flag
-  command the cycle sent is confirmed by the flags read right after it
-  (011 FR-007(d), since 2026-10-04, later), and a
+    command the cycle sent is confirmed by the flags read right after it
+  (011 FR-007(d), since the reading after the command of 2026-10-04), and a
   message its command took out of the folder leaves it in the same cycle
   by the second pass.
   A first fill that nothing disturbed ends with a second pass that opens

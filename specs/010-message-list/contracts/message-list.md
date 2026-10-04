@@ -60,8 +60,10 @@ binding across crates; bodies and private helpers are the plan's.
 
 - `MailUi::show_rows(folder, rows)` — changes the list at once when the
   folder differs from the rows' shown before or the list had no rows, with
-  animations otherwise (research §10); a new read empties the
-  read-in-window set (research §11; the set is retired by
+    animations otherwise (research §10); a new read of the same folder keeps
+  the rows taken out in the window, and showing another folder empties
+  them (spec FR-010, since 2026-10-05; until then every new read emptied
+  the read-in-window set, retired by
   [Read and star](../../011-read-and-star/spec.md) on 2026-10-03). (The window chose the change until
   2026-10-01; the list owns the folder it shows since.)
 - `MailUi::shows_no_row()` and `MailUi::unread_filter()` — whether the
@@ -73,8 +75,10 @@ binding across crates; bodies and private helpers are the plan's.
   FR-010); applies FR-007 and the leaving animation; in a narrow window
   the reader's page is not brought forward.
 - Row object `MessageItem` properties, bound in the row template:
-  `sender`, `subject`, `date-text`, `preview`, `unread`,
-  `read-state-text`, `shown`, `transition-ms`; since 011, `starred`,
+    `sender`, `subject`, `date-text`, `preview`, `unread`, `row-state-text`
+  (the read state and, since 011, the star, which the row speaks; named
+  `read-state-text` until 2026-10-05), `shown`, `transition-ms`; since
+  011, `starred`,
   `pointed`, `star-icon` and `star-style` (011 FR-004).
 - Signal handlers the row template names, provided through the factory's
   `gtk::BuilderRustScope`: `row_entered`, `row_left` (the row's

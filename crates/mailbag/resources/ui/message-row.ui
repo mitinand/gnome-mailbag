@@ -8,7 +8,7 @@
   <requires lib="libadwaita" version="1.8"/>
   <template class="GtkListItem">
     <binding name="accessible-description">
-      <lookup name="read-state-text" type="MessageItem">
+      <lookup name="row-state-text" type="MessageItem">
         <lookup name="item">GtkListItem</lookup>
       </lookup>
     </binding>

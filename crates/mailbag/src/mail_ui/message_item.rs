@@ -52,8 +52,8 @@ mod imp {
         star_style: PhantomData<glib::StrV>,
         /// "Read" or "Unread", and "starred", which the row speaks in place
         /// of the decorative dot and star.
-        #[property(get = Self::read_state_text)]
-        read_state_text: PhantomData<String>,
+        #[property(get = Self::row_state_text)]
+        row_state_text: PhantomData<String>,
         /// Whether the row is open; a row arriving or leaving is closed.
         #[property(get, set, default = true)]
         pub(super) shown: Cell<bool>,
@@ -95,13 +95,13 @@ mod imp {
 
         fn set_unread(&self, unread: bool) {
             if self.unread.replace(unread) != unread {
-                self.obj().notify_read_state_text();
+                self.obj().notify_row_state_text();
             }
         }
 
         fn set_starred(&self, starred: bool) {
             if self.starred.replace(starred) != starred {
-                self.obj().notify_read_state_text();
+                self.obj().notify_row_state_text();
                 self.notify_star();
             }
         }
@@ -133,7 +133,7 @@ mod imp {
             }
         }
 
-        fn read_state_text(&self) -> String {
+        fn row_state_text(&self) -> String {
             match (self.unread.get(), self.starred.get()) {
                 (true, false) => "Unread",
                 (false, false) => "Read",

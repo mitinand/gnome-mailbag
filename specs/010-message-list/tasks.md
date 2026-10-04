@@ -349,6 +349,7 @@ by half stops before continuing.
 ## Deferred, no tasks
 
 Spec FR-011: the durable removal and read state and their sending
-(moving and deleting; read and star), the keyboard way to the trash
-action, conversation rows, attachment and star marks, lists over several
+(moving and deleting; read and star, which built the read state's storing
+and sending and the star marks on 2026-10-03), the keyboard way to the
+trash action, conversation rows, attachment marks, lists over several
 folders, the content cache's keeping rules.

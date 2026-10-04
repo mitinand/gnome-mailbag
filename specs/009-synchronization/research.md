@@ -180,9 +180,11 @@ one number per line.
   few.
 - An entry with `@removed` removes the message from the folder. An entry
   that carries every selected field is a listed message: an arrival or a
-  full update. Any other entry carries only what changed: its `isRead`, when
-  present, sets the read state of a stored message; when it changed other
-  selected fields, or names a message the store lacks, the message is read
+    full update. Any other entry carries only what changed: *until
+  2026-10-05* its `isRead`, when present, set the read state of a stored
+  message; since then every entry about a stored message in a round reads
+  the message (spec FR-007, §15); when it changed other selected fields,
+  or names a message the store lacks, the message is read
   with `GET /me/messages/{id}` before it is stored (spec FR-007); a 404
   there means the message is gone meanwhile and it is left out. Entries of
   one page are merged per message in their order, so a later partial entry
@@ -637,8 +639,9 @@ listing.
   text, leaving `highest_modseq` empty. No fork change.
 - Google's IMAP documentation does not describe CONDSTORE (the IMAP
   extensions page and the IMAP, POP and SMTP page, checked 2026-09-28 and
-  2026-10-04); Gmail announces it after sign-in (004 research), and its
-  HIGHESTMODSEQ is one for the account (004 research).
+    2026-10-04); Gmail announces it after sign-in (004 research), and its
+  HIGHESTMODSEQ appears to be one for the account (004 research, inferred
+  from one folder).
 
 **Measured** on 2026-10-04 with a read-only probe (EXAMINE, STATUS, SEARCH
 and FETCH of UID and FLAGS only) over an account of each IMAP provider,
@@ -707,14 +710,16 @@ listed change in the label, so the pass listed the changed flags and
 found none, one round trip; Gmail's mod-sequence is account-wide (004
 research), so a quiet refresh there may read the changed flags instead
 of nothing. The store was discarded once for its changed structure
-(007 FR-014).
+(007 FR-012).
 
 **Decided on 2026-10-05 (011's fourth review; 011 research §6 has the
 probe)**: in a Microsoft 365 round, an entry about a message the account
 holds names it and the cycle reads the message as the service holds it
 now, instead of taking the entry's values (spec FR-007); one request of
-list fields per named message, within the service's limits (10 000 per
-10 minutes, 4 at a time per mailbox; a `$batch` of 20 counts each part).
+list fields per named message, within the service's limits (005 research
+§5: 10 000 per 10 minutes and 4 at a time per application identity and
+mailbox, the identity GOA shares with other GNOME applications; a `$batch`
+of 20 counts each part).
 Alternatives: taking the entry (the replaced rule; a late entry undoes an
 accepted change); a filter on `lastModifiedDateTime` for every message
 changed since the last round (one request, but a second way of learning

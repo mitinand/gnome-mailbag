@@ -35,7 +35,7 @@
   labels, identification command, readable names) are the domain of this
   feature, not implementation details; the spec names them by role and links
   Google's documentation. Command syntax and library choices stay in the plan.
-- The maintainer's probe results of 2026-09-22 are recorded as accepted
+- The probe results of 2026-09-22 are recorded as accepted
   evidence in Assumptions; their detail belongs to the plan's research.
 - Challenge outcomes of 2026-09-23 are in the spec's Clarifications: readable
   names kept in the cheapest form, thread identifier deferred, one neutral

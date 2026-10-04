@@ -26,10 +26,10 @@ the installed-build checks are the maintainer's, on a Flatpak build
   (SC-003), and of the date wording against a fixed clock, with the
   locale's time form told from samples of both forms (SC-007); GUI tests,
   one per process: the filter lists the unread
-  rows and keeps the open message (SC-004); read on opening after the
-  timer and not before, and the stored state after a read (SC-009); the
-  trash button removes the row, opens the next message and changes
-  nothing in the store (SC-010); arrivals and removals of an animated
+  rows and keeps the open message (SC-004); read on opening after the timer and not before, stored and sent since
+  Read and star (SC-009); the trash button removes the row, opens the
+  next message, changes nothing in the store and the row stays out
+  through a refresh (SC-010); arrivals and removals of an animated
   load set the row objects' animation state and the model changes after
   the timer, while a folder shown anew changes at once (SC-005's states;
   its timing is checked on the installed build); a folder of 100 000 rows

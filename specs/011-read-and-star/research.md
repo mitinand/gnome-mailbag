@@ -172,10 +172,10 @@ nothing. So the replay of an older value after an accepted request (§15,
 the recorded limitation) did not show in ten tries, and reading the
 message again before writing a delta entry's flags, the review's proposed
 remedy, was not taken. Twice the service answered a `flagged` request
-made half a second after a `notFlagged` one with `complete`: once in the
-round and the `GET` alike, once in the `GET` while the round said
-`flagged`; the service's flag properties settle asynchronously under
-rapid changes. The application reads `complete` as not starred, so such a
+made half a second after a `notFlagged` one with `complete`: once in the round and the `GET` alike, once in the `GET` while
+the round said `flagged`, while the `PATCH` answer itself echoed the
+requested value every time; the service's flag properties settle
+asynchronously under rapid changes. The application reads `complete` as not starred, so such a
 star would show as gone until the next change; a cycle sends one request
 per flag and message, the latest wish, so it never changes one flag twice
 within a cycle, and the pace that showed it is faster than the
@@ -195,11 +195,12 @@ find, or finds in another folder, leaves this folder; no value is taken
 from the entry when the reading fails, since the service is then under
 strain and a late entry is likeliest. Cost: one request of list fields
 (about a kilobyte, 0.35 s) per stored message a round names, within the
-service's limits of 10 000 requests per 10 minutes and 4 at a time per
-mailbox (checked on 2026-10-05; a `$batch` counts each of its up to 20
-parts and runs 4 at a time). The record `changed messages read again`
-(debug) carries the count and the time per page. Alternatives and what
-remains: 009 research §5.
+service's limits (005 research §5: 10 000 requests per 10 minutes and 4 at
+a time per application identity and mailbox, the identity GOA shares with
+other GNOME applications; checked on 2026-10-05; a `$batch` counts each of
+its up to 20 parts and runs 4 at a time). The record `changed messages
+read again` (debug) carries the count and the time per page. Alternatives
+and what remains: 009 research §15, "Decided on 2026-10-05".
 
 **Unknown**: whether a `Prefer: return=minimal` header shrinks the
 answer; not tried, listed as optional.
@@ -253,9 +254,9 @@ rejected.
 **Decision**: `message.star` is a stateful boolean action on an action
 group inserted on the reader page; the existing `GtkToggleButton` with
 `action-name="message.star"` shows the state and toggles it;
-`message.mark-unread`, `message.mark-read` are plain actions; the reader
-header's `app.mark-scope-read` / `app.mark-scope-unread` call the same
-handlers.
+`message.mark-unread` is a plain action (no `mark-read`: no form names it,
+tasks T026); the reader header's `app.mark-scope-read` /
+`app.mark-scope-unread` call the same handlers.
 
 **Inferred** from GTK's `GtkActionable` documentation: a toggle button
 bound to a boolean-state action without a parameter reflects the state
@@ -406,6 +407,9 @@ scripted IMAP server; two rapid writes in the window).
 
 ## §15 The review of the implementation: what ends a pending change
 
+The rule lives in spec FR-007(d); this section records why it is so and
+how it changed. Other documents point to FR-007(d) instead of restating it.
+
 An outside review of the built branch on 2026-10-04 found five points;
 the maintainer decided them in this feature the same day, the fourth as
 a recorded limitation.
@@ -465,8 +469,10 @@ and another client may have changed the flag meanwhile; a wish ended
 there by the old listing would be lost without a notice (the second
 review found the case: another client flips the flag during the fill, the
 user then flips it back in the window). So a later step compares only
-with the value this cycle last sent: a wish equal to it waits for the
-listing after the commands; any other wish is sent, a command for a value
+with the value this cycle last sent: a wish equal to it is not sent again
+this cycle and, if unconfirmed, waits for the next cycle (since the reading
+after the command; until then it waited for the listing after the
+commands); any other wish is sent, a command for a value
 the server already has being harmless, and a user changing back while a
 command is in flight is still sent (§14.1). *Until 2026-10-04 (later)*:
 after its last sending step, a cycle that sent anything listed the folder

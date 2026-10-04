@@ -185,7 +185,9 @@ flowchart TD
 - `end_changes_the_listing_shows(listed, batches)` (added at the second
   review of 2026-10-04, §15): `batches.pending_changes()`; a wish the
   listing shows → `batches.settle`, no command. Called once, right after
-  the listing is stored, while it is current.
+  the listing is stored, while it is current. *Built as*
+  `end_changes_the_listing_shows(listed, pending, batches)`, the pending
+  list read once before the pass (009 FR-005(b)).
 - `send_imap_changes(reader, listed, sent_changes, batches)` (amended
   2026-10-04, §15):
   1. `batches.pending_changes()`; keep those the listing shows; a wish
@@ -223,8 +225,9 @@ flowchart TD
   missing → store the listing → end the wishes it shows → send → `for`
   each chunk `{ fetch; store;
   send }` → when a command was accepted, list once more and store the
-  removals and flags it proves (amended 2026-10-04) → finish; the
-  listing's `identity → uid` map lives in `listed_uids`. Amended again on
+    removals and flags it proves (amended 2026-10-04) → finish; the
+  listing's `identity → uid` map lives in `listed_uids` (built as
+  `listed_by_identity`). Amended again on
   2026-10-04 (§15): the cycle keeps `sent_changes`, and when it is not
   empty `confirm_sent_changes` lists again, stores what the listing
   proves, settles the sent changes it shows and returns its refusal, with
@@ -274,7 +277,7 @@ flowchart TD
   on opening and after every re-read of the open message's row.
 
 **`mailbag::mail_ui::message_item`**: `starred` property bound by the row
-form; `read_state_text` says "Starred" too.
+form; `row_state_text` (`read_state_text` until 2026-10-05) says "Starred" too.
 
 **The row's star** (amended 2026-10-03): `message-row.ui` holds the star
 in the second line, after the subject, always allocated; its icon and
@@ -307,7 +310,11 @@ message.
 - `LoadEvent::StoreChanged`: handled as `BatchStored` is today.
 - `failure_declarations`: `ServerStep::ChangeFlags` → "Message not
   changed on the server", "The mail server refused to change this
-  message." and the stopped-responding variant.
+  message." and the stopped-responding variant (*reworded 2026-10-05*:
+  "Message change not confirmed", "The mail server did not confirm the
+  change to these messages.", "…while changing these messages.", since one
+  command covers up to a hundred messages and the kind covers a broken
+  connection too).
 - What the user sees around a change: the row and the toggle change when
   the re-read answers, tens of milliseconds after the write; nothing else
   moves. The next Refresh Mailbox shows the spinner and disables the
@@ -511,9 +518,11 @@ message under many labels.
   situations before mechanisms.
 - **III. Explicit failures and truthful state**: the window shows a
   change only after its commit and only from the store; the server's
-  refusal reverts the row and names the reply; an unknown outcome is
+    refusal reverts the row and names the reply; an unknown outcome is
   settled by reading, never guessed; the stored server value is written
-  only by cycles and by an accepted command.
+  only by cycles, from the server's reports and the flags read after a
+  command (an OK writes nothing, since the reading after the command of
+  2026-10-04).
 - **IV. One owner per business rule**: the effective state is computed in
   one place, the store's row read; the equal-value rule lives in the
   store's flag writes; what each flag means on a provider lives in that
@@ -526,8 +535,15 @@ message under many labels.
   maintainer; the live facts of 2026-10-02 in research.
 - **VII. Gmail first**: the message-level flags and the Starred label are
   checked live; the listing-based addressing is designed for Gmail's
-  many-labels model first and serves Generic IMAP unchanged; Microsoft
+    many-labels model first and serves Generic IMAP unchanged; Microsoft
   365's full-entry cost is recorded and accepted.
+- **VIII. A fact about a message comes from the server's report of it**
+  (added 2026-10-05): a change is confirmed by the listing at the cycle's
+  start or by the flags read right after the command, never by an OK or by
+  the folder's numbers (FR-007(d)); on Microsoft 365 by the request's
+  acceptance, and a round's entry about a stored message makes the cycle
+  read the message (009 FR-007); the scripted servers model the behaviour
+  that gives the least to infer from.
 
 No violation to justify.
 

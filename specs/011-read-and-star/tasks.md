@@ -7,7 +7,8 @@ requirements and the plan's mechanisms, in fresh sessions) and analysed
 for consistency on 2026-10-03; approved on 2026-10-03 (T001) with the
 toast for a change the store cannot write; T002 applied the same day.
 Amended on 2026-10-04 (later): Phase 8, the reading after the command
-(T046–T049), approved the same day (T046).
+(T046–T049), approved the same day (T046); Phase 9 (T050–T052) on
+2026-10-05.
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -40,7 +41,9 @@ invariants.
 | 4. The cycle sends | T018–T023 | feat(sync): send pending flag changes with the cycle | Read and star |
 | 5. The window | T024–T029 | feat(ui): star, mark unread and durable read on opening | Read and star |
 | 6. Final passes | T030–T033 | (per review) | Read and star |
+| 7. The implementation's review | T038–T045 | (per review) | Read and star |
 | 8. The reading after the command | T046–T049 | fix(sync): confirm a flag command by the flags read after it | Read and star |
+| 9. The reading of a round's named message | T050–T052 | fix(sync): read a Microsoft 365 message a round names instead of taking the entry | Read and star |
 
 ## Phase 1: documents and review (portion 1)
 
@@ -644,10 +647,20 @@ the maintainer's word.
   `MessageFlags`. Contract, plan, data-model, research and spec FR-001,
   Edge Cases and Clarifications say so.
 
+Done tasks whose mechanisms were later replaced, kept as history: T004's
+`CASE` ending an equal pending value (T039; both flags in every report,
+T052); T007's `FlagChanges` and partial reports (T050, T052); T020's settle
+on an OK and on a wish equal to its server value (T040, T044, T048: only
+the listing's or the reading's report settles); T024's star in the first
+line (T035); T036's `star_row` and `change_row_flag` (`toggle_row_star`
+and `change_listed_flag`, T045); T037's whole-folder listing after
+commands (009's state pass; the reading after the command, T048).
+
 ## Dependencies
 
 - T001 before everything; T002 after approval; each STOP (T002, T010,
-  T017, T023, T029, T033) waits for the maintainer.
+  T017, T023, T029, T033, T035, T036, T042, T046, T049, T051) waits for
+  the maintainer.
 - Portion 2 before 3 (the batch shape and the store's writes), 3 before 4
   (the commands), 4 before 5 (the window needs `StoreChanged` and the
   store's writes); 6 last.

@@ -1124,6 +1124,23 @@ fn a_microsoft_365_round_applies_removals_partial_entries_and_arrivals() {
     assert_eq!(text_of(&stored[2].content), "Text 4");
 }
 
+/// 009 FR-007 (2026-10-05): a round's entry older than the service, here a
+/// star the service no longer holds, writes nothing of its own; the store
+/// gets the message as the service holds it.
+#[test]
+fn a_rounds_entry_older_than_the_service_writes_nothing_of_its_own() {
+    let id = graph_service::fixture_immutable_id;
+    let store = Arc::new(Store::in_memory());
+    let (_, outcome, stored) = graph_round(
+        vec![serde_json::json!({"id": id(1), "flag": {"flagStatus": "flagged"}})],
+        inbox_messages(&[1, 2, 3]),
+        &store,
+    );
+    assert!(matches!(outcome, LoadResult::Stored { .. }), "{outcome:?}");
+    assert_eq!(identities(&stored)[0], graph_identity(1));
+    assert!(!stored[0].flagged, "{:?}", stored[0]);
+}
+
 /// A star set elsewhere comes as a partial entry with the follow-up flag
 /// alone: the entry names the message, whose star and read state the cycle
 /// reads from the message itself, since the entry may be older than the

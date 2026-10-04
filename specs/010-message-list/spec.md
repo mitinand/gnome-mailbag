@@ -2,8 +2,11 @@
 
 **Feature**: `010-message-list`
 **Created**: 2026-09-30
-**Status**: Approved on 2026-09-30 (tasks T001). FR-002, FR-009,
-FR-011(b) and the Row entity amended on 2026-10-03 by
+**Status**: Approved on 2026-09-30 (tasks T001). FR-001, FR-010, SC-009,
+SC-010 and the passages restating FR-009 amended on 2026-10-05 at the
+consistency analysis of Read and star: a row taken out in the window stays
+out while the folder stays shown, since every stored change now reads the
+rows again; the read state is stored and sent. FR-002, FR-009, FR-011(b) and the Row entity amended on 2026-10-03 by
 [Read and star](../011-read-and-star/spec.md): the row shows a star under the date, the
 second's read state is stored and sent, the window's own record of
 messages counted read is retired, and a row's read state and star are
@@ -25,8 +28,9 @@ with a dot marking the unread ones. Reading by removal moves on to the
 next unread message. New and removed messages slide into and out of the
 list instead of jumping. A filter narrows the list to the unread
 messages. An opened message counts as read after a second, and the row's
-trash button takes the message out of the list; until the actions that
-store and send these changes exist, the window alone remembers them.
+trash button takes the message out of the list; the read state is stored
+and sent since Read and star, and the removal is the window's alone until
+moving and deleting.
 
 **Scope**: This is the complete message list specification for Mailbag,
 written for the target application: many accounts, many folders each,
@@ -43,10 +47,10 @@ leave ([009](../009-synchronization/spec.md)), which content is kept
 ([009](../009-synchronization/spec.md) FR-009, later the content cache),
 the reader ([002](../002-imap-integration/spec.md),
 [006](../006-error-handling/spec.md)), the folder list
-([008](../008-folders/spec.md)), nor any action on a message: marking as
-read, starring, moving and deleting are later features: they make durable
-and send what the window does here (FR-009, FR-010) and use the rules set
-here (FR-006 to FR-008). What waits for a layer that does not exist yet
+([008](../008-folders/spec.md)), nor any action on a message: marking as read and starring are
+[Read and star](../011-read-and-star/spec.md), moving and deleting a later
+feature: they make durable and send what the window does here (FR-009,
+FR-010) and use the rules set here (FR-006 to FR-008). What waits for a layer that does not exist yet
 is marked deferred in FR-011 and gets no plan decisions, tasks or code
 until that layer exists.
 
@@ -90,9 +94,9 @@ words.
    its row has sender, date and subject and an empty preview, and the
    reader explains the encryption when the message is opened.
 5. **Given** an unread message and a read one, **When** the folder is
-   shown, **Then** the unread one shows the dot before its first line and
+      shown, **Then** the unread one shows the dot before its first line and
    the read one shows none; a screen reader speaks "Unread" or "Read" for
-   the row.
+   the row, with "starred" when the message is starred (011 FR-004).
 
 ---
 
@@ -112,10 +116,10 @@ later moving and deleting, which make the removal durable. A message a
 refresh finds gone from the server is not the user's choice: the reader
 then shows that no message is selected, as synchronization already says.
 A message the user has kept open for about a second counts as read: its
-dot goes out, and it is a read neighbour for the rule. Until read and
-star is built, the read state and the removal live in the window only:
-nothing is stored or sent, and the next reading of the stored folder (a
-refresh, selecting the folder again) shows the stored state again. In the
+dot goes out, and it is a read neighbour for the rule. The read state is
+stored and sent since Read and star (FR-009); the removal lives in the
+window only until moving and deleting: nothing is stored or sent, and
+showing the folder anew lists the message again (FR-010). In the
 scenarios below the open message leaves by the row's trash button.
 
 **Why this priority**: the order of reading is the maintainer's stated
@@ -154,9 +158,11 @@ the rule.
     message the rule names opens, and the scripted server receives no
     command.
 11. **Given** messages read by opening and removed by the trash button,
-    **When** the folder is refreshed or selected again, **Then** they are
-    listed again as the store holds them, unread and present, until read
-    and star and moving and deleting store and send the changes.
+    **When** the folder is refreshed, **Then** the read ones stay read,
+    stored and sent (011 FR-003, FR-006), and the removed ones stay out;
+    **When** the folder is shown anew after another, **Then** the removed
+    ones are listed again as the store holds them, until moving and
+    deleting stores and sends the removal (*amended 2026-10-05*).
 
 ---
 
@@ -289,9 +295,12 @@ compared with the rule in the user's locale.
   2026-10-01).
 - The trash button is pressed within the second after opening: the
   message leaves unread; the read timer is dropped with it.
-- A message removed by the trash button returns at the next reading of a
-  refreshed folder: it arrives as any row does, animated (FR-006); the
-  stored folder is the truth until the removal is durable (FR-011(a)).
+- A message removed by the trash button returns when the folder is shown
+  anew after another folder, at once as a folder shown anew does
+  (FR-006); a refresh or a change of another row, which read the rows
+  again since Read and star, keeps it out (FR-010, *amended 2026-10-05*);
+  the stored folder is the truth until the removal is durable
+  (FR-011(a)).
 
 ## Clarifications
 
@@ -342,8 +351,12 @@ compared with the rule in the user's locale.
   state the store does not hold, and a refresh brings read messages back
   unread and removed ones back into the list. Accepted for the
   pre-release build because the list's own rules (FR-006 to FR-008) can
-  then be exercised by hand, and nothing is thrown away: read and star
+    then be exercised by hand, and nothing is thrown away: read and star
   and moving and deleting add the durable part and the sending (FR-011).
+  (Amended 2026-10-05: Read and star stored the read state and made every
+  stored change read the rows again, so a removed row returned within a
+  second of the next read on opening; the removal now stays until the
+  folder is shown anew, FR-010.)
 
 ### Session 2026-09-30 (specification challenge)
 
@@ -402,7 +415,8 @@ compared with the rule in the user's locale.
   click on a row or Enter on the focused row opens its message; the open
   message's row is highlighted; the arrow keys move the keyboard focus
   without opening. A folder shown anew shows its rows at once and opens
-  nothing.
+  nothing; a click on the row's star stars or unstars the message instead
+  of opening it (011 FR-004).
 - **FR-002 — The row**: Each row MUST show, in three lines: first, the
   sender's name (the address when the sender gave no name; "Unknown
   sender" when there is none) in the heading style and, at the end of the
@@ -412,7 +426,8 @@ compared with the rule in the user's locale.
   line stands the unread mark: a small dot in the accent colour, shown
   while the message is unread and hidden once it is read, changing in
   place when the read state changes. The dot is decorative: the row's
-  accessible description says "Unread" or "Read". Long values are cut
+  accessible description says "Unread" or "Read" and, since 011, "starred"
+  with it (011 FR-004). Long values are cut
   with an ellipsis, never wrapped, except the preview's two lines. At the
   end of the first line, so that it takes no width from the preview, a
   small trash icon with the tooltip "Move to Trash" slides in
@@ -515,8 +530,9 @@ compared with the rule in the user's locale.
   filtered list. When the filter leaves no row,
   the list's place says "No unread messages" with the explanation "Every
   message in this folder is read."; a folder never refreshed says what it
-  says without the filter (007 FR-006). Marking as read on opening is a
-  later feature; when it exists, the open message is kept the same way.
+  says without the filter (007 FR-006). Marking as read on opening is
+  FR-009, stored and sent since Read and star; the open message is kept
+  the same way.
 
 **Acting from the list**
 
@@ -539,10 +555,13 @@ compared with the rule in the user's locale.
   the list stays in view: the next message opens without moving to the
   reader's page. Until moving and deleting is built, this is the window's
   state alone:
-  the message stays in the store and on the server, nothing is sent, and
-  the next reading of the stored folder lists it again. Moving and
-  deleting makes the removal durable, sends it and gives the action its
-  keyboard way (FR-011(a)).
+    the message stays in the store and on the server, nothing is sent, the
+  row stays out while the folder stays shown, whatever reads its rows
+  again, and showing the folder anew after another lists it again
+  (*amended 2026-10-05*: since Read and star every stored change reads
+  the rows again, so a removed row otherwise returned within a second of
+  the next read on opening). Moving and deleting makes the removal
+  durable, sends it and gives the action its keyboard way (FR-011(a)).
 
 **Deferred**
 
@@ -613,13 +632,16 @@ compared with the rule in the user's locale.
   no date), every row's date reads as FR-004 says in the user's locale,
   with today's time in the locale's 12- or 24-hour form.
 - **SC-009**: In a scripted folder, an opened unread message loses its dot
-  between 0.8 and 1.5 seconds after opening; a message opened and left
-  within half a second keeps it; after a scripted refresh the stored read
-  state shows again and the scripted server received no command.
+    between 0.8 and 1.5 seconds after opening; a message opened and left
+  within half a second keeps it; the read state is stored after the
+  second and the next scripted refresh sends it (011 FR-003, FR-006;
+  *amended 2026-10-03 by Read and star*; before, nothing was stored or
+  sent).
 - **SC-010**: In a scripted folder, pressing a row's trash button removes
-  the row as SC-005 measures and opens the message FR-007 names; the
-  store and the scripted server are unchanged; after a refresh the row is
-  listed again.
+    the row as SC-005 measures and opens the message FR-007 names; the
+  store and the scripted server are unchanged; after a refresh the row
+  stays out, and the folder shown anew lists it again (*amended
+  2026-10-05*).
 - **SC-008**: On the installed build with an account of each provider,
   the largest folder's rows show previews that match the messages'
   opening words as another client shows them, and the first batch of a
@@ -657,9 +679,10 @@ compared with the rule in the user's locale.
   separate Time Format setting is not read (Clarifications).
 - The system's animation setting is the one GNOME offers in Accessibility;
   the toolkit honours it for the transitions used.
-- The window-only read state and removal (FR-009, FR-010) are a
-  pre-release stage: the build is used by the maintainer to exercise the
-  list, and every reading of the stored folder shows the stored truth.
+- The window-only removal (FR-010) is a pre-release stage: the build is
+  used by the maintainer to exercise the list, and a folder shown anew
+  shows the stored truth; the read state is stored since Read and star
+  (FR-009).
 - Before the first release the store's changed structure discards it at
   start (007 FR-012); this feature adds the preview to the stored message,
   so every folder fills again once.

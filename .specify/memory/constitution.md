@@ -1,5 +1,13 @@
 <!-- Sync Impact Report
-Version: 2.3.0 -> 2.4.0 (new principle).
+Version: 2.4.0 -> 2.4.1 (wording).
+Modified principles: VIII, the scripted servers' default: the behaviour
+that gives the application the least to infer from, not "the required
+behaviour", which a standard that only recommends does not define.
+Rationale: the consistency analyses of 2026-10-05 read the old wording as
+the opposite of its intent for a STORE that changes nothing, where RFC 7162
+§3.1.11 recommends leaving the mod-sequence; the scripted server does, and
+that default is what exposed the hole VIII was written for.
+Previous report (2.3.0 -> 2.4.0, new principle):
 Modified principles: none.
 Added principles:
 - VIII. A fact about a message comes from the server's report of it: the
@@ -122,9 +130,10 @@ proof of a change.
 
 Code relies only on what a standard requires. A behaviour a standard
 recommends or allows is handled both ways, and the scripted servers used in
-tests show the required behaviour by default, with the recommended one behind
-an explicit setting, so that a test cannot pass on an assumption. Extensions
-decide how much is read, never what counts as proof.
+tests show by default the behaviour that gives the application the least to
+infer from, with the other behind an explicit setting when a test needs it,
+so that a test cannot pass on an assumption. Extensions decide how much is
+read, never what counts as proof.
 
 ## Public Repository Language
 
@@ -145,4 +154,4 @@ an implementation. Review design and code changes against these principles. Use
 semantic versioning for amendments; constitution versions are independent of
 application releases.
 
-**Version**: 2.4.0 | **Ratified**: 2026-09-08 | **Last Amended**: 2026-10-04
+**Version**: 2.4.1 | **Ratified**: 2026-09-08 | **Last Amended**: 2026-10-05

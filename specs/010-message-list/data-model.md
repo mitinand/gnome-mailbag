@@ -36,7 +36,10 @@ a message related without fetching (009 FR-005) leaves it as it is.
   [Read and star](../011-read-and-star/spec.md); before, the stored read
   state until a read on opening changed it, spec FR-009), and the
   animation state (`shown`, `transition-ms`, spec FR-006). Every read of
-  the stored rows sets the read state and the star.
+    the stored rows sets the read state and the star.
+- **Removed in window** (`removed_in_window`, window): the identities the
+  trash button took out, kept while the folder stays shown and emptied
+  when another folder is shown (spec FR-010, since 2026-10-05).
 - **Shown mailbox** (window): the folder's stored rows as the latest read
   found them and which folder they belong to (a change of folder shows
   the rows at once, research §10); whether the unread filter is on (one

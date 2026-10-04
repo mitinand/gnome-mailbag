@@ -297,7 +297,11 @@ window-only read state (spec FR-009) is a set of identities that the
 read-on-opening timeout fills and a new read of the stored rows empties;
 the derivation and the read-state reset of the difference update both
 treat a row in the set as read, so a toggle or another opening does not
-bring the dot back (found at the challenge).
+bring the dot back (found at the challenge). *Since 2026-10-03*: Read and
+star stores the read state, and the set is retired; *since 2026-10-05*:
+the set of rows taken out by the trash button is emptied only when another
+folder is shown, since every stored change reads the rows again (spec
+FR-010).
 
 **Alternatives considered**: a filter model over the row objects: a row
 that becomes read would vanish at once instead of leaving as a removed
@@ -329,7 +333,9 @@ object's `unread` becomes false, which hides the dot and counts for
 FR-007 and FR-008; opening another message or the message's leaving
 drops a pending timeout. A new read of the stored rows empties the set
 and sets every row's read state from the store again, which is how the
-stored state returns (spec FR-009). Nothing is sent or stored.
+stored state returns (spec FR-009). Nothing is sent or stored. *Since
+2026-10-03*: the second's read state is a pending change the store holds
+and a cycle sends (011 FR-003, FR-006); the window's set is retired.
 
 ## §14 Date wording
 

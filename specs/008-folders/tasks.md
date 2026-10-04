@@ -462,7 +462,8 @@ its estimate by half stops before doing so.
 
 ## Deferred, no tasks
 
-Unread counts, whole-folder loads and label-driven memberships, the combined
-Inbox, moves and deletes with the rule for views, folder management,
-background refreshes, expansion memory and horizontal scrolling, OBJECTID
-(spec FR-013).
+Unread counts, whole-folder loads and label-driven memberships (built by
+009), the combined Inbox, moves and deletes with the rule for views (the
+flag part built by 011, FR-013(d)), folder management, background
+refreshes, expansion memory and horizontal scrolling, OBJECTID (spec
+FR-013).

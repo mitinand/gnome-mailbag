@@ -104,8 +104,8 @@ sequenceDiagram
   provider once (004 plan D1) and runs one of the two cycles; `batches` is
   the folder's `BatchWriter`.
 - `cycle::imap::synchronize_imap_folder(access, identity_rule, batches)`:
-  1. `ImapFolder::open` — EXAMINE; the folder's numbering version, which
-     Generic IMAP identities carry.
+    1. `ImapFolder::open` — SELECT (EXAMINE until 011 FR-008); the folder's
+     numbering version, which Generic IMAP identities carry.
   2. `batches.read_folder_sync()` — the stored state and identities.
   3. `ImapFolder::list_messages` and `identify` — the listing, whether it
      completed, and each message's identity (`imap:<folder>/<UIDVALIDITY>/
@@ -124,8 +124,10 @@ sequenceDiagram
   2. `where_to_start` — saved position, a first fill's saved place, or a
      first reading.
   3. for each page of `read_message_changes`: `merge_per_message`, then
-     `GraphService::batch_from_changes` (removed entries; read states of
-     messages only this folder holds; listed messages; unknown ones, and
+          `GraphService::batch_from_changes` (removed entries; read states of
+     messages only this folder holds (*until 2026-10-05*: since then every
+     entry about a stored message in a round reads the message, spec
+     FR-007); listed messages; unknown ones, and
      any message another folder holds (`batches.identities_in_other_folders`),
      read with `read_message` and kept only if it is in this folder now,
      leaving it otherwise; a removal met with another entry for the
@@ -348,7 +350,16 @@ except the two form changes.
   waits for nothing.
 - **VI. Evidence before completion**: scripted scenarios for SC-003 to
   SC-006 and cancellation; GTK tests for the list; the installed-build
-  checks of the quickstart, including quitting during a fill.
+    checks of the quickstart, including quitting during a fill.
+- **VII. Gmail first** (added 2026-10-05): CONDSTORE on Gmail by the
+  announced capability (spec Clarifications 2026-10-04), measured on
+  folders under 800 messages; the maintainer ruled on 2026-10-05 that it
+  stands (Clarifications 2026-10-05).
+- **VIII. A fact about a message comes from the server's report of it**
+  (added 2026-10-05): the state pass's numbers decide how much is listed,
+  never what is proven; a command is confirmed by the flags read after it
+  (011 FR-007(d)); on Microsoft 365 a round's entry names a stored
+  message and the message is read (FR-007).
 
 No violation to justify.
 
@@ -488,7 +499,7 @@ columns on `folder`; the window and Microsoft 365 untouched.
 | The folder's numbers | `FolderNumbers` in the domain, converted from the IMAP crate's `MailboxNumbers`; four nullable columns written with the folder's state and read with it; kept through a folder list replacement | ≈ 40 |
 | The reader | `open` selects with `(CONDSTORE)` when the signed-in capabilities announce it; `numbers()`; `reopen()` selects the same folder again in the session; `list_changed_flags(since, row_items)`, `UID FETCH 1:* (UID FLAGS [X-GM-MSGID]) (CHANGEDSINCE since)`, streamed as `list_messages` | ≈ 60 |
 | The pass | `pass_plan(numbers, reference, pending)`: nothing, the changed flags, or every message; the plan runs its listing, stores removals (a complete listing of every message only), flag states and the numbers in one batch, and hands back the listed and the missing messages | ≈ 75 |
-| The cycle | open → read → pass → end the wishes the listing shows → send → batches with sends → when batches were fetched or commands sent: reopen, the pass again against the first pass's numbers, settle the sent changes it shows, the folder left not completed when that pass listed messages it did not fetch → finish | ≈ 55 net |
+| The cycle | open → read → pass → end the wishes the listing shows → send → batches with sends → when batches were fetched or commands sent: reopen, the pass again against the first pass's numbers (which confirms no command since the reading after the command of 2026-10-04, 011 FR-007(d); until then it settled the sent changes it shows, the folder left not completed when that pass listed messages it did not fetch → finish | ≈ 55 net |
 
 ### Function map changes
 
@@ -517,8 +528,9 @@ columns on `folder`; the window and Microsoft 365 untouched.
   stored numbers of a synchronized folder, or, at the second pass, the
   first pass's numbers when its listing completed and every message it
   showed missing was stored; the second pass gets no pending changes:
-  since 2026-10-04 (later) a command is confirmed by the flags read right after it (011
-  FR-007(d)), and the pass learns the folder's own change (until then
+    since the reading after the command (2026-10-04) a command is confirmed
+  by the flags read right after it (011 FR-007(d)), and the pass learns
+  the folder's own change (until then
   the pass confirmed the commands, which one that changes nothing
   escaped). The pending changes read for the plan are the ones
   `end_changes_the_listing_shows` compares with the listing, read once.
