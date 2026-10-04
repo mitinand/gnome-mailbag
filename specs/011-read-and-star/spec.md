@@ -594,8 +594,13 @@ behaviour, readability, size, architecture and security.
   as 009 says: today by Refresh Mailbox, later by background
   synchronization. No change starts a cycle of its own. A change made
   while a cycle of its folder runs is sent before the cycle's next batch
-  or before it closes (FR-007); any other change waits for the folder's
-  next cycle. A failed refresh is not retried on its own for a pending
+  or before it closes (FR-007) when the cycle's state pass listed the
+  message; a change made during a cycle whose pass listed nothing or the
+  changed flags alone (009 FR-005; such a cycle lasts under a second)
+  has no number to be addressed by and waits for the folder's next
+  cycle, shown in the window meanwhile, as any other change does
+  (*clarified 2026-10-04 after the review of the state pass*). A failed
+  refresh is not retried on its own for a pending
   change (006 keeps retries the user's).
 - **FR-007 — How a cycle sends**: (a) *When*: after storing its listing
   (on Microsoft 365, after its round of changes), before each batch of
