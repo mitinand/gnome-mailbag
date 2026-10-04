@@ -517,7 +517,10 @@ behaviour, readability, size, architecture and security.
   listing standing for a minutes-long fill) is the premise background
   synchronization settles; the probes that decide it (full listing,
   `CHANGEDSINCE` listing and a flags fetch of the sent UIDs, by folder
-  size and account) go with that feature's start.
+  size and account) go with that feature's start. Decided later the same
+  day, after those probes: 009's state pass (its FR-005, amended
+  2026-10-04) replaces the full listing after commands; the probes'
+  results are in 009 research §15.
 
 ## Requirements
 
@@ -624,11 +627,12 @@ behaviour, readability, size, architecture and security.
   value stays and goes with the next sending step. (e) *After the
   commands*: a command may change the folder itself, as a star taken off
   a message under Gmail's Starred label takes it out of the label: on
-  IMAP a cycle that sent a command lists the folder once more after its
-  last sending step, stores the removals and flags that listing proves
-  and ends the sent changes it shows; when the server refuses that
-  listing, the cycle ends incomplete with the reply, as with a refused
-  listing at its start. Messages it newly lists arrived during the
+  IMAP a cycle that sent a command runs 009's state pass once more after
+  its last sending step (*since 2026-10-04, 009 FR-005; until then it
+  listed the folder in full*): the pass lists what the folder's numbers
+  say changed, the cycle stores what it proves and ends the sent changes
+  it shows; when the server refuses that listing, the cycle ends
+  incomplete with the reply, as with a refused listing at its start. Messages it newly lists arrived during the
   cycle, which 009 FR-001 lets the next cycle bring, and wait for it.
   (f) A cycle otherwise changes nothing on the server (009 FR-001,
   amended).

@@ -584,3 +584,148 @@ untagged CAPABILITY after sign-in save about two round trips per refresh;
 several connections per account belong to background synchronization
 (020): many accounts with several connections each load a server, and
 Gmail allows 15.
+
+## §15 The state pass (amendment of 2026-10-04)
+
+**Decision**: an IMAP cycle learns the folder's state in a *state pass*
+(spec FR-005): the four numbers the opening returns (UIDVALIDITY, EXISTS,
+UIDNEXT, HIGHESTMODSEQ), compared with the folder's stored ones, decide
+what to list: nothing, the changed flags (`CHANGEDSINCE` where CONDSTORE
+serves, every message's flags otherwise) or every message. The pass runs
+at the cycle's start and, after batches or commands, once more before the
+cycle closes; it stores the numbers it started from with what its listing
+proved. How often passes run during a fill belongs to background
+synchronization (020).
+
+**Why**: the live check of 011 (2026-10-04) found three holes with one
+root. The cycle's single listing at its start was its only view of the
+server while a first fill ran minutes (6 and 19 minutes on the two Generic
+IMAP servers of §14): a folder a cycle's own command changed stayed out of
+agreement until 011 added a full re-listing after commands; changes
+another client made during a fill showed only at the next refresh; and
+each fix inside one long cycle patched the same premise. The maintainer
+named it: one snapshot must not stand for a minutes-long process. A pass
+that costs one round trip when nothing changed can be run again, and the
+second pass at the cycle's end gives the agreement 011 bought with a full
+listing.
+
+**Checked**:
+
+- RFC 3501 §2.3.1.1: the next unique identifier "MUST NOT change unless
+  new messages are added to the mailbox" and "MUST change whenever new
+  messages are added to the mailbox, even if those new messages are
+  subsequently expunged"; so with UIDNEXT equal nothing arrived, and with
+  EXISTS equal too nothing left. §6.3.1: a SELECT of the selected mailbox
+  deselects it first, so the second pass opens the folder again in the
+  same session. §6.4.8: a UID the mailbox lacks is ignored (011).
+- RFC 7162 §3.1.2.1 and §3.1.2.2: once a CONDSTORE enabling command was
+  issued, the server MUST return HIGHESTMODSEQ, or NOMODSEQ for a mailbox
+  without persistent mod-sequences, with every successful SELECT; after
+  NOMODSEQ a FETCH with CHANGEDSINCE is rejected with BAD. §3.1.4.1: the
+  CHANGEDSINCE modifier returns only messages whose mod-sequence is
+  higher than the one given. §3.2: only QRESYNC requires the mailbox's
+  mod-sequence to rise on an expunge, so removals rest on EXISTS and
+  UIDNEXT.
+- The async-imap fork at its pinned revision: `Mailbox` carries `exists`,
+  `uid_next`, `uid_validity` and `highest_modseq`, read from the SELECT
+  response codes; `select_condstore` sends `SELECT … (CONDSTORE)`;
+  `uid_fetch` sends the query text as given, so `(UID FLAGS) (CHANGEDSINCE
+  n)` needs no change. imap-proto parses `HIGHESTMODSEQ` and `MODSEQ`,
+  and a response code it does not know, such as `[NOMODSEQ]`, passes as
+  text, leaving `highest_modseq` empty. No fork change.
+- Google's IMAP documentation does not describe CONDSTORE (the IMAP
+  extensions page and the IMAP, POP and SMTP page, checked 2026-09-28 and
+  2026-10-04); Gmail announces it after sign-in (004 research), and its
+  HIGHESTMODSEQ is one for the account (004 research).
+
+**Measured** on 2026-10-04 with a read-only probe (EXAMINE, STATUS, SEARCH
+and FETCH of UID and FLAGS only) over an account of each IMAP provider,
+medians of three runs; the Gmail folders held under 800 messages, so
+Gmail at scale is unknown:
+
+| | Gmail, 766 messages | Generic IMAP server A, 6 004 | Generic IMAP server B, 9 322 |
+|---|---|---|---|
+| A round trip (NOOP), an opening, a STATUS | 0.17 s each | 0.25 s each | 0.08–0.2 s each |
+| `UID FETCH 1:* (UID FLAGS)` | 0.46 s, 37 KB (60 KB with `X-GM-MSGID`) | 0.63 s, 326 KB | 0.60 s, 385 KB |
+| `UID SEARCH UNSEEN`, `FLAGGED`, `ALL` | one round trip each | one round trip each | 1.6 s, 0.2 s, 0.3 s |
+| `CHANGEDSINCE`, nothing changed | one round trip | one round trip | no CONDSTORE |
+| `CHANGEDSINCE`, 60 and 184 changed | 0.42 s, 2.9 KB | 0.25 s, 10 KB | — |
+| `UID FETCH <100 uids> (UID FLAGS)` | one round trip | one round trip | one round trip |
+| Announced | CONDSTORE, ESEARCH; no QRESYNC | CONDSTORE, QRESYNC, ESEARCH | none of them |
+
+A listing costs about 45 bytes and 60 µs per message on the Generic
+servers, so a folder of 100 000 messages about 6 s and 4.5 MB (inferred);
+on Gmail about 0.4 ms per message between 13 and 766 messages (not
+verified beyond). Gmail's `CHANGEDSINCE` is small in bytes and about as
+slow as the full listing when anything changed, and one round trip when
+nothing did; server A's is one round trip either way.
+
+**Alternatives**:
+
+- A listing before every batch, as first considered: on a server without
+  CONDSTORE a listing per hundred messages adds about 5 % to a fill of
+  9 000 messages and doubles one of 100 000. Not taken as a rule of the
+  cycle: the cadence of passes is the scheduler's (020).
+- A pass once a minute during a fill: proposed and withdrawn the same
+  day, a constant standing in for the scheduler that does not exist yet;
+  correctness never depended on it.
+- Flags by `SEARCH UNSEEN` and `SEARCH FLAGGED`, the UID set by ESEARCH:
+  a round trip each, as much as the listing of a few thousand messages,
+  and on server B three times the listing; ESEARCH compressed the UID set
+  to 198 bytes on Gmail and to 25 KB on server A, whose UIDs are sparse.
+  Not taken; the listing stays where the numbers say something changed.
+- QRESYNC: announced by server A only, not by Gmail. Not taken.
+- A flags fetch of the sent UIDs alone to confirm commands: one round
+  trip everywhere; optional (plan), since the second pass covers it and
+  costs the same on CONDSTORE servers.
+- Arrivals alone by `UID FETCH <stored UIDNEXT>:*`, with removals ruled
+  out when EXISTS grew by exactly the arrivals: optional (plan); new mail,
+  the most common change, would cost a round trip instead of the listing.
+
+**CONDSTORE on Gmail**: 009 decided on 2026-09-28 to use the base method
+only on Gmail, since Google does not document CONDSTORE; on 2026-10-02 it
+decided for COMPRESS=DEFLATE, likewise undocumented by Google, that the
+announced capability decides (§14). Decided on 2026-10-04: the same rule
+for CONDSTORE, for any server (the maintainer's decision).
+
+**Left to 020**: how often a pass runs during a fill; slicing a fill into
+short cycles, each with its own pass (the newest-first order means
+everything above a UID is stored, so a continued fill could list only the
+rest); fetching, within the cycle, the arrivals a second pass finds (they
+wait for the next cycle, as the listing after commands of 011 left them,
+and the folder stays not completed until then).
+
+**The challenges of 2026-10-04** (two fresh sessions, the requirements
+and the plan's mechanisms) found four holes, closed the same day:
+
+1. *Pending changes need the listing.* 011 addresses a change by the UID
+   the cycle's own listing shows and stores no UID; a pass that lists
+   nothing, or only the flags another client changed, leaves a star made
+   before a quiet refresh unsent until something else changes in the
+   folder. A first pass of a folder with pending changes lists every
+   message; the cost is today's listing on exactly the refreshes that
+   carry a change. Addressing a Gmail message by `UID SEARCH X-GM-MSGID`
+   instead (≈ 0.2 s each, 011 research §2) is optional in the plan; a
+   Generic IMAP identity carries its UID and would need no search.
+2. *A second pass that lists an arrival it does not fetch* stores numbers
+   that already count it; the next pass finds them equal and the message
+   is never fetched. Such a pass leaves the folder not completed.
+3. *The numbering version* belongs in every comparison: a renumbered
+   folder without expunges shows the old EXISTS and UIDNEXT, and RFC 3501
+   §2.3.1.1's guarantees hold only "unless the unique identifier validity
+   also changes".
+4. *The second pass compared with the stored state*, which the first
+   batch of a fill marks not completed, so every fill ended with a full
+   listing. It compares with the first pass's numbers instead: the store
+   then holds every message that listing showed, since a refused row
+   command ends the cycle before the second pass.
+
+Also checked by the plan's challenge: inside a FETCH stream the fork
+forwards EXISTS, EXPUNGE and RECENT as typed unsolicited items and the
+rest as `Other`, which the session's notice collector alone reads; UIDNEXT
+and HIGHESTMODSEQ never arrive unsolicited, so a second SELECT is the way
+to fresh numbers; a session closed after an unreadable structure must
+reconnect before it (the reader does so for every command);
+mod-sequences are 63-bit values, which SQLite's INTEGER holds; the
+NOMODSEQ case needs no server knob, since the scripted opening's
+completion text takes an untagged line.

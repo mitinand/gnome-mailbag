@@ -199,7 +199,7 @@ it and its cost are named.
 | Renewing access before it expires, from the lifetime Online Accounts returns | Refusals mid-cycle prove frequent enough to be visible in time | ≈ 20 lines |
 | Larger batches for rows without text | The first fill of a very large folder takes too long because each hundred rows is one round trip | ≈ 10 lines |
 | A Refresh that stops the running cycle | Waiting for a long first fill to refresh another folder proves a problem (spec Clarifications) | ≈ 30 lines and tests; amends 008 FR-012 |
-| CONDSTORE | Background synchronization, or a real folder whose listing makes Refresh slow (spec FR-015(e)) | ≈ 80 lines, one state column; the fork parses `[NOMODSEQ]` |
+| CONDSTORE | Background synchronization, or a real folder whose listing makes Refresh slow (spec FR-015(e)). *Built on 2026-10-04 as part of the state pass (below)* | ≈ 80 lines, one state column; the fork parses `[NOMODSEQ]` |
 
 ## Decisions for the maintainer
 
@@ -446,3 +446,139 @@ then each structure alone (`fetch_structures_apart`, the former isolation
 loop); `read_contents` takes the rows. `sign_in_session` gained
 `compress_session` after the capabilities. The live check's numbers are
 in research §14.
+
+## Amendment 2026-10-04: the state pass
+
+Decided at a feature-start on 2026-10-04 after the live check of
+[Read and star](../011-read-and-star/spec.md) (research §15; spec
+Clarifications 2026-10-04), for branch `claude/state-pass`, from
+`claude/read-star`, whose full listing after a cycle's commands this
+amendment replaces. Documents first (tasks T039), then four portions.
+
+### Size
+
+Budget proposed on 2026-10-04: at most 250 production lines and 400 test
+lines; no thread, timer or queue of the feature's own; no new dependency;
+no change to the IMAP library forks (checked: the pinned async-imap
+already carries `exists`, `uid_next`, `uid_validity`, `highest_modseq` and
+`select_condstore`, and `uid_fetch` takes the query text as given); four
+columns on `folder`; the window and Microsoft 365 untouched.
+
+| Item | Budget | This amendment (estimate) |
+|---|---|---|
+| New modules and production lines | ≤ 250 net | ≈ 200 (≈ 185 before the challenges of 2026-10-04, which added the pending changes to the pass's plan and the conversion of the opening's numbers): `mailbag-imap` ≈ 60 (the opening with the CONDSTORE parameter when announced, the opening's numbers, opening the same folder again, the listing of changed flags sharing the listing's body); `mailbag-domain` ≈ 20 (`FolderNumbers`, a field of `FolderState`, its privacy-safe `Debug`); `mailbag-store` ≈ 20 (four columns read and written with the state); `mailbag-providers` ≈ 100 net (the pass's plan with three outcomes and the pending changes, running a pass and storing its numbers, the second pass at the end, the numbers converted ≈ 130; `confirm_sent_changes` and the listing's state helper −30) |
+| Call sites or existing files touched | — | imap `session.rs`, `reader.rs`, `lib.rs`, `test_server.rs`; domain `lib.rs`; store `schema.sql`, `folders.rs`, `lib.rs`; providers `cycle/imap.rs`, `cycle/pending.rs` (the confirm's caller), tests |
+| New threads, timers, queues | 0 | 0 |
+| New state, types, error types | — | `MailboxNumbers { uid_validity, exists, uid_next, highest_modseq }` in `mailbag-imap`, what the opening returned, and `FolderNumbers` of the same shape in `mailbag-domain`, what the folder stores, the cycle converting, since the IMAP crate does not depend on the domain crate (as 011's `StoreFlag`); the pass's plan (nothing, the changed flags, every message); `ImapFailure::MailboxChanged`, which the reader already raises when a reconnection meets another numbering version, raised likewise when the second opening does |
+| New fields in existing data | 4 columns | `folder.uid_validity`, `folder.exists`, `folder.uid_next`, `folder.highest_modseq` ([data-model.md](data-model.md)) |
+| Changes to other features' contracts or documents | 011, 002, 007 | 011 FR-007(e), plan and research (the confirm is the second pass); 002 contracts/imap-reading.md (the opening and the listing); 007 FR-014(a) |
+| New dependencies | 0 | 0 |
+| Tests | ≤ 400 | ≈ 385 (≈ 330 before the challenges, which measured the cycle tests at 30–60 lines each): the scripted server ≈ 85 (UIDNEXT in the opening, a CONDSTORE knob with HIGHESTMODSEQ, per-message mod-sequences raised by `UID STORE` and by a scripted change, `CHANGEDSINCE` cut off the items before `split_items`, a message gone after the first listing, a flag changed between connections); store ≈ 30; imap ≈ 50; providers ≈ 220 (SC-011's outcomes as successive cycles on one fixture, SC-012 apart, a pending star on a quiet CONDSTORE server, the 011 tests of the listing after commands rewritten for the second pass) |
+
+### Minimal version
+
+| Step | What it does | Cost |
+|---|---|---|
+| The folder's numbers | `FolderNumbers` in the domain, converted from the IMAP crate's `MailboxNumbers`; four nullable columns written with the folder's state and read with it; kept through a folder list replacement | ≈ 40 |
+| The reader | `open` selects with `(CONDSTORE)` when the signed-in capabilities announce it; `numbers()`; `reopen()` selects the same folder again in the session; `list_changed_flags(since, row_items)`, `UID FETCH 1:* (UID FLAGS [X-GM-MSGID]) (CHANGEDSINCE since)`, streamed as `list_messages` | ≈ 60 |
+| The pass | `pass_plan(numbers, reference, pending)`: nothing, the changed flags, or every message; the plan runs its listing, stores removals (a complete listing of every message only), flag states and the numbers in one batch, and hands back the listed and the missing messages | ≈ 75 |
+| The cycle | open → read → pass → end the wishes the listing shows → send → batches with sends → when batches were fetched or commands sent: reopen, the pass again against the first pass's numbers, settle the sent changes it shows, the folder left not completed when that pass listed messages it did not fetch → finish | ≈ 55 net |
+
+### Function map changes
+
+- `session::open_mailbox`: `select_condstore` when `capabilities` include
+  CONDSTORE, else `select`; `MailboxSession` keeps the opening's numbers.
+- `MailboxReader::numbers() -> MailboxNumbers`; `reopen() -> Result<(),
+  ImapError>`: when the session was closed after an unreadable structure
+  it reconnects as every command does, otherwise it runs the same SELECT
+  on the open session (RFC 3501 §6.3.1: a SELECT deselects first); it
+  replaces the numbers and the message count, and a numbering version
+  other than the first opening's is `ImapFailure::MailboxChanged`, the
+  rule `reconnect` already owns; `list_changed_flags(since: u64,
+  row_items) -> FolderListing` shares `list_messages`' body (the query
+  differs by the `CHANGEDSINCE` modifier) and the EXISTS = 0 shortcut; its
+  `messages` are the changed ones only.
+- `cycle::imap::pass_plan(numbers: &MailboxNumbers, reference:
+  Option<&FolderNumbers>, pending: &[PendingChange]) -> PassPlan`:
+  `Everything` when there is no reference, the numbering version differs,
+  a number is missing on either side, or `pending` is not empty (011
+  addresses a change by the UID the listing shows); `Nothing` when all
+  four numbers are equal; `ChangedFlags { since }` when EXISTS and UIDNEXT
+  are equal and both HIGHESTMODSEQ are present. The reference is the
+  stored numbers of a synchronized folder, or, at the second pass, the
+  first pass's numbers when its listing completed and every message it
+  showed missing was stored; the second pass gets no pending changes,
+  since the cycle's own commands raised the mod-sequences of the messages
+  they changed. The pending changes read for the plan are the ones
+  `end_changes_the_listing_shows` compares with the listing, read once.
+- `cycle::imap::run_state_pass(server, reference, batches, plan) ->
+  StatePass { listed: Vec<ListedMessage>, missing: Vec<&ListedMessage>,
+  refusal }`: `Nothing` lists nothing and stores nothing; `ChangedFlags`
+  calls `list_changed_flags` and stores flag states with the numbers,
+  removing nothing; `Everything` calls `list_messages` and stores what
+  `listing_changes` proves, removals only when the listing completed. A
+  completed listing always writes the folder's state with the numbers:
+  synchronized when nothing is missing, not completed otherwise (today's
+  helper writes none for a synchronized folder with nothing missing, so
+  the numbers would never advance); a refused listing writes the state as
+  today and leaves the numbers as stored.
+- `cycle::imap::synchronize_imap_folder`: the order above;
+  `confirm_sent_changes` goes, its settle of the sent changes
+  (`settle_sent_changes`) runs on the second pass's listed messages; a
+  second pass that listed messages it did not fetch ends the cycle with
+  the folder not completed, so the next cycle lists and fetches them.
+- Record lines: the pass's outcome at info ("nothing changed", "flags
+  listed", "folder listed") with counts; the numbers at debug.
+
+### Decisions for the maintainer
+
+1. **CONDSTORE where the server announces it, Gmail included** (spec
+   Clarifications 2026-10-04): Google's documentation does not describe
+   it; the capability does, and for COMPRESS=DEFLATE this feature already
+   lets the announced capability decide (research §14). Alternative: the
+   base method on Gmail, which then gets only the EXISTS and UIDNEXT check
+   and the second pass, never the flag skip. Decided on 2026-10-04: the
+   capability decides.
+2. **The second pass only after batches or commands**: a synchronized
+   folder with nothing missing and nothing sent ends with its first pass.
+   Alternative: a second pass always, one round trip more per refresh for
+   nothing. Recommended as written.
+3. **No cadence inside the cycle** (spec Clarifications 2026-10-04):
+   decided on 2026-10-04.
+
+After the challenges of 2026-10-04 (two fresh sessions: the spec's
+requirements, the plan's mechanisms), applied the same day: a first pass
+of a folder with pending changes lists every message, since the changes
+are addressed by the listing's UIDs; a second pass that lists messages
+it does not fetch leaves the folder not completed, since its stored
+numbers would otherwise hide them from every later pass; the numbering
+version joins every comparison; the second pass compares with the first
+pass's numbers, so an undisturbed fill ends with one round trip; `reopen`
+reconnects first when the session was closed; the opening's numbers are
+the IMAP crate's own type, converted by the cycle; a completed listing
+always writes the state with the numbers; the NOMODSEQ test uses the
+scripted opening's completion, no knob; the providers' tests are
+estimated at the measured 30–60 lines each.
+
+### Optional mechanisms
+
+| Mechanism | Situation that would require it | Cost if needed |
+|---|---|---|
+| Arrivals alone by `UID FETCH <stored UIDNEXT>:* (UID FLAGS …)`, removals ruled out when EXISTS grew by exactly the arrivals | New mail is the most common change, and on a large folder each arrival costs the whole listing today; measured at 0.6 s for 9 000 messages, estimated at seconds for 100 000 (research §15) | ≈ 30 lines |
+| A flags fetch of the sent UIDs alone as the second pass's listing on a server without CONDSTORE | The second pass lists every message's flags there after each refresh with a command; 0.6 s for 9 000 messages | ≈ 25 lines |
+| Fetching within the cycle the arrivals the second pass finds | A long fill ends with mail that arrived meanwhile listed but not fetched until the next cycle, the folder left not completed | ≈ 15 lines; or 020's slicing |
+| Addressing a pending Gmail message by `UID SEARCH X-GM-MSGID` when the pass lists nothing | Every refresh after the user read or starred a message lists the folder in full; on a large Gmail folder that is the whole listing's cost per such refresh (a Generic IMAP identity carries its UID and needs no search) | ≈ 40 lines; about 0.2 s per pending message on Gmail (011 research §2) |
+
+### Portions
+
+1. **Documents** (T039): this amendment, spec, research §15, data model,
+   contract, quickstart, the 011, 002 and 007 amendments; the maintainer's
+   decision 1; then `spec-challenge` in a fresh session. *Pause.*
+2. **The folder's numbers** (T040–T041): domain, schema, store. *Pause.*
+3. **The reader** (T042–T043): the opening, the numbers, `reopen`, the
+   changed-flags listing, the scripted server's CONDSTORE. *Pause.*
+4. **The cycle** (T044–T045): the pass, the second pass, the 011 tests
+   rewritten; SC-011, SC-012. *Pause.*
+5. **Final passes** (T046–T047): check, size against the budget, the
+   quickstart's steps 11–12 on the installed build, one consistency
+   analysis, `simplify-review` in a fresh session.

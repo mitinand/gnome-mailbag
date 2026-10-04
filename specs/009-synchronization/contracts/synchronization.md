@@ -3,7 +3,11 @@
 *Amended 2026-10-03 by [Read and star](../../011-read-and-star/spec.md)*: the batch and the row carry the
 star beside the read state, the cycle sends pending flag changes and
 reads and settles them in the store, the window's event is
-`StoreChanged`, and the row object gains `starred`.
+`StoreChanged`, and the row object gains `starred`. *Amended 2026-10-04
+(the state pass, spec FR-005)*: the folder state carries the numbers of
+its latest state pass, and the reader opens with CONDSTORE where announced,
+reports the opening's numbers, opens the folder again and lists changed
+flags.
 
 The definitions the crates share for a cycle, kept in `mailbag-domain`, and
 the operations the window, the providers and the store agree on. Names are
@@ -15,8 +19,14 @@ user's word, *mailbox*, where it names the refreshed folder
 ## Domain types (`mailbag-domain`)
 
 - `FolderState { server_position: Option<String>, fill_place:
-  Option<String>, synchronized: bool }`:
-  what a folder remembers between cycles (data-model.md `folder`). A
+  Option<String>, synchronized: bool, numbers: Option<FolderNumbers> }`:
+  what a folder remembers between cycles (data-model.md `folder`); since
+  2026-10-04 `numbers` holds the four numbers of the folder's latest state
+  pass, `FolderNumbers { uid_validity: Option<u32>, exists: u32,
+  uid_next: Option<u32>, highest_modseq: Option<u64> }`, `None` for
+  Microsoft 365 and before a pass (spec FR-005); the IMAP crate's
+  `MailboxNumbers` has the same shape, and the cycle converts, since
+  `mailbag-imap` does not depend on `mailbag-domain`. A
   Generic IMAP message's identity is `imap:<folder>/<UIDVALIDITY>/<UID>`.
 - `FolderBatch { removed: Vec<String>, flag_states: Vec<(String,
   FlagChanges)>, known_arrived: Vec<(String, MessageFlags)>, arrived:
@@ -110,6 +120,18 @@ user's word, *mailbox*, where it names the refreshed folder
 ## Protocol crates
 
 - `mailbag-imap`: `MailboxReader::open` and `uid_validity()` as today;
+  since 2026-10-04 `open` selects the folder with the CONDSTORE parameter
+  when the signed-in capabilities announce CONDSTORE, `numbers() ->
+  MailboxNumbers` gives the opening's four numbers, `reopen() ->
+  Result<(), ImapError>` selects the same folder again in the session
+  (reconnecting first when the session was closed) and replaces the
+  numbers and the message count, raising `ImapFailure::MailboxChanged`
+  for another numbering version as `reconnect` does, and
+  `list_changed_flags(since: u64, row_items) -> Result<FolderListing,
+  ImapError>` lists only the messages whose mod-sequence is above `since`
+  (`UID FETCH 1:* (UID FLAGS [X-GM-MSGID]) (CHANGEDSINCE since)`), sharing
+  `list_messages`' body and completion handling (spec FR-005, research
+  §15);
   `MailboxReader::list_messages(row_items) -> Result<FolderListing,
   ImapError>` with `FolderListing { messages: Vec<ListedUid>, refusal:
   Option<ServerReply> }` and `ListedUid { uid, seen, flagged,

@@ -8,7 +8,9 @@ T033–T036 done, the manual checks passed on the installed build on
 independent review, done on 2026-09-30. The amendment of 2026-10-02 (one
 connection, faster) was built without tasks, by the feature-start's path
 for internal changes: three reviewed portions, the installed-build check,
-then the documents (plan "Amendment 2026-10-02", research §14).
+then the documents (plan "Amendment 2026-10-02", research §14). The
+amendment of 2026-10-04 (the state pass) has its tasks in Phase 8, on
+branch `claude/state-pass`; its documents await approval (T039).
 
 [Spec](spec.md) owns the rules, [plan](plan.md) owns the size table, the
 function map and the portions, [research](research.md) owns the decisions
@@ -484,3 +486,112 @@ Optional mechanisms); upgrading a populated store (FR-015(f)).
   refusal of structures or texts, a text not returned keeping the stored
   one); in spec.md FR-011, a cross-reference to FR-009's failure on a
   temporary refusal.
+
+## Phase 8: the state pass (amendment of 2026-10-04)
+
+Decided at a feature-start on 2026-10-04 (plan "Amendment 2026-10-04",
+research §15, spec Clarifications 2026-10-04) on branch
+`claude/state-pass`, from `claude/read-star`, whose full listing after a
+cycle's commands this amendment replaces. Each portion ends with its
+tests, `scripts/check.sh`, the size compared with the plan's table and a
+STOP for the maintainer's review.
+
+| Portion | Tasks | Suggested commit subject |
+|---|---|---|
+| 8a. Documents | T039 | docs(sync): specify the state pass |
+| 8b. The folder's numbers | T040–T041 | feat(store): keep the numbers of a folder's latest state pass |
+| 8c. The reader | T042–T043 | feat(imap): open with CONDSTORE and list changed flags |
+| 8d. The cycle | T044–T045 | feat(sync): learn a folder's state in a pass, twice per cycle |
+| 8e. Final passes | T046–T047 | (per review) |
+
+- [ ] T039 STOP: present the amended spec.md (status, Scope, US1,
+  Edge Cases, Clarifications 2026-10-04, FR-001, FR-004, FR-005, FR-008,
+  FR-012, FR-015(c) and (e), Key Entities, the flowchart, SC-011, SC-012,
+  Assumptions, Amendments), plan.md ("Amendment 2026-10-04" and the
+  CONDSTORE row of Optional mechanisms), research.md §15, data-model.md
+  (`folder` columns and rules), contracts/synchronization.md
+  (`FolderState`, `FolderNumbers`, the reader), quickstart.md (steps 11
+  and 12, the scripted cases), and the amendments of 011 (spec FR-007(e)
+  and Clarifications, plan, research §2), 002 contracts/imap-reading.md
+  and 007 FR-014(a). Decision taken on 2026-10-04: CONDSTORE on Gmail by
+  the announced capability (plan, decision 1). Then `spec-challenge` in
+  fresh sessions, the spec's requirements and the plan's mechanisms; wait
+  for approval before any code.
+- [ ] T040 In crates/mailbag-domain/src/lib.rs `FolderNumbers {
+  uid_validity: Option<u32>, exists: u32, uid_next: Option<u32>,
+  highest_modseq: Option<u64> }` and `FolderState.numbers:
+  Option<FolderNumbers>` (every `FolderState { .. }` site of the workspace
+  gains the field); in crates/mailbag-store/src/schema.sql the four
+  nullable columns on `folder`; `read_folder_state` and
+  `write_folder_state` carry them; replacing a folder list keeps them
+  (`upsert_folders` leaves unnamed columns alone).
+- [ ] T041 [P] Store tests: the numbers round-trip with a batch's state,
+  stay through a folder list replacement, and are absent for a folder
+  that never had a complete pass.
+- [ ] T042 In crates/mailbag-imap: `MailboxNumbers` (the crate's own
+  type, as `StoreFlag` is); `session::open_mailbox` selects with
+  `select_condstore` when the signed-in capabilities announce CONDSTORE,
+  else `select`, and `MailboxSession` keeps the opening's numbers;
+  `MailboxReader::numbers()`; `reopen()` (reconnect first when the
+  session was closed after an unreadable structure, else the same SELECT
+  again in the open session; the numbers and the message count replaced;
+  another numbering version is `ImapFailure::MailboxChanged` as in
+  `reconnect`); `list_changed_flags(since, row_items)` sharing
+  `list_messages`' body, the query gaining `(CHANGEDSINCE since)`. The
+  scripted server: UIDNEXT in every opening's answer; a `condstore` knob
+  (the capability; HIGHESTMODSEQ in the answer to a SELECT with the
+  parameter; a mod-sequence per message raised by `UID STORE` and by a
+  scripted flag change; `CHANGEDSINCE` cut off the items before
+  `split_items` and answered from the mod-sequences); a message gone
+  after the first listing of a connection (for SC-012's removal, since
+  `vanishing_uid` stays in every listing); a flag changed from the second
+  connection on (for SC-011's "a flag changed" between two cycles).
+  NOMODSEQ needs no knob: the test sets `select_completion` with an
+  untagged `* OK [NOMODSEQ]` line.
+- [ ] T043 [P] IMAP tests: the opening's numbers; SELECT with the
+  parameter only when announced; `CHANGEDSINCE` lists only the changed
+  messages, with `X-GM-MSGID` when asked; a `[NOMODSEQ]` opening leaves
+  the mod-sequence empty; `reopen` refreshes the numbers after a scripted
+  change and fails as `MailboxChanged` on another numbering version.
+- [ ] T044 In crates/mailbag-providers/src/cycle/imap.rs `pass_plan`
+  (nothing, the changed flags, every message; every message also when
+  there is no reference, the numbering version differs, a number is
+  missing or pending changes exist, as the plan's function map says),
+  `run_state_pass` (the plan's listing; removals only from a complete
+  listing of every message; flag states; a completed listing always
+  writes the state, synchronized when nothing is missing, with the
+  numbers converted from the opening's; a refused listing leaves the
+  numbers as stored; the listed and the missing messages returned), and
+  `synchronize_imap_folder` in the plan's order: open → read → pass (the
+  pending changes read once, handed on to `end_changes_the_listing_shows`)
+  → end the wishes the listing shows → send → batches with sends → when
+  batches were fetched or commands sent: `reopen`, the pass again against
+  the first pass's numbers (none when its listing was refused),
+  `settle_sent_changes` on what it listed, the folder left not completed
+  when it listed messages it did not fetch → finish;
+  `confirm_sent_changes` goes. Record lines: the pass's outcome at info
+  with counts, the numbers at debug.
+- [ ] T045 [P] Cycle tests against the scripted server, SC-011's
+  outcomes as successive cycles on one CONDSTORE fixture: nothing changed
+  → one SELECT, no listing; a flag changed → one `CHANGEDSINCE` holding
+  that message alone, the flag stored, nothing removed; an arrival, then
+  a removal → the listing of every message; a pending star with nothing
+  changed on the server → the listing of every message and the command
+  sent; a server without CONDSTORE → the listing as before; a folder
+  whose fill did not complete → the listing; a changed numbering with the
+  same count and next number → the folder refills. SC-012 apart: a first
+  fill of 300 during which the scripted server changes a flag and removes
+  a message → both stored at the fill's end, the second pass a
+  `CHANGEDSINCE` and a listing; an undisturbed fill → a second pass of
+  one SELECT; an arrival during the fill → the folder not completed, the
+  next cycle fetches it. The 011 tests of the listing after commands
+  rewritten for the second pass (Gmail Starred, the ignored UID, the
+  refused second listing, the lost answer); the record names the pass's
+  outcome.
+- [ ] T046 STOP: ./scripts/check.sh, the size against the budget (≤ 250
+  production, ≤ 400 test lines), the quickstart's steps 11 and 12 on the
+  installed build with the maintainer, the record checked for privacy
+  (counts and the pass's outcome; folder names at debug).
+- [ ] T047 Final passes: one consistency analysis and `simplify-review` on
+  the branch diff, each in a fresh session; findings reported, scope-adding
+  ones brought to the maintainer; the measured facts stay in research §15.

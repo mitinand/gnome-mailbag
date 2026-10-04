@@ -33,6 +33,8 @@ FR-012), so every folder fills again.
 | 8. Failures (US3) | Network off during a refresh; then network on and refresh | The banner by 006, stored rows unchanged, nothing removed; the banner goes when the next refresh starts, and that refresh completes |
 | 9. Accounts (US6) | During a fill, turn the account's Mail off in Online Accounts; turn it on again and refresh | The fill stops and the account's mail is gone; the next refresh fills the folder from nothing |
 | 10. The record (003) | Start with `--log-level=debug` and refresh a folder | Counts of listed, removed, changed and arrived messages; `compression enabled` on a server that announces it (Gmail); folder names at debug only; no subject, sender, text or credential |
+| 11. Nothing changed, cheaply (FR-005, since 2026-10-04) | With `--log-level=debug`, refresh a synchronized folder twice on an account whose server announces CONDSTORE | The second refresh's record shows the folder opened and the pass's outcome "nothing changed", no listing; the refresh ends within a second or two. On a server without CONDSTORE the listing runs as before |
+| 12. A change during a fill (FR-001, since 2026-10-04) | Start the first fill of a large folder; while it runs, mark a message read and delete another in the web interface | Both are shown when the fill ends, with no further refresh; the record shows the second pass and what it listed |
 
 Cases the automated tests cover with scripted servers: a listing cut short,
 refused or ended by a lost connection; a removal reported during the
@@ -43,4 +45,9 @@ unknown message, a rejected position and a rejected place of a first fill,
 a removal met with another entry for a message in one page; a refusal the
 server marks temporary of a batch's structures or texts; a text the service
 no longer returns keeping the stored one (a store test); cancellation
-reported within a second while the server stops answering.
+reported within a second while the server stops answering; since
+2026-10-04, a state pass that finds nothing changed, only changed flags,
+or a changed count, on a server with and without CONDSTORE, a mailbox
+answering NOMODSEQ, a folder whose fill did not complete, and a flag
+change and a removal made during a first fill stored at its end
+(SC-011, SC-012).
